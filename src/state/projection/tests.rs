@@ -20,8 +20,8 @@ fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
             "timeline": {
                 "events": [{
                     "kind": "ak.message.create",
-                    "event_id": "ak:event:expired",
-                    "actor_id": "did:web:alice.example",
+                    "event_id": "ak:event:AFQAR2XErrXGAnlXE6bKXYyKeXf07nWETTDROpEmLSeo",
+                    "actor_id": "ak:did_core:web:alice.example",
                     "realm_id": realm,
                     "strand_id": strand,
                     "message_id": message,
@@ -36,7 +36,7 @@ fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
     let events = projection_events_from_sync_realms(&realms, Some(&store), None);
     let expired = events
         .iter()
-        .find(|event| event.id == "ak:event:expired")
+        .find(|event| event.id == "ak:event:AFQAR2XErrXGAnlXE6bKXYyKeXf07nWETTDROpEmLSeo")
         .expect("expired event");
 
     assert_eq!(expired.body, "[expired]");
@@ -46,8 +46,8 @@ fn golden_realm_id() -> arkret_sdk::RealmId {
     arkret_sdk::RealmId::new(GOLDEN_REALM).unwrap()
 }
 
-fn golden_actor() -> arkret_sdk::ActorId {
-    arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
+fn golden_actor() -> arkret_sdk::DidCoreId {
+    arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
 }
 
 fn golden_event(
@@ -170,8 +170,8 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
             "timeline": {
                 "events": [{
                     "kind": "ak.message.create",
-                    "event_id": "ak:event:late",
-                    "actor_id": "did:web:alice.example",
+                    "event_id": "ak:event:A4BWEYeaKK6NG4kEzOZXc7FlBfXuJdsVxsjAp4V6hygg",
+                    "actor_id": "ak:did_core:web:alice.example",
                     "realm_id": realm,
                     "strand_id": strand,
                     "message_id": message,
@@ -190,7 +190,7 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
     let events = projection_events_from_sync_realms(&realms, Some(&store), None);
     let rejected = events
         .iter()
-        .find(|event| event.id == "ak:event:late")
+        .find(|event| event.id == "ak:event:A4BWEYeaKK6NG4kEzOZXc7FlBfXuJdsVxsjAp4V6hygg")
         .expect("late recovery event");
 
     assert_eq!(rejected.body, "");

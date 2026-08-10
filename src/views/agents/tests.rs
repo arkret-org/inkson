@@ -288,7 +288,8 @@ mod personal_agent_tests {
     #[test]
     fn bootstrap_serializes_spec_six_fields_without_scope_or_private_key() {
         let outcome = arkret_sdk::AgentProvisionComplete {
-            agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+            agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
+                .unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             )
@@ -319,7 +320,7 @@ mod personal_agent_tests {
         // base-URL field is the SDK/spec wire name `arkret_base_url` (a wire key,
         // deliberately not renamed by the arkret→arkret source rename).
         assert_eq!(value["arkret_base_url"], "https://arkret.example");
-        assert_eq!(value["service_id"], "did:web:arkret.example");
+        assert_eq!(value["service_id"], "ak:did_core:web:arkret.example");
         assert_eq!(value["agent_id"], "did:web:agents.example:summary");
         assert_eq!(value["pairing_request_id"], "0197-req");
         assert_eq!(value["pairing_code"], "123456");
@@ -335,7 +336,8 @@ mod personal_agent_tests {
     #[test]
     fn deep_link_is_https_universal_link_wrapping_a_short_pairing_token() {
         let outcome = arkret_sdk::AgentProvisionComplete {
-            agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+            agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
+                .unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             )
@@ -394,7 +396,7 @@ mod personal_agent_tests {
             "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";
         let raw = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-            "agent_id": "did:web:agents.example:summary",
+            "agent_id": "ak:did_core:web:agents.example:summary",
             "verification_method": verification_method,
             "public_key": {
                 "kty": "OKP",
@@ -465,16 +467,17 @@ mod personal_agent_tests {
         ));
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
-        let agent_did = arkret_sdk::Did::new(agent.to_owned()).unwrap();
-        let controller_did = arkret_sdk::Did::new(controller.to_owned()).unwrap();
-        let agent_actor_id =
-            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&agent_did).unwrap());
-        let controller_actor_id = arkret_sdk::ActorId::from(
+        let agent_did = arkret_sdk::DidFullId::new(agent.to_owned()).unwrap();
+        let controller_did = arkret_sdk::DidFullId::new(controller.to_owned()).unwrap();
+        let agent_actor_id = arkret_sdk::DidCoreId::from(
+            arkret_sdk::project_full_id_to_core_id(&agent_did).unwrap(),
+        );
+        let controller_actor_id = arkret_sdk::DidCoreId::from(
             arkret_sdk::project_full_id_to_core_id(&controller_did).unwrap(),
         );
         let scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
-            &agent_did,
-            &controller_did,
+            &agent_actor_id,
+            &controller_actor_id,
             &scope,
         )
         .unwrap();
@@ -500,7 +503,7 @@ mod personal_agent_tests {
             "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
         )
         .unwrap();
-        let agent_id = arkret_sdk::Did::new(agent.to_owned()).unwrap();
+        let agent_id = crate::mls_api_helpers::principal_core_id(agent).unwrap();
         let verification_method = arkret_wire::DidUrl::new(verification_method).unwrap();
         let public_key = arkret_models_collaboration::governance::agent_artifacts::PublicKey {
             kty: arkret_wire::NonEmptyString::new("OKP").unwrap(),
@@ -531,7 +534,7 @@ mod personal_agent_tests {
                         verification_method: verification_method.clone(),
                         signature_algorithm: arkret_models_collaboration::agent_operations::AgentRuntimeKeyAlgorithm::Ed25519,
                         challenge: pairing_request_id,
-                        audience: arkret_sdk::ServiceId::new(service_id.to_owned()).unwrap(),
+                        audience: arkret_sdk::DidCoreId::new(service_id.to_owned()).unwrap(),
                         created_at,
                         expires_at,
                         runtime_key_binding_digest,
@@ -565,12 +568,12 @@ mod personal_agent_tests {
         let expected_pairing_digest =
             arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
                 arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY,
-                &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
+                &controller_actor_id,
                 &request.agent_id,
                 &request.pairing_request_id,
                 "12345678",
                 expires_at,
-                &arkret_sdk::ServiceId::new(service_id.to_owned()).unwrap(),
+                &arkret_sdk::DidCoreId::new(service_id.to_owned()).unwrap(),
                 &request.proof_of_possession.runtime_key_binding_digest,
                 &request.proof_of_possession,
             )
@@ -614,9 +617,7 @@ mod personal_agent_tests {
         );
         arkret_signatures::agent_evidence::verify_agent_signing_key_binding(
             &signing_key_binding,
-            &arkret_sdk::ActorId::from(
-                arkret_sdk::project_full_id_to_core_id(&request.agent_id).unwrap(),
-            ),
+            &request.agent_id,
             &signing_key_binding.agent_key_id,
             &signing_key_binding.controller_id,
             &request.verification_method,
@@ -702,15 +703,15 @@ mod personal_agent_tests {
         ));
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
-        let agent_actor_id = arkret_sdk::ActorId::from(
+        let agent_actor_id = arkret_sdk::DidCoreId::from(
             arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::FullId::new(agent.to_owned()).unwrap(),
+                &arkret_sdk::DidFullId::new(agent.to_owned()).unwrap(),
             )
             .unwrap(),
         );
-        let controller_actor_id = arkret_sdk::ActorId::from(
+        let controller_actor_id = arkret_sdk::DidCoreId::from(
             arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::FullId::new(controller.to_owned()).unwrap(),
+                &arkret_sdk::DidFullId::new(controller.to_owned()).unwrap(),
             )
             .unwrap(),
         );
@@ -780,7 +781,7 @@ mod personal_agent_tests {
         let draft = serde_json::json!({
             "type": "ak.agent.draft.v1",
             "draft_id": "0197-draft",
-            "agent_id": "did:web:agents.example:summary",
+            "agent_id": "ak:did_core:web:agents.example:summary",
             "proposed_action": "ak.message.create",
             "target": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "content": {"body": "draft text"},
@@ -796,7 +797,7 @@ mod personal_agent_tests {
         )
         .unwrap();
         assert_eq!(payload["draft_id"], "0197-draft");
-        assert_eq!(payload["controller_id"], "did:web:alice.example");
+        assert_eq!(payload["controller_id"], "ak:did_core:web:alice.example");
         assert_eq!(payload["proposed_action"], "ak.message.create");
         assert_eq!(payload["approved_at"], "2026-06-26T00:00:00.000Z");
         assert_eq!(payload["expires_at"], "2026-06-26T01:00:00.000Z");
@@ -816,7 +817,7 @@ mod personal_agent_tests {
     fn build_action_approve_payload_prefers_action_request_digest() {
         let request = serde_json::json!({
             "request_id": "ak:agent-action-request:0197",
-            "agent_id": "did:web:agents.example:summary",
+            "agent_id": "ak:did_core:web:agents.example:summary",
             "proposed_action": "ak.message.create",
             "target": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "request_canonical_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -843,7 +844,7 @@ mod personal_agent_tests {
     fn build_action_reject_payload_carries_reason_and_controller() {
         let request = serde_json::json!({
             "request_id": "ak:agent-action-request:0198",
-            "agent_id": "did:web:agents.example:summary",
+            "agent_id": "ak:did_core:web:agents.example:summary",
         });
         let payload = serde_json::to_value(
             build_action_reject_payload(
@@ -856,7 +857,7 @@ mod personal_agent_tests {
         )
         .unwrap();
         assert_eq!(payload["request_id"], "ak:agent-action-request:0198");
-        assert_eq!(payload["controller_id"], "did:web:alice.example");
+        assert_eq!(payload["controller_id"], "ak:did_core:web:alice.example");
         assert_eq!(payload["rejected_at"], "2026-06-26T00:00:00.000Z");
         assert_eq!(payload["reason"], "needs review");
         assert!(!payload["rejection_id"].as_str().unwrap().is_empty());
@@ -875,7 +876,7 @@ mod personal_agent_tests {
         .unwrap();
 
         assert_eq!(operation.kind.as_str(), "ak.message.create");
-        assert_eq!(operation.actor_id.as_str(), "did:web:alice.example");
+        assert_eq!(operation.actor_id.as_str(), "ak:did_core:web:alice.example");
         assert_eq!(
             operation.executed_by.as_ref().map(|did| did.as_str()),
             Some("did:web:agents.example:summary")

@@ -51,7 +51,7 @@ pub fn build_audit_accessed(
     // schema_violation.
     let payload = arkret_sdk::AuditAccessedPayload {
         access_kind: arkret_sdk::AuditAccessedKind::Other,
-        writer_actor_id: arkret_sdk::Did::new(actor.to_owned())?,
+        writer_actor_id: crate::mls_api_helpers::principal_core_id(actor)?,
         target_actor_id: None,
         target_ref: target_event_id.into(),
         target_cell_id: None,
@@ -99,7 +99,7 @@ pub fn build_audit_ryw_receipt(
     };
     let payload = arkret_sdk::AuditPayload {
         target_ref: Some(source_event_id.into()),
-        actor_id: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        actor_id: Some(crate::mls_api_helpers::principal_core_id(actor)?),
         purpose: Some(purpose),
         accessed_at: Some(crate::clock::now_utc_millis()),
     };
@@ -159,7 +159,7 @@ pub fn build_disclosure_receipt(
     disclosed_claims: Vec<String>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::IdentityDisclosureReceiptStatePayload {
-        holder_did: arkret_sdk::Did::new(holder_did.to_owned())?,
+        holder_principal_id: arkret_sdk::DidFullId::new(holder_did.to_owned())?,
         value: Some(serde_json::json!({
             "request_id": request_id,
             "counterparty": counterparty,
@@ -185,14 +185,17 @@ mod tests {
         let op = build_audit_accessed(
             "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
-            "ak:event:abc",
+            "ak:event:ANOufzo30HjlW4S8eBowzzay9mI2anxKRM5l1AUQ1pDE",
             "did:key:zDevice",
         )
         .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.audit.accessed");
-        assert_eq!(op.payload["target_ref"], "ak:event:abc");
-        assert_eq!(op.payload["writer_actor_id"], "did:web:alice");
+        assert_eq!(
+            op.payload["target_ref"],
+            "ak:event:ANOufzo30HjlW4S8eBowzzay9mI2anxKRM5l1AUQ1pDE"
+        );
+        assert_eq!(op.payload["writer_actor_id"], "ak:did_core:web:alice");
         assert!(
             op.payload["purpose"]
                 .as_str()
@@ -209,14 +212,17 @@ mod tests {
         let op = build_audit_ryw_receipt(
             "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
-            "ak:event:abc",
+            "ak:event:ANOufzo30HjlW4S8eBowzzay9mI2anxKRM5l1AUQ1pDE",
             vec!["did:key:zA".into(), "did:key:zB".into()],
         )
         .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.audit.ryw_receipt");
-        assert_eq!(op.payload["target_ref"], "ak:event:abc");
-        assert_eq!(op.payload["actor_id"], "did:web:alice");
+        assert_eq!(
+            op.payload["target_ref"],
+            "ak:event:ANOufzo30HjlW4S8eBowzzay9mI2anxKRM5l1AUQ1pDE"
+        );
+        assert_eq!(op.payload["actor_id"], "ak:did_core:web:alice");
         assert!(
             op.payload["purpose"]
                 .as_str()
@@ -280,12 +286,12 @@ mod tests {
         .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.identity.disclosure_receipt");
-        assert_eq!(op.payload["holder_did"], "did:web:alice");
-        assert_eq!(op.payload["value"]["counterparty"], "did:web:bob");
+        assert_eq!(op.payload["holder_did"], "ak:did_core:web:alice");
+        assert_eq!(op.payload["value"]["counterparty"], "ak:did_core:web:bob");
         let writes = crate::operation::direct_registered_cell_writes(&op).unwrap();
         assert_eq!(
             writes[0].cell.as_str(),
-            "ak:cell:ak.component.identity.disclosure_receipt.v1:did:web:alice"
+            "ak:cell:ak.component.identity.disclosure_receipt.v1:ak:did_core:web:alice"
         );
     }
 

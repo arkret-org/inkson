@@ -630,12 +630,18 @@ fn history_secrets_json_drops_malformed_entries() {
 /// IndexedDB-only key material.
 #[test]
 fn history_secret_store_key_is_classified_indexeddb_only() {
-    let key = mls_history_secret_store_key("ak:realm:abc123");
+    let key = mls_history_secret_store_key("ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8");
     assert!(key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX));
     assert!(is_wasm_indexeddb_required_secret_key(&key));
     // Stable across calls (no nonce / randomness in the key derivation).
-    assert_eq!(key, mls_history_secret_store_key("ak:realm:abc123"));
-    assert_ne!(key, mls_history_secret_store_key("ak:realm:other"));
+    assert_eq!(
+        key,
+        mls_history_secret_store_key("ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8")
+    );
+    assert_ne!(
+        key,
+        mls_history_secret_store_key("ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo")
+    );
 }
 
 #[test]

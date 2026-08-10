@@ -266,7 +266,7 @@ pub fn CirclesPanel(
                                         let member_realm_id = circle.realm_id.to_string();
                                         let account_did = account_did.clone();
                                         move |_| {
-                                            let Ok(actor_id) = arkret_sdk::Did::new(member_actor().trim().to_owned()) else {
+                                            let Ok(actor_id) = arkret_sdk::DidFullId::new(member_actor().trim().to_owned()) else {
                                                 status.set("Enter a valid member DID".to_owned());
                                                 return;
                                             };
@@ -424,7 +424,7 @@ pub fn CirclesPanel(
                                             status.set("Invalid Realm id".to_owned());
                                             return;
                                         };
-                                        let Ok(actor_id) = arkret_sdk::Did::new(account_did.clone()) else {
+                                        let Ok(actor_id) = arkret_sdk::DidFullId::new(account_did.clone()) else {
                                             status.set("Invalid account DID".to_owned());
                                             return;
                                         };

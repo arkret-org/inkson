@@ -95,10 +95,11 @@ fn sign_test_backup(
 
 #[test]
 fn managed_agent_pcr_binding_is_bound_into_hpke_aad() {
-    let controller = arkret_sdk::Did::new(ACTOR).unwrap();
+    let controller = arkret_sdk::DidFullId::new(ACTOR).unwrap();
     let binding = ManagedPrincipalBinding {
-        managed_principal_id: arkret_sdk::Did::new("did:web:agent.example").unwrap(),
-        controller_id: controller,
+        managed_principal_id: crate::mls_api_helpers::principal_core_id("did:web:agent.example")
+            .unwrap(),
+        controller_id: arkret_sdk::project_full_id_to_core_id(&controller).unwrap(),
         principal_control_realm_id: arkret_sdk::RealmId::new(
             "ak:realm:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5",
         )
@@ -636,13 +637,13 @@ fn delete_challenge() -> arkret_sdk::KeysBackupsDeleteChallenge {
         challenge: arkret_sdk::Base64UrlString::new("Y2hhbGxlbmdl").unwrap(),
         nonce: arkret_sdk::Base64UrlString::new("bm9uY2U").unwrap(),
         operation: arkret_sdk::ServiceOperationId::SELF_KEYS_BACKUPS_RESOURCE_DELETE.to_owned(),
-        principal_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         backup_id: arkret_sdk::BackupId::new(
             "ak:backup:01964137-0000-7000-8000-00000000beef".to_owned(),
         )
         .unwrap(),
         audience: arkret_sdk::NonEmptyString::new("https://soland.example").unwrap(),
-        service_id: arkret_sdk::Did::new("did:web:soland.example".to_owned()).unwrap(),
+        service_id: crate::mls_api_helpers::principal_core_id("did:web:soland.example").unwrap(),
         request_id: arkret_sdk::Base64UrlString::new("cmVxdWVzdC1pZA").unwrap(),
         issued_at,
         expires_at: issued_at + chrono::Duration::seconds(300),

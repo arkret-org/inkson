@@ -50,7 +50,7 @@ fn build_remove_proposal_event(
     proposal: &arkret_sdk::MlsProposalEnvelope,
     governance_binding: Option<arkret_sdk::MlsGovernanceBindingPayload>,
 ) -> Result<arkret_sdk::Event, String> {
-    let target_principal = arkret_sdk::Did::new(target_principal_id.to_owned())
+    let target_principal = crate::mls_api_helpers::principal_core_id(target_principal_id)
         .map_err(|err| format!("invalid remove target principal id: {err:?}"))?;
     let proposal_payload = arkret_sdk::MlsProposalPayload {
         mls_group_id: arkret_sdk::MlsGroupId::new(proposal.group_id.clone())

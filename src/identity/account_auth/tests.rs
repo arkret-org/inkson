@@ -81,7 +81,10 @@ fn session_grant_proof_signs_canonical_claims() {
         "type claim must match coauth's spec"
     );
     assert_eq!(claims.grant_id, "01HABC123");
-    assert_eq!(claims.audience.as_str(), "did:web:principal.example");
+    assert_eq!(
+        claims.audience.as_str(),
+        "ak:did_core:web:principal.example"
+    );
     assert_eq!(claims.challenge, "challenge-deadbeef");
     assert_eq!(
         claims.grant_jwt_hash,
@@ -438,7 +441,7 @@ fn resolve_gate_account_base_fails_closed_without_account_authority() {
 
 fn principal_description() -> arkret_sdk::ServiceDescribe {
     let mut description = arkret_sdk::ServiceDescribe::development(
-        arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
+        arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
         arkret_sdk::TypedTrustDomainId::new("ak:trust_domain:principal.example".to_owned())
             .unwrap(),
         arkret_sdk::ServiceKind::PrincipalServer,

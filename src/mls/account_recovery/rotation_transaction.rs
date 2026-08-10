@@ -3,7 +3,7 @@ pub(super) use arkret_models_collaboration::events_payloads::key_backup::Control
 use arkret_models_collaboration::events_payloads::key_backup::resolve_controller_backup_trust_anchor;
 use arkret_models_crypto::{BackupKind, BackupSeriesEraseRequestBody, BackupSeriesEraseStatus};
 use arkret_wire::{
-    BackupObjectRef, BackupRotationKind, BackupSeriesId, Base64UrlString, Did,
+    BackupObjectRef, BackupRotationKind, BackupSeriesId, Base64UrlString, DidFullId,
     EventsSubmitBatchRequestBody, Hash, LeaseBasisRef, RiskTier, SchemaId,
     SecurityTransactionBinding, SecurityTransactionState, SecurityTransactionStep, TransactionId,
     UnsignedClientStepAttestation,
@@ -54,13 +54,9 @@ pub(crate) fn prepare_rotation_backup_material(
 ) -> Result<PreparedRotationBackupMaterial> {
     let normalized = crate::recovery_crypto::normalize_recovery_key_input(recovery_words)
         .ok_or_else(|| anyhow!("a valid 24-word Recovery Key is required"))?;
-    let rotation = crate::mls::runtime::prepare_account_mls_secret_rotation(
-        secure_store,
-        actor_id,
-        device_id,
-        snapshots,
-    )
-    .map_err(|error| anyhow!(error.user_message()))?;
+    let rotation =
+        crate::mls::runtime::prepare_account_mls_secret_rotation(secure_store, actor_id, snapshots)
+            .map_err(|error| anyhow!(error.user_message()))?;
     if !rotation.failed_realms.is_empty() {
         return Err(anyhow!(
             "security rotation cannot omit locally held MLS history Realms"
@@ -185,7 +181,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     }
     let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
-    let coordinator_service_id = Did::new(submitter.service_id().await?)?;
+    let coordinator_service_id = DidFullId::new(submitter.service_id().await?)?;
     let list_payload = super::restore::fetch_mls_restore_payload(api, actor_id).await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
@@ -202,7 +198,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         &trust_anchor,
     )?;
 
-    let principal = Did::new(actor_id.to_owned())?;
+    let principal = DidFullId::new(actor_id.to_owned())?;
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let frontier = submitter
@@ -262,6 +258,9 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .collect();
     let transaction_id =
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?;
+    let principal = crate::mls_api_helpers::principal_core_id(principal.as_str())?;
+    let coordinator_service_id =
+        crate::mls_api_helpers::principal_core_id(coordinator_service_id.as_str())?;
     let create = crate::fresh_device_recovery::SecurityRotationDraft {
         transaction_id: transaction_id.clone(),
         principal_id: principal,
@@ -365,7 +364,7 @@ async fn drive_security_rotation(
 ) -> Result<CompletedSecurityRotation> {
     let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
-    let principal = Did::new(actor_id.to_owned())?;
+    let principal = DidFullId::new(actor_id.to_owned())?;
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let transaction_id = transaction.transaction_id.clone();
@@ -639,7 +638,7 @@ pub(super) async fn current_controller_backup_trust_anchor(
     actor_id: &str,
     device_id: &str,
 ) -> Result<ControllerBackupTrustAnchor> {
-    let actor = Did::new(actor_id.to_owned())?;
+    let actor = crate::mls_api_helpers::principal_core_id(actor_id)?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let outcome = crate::transport::keys::query_keys(http, actor_id, device_id).await?;
     resolve_controller_backup_trust_anchor(&outcome, &actor, &device)
@@ -680,8 +679,9 @@ pub(super) fn build_active_series_event(
 ) -> Result<arkret_sdk::Event> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let principal = Did::new(actor_id.to_owned())?;
-    let verification_method = signer.verification_method_for_principal(&principal)?;
+    let principal_full_id = DidFullId::new(actor_id.to_owned())?;
+    let principal = crate::mls_api_helpers::principal_core_id(actor_id)?;
+    let verification_method = signer.verification_method_for_principal(&principal_full_id)?;
     let backup_kind = match kind {
         BackupRotationKind::SecretStorage => BackupKind::SecretStorage,
         BackupRotationKind::MlsHistory => BackupKind::MlsHistory,

@@ -139,14 +139,14 @@ mod tests {
 
     #[test]
     fn projected_members_reads_roster_actor_id_entries() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = LocalStateStore::default();
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "members": [
-                    {"actor_id": "did:web:alice.example", "membership": "join"},
-                    {"actor_id": "did:web:agent.example", "membership": "join"}
+                    {"actor_id": "ak:did_core:web:alice.example", "membership": "join"},
+                    {"actor_id": "ak:did_core:web:agent.example", "membership": "join"}
                 ]
             }),
         );
@@ -154,23 +154,23 @@ mod tests {
         assert_eq!(
             projected_members_for_realm(&store, realm_id),
             vec![
-                "did:web:agent.example".to_owned(),
-                "did:web:alice.example".to_owned()
+                "ak:did_core:web:agent.example".to_owned(),
+                "ak:did_core:web:alice.example".to_owned()
             ]
         );
     }
 
     #[test]
     fn projected_members_ignores_noncanonical_projection_sources() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = LocalStateStore::default();
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "owner": "did:web:owner.example",
-                "admins": [{"actor_id": "did:web:admin.example", "membership": "join"}],
+                "admins": [{"actor_id": "ak:did_core:web:admin.example", "membership": "join"}],
                 "summary": {
-                    "members": [{"actor_id": "did:web:member.example", "membership": "join"}],
+                    "members": [{"actor_id": "ak:did_core:web:member.example", "membership": "join"}],
                     "created_by": "did:web:owner.example"
                 }
             }),

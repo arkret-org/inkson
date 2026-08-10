@@ -26,7 +26,7 @@ pub async fn query_keys(
     actor: &str,
     device_id: &str,
 ) -> anyhow::Result<KeysQueryOutcome> {
-    let actor = arkret_sdk::Did::new(actor.to_owned())
+    let actor = arkret_sdk::DidFullId::new(actor)
         .map_err(|err| anyhow::anyhow!("invalid actor DID `{actor}`: {err}"))?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;
@@ -65,7 +65,7 @@ pub async fn send_device_message<K: arkret_sdk::DeviceMessageSpec>(
     content: K::Content,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
     let message_id = arkret_sdk::DeviceMessageId::new_v7_at(crate::clock::now_unix_ms());
-    let target_actor = arkret_sdk::Did::new(target_actor.to_owned())?;
+    let target_actor = crate::mls_api_helpers::principal_core_id(target_actor)?;
     let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())?;
     let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);
     let payload = arkret_sdk::TypedDeviceMessageTarget::<K>::new(message_id, expires_at, content)?
@@ -105,7 +105,7 @@ pub async fn submit_realm_key_request(
             to_epoch,
             history_visibility: None,
         },
-        recipient_principal_id: arkret_sdk::Did::new(actor_id.trim().to_owned())?,
+        recipient_principal_id: crate::mls_api_helpers::principal_core_id(actor_id)?,
         recipient_device_id: device_id.clone(),
         recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
             recipient_hpke_public_key.trim(),
@@ -118,7 +118,7 @@ pub async fn submit_realm_key_request(
         // The principal that owns `target_source_ref` (the provider device the
         // requester picked as its history source). Required by the SDK request
         // schema so the relay can route to the provider's to-device queue.
-        target_principal_id: arkret_sdk::Did::new(provider_principal_id.trim().to_owned())?,
+        target_principal_id: crate::mls_api_helpers::principal_core_id(provider_principal_id)?,
         created_at: crate::clock::now_utc(),
     };
     payload

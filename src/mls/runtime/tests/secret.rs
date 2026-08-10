@@ -7,18 +7,8 @@ use crate::state::isolated_store_for_tests as temp_state_store;
 #[test]
 fn device_snapshot_secret_is_created_and_reused() {
     let store = MemorySecureKeyStore::new();
-    let first = load_or_create_device_snapshot_secret(
-        &store,
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-    )
-    .unwrap();
-    let second = load_or_create_device_snapshot_secret(
-        &store,
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-    )
-    .unwrap();
+    let first = load_or_create_account_mls_secret(&store, "did:web:alice.example").unwrap();
+    let second = load_or_create_account_mls_secret(&store, "did:web:alice.example").unwrap();
     assert_eq!(first, second);
     assert_eq!(first.len(), 43);
 }
@@ -40,9 +30,9 @@ fn device_snapshot_secret_load_does_not_create() {
 fn account_secret_is_shared_across_devices() {
     let store = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
-    let from_a = load_or_create_device_snapshot_secret(&store, actor, "ak:device:a").unwrap();
+    let from_a = load_or_create_account_mls_secret(&store, actor).unwrap();
     // A different device of the SAME account must resolve the SAME secret.
-    let from_b = load_or_create_device_snapshot_secret(&store, actor, "ak:device:b").unwrap();
+    let from_b = load_or_create_account_mls_secret(&store, actor).unwrap();
     assert_eq!(from_a, from_b);
     // It is stored under the account key, not a device key.
     assert!(
@@ -140,7 +130,7 @@ fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
     );
     let snapshots = BTreeMap::from([(realm.to_owned(), original)]);
 
-    let rotation = prepare_account_mls_secret_rotation(&store, actor, device, &snapshots).unwrap();
+    let rotation = prepare_account_mls_secret_rotation(&store, actor, &snapshots).unwrap();
 
     assert_eq!(rotation.previous_version, 1);
     assert_eq!(rotation.new_version, 2);
@@ -214,7 +204,7 @@ fn account_secret_rotation_skips_undecryptable_realm_and_records_failure() {
     );
     let snapshots = BTreeMap::from([(good_realm.to_owned(), good), (bad_realm.to_owned(), bad)]);
 
-    let rotation = prepare_account_mls_secret_rotation(&store, actor, device, &snapshots).unwrap();
+    let rotation = prepare_account_mls_secret_rotation(&store, actor, &snapshots).unwrap();
 
     // Good realm rotated; bad realm skipped + recorded.
     assert!(rotation.rewrapped_snapshots.contains_key(good_realm));

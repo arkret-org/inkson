@@ -338,7 +338,7 @@ mod tests {
         let mut event = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Realm { realm_id },
-            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             json!({
@@ -385,7 +385,7 @@ mod tests {
             unreachable!();
         };
         message.event.executed_by =
-            Some(arkret_sdk::ActorId::new("ak:did_core:web:agent.example").unwrap());
+            Some(arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap());
         assert!(accepted_direct_message_final(&delegated).is_none());
 
         let mut ambiguous = direct_message_event();

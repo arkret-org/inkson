@@ -174,7 +174,7 @@ fn resolve_principal_authoring_generation_from_keys(
     principal_id: &str,
     device_id: &str,
 ) -> anyhow::Result<PrincipalGenerationResolution> {
-    let principal = arkret_sdk::Did::new(principal_id.to_owned())?;
+    let principal = crate::mls_api_helpers::principal_core_id(principal_id)?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let record = outcome
         .device_keys

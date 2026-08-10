@@ -64,7 +64,10 @@ fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projectio
     // had queued a ak.strand.update locally that bumped summary + body.
     // After page refresh, the overlay must re-apply that patch so the
     // user doesn't see their edits silently disappear.
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.title = "old title".to_owned();
     card.description = "old summary".to_owned();
     card.body = "old body".to_owned();
@@ -78,14 +81,14 @@ fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projectio
     }];
     let queued = RawOperationRecord {
         operation_id: "op-1".to_owned(),
-        realm_id: Some("ak:realm:r1".to_owned()),
+        realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
             "kind": "ak.strand.update",
             "operation_id": "op-1",
             "write_state": "queued",
             "body": {
-                "strand_id": "ak:strand:edit-me",
+                "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                 "patch": {
                     "title": { "$op": "set", "value": "new title" },
                     "summary": { "$op": "set", "value": "new summary" },
@@ -106,7 +109,10 @@ fn local_card_update_overlay_replays_queued_summary_and_body_on_top_of_projectio
 
 #[test]
 fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.due = "2026-06-11".to_owned();
     let columns = vec![KanbanColumn {
         id: "ak:space:list-a".to_owned(),
@@ -117,14 +123,14 @@ fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
     }];
     let queued = RawOperationRecord {
         operation_id: "op-clear-due".to_owned(),
-        realm_id: Some("ak:realm:r1".to_owned()),
+        realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
             "kind": "ak.strand.update",
             "operation_id": "op-clear-due",
             "write_state": "queued",
             "body": {
-                "strand_id": "ak:strand:edit-me",
+                "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                 "patch": {
                     "metadata.fields": {
                         "$op": "set",
@@ -140,7 +146,10 @@ fn overlay_local_card_update_records_clears_due_from_fields_replacement() {
 
 #[test]
 fn card_synthesis_track_entries_preserve_append_history() {
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.synthesis = "second synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
@@ -153,16 +162,16 @@ fn card_synthesis_track_entries_preserve_append_history() {
     let raw_operations = vec![
         RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:r1".to_owned()),
+            realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
             received_at: received_at("2026-05-22T10:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-1",
-                "actor_id": "did:web:acme.example:users:alice",
+                "actor_id": "ak:did_core:web:acme.example:users:alice",
                 "created_at": "2026-05-22T10:00:00.000Z",
                 "write_state": "queued",
                 "body": {
-                    "strand_id": "ak:strand:edit-me",
+                    "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                     "patch": {
                         "synthesis": { "$op": "set", "value": "first synthesis" }
                     }
@@ -171,16 +180,16 @@ fn card_synthesis_track_entries_preserve_append_history() {
         },
         RawOperationRecord {
             operation_id: "op-2".to_owned(),
-            realm_id: Some("ak:realm:r1".to_owned()),
+            realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
             received_at: received_at("2026-05-22T11:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-2",
-                "actor_id": "did:web:acme.example:users:bob",
+                "actor_id": "ak:did_core:web:acme.example:users:bob",
                 "created_at": "2026-05-22T11:00:00.000Z",
                 "write_state": "queued",
                 "body": {
-                    "strand_id": "ak:strand:edit-me",
+                    "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                     "patch": {
                         "synthesis": { "$op": "set", "value": "second synthesis" }
                     }
@@ -206,7 +215,10 @@ fn card_synthesis_track_entries_preserve_append_history() {
 
 #[test]
 fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_history() {
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.synthesis = join_synthesis_entry_bodies(vec![
         "alice synthesis".to_owned(),
         "bob synthesis".to_owned(),
@@ -223,16 +235,16 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
     let raw_operations = vec![
         RawOperationRecord {
             operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:r1".to_owned()),
+            realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
             received_at: received_at("2026-05-22T10:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-1",
-                "actor_id": "did:web:acme.example:users:alice",
+                "actor_id": "ak:did_core:web:acme.example:users:alice",
                 "created_at": "2026-05-22T10:00:00.000Z",
                 "write_state": "synced",
                 "body": {
-                    "strand_id": "ak:strand:edit-me",
+                    "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                     "patch": {
                         "synthesis": { "$op": "set", "value": "alice synthesis" }
                     }
@@ -241,16 +253,16 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
         },
         RawOperationRecord {
             operation_id: "op-2".to_owned(),
-            realm_id: Some("ak:realm:r1".to_owned()),
+            realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
             received_at: received_at("2026-05-22T11:00:00.000Z"),
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-2",
-                "actor_id": "did:web:acme.example:users:bob",
+                "actor_id": "ak:did_core:web:acme.example:users:bob",
                 "created_at": "2026-05-22T11:00:00.000Z",
                 "write_state": "synced",
                 "body": {
-                    "strand_id": "ak:strand:edit-me",
+                    "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                     "patch": {
                         "synthesis": {
                             "$op": "set",
@@ -297,7 +309,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
         json!({
             "event_kind": "ak.strand.update",
             "event_id": "ak:event:AZUYAeUiTiKHqTOGKrrTfa2xZPZj09T6IRYuDuCNc9ZQ",
-            "actor_id": "did:web:acme.example:users:alice",
+            "actor_id": "ak:did_core:web:acme.example:users:alice",
             "created_at": "2026-05-22T10:00:00.000Z",
             "realm_id": TEST_REALM_ID,
             "payload": {
@@ -308,7 +320,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
         json!({
             "event_kind": "ak.strand.update",
             "event_id": "ak:event:AYiSAxDIS8PlP8d9iucotDVTdZ9-CahOJVw2Km3R38HU",
-            "actor_id": "did:web:acme.example:users:bob",
+            "actor_id": "ak:did_core:web:acme.example:users:bob",
             "created_at": "2026-05-22T11:00:00.000Z",
             "realm_id": TEST_REALM_ID,
             "payload": {
@@ -356,7 +368,10 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     // group/replay by entry id, so a re-delivered update must not double the
     // track. This is the event-sourced replacement for the old
     // history-merge dedup guarantee.
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.synthesis = "alice synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
@@ -366,11 +381,11 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     let event = json!({
         "event_kind": "ak.strand.update",
         "event_id": "op-1",
-        "actor_id": "did:web:acme.example:users:alice",
+        "actor_id": "ak:did_core:web:acme.example:users:alice",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "realm_id": "ak:realm:r1",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "payload": {
-            "strand_id": "ak:strand:edit-me",
+            "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
             "patch": { "synthesis": { "$op": "set", "value": "alice synthesis" } }
         }
     });
@@ -379,8 +394,16 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     let events =
         crate::state::projection::kanban_ops::sdk_events_from_values(std::slice::from_ref(&event));
     // Fold the same event twice, as a resubscribe would.
-    crate::sync_engine::ingest_kanban_projection_events(&mut store, "ak:realm:r1", &events);
-    crate::sync_engine::ingest_kanban_projection_events(&mut store, "ak:realm:r1", &events);
+    crate::sync_engine::ingest_kanban_projection_events(
+        &mut store,
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+    );
+    crate::sync_engine::ingest_kanban_projection_events(
+        &mut store,
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+    );
 
     let raw_ops = store.load().raw_operations;
     assert_eq!(raw_ops.len(), 1, "resent update deduped by operation_id");
@@ -395,7 +418,10 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
 fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
     // Single-author card (created_by == updated_by): the projection fallback
     // may confidently attribute the entry to that author.
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.synthesis = "bob synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:bob".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
@@ -406,7 +432,10 @@ fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].body, "bob synthesis");
-    assert_eq!(entries[0].actor_id, "did:web:acme.example:users:bob");
+    assert_eq!(
+        entries[0].actor_id,
+        "ak:did_core:web:acme.example:users:bob"
+    );
     assert_eq!(entries[0].author_label, "did:web:acme.example:users:bob");
     assert_eq!(entries[0].timestamp_label, "2026-05-22 11:00");
 }
@@ -418,7 +447,10 @@ fn projection_synthesis_revision_leaves_multi_author_card_unattributed() {
     // entry, which was the cross-member misattribution bug. It leaves the entry
     // unattributed ("Unknown author") instead, which option B then fills in by
     // fetching the strand event history on card open.
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.synthesis = "bob synthesis".to_owned();
     card.created_by = "did:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
@@ -438,7 +470,10 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
     let actor = "did:web:auth.local.host:users:01kth8q1w1f9c9pt3a0zfvf6gb";
     let subject = "did:web:auth.local.host:principals:alice";
     let digest = "sha256:abababababababababababababababababababababababababababababababab";
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.synthesis = "wqefqqwf".to_owned();
     card.created_by = actor.to_owned();
 
@@ -481,7 +516,10 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
 #[test]
 fn late_join_synthesis_author_resolves_handle_from_roster_actor_did() {
     let actor = "did:webvh:zQmHistoricalAuthor";
-    let mut card = test_card("ak:strand:late-join", "U");
+    let mut card = test_card(
+        "ak:strand:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4",
+        "U",
+    );
     card.synthesis = "historical synthesis".to_owned();
     card.created_by = actor.to_owned();
 
@@ -517,7 +555,10 @@ fn late_join_synthesis_author_resolves_handle_from_roster_actor_did() {
 #[test]
 fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
     let actor = "did:webvh:zQmCurrentAccount";
-    let mut card = test_card("ak:strand:self-handle", "U");
+    let mut card = test_card(
+        "ak:strand:AF3DijehNxWqPlABWhHV2X7qV7ZeRCJQ7el0rZYaSQXs",
+        "U",
+    );
     card.synthesis = "shared identity resolution".to_owned();
     card.created_by = actor.to_owned();
 
@@ -546,7 +587,10 @@ fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
 
 #[test]
 fn synthesis_new_entry_appends_without_replacing_existing_entries() {
-    let mut card = test_card("ak:strand:edit-me", "U");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
     card.synthesis = join_synthesis_entry_bodies(vec![
         "first active synthesis".to_owned(),
         "second active synthesis".to_owned(),
@@ -574,28 +618,28 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
     let ops = vec![
         RawOperationRecord {
             operation_id: "op-a".to_owned(),
-            realm_id: Some("ak:realm:r1".to_owned()),
+            realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.strand.update",
                 "body": {
-                    "strand_id": "ak:strand:target",
-                    "actor_id": "did:web:alice.example",
+                    "strand_id": "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w",
+                    "actor_id": "ak:did_core:web:alice.example",
                 },
             }),
         },
         // Same strand, different actor — both should appear.
         RawOperationRecord {
             operation_id: "op-b".to_owned(),
-            realm_id: Some("ak:realm:r1".to_owned()),
+            realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.message.create",
                 "body": {
-                    "target_ref": "ak:strand:target",
+                    "target_ref": "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w",
                     // Canonical actor key only; forbidden `sender`
                     // fields are hard-rejected.
-                    "actor_id": "did:web:bob.example",
+                    "actor_id": "ak:did_core:web:bob.example",
                 },
             }),
         },
@@ -603,18 +647,21 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
         // unrelated realm actors into the per-card participant list.
         RawOperationRecord {
             operation_id: "op-c".to_owned(),
-            realm_id: Some("ak:realm:r1".to_owned()),
+            realm_id: Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
                 "kind": "ak.strand.update",
                 "body": {
-                    "strand_id": "ak:strand:other",
-                    "actor_id": "did:web:carol.example",
+                    "strand_id": "ak:strand:A4EpRDvQloG8EYOGEPnGhe1SLpxBiLQbOvlptwBvvPkA",
+                    "actor_id": "ak:did_core:web:carol.example",
                 },
             }),
         },
     ];
-    let dids = strand_participant_dids(&ops, "ak:strand:target");
+    let dids = strand_participant_dids(
+        &ops,
+        "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w",
+    );
     assert_eq!(
         dids,
         vec![
@@ -627,7 +674,10 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
 
 #[test]
 fn card_detail_update_patch_emits_body_set_and_unset_ops() {
-    let mut current = test_card("ak:strand:f1", "U");
+    let mut current = test_card(
+        "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+        "U",
+    );
     current.title = "Keep".to_owned();
     current.body = "old long-form body".to_owned();
     let mut draft = card_detail_draft_from_card(&current);
@@ -644,7 +694,10 @@ fn card_detail_update_patch_emits_body_set_and_unset_ops() {
 
 #[test]
 fn card_detail_update_patch_unsets_empty_optional_fields() {
-    let mut current = test_card("ak:strand:f1", "U");
+    let mut current = test_card(
+        "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+        "U",
+    );
     current.title = "Keep".to_owned();
     current.description = "old summary".to_owned();
     current.labels = vec!["old".to_owned()];
@@ -676,7 +729,10 @@ fn card_detail_update_patch_unsets_empty_optional_fields() {
 
 #[test]
 fn description_edit_scope_preserves_metadata_fields() {
-    let mut current = test_card("ak:strand:f1", "U");
+    let mut current = test_card(
+        "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+        "U",
+    );
     current.title = "Keep".to_owned();
     current.description = "old summary".to_owned();
     current.body = "old long-form body".to_owned();
@@ -719,7 +775,10 @@ fn description_edit_scope_preserves_metadata_fields() {
 
 #[test]
 fn apply_card_detail_draft_marks_card_queued() {
-    let mut card = test_card("ak:strand:f1", "U");
+    let mut card = test_card(
+        "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+        "U",
+    );
     let draft = CardDetailDraft {
         title: "New title".to_owned(),
         description: "New summary".to_owned(),
@@ -807,7 +866,10 @@ fn locate_strand_position_missing_strand_returns_initial() {
             "groups": []
         }))
         .unwrap();
-    let expected = locate_strand_position_in_projection(&projection, "ak:strand:01missing");
+    let expected = locate_strand_position_in_projection(
+        &projection,
+        "ak:strand:AIAbwRfAw3zu-66yOfsjuxIhm7pwbG1Kyy559Vp3bDWM",
+    );
     assert_eq!(expected, StrandPositionExpectation::Initial);
 }
 

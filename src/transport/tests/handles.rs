@@ -24,7 +24,7 @@ fn resolve_handle_request_body_carries_lookup_context() {
 
     assert_eq!(body["handle"], "bob:local.host");
     assert_eq!(body["intent"], "lookup");
-    assert_eq!(body["requester"], "did:web:alice.example");
+    assert_eq!(body["requester"], "ak:did_core:web:alice.example");
     assert_eq!(
         body["audience"],
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
@@ -33,7 +33,7 @@ fn resolve_handle_request_body_carries_lookup_context() {
         body["realm_id"],
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
-    assert_eq!(body["expected_did"], "did:web:bob.example");
+    assert_eq!(body["expected_principal_id"], "ak:did_core:web:bob.example");
     assert_eq!(body["proof_challenge"], "ak:challenge:test");
     assert_eq!(body["proofs"], json!(["proof-a", "proof-b"]));
 }
@@ -50,13 +50,13 @@ fn canonical_invitee_handle_accepts_display_alias() {
 fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites() {
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let resolved: ResolveHandleView = serde_json::from_value(json!({
-        "subject": "did:web:bob.example",
+        "did": "did:web:bob.example",
         "handle": "bob:local.host",
         "handle_claim": {
-            "subject": "did:web:bob.example",
+            "subject": "ak:did_core:web:bob.example",
             "audience": realm_id,
             "member_delivery_binding": {
-                "recipient_service_id": "did:web:local.host",
+                "recipient_service_id": "ak:did_core:web:local.host",
                 "recipient_service_kind": "principal_server",
                 "binding_source": "explicit",
                 "delivery_modes": ["events"]
@@ -72,7 +72,7 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
             .unwrap()
             .recipient_service_id
             .as_str(),
-        "did:web:local.host"
+        "ak:did_core:web:local.host"
     );
 
     let missing_binding: ResolveHandleView = serde_json::from_value(json!({

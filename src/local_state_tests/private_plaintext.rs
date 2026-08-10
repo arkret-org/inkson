@@ -9,14 +9,24 @@ fn private_plaintext_snapshot_json_round_trips_through_merge() {
     let path = temp_state_path("private-plaintext-snapshot");
     let mut store = LocalStateStore::with_path(path);
     assert!(store.private_plaintext_is_empty());
-    store.save_private_plaintext("ak:realm:s1", "ak:strand:f1", "body", "\"hello body\"");
     store.save_private_plaintext(
-        "ak:realm:s1",
-        "ak:strand:f1",
+        "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
+        "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+        "body",
+        "\"hello body\"",
+    );
+    store.save_private_plaintext(
+        "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
+        "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
         "synthesis",
         "\"hello synthesis\"",
     );
-    store.save_private_plaintext("ak:realm:s2", "ak:strand:f2", "body", "\"other body\"");
+    store.save_private_plaintext(
+        "ak:realm:AxGJ5bnb2NT29k-kJ71MFoiFFSRsCSvI3e2k_GdVpqJE",
+        "ak:strand:AaKpoM7I3iy6d1PX7gkqfR_AELjR5119vkMmYl6H8Jw8",
+        "body",
+        "\"other body\"",
+    );
     assert!(!store.private_plaintext_is_empty());
 
     let json = store.private_plaintext_snapshot_json();
@@ -29,15 +39,27 @@ fn private_plaintext_snapshot_json_round_trips_through_merge() {
     assert!(fresh.private_plaintext_is_empty());
     fresh.merge_private_plaintext_map(map);
     assert_eq!(
-        fresh.private_plaintext_for("ak:realm:s1", "ak:strand:f1", "body"),
+        fresh.private_plaintext_for(
+            "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
+            "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+            "body"
+        ),
         Some("\"hello body\"".to_owned())
     );
     assert_eq!(
-        fresh.private_plaintext_for("ak:realm:s1", "ak:strand:f1", "synthesis"),
+        fresh.private_plaintext_for(
+            "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
+            "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+            "synthesis"
+        ),
         Some("\"hello synthesis\"".to_owned())
     );
     assert_eq!(
-        fresh.private_plaintext_for("ak:realm:s2", "ak:strand:f2", "body"),
+        fresh.private_plaintext_for(
+            "ak:realm:AxGJ5bnb2NT29k-kJ71MFoiFFSRsCSvI3e2k_GdVpqJE",
+            "ak:strand:AaKpoM7I3iy6d1PX7gkqfR_AELjR5119vkMmYl6H8Jw8",
+            "body"
+        ),
         Some("\"other body\"".to_owned())
     );
 }
@@ -48,25 +70,44 @@ fn merge_private_plaintext_map_keeps_local_value_on_conflict() {
     // local value wins on conflict.
     let path = temp_state_path("private-plaintext-conflict");
     let mut store = LocalStateStore::with_path(path);
-    store.save_private_plaintext("ak:realm:s1", "ak:strand:f1", "body", "\"local newer\"");
+    store.save_private_plaintext(
+        "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
+        "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+        "body",
+        "\"local newer\"",
+    );
 
     let mut fields = BTreeMap::new();
     fields.insert("body".to_owned(), "\"backup older\"".to_owned()); // conflict
     fields.insert("synthesis".to_owned(), "\"backup synthesis\"".to_owned()); // gap
     let mut strands = BTreeMap::new();
-    strands.insert("ak:strand:f1".to_owned(), fields);
+    strands.insert(
+        "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs".to_owned(),
+        fields,
+    );
     let mut incoming = BTreeMap::new();
-    incoming.insert("ak:realm:s1".to_owned(), strands);
+    incoming.insert(
+        "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok".to_owned(),
+        strands,
+    );
     store.merge_private_plaintext_map(incoming);
 
     // Conflict: local value kept.
     assert_eq!(
-        store.private_plaintext_for("ak:realm:s1", "ak:strand:f1", "body"),
+        store.private_plaintext_for(
+            "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
+            "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+            "body"
+        ),
         Some("\"local newer\"".to_owned())
     );
     // Gap: backup fills it.
     assert_eq!(
-        store.private_plaintext_for("ak:realm:s1", "ak:strand:f1", "synthesis"),
+        store.private_plaintext_for(
+            "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
+            "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs",
+            "synthesis"
+        ),
         Some("\"backup synthesis\"".to_owned())
     );
 }
@@ -125,7 +166,11 @@ fn private_plaintext_sidecar_stays_memory_only_without_secure_store() {
     );
     assert!(
         reader
-            .private_plaintext_for("ak:realm:other", strand, "body")
+            .private_plaintext_for(
+                "ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo",
+                strand,
+                "body"
+            )
             .is_none()
     );
 
@@ -484,9 +529,10 @@ fn history_secret_is_never_written_to_plaintext_state() {
     let mut by_epoch = BTreeMap::new();
     by_epoch.insert(7, b"history-secret".to_vec());
     let mut state = ClientLocalState::default();
-    state
-        .history_secrets
-        .insert("ak:realm:history".to_owned(), by_epoch);
+    state.history_secrets.insert(
+        "ak:realm:ALhIwwaNjUcFQjbGbqhUXDMd7TmMAySErYupzwj-6Fdk".to_owned(),
+        by_epoch,
+    );
 
     let persisted = e2ee_safe_persist_state(&state);
     assert!(

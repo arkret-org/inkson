@@ -23,11 +23,11 @@ mod device_identity_proof_tests {
     ) -> Value {
         let mut envelope = json!({
             "kind": "ak.message.create",
-            "realm_id": "ak:realm:r",
+            "realm_id": "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
             "actor_id": actor_id,
             "created_at": "2026-06-16T00:00:00.000Z",
             "message_id": "ak:msg:1",
-            "strand_id": "ak:strand:general",
+            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
             "content": { "body": "hello from a verified device" }
         });
         if let Some(device_id) = device_id {
@@ -48,7 +48,7 @@ mod device_identity_proof_tests {
         let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let did = arkret_sdk::Did::new(actor_id.to_owned()).unwrap();
+        let did = arkret_sdk::DidFullId::new(actor_id.to_owned()).unwrap();
         let mut proof = arkret_sdk::Proof {
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
@@ -60,7 +60,7 @@ mod device_identity_proof_tests {
             jws: String::new(),
         };
         let binding_bytes = proof
-            .canonical_binding_bytes(&arkret_sdk::ActorId::from(
+            .canonical_binding_bytes(&arkret_sdk::DidCoreId::from(
                 arkret_sdk::project_full_id_to_core_id(&did).unwrap(),
             ))
             .unwrap();
@@ -91,8 +91,11 @@ mod device_identity_proof_tests {
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Verified
         );
-        let message = chat_message_from_event("ak:realm:r", &envelope)
-            .expect("verified message must enter the view");
+        let message = chat_message_from_event(
+            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+            &envelope,
+        )
+        .expect("verified message must enter the view");
         assert_eq!(message.sender, actor);
         crate::identity::device_directory::invalidate_actor(actor);
     }
@@ -109,7 +112,13 @@ mod device_identity_proof_tests {
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Rejected
         );
-        assert!(chat_message_from_event("ak:realm:r", &envelope).is_none());
+        assert!(
+            chat_message_from_event(
+                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+                &envelope
+            )
+            .is_none()
+        );
         crate::identity::device_directory::invalidate_actor(actor);
     }
 
@@ -124,7 +133,13 @@ mod device_identity_proof_tests {
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Rejected
         );
-        assert!(chat_message_from_event("ak:realm:r", &envelope).is_none());
+        assert!(
+            chat_message_from_event(
+                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+                &envelope
+            )
+            .is_none()
+        );
         crate::identity::device_directory::invalidate_actor(actor);
     }
 
@@ -157,8 +172,11 @@ mod device_identity_proof_tests {
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Unresolved
         );
-        let message = chat_message_from_event("ak:realm:r", &envelope)
-            .expect("unresolved message stays visible (flagged)");
+        let message = chat_message_from_event(
+            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+            &envelope,
+        )
+        .expect("unresolved message stays visible (flagged)");
         assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
     }
 
@@ -176,7 +194,7 @@ mod device_identity_proof_tests {
 
         assert_eq!(
             verify_chat_envelope_proof_for_realm(
-                "ak:realm:r",
+                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
                 &envelope,
                 None,
                 Some((actor, device)),
@@ -184,7 +202,7 @@ mod device_identity_proof_tests {
             ChatProofVerdict::Verified
         );
         let message = chat_message_from_event_with_sidecar(
-            "ak:realm:r",
+            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
             &envelope,
             None,
             Some((actor, device)),
@@ -206,7 +224,7 @@ mod device_identity_proof_tests {
 
         assert_eq!(
             verify_chat_envelope_proof_for_realm(
-                "ak:realm:r",
+                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
                 &envelope,
                 None,
                 Some((actor, device)),
@@ -232,8 +250,11 @@ mod device_identity_proof_tests {
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Verified
         );
-        let message = chat_message_from_event("ak:realm:r", &envelope)
-            .expect("standard Event envelope without device_id uses proof fragment");
+        let message = chat_message_from_event(
+            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+            &envelope,
+        )
+        .expect("standard Event envelope without device_id uses proof fragment");
         assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
         crate::identity::device_directory::invalidate_actor(actor);
     }
@@ -249,7 +270,12 @@ mod device_identity_proof_tests {
         let envelope = signed_message_envelope_inner(&signer, agent, None);
 
         assert_eq!(
-            verify_chat_envelope_proof_for_realm("ak:realm:ordinary", &envelope, None, None),
+            verify_chat_envelope_proof_for_realm(
+                "ak:realm:AzuLpzKBwC3cxyHqYqQRSx5Ox3nr7S9FtADPyvdaYpXY",
+                &envelope,
+                None,
+                None
+            ),
             ChatProofVerdict::Unresolved
         );
     }
@@ -258,17 +284,23 @@ mod device_identity_proof_tests {
     fn proofless_attributed_projection_is_rejected() {
         let envelope = json!({
             "kind": "ak.message.create",
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "device_id": "ak:device:alice",
             "message_id": "ak:msg:proofless",
-            "strand_id": "ak:strand:general",
+            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
             "content": { "body": "proofless message" }
         });
         assert_eq!(
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Rejected
         );
-        assert!(chat_message_from_event("ak:realm:r", &envelope).is_none());
+        assert!(
+            chat_message_from_event(
+                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+                &envelope
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -277,12 +309,12 @@ mod device_identity_proof_tests {
         let executor = "did:web:applet.example";
         let mut envelope = json!({
             "kind": "ak.message.create",
-            "realm_id": "ak:realm:r",
+            "realm_id": "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
             "actor_id": actor,
             "executed_by": executor,
             "created_at": "2026-06-16T00:00:00.000Z",
             "message_id": "ak:msg:applet",
-            "strand_id": "ak:strand:general",
+            "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
             "content": { "body": "hello through an applet" }
         });
         let canonical_bytes = crate::canonical::canonical_json_bytes(&envelope).unwrap();
@@ -299,8 +331,11 @@ mod device_identity_proof_tests {
             verify_chat_envelope_proof(&envelope),
             ChatProofVerdict::Unresolved
         );
-        let message = chat_message_from_event("ak:realm:r", &envelope)
-            .expect("an unresolved Applet executor remains visible and flagged");
+        let message = chat_message_from_event(
+            "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+            &envelope,
+        )
+        .expect("an unresolved Applet executor remains visible and flagged");
         assert_eq!(message.sender, actor);
         assert_eq!(message.crypto_state, MessageCryptoState::NeedsVerification);
     }

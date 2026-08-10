@@ -3,11 +3,14 @@ use super::*;
 #[test]
 fn card_detail_deep_link_targets_kanban_task_route() {
     assert_eq!(
-        strand_detail_deep_link_path("ak:space:ops", "ak:strand:abc"),
+        strand_detail_deep_link_path(
+            "ak:space:ops",
+            "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"
+        ),
         "/kanban/ak:space:ops/task/ak:strand:abc"
     );
     assert_eq!(
-        strand_detail_deep_link_path("", "ak:strand:abc"),
+        strand_detail_deep_link_path("", "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"),
         format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/ak:strand:abc")
     );
 }
@@ -56,7 +59,7 @@ fn card_detail_share_link_carries_current_tab() {
     assert_eq!(
         strand_detail_deep_link_path_with_tab(
             "ak:space:ops",
-            "ak:strand:abc",
+            "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg",
             CardDetailContentTab::Discussion
         ),
         "/kanban/ak:space:ops/task/ak:strand:abc?tab=discussion"
@@ -67,18 +70,18 @@ fn card_detail_share_link_carries_current_tab() {
 fn route_card_strand_id_reads_task_segment_only() {
     assert_eq!(
         route_card_strand_id(&Route::KanbanTask {
-            realm_id: "ak:realm:ops".to_owned(),
-            task_id: "ak:strand:abc".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
+            task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
         }),
-        Some("ak:strand:abc".to_owned())
+        Some("ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned())
     );
     assert_eq!(
         route_card_strand_id(&Route::KanbanBoardTask {
-            realm_id: "ak:realm:ops".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             board_id: "ak:space:board".to_owned(),
-            task_id: "ak:strand:abc".to_owned(),
+            task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
         }),
-        Some("ak:strand:abc".to_owned())
+        Some("ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned())
     );
     assert_eq!(route_card_strand_id(&Route::Kanban), None);
 }
@@ -87,16 +90,16 @@ fn route_card_strand_id_reads_task_segment_only() {
 fn route_board_id_reads_board_segment_only() {
     assert_eq!(
         route_board_id(&Route::KanbanBoard {
-            realm_id: "ak:realm:ops".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             board_id: "ak:space:board".to_owned(),
         }),
         Some("ak:space:board".to_owned())
     );
     assert_eq!(
         route_board_id(&Route::KanbanBoardTask {
-            realm_id: "ak:realm:ops".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             board_id: "ak:space:board".to_owned(),
-            task_id: "ak:strand:abc".to_owned(),
+            task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
         }),
         Some("ak:space:board".to_owned())
     );
@@ -104,14 +107,14 @@ fn route_board_id_reads_board_segment_only() {
     // the projection on arrival.
     assert_eq!(
         route_board_id(&Route::KanbanTask {
-            realm_id: "ak:realm:ops".to_owned(),
-            task_id: "ak:strand:abc".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
+            task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
         }),
         None
     );
     assert_eq!(
         route_board_id(&Route::KanbanRealm {
-            realm_id: "ak:realm:ops".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
         }),
         None
     );
@@ -120,16 +123,19 @@ fn route_board_id_reads_board_segment_only() {
 #[test]
 fn kanban_board_route_carries_board_or_falls_back() {
     assert_eq!(
-        kanban_board_route("ak:realm:ops", "ak:space:board"),
+        kanban_board_route(
+            "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U",
+            "ak:space:board"
+        ),
         Route::KanbanBoard {
-            realm_id: "ak:realm:ops".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             board_id: "ak:space:board".to_owned(),
         }
     );
     assert_eq!(
-        kanban_board_route("ak:realm:ops", ""),
+        kanban_board_route("ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U", ""),
         Route::KanbanRealm {
-            realm_id: "ak:realm:ops".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
         }
     );
 }
@@ -137,18 +143,26 @@ fn kanban_board_route_carries_board_or_falls_back() {
 #[test]
 fn kanban_card_task_route_carries_board_or_falls_back() {
     assert_eq!(
-        kanban_card_task_route("ak:realm:ops", "ak:space:board", "ak:strand:abc"),
+        kanban_card_task_route(
+            "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U",
+            "ak:space:board",
+            "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"
+        ),
         Route::KanbanBoardTask {
-            realm_id: "ak:realm:ops".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
             board_id: "ak:space:board".to_owned(),
-            task_id: "ak:strand:abc".to_owned(),
+            task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
         }
     );
     assert_eq!(
-        kanban_card_task_route("ak:realm:ops", "", "ak:strand:abc"),
+        kanban_card_task_route(
+            "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U",
+            "",
+            "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"
+        ),
         Route::KanbanTask {
-            realm_id: "ak:realm:ops".to_owned(),
-            task_id: "ak:strand:abc".to_owned(),
+            realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
+            task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
         }
     );
 }

@@ -234,7 +234,7 @@ pub fn replace_active_mention_token(
 ///
 /// Returns lowercase hex.
 pub fn mention_sidecar_digest(routing_key: &[u8], did: &str) -> Result<String, String> {
-    let did = arkret_sdk::Did::new(did).map_err(|error| error.to_string())?;
+    let did = arkret_sdk::DidFullId::new(did).map_err(|error| error.to_string())?;
     let out = arkret_sdk::mls::mention_routing_hmac_from_key(routing_key, &did)
         .map_err(|error| error.to_string())?;
     Ok(crate::canonical::hex_encode(&out))

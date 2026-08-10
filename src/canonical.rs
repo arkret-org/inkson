@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn canonical_event_digest_round_trip() {
-        let body = json!({"strand_id": "ak:strand:abc", "title": "Ops"});
+        let body = json!({"strand_id": "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg", "title": "Ops"});
         let d = canonical_event_digest(&body).unwrap();
         assert!(d.starts_with("sha256:"));
         assert_eq!(d, canonical_sha256(&body).unwrap());
@@ -138,8 +138,8 @@ mod tests {
         // Two semantically identical move payloads with different
         // serialization orders MUST produce the same canonical bytes,
         // otherwise downstream signatures diverge.
-        let a = json!({"strand_id": "ak:strand:1", "patch": {"title": "x"}});
-        let b = json!({"patch": {"title": "x"}, "strand_id": "ak:strand:1"});
+        let a = json!({"strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA", "patch": {"title": "x"}});
+        let b = json!({"patch": {"title": "x"}, "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA"});
         assert_eq!(
             canonical_move_bytes(&a).unwrap(),
             canonical_move_bytes(&b).unwrap()
@@ -153,7 +153,7 @@ mod tests {
             "kind": "ak.message.create",
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",

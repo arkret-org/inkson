@@ -188,7 +188,7 @@ fn build_formal_applet_install_events(
     snapshot: &AppletInstallPreviewSnapshot,
     actor_id: &str,
 ) -> anyhow::Result<(arkret_sdk::Event, Vec<arkret_sdk::Event>)> {
-    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())
+    let actor = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|error| anyhow::anyhow!("invalid install actor DID: {error}"))?;
     if snapshot.plan.effective_scope != snapshot.effective_scope {
         anyhow::bail!("preview effective_scope no longer matches the install target");
@@ -239,6 +239,7 @@ fn build_formal_applet_install_events(
             realm_id: Some(realm_id.clone()),
             issuer: actor.clone(),
             subject: arkret_sdk::CapabilitySubject::Did(snapshot.package.service_id.clone()),
+            subject_authority_instance: None,
             actions: vec![action],
             resources: vec![resource.clone()],
             capability_action_registry_digest: Some(registry_digest.clone()),

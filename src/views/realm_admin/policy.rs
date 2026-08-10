@@ -30,7 +30,7 @@ fn normalize_did_method_entry(value: &str) -> Result<String, String> {
 fn normalize_did_list(raw: &str, label: &str) -> Result<Vec<String>, String> {
     let mut values = Vec::new();
     for value in split_policy_list(raw) {
-        arkret_sdk::Did::new(value.clone()).map_err(|err| format!("{label}: {err}"))?;
+        arkret_sdk::DidFullId::new(value.clone()).map_err(|err| format!("{label}: {err}"))?;
         if !values.iter().any(|existing| existing == &value) {
             values.push(value);
         }

@@ -252,7 +252,7 @@ mod tests {
         assert!(body.contains("<redacted:arkret-link>"));
         assert!(!body.contains("did:web:alice.example"));
         assert!(!body.contains("alice@example.com"));
-        assert!(!body.contains("ak:realm:01964137"));
+        assert!(!body.contains("ak:realm:AFNud078D09isnGzjxtgN4-WMM_nvtPTYmt9hEh5qjjE"));
     }
 
     #[test]

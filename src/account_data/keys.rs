@@ -35,7 +35,7 @@ pub fn build_account_data_set(
     };
     let payload = arkret_sdk::AccountDataSetPayload {
         key: arkret_sdk::NonEmptyString::new(key.as_wire()).map_err(anyhow::Error::msg)?,
-        owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        owner: Some(crate::mls_api_helpers::principal_core_id(actor)?),
         expected_revision,
         body,
         encrypted_payload,
@@ -56,7 +56,7 @@ pub fn build_account_data_tombstone(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::AccountDataSetPayload {
         key: arkret_sdk::NonEmptyString::new(key.as_wire()).map_err(anyhow::Error::msg)?,
-        owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        owner: Some(crate::mls_api_helpers::principal_core_id(actor)?),
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: None,
@@ -186,7 +186,7 @@ pub fn build_private_account_data_set(
     };
     let payload = arkret_sdk::AccountDataSetPayload {
         key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
-        owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        owner: Some(crate::mls_api_helpers::principal_core_id(actor)?),
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: Some(encrypted_payload.into_iter().collect()),
@@ -208,7 +208,7 @@ pub fn build_private_account_data_tombstone(
     validate_private_account_data_key(key)?;
     let payload = arkret_sdk::AccountDataSetPayload {
         key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
-        owner: Some(arkret_sdk::Did::new(actor.to_owned())?),
+        owner: Some(crate::mls_api_helpers::principal_core_id(actor)?),
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: None,

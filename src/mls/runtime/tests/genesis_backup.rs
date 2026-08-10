@@ -10,12 +10,12 @@ use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
 use crate::state::isolated_store_for_tests as temp_state_store;
 
-fn signed_key_backup_wire(mut body: arkret_sdk::KeyBackup) -> Value {
+fn signed_key_backup_wire(mut body: arkret_sdk::KeyBackup, signer_principal_id: &str) -> Value {
     body.auth_data = None;
     let device_id = body.device_id.clone().unwrap();
     let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
         device_id,
-        arkret_sdk::DidUrl::new(format!("{}#test-device", body.actor_id)).unwrap(),
+        arkret_sdk::DidUrl::new(format!("{signer_principal_id}#test-device")).unwrap(),
         arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
         arkret_sdk::EventId::new(
             "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD".to_owned(),
@@ -74,7 +74,10 @@ fn build_mls_genesis_payload_has_required_fields() {
 
     // epoch MUST be the literal 0 the schema/reducer require.
     assert_eq!(payload["epoch"].as_u64(), Some(0));
-    assert_eq!(payload["creator_principal_id"].as_str(), Some(actor));
+    assert_eq!(
+        payload["creator_principal_id"].as_str(),
+        Some("ak:did_core:web:alice.example")
+    );
     assert_eq!(payload["creator_device_id"].as_str(), Some(device));
     assert_eq!(
         payload["mls_group_id"].as_str(),
@@ -161,9 +164,9 @@ fn legacy_epoch_zero_snapshot_without_governance_binding_fails_closed() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let secret = load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
+    let secret = load_or_create_account_mls_secret(&secure, actor).unwrap();
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -307,15 +310,15 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_mls_history_backup_saves_snapshot_when_fresh() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM";
     let store = MemorySecureKeyStore::new();
-    let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
+    let secret = load_or_create_account_mls_secret(&store, actor).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
-        Did::new(actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -340,7 +343,7 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
             &derive_mls_history_backup_key(&secret).unwrap(),
         )
         .unwrap();
-    let wire_body = signed_key_backup_wire(body.clone());
+    let wire_body = signed_key_backup_wire(body.clone(), actor);
     let mut state = temp_state_store("restore-fresh");
 
     let restored = restore_mls_history_backup_with_device_snapshot(
@@ -367,15 +370,15 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_mls_history_backup_rejects_epoch_rollback() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
     let store = MemorySecureKeyStore::new();
-    let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
+    let secret = load_or_create_account_mls_secret(&store, actor).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
-        Did::new(actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -397,7 +400,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
             &derive_mls_history_backup_key(&secret).unwrap(),
         )
         .unwrap();
-    let wire_body = signed_key_backup_wire(body);
+    let wire_body = signed_key_backup_wire(body, actor);
     let mut state = temp_state_store("restore-rollback");
     state.set_realm_seal_view(
         realm,
@@ -423,7 +426,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn cross_device_recovery_restores_history_without_local_secret() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     use crate::mls::account_recovery::{
         build_mls_account_secret_backup_body_with_kek, decrypt_mls_account_secret_backup,
@@ -438,10 +441,10 @@ fn cross_device_recovery_restores_history_without_local_secret() {
 
     // --- Device A: account secret + a real MLS group + history backup body.
     let store_a = MemorySecureKeyStore::new();
-    let secret_a = load_or_create_account_mls_secret(&store_a, actor, device_a).unwrap();
+    let secret_a = load_or_create_account_mls_secret(&store_a, actor).unwrap();
 
     let identity = ArkretMlsIdentity::new_basic(
-        Did::new(actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device_a.to_owned()).unwrap(),
     )
     .unwrap();
@@ -457,7 +460,7 @@ fn cross_device_recovery_restores_history_without_local_secret() {
     );
     let (_history_backup_id, history_body) =
         build_mls_history_backup_body_with_secret(&envelope, actor, device_a, &secret_a).unwrap();
-    let history_body = signed_key_backup_wire(history_body);
+    let history_body = signed_key_backup_wire(history_body, actor);
 
     // Device A wraps the account secret behind the recovery PASSPHRASE
     // (KEK derived from the passphrase, exactly like the recovery setup
@@ -471,7 +474,7 @@ fn cross_device_recovery_restores_history_without_local_secret() {
         &secret_a,
     )
     .unwrap();
-    let account_secret_body = signed_key_backup_wire(account_secret_body);
+    let account_secret_body = signed_key_backup_wire(account_secret_body, actor);
 
     // --- Device B: a FRESH empty store with NO secret of any kind.
     let store_b = MemorySecureKeyStore::new();

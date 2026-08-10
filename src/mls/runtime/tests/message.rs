@@ -217,7 +217,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
             "members_limited": false,
             "members": [
                 { "actor_id": actor, "membership": "join" },
-                { "actor_id": "did:web:bob.example", "membership": "join" }
+                { "actor_id": "ak:did_core:web:bob.example", "membership": "join" }
             ]
         }),
     );
@@ -331,7 +331,9 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     // the newly accepted Realm. Reconcile must retain its optimistic body
     // until the authoritative Realm projection arrives.
     let keep = crate::realm_tree::full_sync_projection_keep_set(
-        &std::collections::BTreeSet::from(["ak:realm:control".to_owned()]),
+        &std::collections::BTreeSet::from([
+            "ak:realm:APCEv_eZJS-G3Rl9hDcbEIFNJxcYpqP2nkoGb6FOPmVc".to_owned(),
+        ]),
         &state.load().realm_tree_projections,
     );
     state.retain_realm_tree_projections(|id| keep.contains(id));
@@ -384,13 +386,13 @@ fn two_member_group_with_bob_snapshot(
     bob_device: &str,
 ) -> arkret_sdk::ArkretMlsGroup {
     let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
     let bob = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -399,7 +401,7 @@ fn two_member_group_with_bob_snapshot(
     let add = alice_group.add_member(&bob_key_package).unwrap();
     let bob_group = arkret_sdk::ArkretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
 
-    let secret = load_or_create_device_snapshot_secret(secure, bob_actor, bob_device).unwrap();
+    let secret = load_or_create_account_mls_secret(secure, bob_actor).unwrap();
     let post_state = bob_group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let mut salt = [0u8; 16];
@@ -790,15 +792,15 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_write_uses_device_key_snapshot_when_ready() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
     let store = MemorySecureKeyStore::new();
-    let secret = load_or_create_device_snapshot_secret(&store, actor, device).unwrap();
+    let secret = load_or_create_account_mls_secret(&store, actor).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
-        Did::new(actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -847,7 +849,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let secure = MemorySecureKeyStore::new();
-    let _ = load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
+    let _ = load_or_create_account_mls_secret(&secure, actor).unwrap();
     let mut state = temp_state_store("persist-on-accept");
     let realm = "ak:realm:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk";
 
@@ -913,7 +915,7 @@ fn empty_welcome_set_reports_no_work() {
     let outcome = apply_welcome_messages_with_device_snapshot(
         &mut state,
         &store,
-        "ak:realm:empty",
+        "ak:realm:Awkt11sH1cqYGNwG-NdGAvUk2xwJeJ7AC-93lG5ups2U",
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         &json!({ "messages": [] }),
@@ -940,7 +942,7 @@ fn malformed_welcome_is_counted_not_swallowed() {
     let outcome = apply_welcome_messages_with_device_snapshot(
         &mut state,
         &store,
-        "ak:realm:malformed",
+        "ak:realm:Ae4L5dU13P9VksvkJAOF29Z7lsbKvgUqVqVh7q2H-E2I",
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         &messages,
@@ -960,13 +962,13 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
     let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
     let bob = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new(bob_actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -1040,7 +1042,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
                 "content": {
                     "mls_group_id": "mls-group-a",
                     "epoch": 1,
-                    "recipient_principal_id": "did:web:alice.example",
+                    "recipient_principal_id": "ak:did_core:web:alice.example",
                     "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                     "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                     "keypackage_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1050,7 +1052,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
                         "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                         "keypackage_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "capabilities_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                        "device_authorize_event_id": "ak:event:Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                        "device_authorize_event_id": "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
                     },
                     "ciphertext": "AQID",
                     "expires_at": "2100-01-01T00:00:00.000Z"
@@ -1061,7 +1063,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
     let outcome = apply_welcome_messages_with_device_snapshot(
         &mut state,
         &store,
-        "ak:realm:welcome-claim-envelope",
+        "ak:realm:Akb0VAmKqt26zC2oOrzxcUkvENt4KqxzU7fgzKks_4jk",
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         &messages,
@@ -1550,7 +1552,7 @@ async fn tier3_history_decrypt_works_without_local_snapshot() {
 
     // Build alice's group WITHOUT persisting any snapshot into `state`.
     let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )

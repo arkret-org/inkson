@@ -171,7 +171,7 @@ pub fn build_key_backup_unlock_proof(
     )?;
     let unsigned = arkret_sdk::UnsignedKeyBackupUnlockProof::new(
         recovery_session_id,
-        arkret_sdk::Did::new(principal_id.to_owned())?,
+        crate::mls_api_helpers::principal_core_id(principal_id)?,
         arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?,
         backup.backup_id.clone(),
         backup.backup_kind,
@@ -435,7 +435,7 @@ mod tests {
         let backup = arkret_sdk::KeyBackupSummary {
             backup_id: arkret_sdk::BackupId::new("ak:backup:0196419b-0000-7000-8000-000000000001")
                 .unwrap(),
-            actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             device_id: None,
             backup_kind: arkret_sdk::BackupKind::MlsHistory,
             backup_version: "kb_1".to_owned(),

@@ -171,12 +171,11 @@ pub fn render_actor_mention(
     cached_handle: Option<&arkret_sdk::Handle>,
     display_name_at_time: Option<&str>,
 ) -> RenderedMention {
-    use arkret_sdk::Did;
     use arkret_sdk::identity::{MentionRender, PrimaryHandleSelectInput, render_mention};
 
     // A malformed subject_id can't be resolved; fall straight to the
     // unresolved tier with a truncated form of the raw string.
-    let Ok(subject) = Did::new(subject_id.to_owned()) else {
+    let Ok(subject) = crate::mls_api_helpers::principal_core_id(subject_id) else {
         return RenderedMention {
             label: short_protocol_id(subject_id),
             tier_class: "mention-unresolved",
@@ -184,11 +183,15 @@ pub fn render_actor_mention(
         };
     };
 
+    let accepted_issuers = accepted_issuers
+        .iter()
+        .filter_map(|issuer| arkret_sdk::DidCoreId::new(issuer.clone()).ok())
+        .collect::<Vec<_>>();
     let selection = PrimaryHandleSelectInput {
         subject_id: subject.as_str(),
         context,
         claim_set_snapshot,
-        accepted_issuers,
+        accepted_issuers: &accepted_issuers,
         // TODO(R3.2.1): resolve `metadata.primary_handle` at as_of via a
         // DID Document snapshot resolver (NoHolderPreferenceResolver
         // until the resolver is wired).
@@ -258,7 +261,8 @@ pub fn handle_claim_rows(
                 handle,
                 issuer: claim
                     .issuer
-                    .clone()
+                    .as_ref()
+                    .map(ToString::to_string)
                     .unwrap_or_else(|| "(unknown)".to_owned()),
                 binding_state: claim
                     .binding_state
@@ -464,9 +468,12 @@ mod tests {
         let claim = HandleClaim {
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
             subject: Some(
-                arkret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap(),
+                crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
+                    .unwrap(),
             ),
-            issuer: Some("did:web:issuer.acme.example".to_owned()),
+            issuer: Some(
+                crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
+            ),
             binding_state: Some(HandleBindingState::Verified),
             created_at: Some(now - chrono::Duration::hours(1)),
             expires_at: Some(now + chrono::Duration::days(30)),
@@ -523,11 +530,14 @@ mod tests {
         use arkret_sdk::Handle;
         let now = chrono::Utc::now();
         let subject =
-            arkret_sdk::Did::new("did:web:acme.example:principals:alice".to_owned()).unwrap();
+            crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
+                .unwrap();
         let claim = HandleClaim {
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
             subject: Some(subject.clone()),
-            issuer: Some("did:web:issuer.acme.example".to_owned()),
+            issuer: Some(
+                crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
+            ),
             binding_state: Some(HandleBindingState::Verified),
             created_at: Some(now),
             expires_at: Some(now + chrono::Duration::days(30)),
@@ -546,7 +556,7 @@ mod tests {
         let rows = handle_claim_rows(&res);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].handle, "alice:acme.example");
-        assert_eq!(rows[0].issuer, "did:web:issuer.acme.example");
+        assert_eq!(rows[0].issuer, "ak:did_core:web:issuer.acme.example");
         assert_eq!(rows[0].binding_state, "verified");
         assert!(rows[0].is_primary);
         assert!(rows[0].claim_digest.starts_with("sha256:"));

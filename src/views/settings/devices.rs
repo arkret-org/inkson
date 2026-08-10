@@ -93,7 +93,7 @@ struct ResolvedPairingApprovalPayload {
 #[serde(deny_unknown_fields)]
 struct PairingApprovalPayload {
     schema: arkret_sdk::NonEmptyString,
-    account_did: arkret_sdk::Did,
+    account_did: arkret_sdk::DidFullId,
     pairing_code: arkret_sdk::DevicePairingCode,
     new_device_pubkey: arkret_sdk::PublicKey,
     challenge_proof: arkret_sdk::DevicePairingChallengeProof,
@@ -172,7 +172,7 @@ fn build_pair_payload(
         |value: &str| arkret_sdk::NonEmptyString::new(value.to_owned()).map_err(anyhow::Error::msg);
     let payload = PairingApprovalPayload {
         schema: non_empty("ak.device.pair.request.v1")?,
-        account_did: arkret_sdk::Did::new(account_did.to_owned())?,
+        account_did: arkret_sdk::DidFullId::new(account_did.to_owned())?,
         pairing_code: arkret_sdk::DevicePairingCode::new(pairing_code.to_owned())
             .map_err(anyhow::Error::msg)?,
         new_device_pubkey: arkret_sdk::PublicKey {
@@ -1572,7 +1572,7 @@ fn render_pair_strand(
                                             let verification = async {
                                                 let attestation = extract_device_pairing_target_attestation(&handoff_link)
                                                     .ok_or_else(|| anyhow::anyhow!("saved pairing handoff omitted target attestation"))?;
-                                                let principal = arkret_sdk::Did::new(principal)?;
+                                                let principal = arkret_sdk::DidFullId::new(principal)?;
                                                 let http = crate::transport::TransportClient::unauthenticated(&base)?
                                                     .sdk_http_client()?;
                                                 crate::identity::device_pairing::verify_authorized_pairing_event(
@@ -1916,7 +1916,7 @@ mod tests {
     #[test]
     fn parse_devices_uses_first_device_when_current_missing() {
         let payload = json!({
-            "principal_id": "did:web:alice.example",
+            "principal_id": "ak:did_core:web:alice.example",
             "devices": [
                 {
                     "device_id": "device-1",

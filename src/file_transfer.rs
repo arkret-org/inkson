@@ -132,12 +132,9 @@ pub fn load_or_create_file_transfer_crypto_context(
     device_id: &str,
 ) -> anyhow::Result<FileTransferCryptoContext> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let account_secret = crate::mls::runtime::load_or_create_account_mls_secret(
-        secure_store.as_ref(),
-        actor_id,
-        device_id,
-    )
-    .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?;
+    let account_secret =
+        crate::mls::runtime::load_or_create_account_mls_secret(secure_store.as_ref(), actor_id)
+            .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?;
     FileTransferCryptoContext::from_account_secret(&account_secret)
 }
 
@@ -164,7 +161,7 @@ pub async fn upload_actor_private_file(
     plaintext: Vec<u8>,
 ) -> anyhow::Result<FileTransferUploadResult> {
     let http = api.sdk_http_client()?;
-    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let actor = arkret_sdk::DidFullId::new(actor_id.trim().to_owned())?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(&http, &actor).await?;
     let prepared = prepare_actor_private_file(
@@ -223,7 +220,7 @@ pub async fn upload_device_bound_file(
     plaintext: Vec<u8>,
 ) -> anyhow::Result<FileTransferDeviceBoundUploadResult> {
     let http = api.sdk_http_client()?;
-    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let actor = arkret_sdk::DidFullId::new(actor_id.trim().to_owned())?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(&http, &actor).await?;
     let prepared = prepare_actor_private_file(
@@ -496,7 +493,7 @@ fn prepare_actor_private_file(
     if device_id.trim().is_empty() {
         anyhow::bail!("device_id is required for file transfer");
     }
-    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let actor = arkret_sdk::DidFullId::new(actor_id.trim().to_owned())?;
     let updated_hlc = crate::signing_stamp::issue_protocol_hlc(
         actor.as_str(),
         device_id.trim(),
@@ -607,7 +604,7 @@ impl PreparedFileTransfer {
         for recipient in recipient_devices {
             let actor_id = recipient.actor_id.trim().to_owned();
             let device_id = recipient.device_id.trim().to_owned();
-            arkret_sdk::Did::new(actor_id.clone()).map_err(|error| {
+            arkret_sdk::DidFullId::new(actor_id.clone()).map_err(|error| {
                 anyhow::anyhow!("invalid file-transfer recipient actor: {error}")
             })?;
             arkret_sdk::DeviceId::new(device_id.clone()).map_err(|error| {
@@ -753,7 +750,7 @@ fn open_file_transfer_device_key_message(
         .map_err(|error| anyhow::anyhow!("file-transfer key message binding failed: {error}"))?;
     let recipient_actor_id = recipient_actor_id.trim();
     let recipient_device_id = recipient_device_id.trim();
-    arkret_sdk::Did::new(recipient_actor_id.to_owned())
+    arkret_sdk::DidFullId::new(recipient_actor_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid file-transfer recipient actor: {error}"))?;
     arkret_sdk::DeviceId::new(recipient_device_id.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid file-transfer recipient device_id: {error}"))?;

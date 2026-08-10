@@ -369,23 +369,30 @@ pub fn register_web_protocol_handler(landing: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    const R: &str = "AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml";
-    const F: &str = "AQ5uuUVXlrGqR79MEUmEPOIMYQIdRhgBIsTAtH3mgNpC";
-    const M: &str = "Ae7X76GvvRfNzRJ816sY6MNBQbaRxwkzKMLbQPQsG5sq";
+    const R: &str = "ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU";
+    const F: &str = "Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc";
     const VIA: &str = "did:web:relay.example";
     const LANDING: &str = "https://share.arkret.example";
 
     #[test]
     fn strip_sigil_handles_typed_and_bare_ids() {
-        assert_eq!(strip_sigil("ak:realm:abc"), "abc");
-        assert_eq!(strip_sigil("ak:strand:def"), "def");
+        assert_eq!(
+            strip_sigil("ak:realm:AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg"),
+            "AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg"
+        );
+        assert_eq!(
+            strip_sigil("ak:strand:Aksewn8OlIRPgPdzRjVdGnLMpy8xmetAY6MQDUVpviH0"),
+            "Aksewn8OlIRPgPdzRjVdGnLMpy8xmetAY6MQDUVpviH0"
+        );
         assert_eq!(strip_sigil("bare-token"), "bare-token");
         assert_eq!(strip_sigil("team.example.com"), "team.example.com");
     }
 
     #[test]
     fn realm_links_use_fragment_for_https() {
-        let target = ShareTarget::realm(&format!("ak:realm:{R}"));
+        let target = ShareTarget::realm(&format!(
+            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"
+        ));
         let links = target.build_reference_links(LANDING, &[], AddressAction::View);
         // HTTPS landing keeps the target in the fragment.
         assert!(
@@ -401,7 +408,10 @@ mod tests {
 
     #[test]
     fn strand_links_ignore_via_and_roundtrip() {
-        let target = ShareTarget::strand(&format!("ak:realm:{R}"), &format!("ak:strand:{F}"));
+        let target = ShareTarget::strand(
+            &format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"),
+            &format!("ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc"),
+        );
         let links = target.build_reference_links(LANDING, &[VIA.to_owned()], AddressAction::View);
         assert!(links.web_arkret.contains(&format!("realm/{R}/strand/{F}")));
         assert!(!links.web_arkret.contains("via="));
@@ -414,10 +424,14 @@ mod tests {
 
     #[test]
     fn message_link_routes_to_chat() {
+        let event_id =
+            arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let message_id = arkret_sdk::MessageId::from_event_id(&event_id);
         let target = ShareTarget::message(
-            &format!("ak:realm:{R}"),
-            &format!("ak:strand:{F}"),
-            &format!("ak:message:{M}"),
+            &format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"),
+            &format!("ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc"),
+            message_id.as_str(),
         );
         let links = target.build_links(
             LANDING,
@@ -430,7 +444,10 @@ mod tests {
         assert!(opened.address.is_message());
         match opened.route_for(TargetKind::Message) {
             Route::Chat { realm_id, .. } => {
-                assert_eq!(realm_id, format!("ak:realm:{R}"));
+                assert_eq!(
+                    realm_id,
+                    format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU")
+                );
             }
             other => panic!("expected Chat route, got {other:?}"),
         }
@@ -440,7 +457,10 @@ mod tests {
     fn realm_target_routes_to_realm() {
         let opened = OpenedLink::parse(&format!("web+arkret:realm/{R}")).unwrap();
         match opened.route_for(TargetKind::Realm) {
-            Route::Realm { realm_id } => assert_eq!(realm_id, format!("ak:realm:{R}")),
+            Route::Realm { realm_id } => assert_eq!(
+                realm_id,
+                format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU")
+            ),
             other => panic!("expected Realm route, got {other:?}"),
         }
     }
@@ -453,7 +473,10 @@ mod tests {
 
     #[test]
     fn invite_link_roundtrips_token_and_binds_digest() {
-        let target = ShareTarget::strand(&format!("ak:realm:{R}"), &format!("ak:strand:{F}"));
+        let target = ShareTarget::strand(
+            &format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"),
+            &format!("ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc"),
+        );
         let links = target.build_links(
             LANDING,
             &[VIA.to_owned()],
@@ -472,7 +495,10 @@ mod tests {
 
     #[test]
     fn preview_link_roundtrips_token_and_binds_digest() {
-        let target = ShareTarget::strand(&format!("ak:realm:{R}"), &format!("ak:strand:{F}"));
+        let target = ShareTarget::strand(
+            &format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"),
+            &format!("ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc"),
+        );
         let links = target.build_preview_links(
             LANDING,
             &[VIA.to_owned()],
@@ -500,7 +526,9 @@ mod tests {
 
     #[test]
     fn reference_link_drops_stray_token() {
-        let target = ShareTarget::realm(&format!("ak:realm:{R}"));
+        let target = ShareTarget::realm(&format!(
+            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"
+        ));
         // Even if a token is passed, a reference link must not carry it.
         let links = target.build_links(
             LANDING,

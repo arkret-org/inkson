@@ -105,12 +105,13 @@ pub(crate) fn local_redaction_tombstone_for_message(
     redacted_at: chrono::DateTime<chrono::Utc>,
     redaction_ref: Option<&str>,
 ) -> Value {
+    let actor_id = principal_core_key(&message.sender).unwrap_or_default();
     let mut event = json!({
         "kind": "ak.message.create",
         "event_id": message.id.clone(),
         "realm_id": message.realm_id.clone(),
         "strand_id": message.strand_id.clone(),
-        "actor_id": message.sender.clone(),
+        "actor_id": actor_id,
         "sender": message.sender.clone(),
         "created_at": arkret_sdk::canonical::format_timestamp_canonical(redacted_at),
     });
@@ -1163,7 +1164,7 @@ fn verify_minimal_metadata_chat_author(
         .get("actor_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let Ok(actor_id) = arkret_sdk::ActorId::new(actor.to_owned()) else {
+    let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor.to_owned()) else {
         return ChatProofVerdict::Rejected;
     };
     // The envelope's encrypted-content coordinates are the trust-anchor
@@ -1302,7 +1303,11 @@ fn verification_method_device_fragment<'a>(
         .map(|(head, _)| head)
         .unwrap_or(verification_method);
     let (controller, fragment) = no_query.split_once('#')?;
-    (controller == actor && fragment.starts_with("ak:device:")).then_some(fragment)
+    let controller_matches = arkret_sdk::DidFullId::new(controller.to_owned())
+        .ok()
+        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+        .is_some_and(|core_id| core_id.as_str() == actor);
+    (controller_matches && fragment.starts_with("ak:device:")).then_some(fragment)
 }
 
 fn persistent_proof_controllers_match(envelope: &Value, expected_controller: &str) -> bool {
@@ -1316,7 +1321,12 @@ fn persistent_proof_controllers_match(envelope: &Value, expected_controller: &st
         .iter()
         .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
         .any(|verification_method| {
-            verification_method_controller(verification_method) == expected_controller
+            arkret_sdk::DidFullId::new(
+                verification_method_controller(verification_method).to_owned(),
+            )
+            .ok()
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+            .is_some_and(|core_id| core_id.as_str() == expected_controller)
         })
 }
 
@@ -1489,7 +1499,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
                 .and_then(Value::as_str)
         })
         .filter(|value| value.starts_with("ak:strand:"))
-        .unwrap_or("ak:strand:general")
+        .unwrap_or("ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE")
         .to_owned();
     // Message submit payloads normatively do not carry `scope_circle_id`.
     // The reducer stamps the immutable Event `effective_scope`; selecting the
@@ -2008,7 +2018,7 @@ pub(crate) fn typing_actor_snapshot_from_signals(
         let actor = value_string_at(body, &["actor_id"])
             .unwrap_or_default()
             .trim();
-        if !actor.is_empty() && actor != account_did {
+        if !actor.is_empty() && !same_principal_core(actor, account_did) {
             actors.insert(actor.to_owned());
             let expires_at_ms = expires_at.timestamp_millis();
             next_expires_at_ms = Some(match next_expires_at_ms {
@@ -2127,23 +2137,26 @@ pub(crate) fn presence_maps_from_sync_events(
     if events.is_empty() {
         return None;
     }
-    let participant_set = participants
+    let participant_by_core = participants
         .iter()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
+        .filter_map(|participant| {
+            principal_core_key(participant).map(|core| (core, participant.clone()))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let account_core = principal_core_key(account_did);
     let mut states = std::collections::BTreeMap::<String, String>::new();
     let mut labels = std::collections::BTreeMap::<String, String>::new();
     let mut status_messages = std::collections::BTreeMap::<String, String>::new();
     for did in participants {
         states.insert(
             did.clone(),
-            if did == account_did {
+            if principal_core_key(did) == account_core {
                 "online".to_owned()
             } else {
                 "offline".to_owned()
             },
         );
-        if did == account_did
+        if principal_core_key(did) == account_core
             && let Some(label) = clean_participant_display_name(account_label, Some(did))
         {
             labels.insert(did.clone(), label);
@@ -2158,10 +2171,15 @@ pub(crate) fn presence_maps_from_sync_events(
         ),
     >::new();
     for event in events {
-        let Some(actor) = sync_presence_actor(event) else {
+        let Some(actor_core) =
+            sync_presence_actor(event).and_then(|actor| principal_core_key(&actor))
+        else {
             continue;
         };
-        if !participant_set.contains(&actor) || !sync_presence_event_is_live(event, now) {
+        let Some(actor) = participant_by_core.get(&actor_core).cloned() else {
+            continue;
+        };
+        if !sync_presence_event_is_live(event, now) {
             continue;
         }
         let Some(state) = sync_presence_state(event)
@@ -2189,7 +2207,7 @@ pub(crate) fn presence_maps_from_sync_events(
     }
     let matched_remote = presence_by_actor
         .keys()
-        .any(|actor| actor.as_str() != account_did);
+        .any(|actor| principal_core_key(actor) != account_core);
     for (actor, (actor_states, status_message)) in presence_by_actor {
         states.insert(
             actor.clone(),

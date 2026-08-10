@@ -575,7 +575,7 @@ mod tests {
             }
         });
         let card = PollCard::from_content(
-            "ak:event:1".to_owned(),
+            "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc".to_owned(),
             Some("ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu"),
             &content,
         )
@@ -584,7 +584,10 @@ mod tests {
             card.poll_id,
             "ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu"
         );
-        assert_eq!(card.message_id, "ak:event:1");
+        assert_eq!(
+            card.message_id,
+            "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc"
+        );
         assert_eq!(card.question, "ship?");
         assert_eq!(card.max_selections, 2);
         assert_eq!(card.options[0].id, "yes");
@@ -601,7 +604,14 @@ mod tests {
             "question": "ship?",
             "options": [{"id": "yes", "label": "Yes"}, {"id": "no", "label": "No"}]
         });
-        assert!(PollCard::from_content("ak:event:1".to_owned(), None, &flat).is_none());
+        assert!(
+            PollCard::from_content(
+                "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc".to_owned(),
+                None,
+                &flat
+            )
+            .is_none()
+        );
         // Unknown tally-disclosure mode.
         let undisclosed = json!({
             "kind": "ak.content.poll",
@@ -612,7 +622,14 @@ mod tests {
                 "answers": [{"id": "yes", "text": {"kind": "ak.content.text", "body": "Yes"}}]
             }
         });
-        assert!(PollCard::from_content("ak:event:1".to_owned(), None, &undisclosed).is_none());
+        assert!(
+            PollCard::from_content(
+                "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc".to_owned(),
+                None,
+                &undisclosed
+            )
+            .is_none()
+        );
     }
 
     #[test]

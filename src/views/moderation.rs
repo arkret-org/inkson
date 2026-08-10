@@ -591,17 +591,31 @@ mod tests {
     #[test]
     fn lift_removes_the_standing_decision_it_targets() {
         let ops = vec![
-            decision_op("ak:event:1", "ak:event:a", "quarantine"),
-            decision_op("ak:event:2", "ak:event:b", "hard_deny"),
+            decision_op(
+                "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc",
+                "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4",
+                "quarantine",
+            ),
+            decision_op(
+                "ak:event:AXcPfjVv4gB4YXMmxykws6YCG5IZrhBAAzc4-yYUDIY4",
+                "ak:event:AWSsryl67JAGALOqh0ZH5T-813hPA-GnZxpV3_U9Xp8c",
+                "hard_deny",
+            ),
             json!({
                 "kind": "ak.moderation.decision.lift",
-                "body": { "target_ref": "ak:event:a", "decision_ref": "ak:event:1" }
+                "body": { "target_ref": "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4", "decision_ref": "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc" }
             }),
         ];
         let (decisions, _) = project_moderation_queues(&ops);
         assert_eq!(decisions.len(), 1);
-        assert_eq!(decisions[0].target_ref, "ak:event:b");
-        assert_eq!(decisions[0].decision_ref, "ak:event:2");
+        assert_eq!(
+            decisions[0].target_ref,
+            "ak:event:AWSsryl67JAGALOqh0ZH5T-813hPA-GnZxpV3_U9Xp8c"
+        );
+        assert_eq!(
+            decisions[0].decision_ref,
+            "ak:event:AXcPfjVv4gB4YXMmxykws6YCG5IZrhBAAzc4-yYUDIY4"
+        );
         assert_eq!(decisions[0].decision, "hard_deny");
     }
 
@@ -625,7 +639,7 @@ mod tests {
                 "body": {
                     "appeal_id": "ak:appeal:1",
                     "decision_ref": "ak:decision:1",
-                    "target_ref": "ak:event:a",
+                    "target_ref": "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4",
                 }
             }),
             json!({

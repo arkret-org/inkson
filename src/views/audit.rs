@@ -154,15 +154,21 @@ mod tests {
             "op-1",
             &json!({
                 "kind": "ak.audit.accessed",
-                "realm_id": "ak:realm:s1",
-                "target_event_id": "ak:event:abc",
+                "realm_id": "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
+                "target_event_id": "ak:event:ANOufzo30HjlW4S8eBowzzay9mI2anxKRM5l1AUQ1pDE",
                 "reader_device": "did:key:zDevice",
             }),
         )
         .expect("should classify");
         assert_eq!(row.kind, "ak.audit.accessed");
-        assert_eq!(row.realm_id.as_deref(), Some("ak:realm:s1"));
-        assert_eq!(row.target_event_id.as_deref(), Some("ak:event:abc"));
+        assert_eq!(
+            row.realm_id.as_deref(),
+            Some("ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok")
+        );
+        assert_eq!(
+            row.target_event_id.as_deref(),
+            Some("ak:event:ANOufzo30HjlW4S8eBowzzay9mI2anxKRM5l1AUQ1pDE")
+        );
     }
 
     #[test]
@@ -171,12 +177,15 @@ mod tests {
             "op-2",
             &json!({
                 "kind": "ak.audit.ryw_receipt",
-                "source_event_id": "ak:event:xyz",
+                "source_event_id": "ak:event:AT0vreMDT0LOX4VqBw6oTfJXIygWfJREjoMZQIWL7Wm0",
             }),
         )
         .expect("should classify");
         assert_eq!(row.kind, "ak.audit.ryw_receipt");
-        assert_eq!(row.target_event_id.as_deref(), Some("ak:event:xyz"));
+        assert_eq!(
+            row.target_event_id.as_deref(),
+            Some("ak:event:AT0vreMDT0LOX4VqBw6oTfJXIygWfJREjoMZQIWL7Wm0")
+        );
     }
 
     #[test]
@@ -185,7 +194,7 @@ mod tests {
             "op-3",
             &json!({
                 "kind": "ak.message.create",
-                "realm_id": "ak:realm:s1",
+                "realm_id": "ak:realm:Af1zqB3_Jrboro34y4gO5sGw_9WdcaJpJ0RFj0J3Czok",
             }),
         );
         assert!(none.is_none());

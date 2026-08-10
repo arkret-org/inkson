@@ -32,7 +32,7 @@ fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
             )
             .unwrap(),
         },
-        arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap(),
         1,
         arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         payload,
@@ -465,7 +465,7 @@ fn notification_eval_context_extracts_watch_and_e2ee_flags() {
     assert!(ctx.is_e2ee);
     assert!(!ctx.local_decrypted);
     assert_eq!(ctx.mentions_actor, Some(true));
-    assert_eq!(ctx.sender.as_deref(), Some("did:web:alice.example"));
+    assert_eq!(ctx.sender.as_deref(), Some("ak:did_core:web:alice.example"));
 }
 
 #[test]
@@ -502,7 +502,7 @@ fn notification_eval_context_uses_typed_actor_not_preview_aliases() {
     );
     let ctx = notification_eval_context(&notification);
 
-    assert_eq!(ctx.sender.as_deref(), Some("did:web:alice.example"));
+    assert_eq!(ctx.sender.as_deref(), Some("ak:did_core:web:alice.example"));
 }
 
 #[test]
@@ -616,7 +616,8 @@ fn notification_sources_merge_account_data_with_typed_subscribe_deltas() {
                         "agent_runtime_approval:01964137-0000-7000-8000-000000000005",
                     )
                     .unwrap(),
-                    agent_id: arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap(),
+                    agent_id: crate::mls_api_helpers::principal_core_id("did:web:agent.example")
+                        .unwrap(),
                     requested_at: chrono::DateTime::parse_from_rfc3339("2026-05-29T00:00:00.000Z")
                         .unwrap()
                         .with_timezone(&chrono::Utc),

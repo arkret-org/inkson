@@ -47,7 +47,7 @@ pub async fn issue_challenge(
         request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
         identity_creation_lease_id: checkpoint.lease_id.clone(),
         lease_fence: checkpoint.lease_fence,
-        principal_id: arkret_sdk::project_full_id_to_core_id(&arkret_sdk::FullId::new(
+        principal_id: arkret_sdk::project_full_id_to_core_id(&arkret_sdk::DidFullId::new(
             checkpoint.did.clone(),
         )?)?,
         did_version_id: checkpoint.version_id.clone(),
@@ -91,7 +91,7 @@ pub async fn confirm(
         challenge: pending.challenge.challenge.clone(),
         identity_creation_lease_id: checkpoint.lease_id.clone(),
         lease_fence: checkpoint.lease_fence,
-        principal_id: arkret_sdk::project_full_id_to_core_id(&arkret_sdk::FullId::new(
+        principal_id: arkret_sdk::project_full_id_to_core_id(&arkret_sdk::DidFullId::new(
             checkpoint.did.clone(),
         )?)?,
         did_version_id: checkpoint.version_id.clone(),

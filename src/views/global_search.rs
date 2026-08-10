@@ -489,9 +489,9 @@ mod tests {
     fn result_actor_id_ignores_deprecated_sender_field() {
         let row = json!({
             "sender": "did:web:removed.example",
-            "actor_id": "did:web:alice.example"
+            "actor_id": "ak:did_core:web:alice.example"
         });
-        assert_eq!(result_actor_id(&row), "did:web:alice.example");
+        assert_eq!(result_actor_id(&row), "ak:did_core:web:alice.example");
 
         let removed_only = json!({"sender": "did:web:removed.example"});
         assert!(result_actor_id(&removed_only).is_empty());
@@ -500,16 +500,25 @@ mod tests {
     #[test]
     fn result_destination_prefers_message_anchor() {
         let row = json!({
-            "realm_id": "ak:realm:demo",
-            "event_id": "ak:event:message",
+            "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+            "event_id": "ak:event:AMRFFcIrNlRzkEP8vLsl4eBWTFBOBX6eR89IhQWPENxE",
             "content": {"body": "hit"}
         });
         let destination = result_destination(&row).expect("destination");
-        assert_eq!(destination.seal.as_deref(), Some("ak:event:message"));
+        assert_eq!(
+            destination.seal.as_deref(),
+            Some("ak:event:AMRFFcIrNlRzkEP8vLsl4eBWTFBOBX6eR89IhQWPENxE")
+        );
         match destination.route {
             Route::Chat { realm_id, message } => {
-                assert_eq!(realm_id, "ak:realm:demo");
-                assert_eq!(message, "ak:event:message");
+                assert_eq!(
+                    realm_id,
+                    "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"
+                );
+                assert_eq!(
+                    message,
+                    "ak:event:AMRFFcIrNlRzkEP8vLsl4eBWTFBOBX6eR89IhQWPENxE"
+                );
             }
             other => panic!("expected Chat, got {other:?}"),
         }
@@ -526,7 +535,7 @@ mod tests {
                 "timeline": {"events": [{
                     "kind": "ak.message.create",
                     "event_id": event_id,
-                    "actor_id": "did:web:alice.example",
+                    "actor_id": "ak:did_core:web:alice.example",
                     "created_at": "2026-06-19T00:00:00.000Z",
                     "content": {
                         "realm_id": realm_id,
@@ -577,7 +586,7 @@ mod tests {
                 "timeline": {"events": [{
                     "kind": "ak.message.create",
                     "event_id": "ak:event:AXJBg5RPw2O28Q_GeztGzhWf2jDciYN15ub4OYYpJ1tQ",
-                    "actor_id": "did:web:alice.example",
+                    "actor_id": "ak:did_core:web:alice.example",
                     "created_at": "2026-06-19T00:00:00.000Z",
                     "content": {
                         "realm_id": realm_id,
@@ -626,7 +635,8 @@ mod tests {
                 source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
                 client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
                 addressed_agent_ids: vec![
-                    arkret_sdk::Did::new("did:web:assistant.agents.example").unwrap(),
+                    crate::mls_api_helpers::principal_core_id("did:web:assistant.agents.example")
+                        .unwrap(),
                 ],
                 completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
                 coordinator_agent_id: None,
@@ -680,7 +690,7 @@ mod tests {
                     "timeline": {"events": [{
                         "kind": "ak.message.create",
                         "event_id": "ak:event:Ae8oasaCa8YvwE4_ULb5-ictCSzTCZoyn5KqQ81wpvDG",
-                        "actor_id": "did:web:alice.example",
+                        "actor_id": "ak:did_core:web:alice.example",
                         "created_at": "2026-06-19T00:00:00.000Z",
                         "content": {"realm_id": first_realm_id, "body": "needle first"}
                     }]}
@@ -693,7 +703,7 @@ mod tests {
                     "timeline": {"events": [{
                         "kind": "ak.message.create",
                         "event_id": "ak:event:AatXc8rOoiOfXgpJeRROJV9yNH3ydNHDDoc6VbiwNThT",
-                        "actor_id": "did:web:bob.example",
+                        "actor_id": "ak:did_core:web:bob.example",
                         "created_at": "2026-06-19T00:00:00.000Z",
                         "content": {"realm_id": second_realm_id, "body": "needle second"}
                     }]}

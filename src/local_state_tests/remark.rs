@@ -95,7 +95,7 @@ fn contact_remark_set_tombstone_and_display_name() {
     store.set_contact_remark(
         did,
         crate::account_data::ContactRemark::new(
-            arkret_sdk::Did::new(did.to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id(did).unwrap(),
             "Alice from Ops",
             chrono::Utc::now(),
         ),
@@ -106,7 +106,7 @@ fn contact_remark_set_tombstone_and_display_name() {
     store.set_contact_remark(
         did,
         crate::account_data::ContactRemark::new(
-            arkret_sdk::Did::new(did.to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id(did).unwrap(),
             "",
             chrono::Utc::now(),
         ),

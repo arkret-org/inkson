@@ -1318,10 +1318,10 @@ mod tests {
     #[test]
     fn actor_preview_maps_canonical_actor_id_to_rendered_did() {
         let preview = arkret_models_discovery::ActorPreview {
-            actor_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             handle: Some("alice:example.com".to_owned()),
             display_name: Some("Alice".to_owned()),
-            organization_did: None,
+            organization_principal_id: None,
             avatar_blob_ref: None,
             as_of: chrono::Utc::now(),
             source_refs: Vec::new(),

@@ -401,7 +401,7 @@ async fn current_event_signer_matches_directory(
     let outcome =
         crate::transport::keys::query_keys(&principal_api.sdk_http_client()?, actor, device)
             .await?;
-    let actor_id = arkret_sdk::Did::new(actor.to_owned())?;
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor)?;
     let device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let expected_key = format!("did:key:{public_key}");
     let signer_matches = outcome

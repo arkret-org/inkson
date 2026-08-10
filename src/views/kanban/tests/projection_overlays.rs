@@ -123,7 +123,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
         "event_id": "ak:event:ARq0N2BRkK7h3xduSOgAymIoN9vCfxsuQ50AW3ajRd2L",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f003",
         "event_kind": "ak.strand.update",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": TEST_REALM_ID,
         "payload": {
@@ -441,7 +441,7 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
         "event_id": "ak:event:AZUYAeUiTiKHqTOGKrrTfa2xZPZj09T6IRYuDuCNc9ZQ",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f001",
         "event_kind": "ak.strand.update",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "payload": {
@@ -504,7 +504,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "event_id": "ak:event:AYiSAxDIS8PlP8d9iucotDVTdZ9-CahOJVw2Km3R38HU",
         "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f002",
         "event_kind": "ak.strand.update",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "payload": {

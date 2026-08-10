@@ -27,7 +27,7 @@
 use std::collections::BTreeMap;
 
 use arkret_sdk::{
-    Did, EventId, IdentityPayloadCarrier, MemberIdentity, MemberIdentityProof,
+    DidFullId, EventId, IdentityPayloadCarrier, MemberIdentity, MemberIdentityProof,
     MemberIdentitySegment, MemberIdentitySignatureAlgorithm, MemberIdentityUpdatePayload, RealmId,
     effective_identity_events,
 };
@@ -137,7 +137,7 @@ impl MemberIdentityStore {
         };
         let stored = self.inner.get(&key)?;
         let sdk_realm_id = RealmId::new(realm_id).ok()?;
-        let sdk_actor_id = Did::new(actor_id.to_owned()).ok()?;
+        let sdk_actor_id = crate::mls_api_helpers::principal_core_id(actor_id).ok()?;
 
         // Build the (EventId, &Payload) candidate list the SDK helper
         // expects. Drop entries whose event_id won't parse.
@@ -339,8 +339,8 @@ mod tests {
         let mut identity = MemberIdentity {
             schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
             realm_id: RealmId::new(TEST_REALM).unwrap(),
-            actor_id: Did::new(actor_id.to_owned()).unwrap(),
-            subject_id: Did::new(actor_id.to_owned()).unwrap(),
+            actor_id: crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
+            subject_id: crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
             display_profile: DisplayProfile {
                 display_name: name.to_owned(),
                 avatar_blob_ref: None,
@@ -501,8 +501,8 @@ mod tests {
             schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
             realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap(),
-            actor_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
-            subject_id: Did::new("did:web:alice.example".to_owned()).unwrap(),
+            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            subject_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             display_profile: DisplayProfile {
                 display_name: "Alice".to_owned(),
                 avatar_blob_ref: None,

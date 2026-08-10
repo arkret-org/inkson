@@ -91,8 +91,8 @@ pub fn capability_grant_actions_with_resources(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
     let realm_typed = arkret_sdk::RealmId::new(realm.clone())?;
-    let actor_typed = arkret_sdk::Did::new(actor.to_owned())?;
-    let subject_typed = arkret_sdk::Did::new(subject.to_owned())?;
+    let actor_typed = crate::mls_api_helpers::principal_core_id(actor)?;
+    let subject_typed = crate::mls_api_helpers::principal_core_id(subject)?;
     let constraints_typed = if constraints.is_null() {
         Vec::new()
     } else {
@@ -116,6 +116,7 @@ pub fn capability_grant_actions_with_resources(
         realm_id: Some(realm_typed.clone()),
         issuer: actor_typed,
         subject: arkret_sdk::CapabilitySubject::Did(subject_typed),
+        subject_authority_instance: None,
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
         resources,
         capability_action_registry_digest: registry_digest,

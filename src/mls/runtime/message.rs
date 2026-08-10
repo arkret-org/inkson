@@ -3,7 +3,7 @@
 
 use super::{
     MlsRuntimeError, load_device_snapshot_secret, load_mls_key_package_identity_state,
-    load_or_create_device_snapshot_secret, should_force_epoch_advance,
+    load_or_create_account_mls_secret, should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
 
@@ -431,13 +431,13 @@ pub fn ordinary_agent_mls_author_view(
         let Ok(identity) = std::str::from_utf8(identity) else {
             continue;
         };
-        let Ok(signer_id) = arkret_sdk::Did::new(identity.to_owned()) else {
+        let Ok(signer_id) = arkret_sdk::DidFullId::new(identity.to_owned()) else {
             continue;
         };
         let Ok(signer_core) = arkret_sdk::project_full_id_to_core_id(&signer_id) else {
             continue;
         };
-        let signer_actor = arkret_sdk::ActorId::from(signer_core);
+        let signer_actor = arkret_sdk::DidCoreId::from(signer_core);
         for entry in state_store.cached_agent_signer_evidence_for_agent(&signer_actor) {
             let binding = match &entry.evidence {
                 arkret_sdk::AgentSignerEvidence::CurrentAdmission {
@@ -1249,39 +1249,63 @@ fn decode_welcome_envelope(
             "durable Welcome ciphertext differs from claim_envelope.welcome_digest".to_owned(),
         );
     }
-    let recipient_device_id = match durable.recipient {
-        arkret_sdk::MlsWelcomeRecipient::Device {
-            recipient_device_id,
-        } => recipient_device_id,
-        arkret_sdk::MlsWelcomeRecipient::NativeAgent { .. } => {
-            return Err(
-                "Native Agent Welcome cannot be mapped to an ak:device recipient; the Agent runtime endpoint must consume it through the Native Agent branch"
-                    .to_owned(),
-            );
-        }
-    };
-    let recipient_full_id = arkret_sdk::FullId::new(
-        crate::event_signer::active_signer()
-            .ok_or_else(|| "active recipient signer is unavailable".to_owned())?
-            .signer_did()
-            .to_owned(),
-    )
-    .map_err(|error| format!("active recipient full_id is invalid: {error}"))?;
-    if arkret_sdk::project_full_id_to_core_id(&recipient_full_id)
-        .map_err(|error| format!("project active recipient full_id: {error}"))?
-        != durable.recipient_principal_id
-    {
-        return Err("active recipient full_id does not match durable Welcome recipient".to_owned());
-    }
+    let recipient = welcome_recipient_endpoint(&durable.recipient_principal_id, durable.recipient)?;
     Ok(arkret_sdk::MlsWelcomeEnvelope {
         group_id: durable.mls_group_id.as_str().to_owned(),
         epoch: durable.epoch,
-        recipient_principal_id: recipient_full_id,
-        recipient_device_id,
+        recipient,
         welcome: ciphertext,
         welcome_hash,
         ratchet_tree: None,
     })
+}
+
+fn welcome_recipient_endpoint(
+    recipient_principal_id: &arkret_sdk::DidCoreId,
+    recipient: arkret_sdk::MlsWelcomeRecipient,
+) -> Result<arkret_sdk::MlsEndpointIdentity, String> {
+    match recipient {
+        arkret_sdk::MlsWelcomeRecipient::Device {
+            recipient_device_id,
+        } => {
+            let recipient_full_id = arkret_sdk::DidFullId::new(
+                crate::event_signer::active_signer()
+                    .ok_or_else(|| "active recipient signer is unavailable".to_owned())?
+                    .signer_did()
+                    .to_owned(),
+            )
+            .map_err(|error| format!("active recipient full_id is invalid: {error}"))?;
+            if arkret_sdk::project_full_id_to_core_id(&recipient_full_id)
+                .map_err(|error| format!("project active recipient full_id: {error}"))?
+                != *recipient_principal_id
+            {
+                return Err(
+                    "active recipient full_id does not match durable Welcome recipient".to_owned(),
+                );
+            }
+            Ok(arkret_sdk::MlsEndpointIdentity::human_device(
+                recipient_principal_id.clone(),
+                recipient_device_id,
+            ))
+        }
+        arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+            recipient_agent_id,
+            recipient_agent_verification_method,
+            agent_key_authorize_event_id,
+        } => {
+            if recipient_agent_id != *recipient_principal_id {
+                return Err(
+                    "Native Agent Welcome recipient differs from recipient_principal_id".to_owned(),
+                );
+            }
+            Ok(arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+                recipient_agent_id,
+                recipient_agent_verification_method,
+                agent_key_authorize_event_id,
+            )
+            .map_err(|error| format!("Native Agent Welcome endpoint is invalid: {error}"))?)
+        }
+    }
 }
 
 /// YGN-SEC-01 gate (1): before accepting an inbound Welcome, independently
@@ -1333,11 +1357,12 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
                 .ok_or_else(|| {
                     "claim_envelope device signature kid has no DID URL fragment".to_owned()
                 })?;
-            let full_id = arkret_sdk::FullId::new(controller.to_owned())
-                .map_err(|error| format!("claim_envelope requester FullId: {error}"))?;
-            let projected = arkret_sdk::project_full_id_to_core_id(&full_id)
-                .map_err(|error| format!("claim_envelope requester CoreId projection: {error}"))?;
-            if projected != envelope.requester_did {
+            let full_id = arkret_sdk::DidFullId::new(controller.to_owned())
+                .map_err(|error| format!("claim_envelope requester DidFullId: {error}"))?;
+            let projected = arkret_sdk::project_full_id_to_core_id(&full_id).map_err(|error| {
+                format!("claim_envelope requester DidCoreId projection: {error}")
+            })?;
+            if projected != envelope.requester_actor_id {
                 return Err(
                     "claim_envelope signature controller does not project to requester core id"
                         .to_owned(),
@@ -1483,7 +1508,7 @@ pub(crate) fn preview_welcome_security_frontiers(
     device_id: &str,
     messages_value: &serde_json::Value,
 ) -> Result<Vec<WelcomeSecurityFrontierPreview>, String> {
-    let principal_did = arkret_sdk::Did::new(actor_id.to_owned())
+    let principal_did = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|error| format!("preview Welcome principal: {error}"))?;
     let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|error| format!("preview Welcome device: {error}"))?;
@@ -1556,9 +1581,9 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // The snapshot secret / identity are prerequisites for ALL welcomes: if they
     // are unavailable no welcome could possibly apply, so surface them as a hard
     // error (the readiness status machinery keys off these).
-    let secret = load_or_create_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_or_create_account_mls_secret(secure_store, actor_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = arkret_sdk::Did::new(actor_id.to_owned())
+    let principal_did = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
@@ -1781,7 +1806,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
 ) -> Result<
     (
         arkret_sdk::Hash,
-        Vec<arkret_sdk::Did>,
+        Vec<arkret_sdk::DidCoreId>,
         Vec<serde_json::Value>,
         Option<PreparedMlsCommit>,
         Option<crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -1827,7 +1852,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
 ) -> Result<
     (
         arkret_sdk::Hash,
-        Vec<arkret_sdk::Did>,
+        Vec<arkret_sdk::DidCoreId>,
         Vec<serde_json::Value>,
         Option<PreparedMlsCommit>,
         Option<crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -1990,7 +2015,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
 /// round-trips.
 type DeviceSnapshotEncryption = (
     arkret_sdk::Hash,
-    Vec<arkret_sdk::Did>,
+    Vec<arkret_sdk::DidCoreId>,
     arkret_sdk::EncryptedPayload,
     Option<arkret_sdk::EncryptedPayload>,
     Option<PreparedMlsCommit>,
@@ -2322,5 +2347,38 @@ pub(crate) fn aad_visibility_of(
         arkret_sdk::EncryptedEnvelopeAadVisibility::RoutingDigest
     } else {
         arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden
+    }
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::welcome_recipient_endpoint;
+
+    #[test]
+    fn native_agent_welcome_recipient_keeps_the_runtime_authority_tuple() {
+        let agent_id = crate::mls_api_helpers::principal_core_id("did:web:agent.example").unwrap();
+        let method =
+            arkret_sdk::DidUrl::new("did:web:agent.example#runtime-key".to_owned()).unwrap();
+        let authorization_ref =
+            arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
+                .unwrap();
+        let endpoint = welcome_recipient_endpoint(
+            &agent_id,
+            arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+                recipient_agent_id: agent_id.clone(),
+                recipient_agent_verification_method: method.clone(),
+                agent_key_authorize_event_id: authorization_ref.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            endpoint,
+            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime {
+                agent_id,
+                verification_method: method,
+                agent_key_authorize_event_id: authorization_ref,
+            }
+        );
     }
 }

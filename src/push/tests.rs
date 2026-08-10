@@ -134,10 +134,10 @@ fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
     validate_blind_wakeup_payload(&ok).expect("redacted wakeup is allowed");
 
     for payload in [
-        serde_json::json!({"realm_id": "ak:realm:demo"}),
-        serde_json::json!({"event": {"event_id": "ak:event:1"}}),
+        serde_json::json!({"realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"}),
+        serde_json::json!({"event": {"event_id": "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc"}}),
         serde_json::json!({"sender": "did:web:alice.example"}),
-        serde_json::json!({"items": [{"strand_id": "ak:strand:demo"}]}),
+        serde_json::json!({"items": [{"strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q"}]}),
         serde_json::json!({"local_name": "Alice from Ops"}),
         serde_json::json!({"remark": "private label"}),
         serde_json::json!({"opaque": "did:web:alice.example"}),

@@ -57,7 +57,7 @@ pub(super) fn snapshot_manifest_for_items(
         arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000aa").unwrap();
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
-    let service_id = arkret_sdk::Did::new("did:web:server.example").unwrap();
+    let service_id = crate::mls_api_helpers::principal_core_id("did:web:server.example").unwrap();
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
     let built = arkret_sdk::build_snapshot_chunks(
         &snapshot_id,

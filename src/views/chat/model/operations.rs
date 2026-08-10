@@ -105,12 +105,9 @@ pub(crate) fn load_chat_productivity_namespace_key(
     device_id: &str,
 ) -> anyhow::Result<[u8; crate::account_data::PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_KEY_LEN]> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let account_secret = crate::mls::runtime::load_or_create_account_mls_secret(
-        secure_store.as_ref(),
-        actor_id,
-        device_id,
-    )
-    .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?;
+    let account_secret =
+        crate::mls::runtime::load_or_create_account_mls_secret(secure_store.as_ref(), actor_id)
+            .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?;
     crate::account_data::productivity_account_data_namespace_key(&account_secret)
 }
 

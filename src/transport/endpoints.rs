@@ -147,11 +147,23 @@ impl MlsEndpoints<'_> {
         device_id: &str,
         record: &arkret_sdk::MlsKeyPackageRecord,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
-        let device_id = device_id.trim();
+        let requested_device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
+        let (principal_id, device_id) = match &record.endpoint {
+            arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                principal_id,
+                device_id,
+            } if device_id == &requested_device_id => (principal_id.clone(), device_id.clone()),
+            arkret_sdk::MlsEndpointIdentity::HumanDevice { .. } => {
+                anyhow::bail!("KeyPackage endpoint device differs from upload signer device")
+            }
+            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
+                anyhow::bail!("Native Agent KeyPackage requires the agent-authorized upload flow")
+            }
+        };
         let entry = crate::mls_api_helpers::mls_key_package_record_upload_entry(record)?;
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
-            principal_id: record.principal_id.clone(),
-            device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
+            principal_id,
+            device_id,
             key_packages: vec![entry],
             expires_at: None,
             strand_id: None,

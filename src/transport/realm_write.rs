@@ -538,7 +538,7 @@ pub async fn leave_realm(
 pub async fn repair_direct_conversation_self_rejoin(
     submitter: &EventSubmitter,
     realm_id: &arkret_sdk::RealmId,
-    actor_id: &arkret_sdk::Did,
+    actor_id: &arkret_sdk::DidFullId,
 ) -> anyhow::Result<SubmitEventResult> {
     // This low-level compatibility helper performs only the durable membership
     // half. New callers should use `dispatch_direct_conversation_repair`, which
@@ -578,14 +578,14 @@ pub async fn dispatch_direct_conversation_repair(
     http: &arkret_sdk::http_client::Client,
     state_store: &mut crate::state::LocalStateStore,
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
-    requester_principal_id: arkret_sdk::CoreId,
-    requester_full_id: &arkret_sdk::Did,
+    requester_principal_id: arkret_sdk::DidCoreId,
+    requester_full_id: &arkret_sdk::DidFullId,
     requester_device_id: arkret_sdk::DeviceId,
-    source_service_id: arkret_sdk::CoreId,
-    target_service_id: arkret_sdk::CoreId,
+    source_service_id: arkret_sdk::DidCoreId,
+    target_service_id: arkret_sdk::DidCoreId,
     target_keypackage_ref: arkret_sdk::NonEmptyString,
 ) -> anyhow::Result<String> {
-    let requester_full = arkret_sdk::FullId::new(requester_full_id.as_str().to_owned())?;
+    let requester_full = arkret_sdk::DidFullId::new(requester_full_id.as_str().to_owned())?;
     if arkret_sdk::project_full_id_to_core_id(&requester_full)? != requester_principal_id {
         anyhow::bail!("repair requester full_id does not project to requester principal core_id");
     }
@@ -767,7 +767,7 @@ pub async fn activate_direct_conversation_repair(
     submitter: &EventSubmitter,
     state_store: &mut crate::state::LocalStateStore,
     request_id: &str,
-    actor_id: &arkret_sdk::CoreId,
+    actor_id: &arkret_sdk::DidCoreId,
     payload: arkret_sdk::DirectConversationMlsGenerationActivatePayload,
 ) -> anyhow::Result<SubmitEventResult> {
     let planner = state_store

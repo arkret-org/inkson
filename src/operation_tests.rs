@@ -98,7 +98,7 @@ fn operation_builder_generates_valid_envelope() {
         op.realm_id.as_str(),
         "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8"
     );
-    assert_eq!(op.actor_id.as_str(), "did:web:alice");
+    assert_eq!(op.actor_id.as_str(), "ak:did_core:web:alice");
     assert_eq!(op.kind.as_str(), "ak.message.create");
     assert!(
         !op.hlc
@@ -156,7 +156,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
 
     assert_eq!(
         op.executed_by.as_ref().map(|did| did.as_str()),
-        Some("did:web:agent.example")
+        Some("ak:did_core:web:agent.example")
     );
     assert_eq!(
         op.authorization_ref.as_deref(),
@@ -169,7 +169,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
         object.remove("proofs");
         object.remove("unsigned");
     }
-    assert_eq!(canonical["executed_by"], "did:web:agent.example");
+    assert_eq!(canonical["executed_by"], "ak:did_core:web:agent.example");
     assert_eq!(
         canonical["authorization_ref"],
         "ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS"
@@ -194,7 +194,10 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     );
     assert!(serde_json::from_value::<Event>(with_stale_field).is_err());
     let object = value.as_object_mut().unwrap();
-    object.insert("executed_by".to_owned(), json!("did:web:agent.example"));
+    object.insert(
+        "executed_by".to_owned(),
+        json!("ak:did_core:web:agent.example"),
+    );
     object.insert(
         "authorization_ref".to_owned(),
         json!("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS"),
@@ -216,7 +219,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
     );
     assert_eq!(
         parsed.executed_by.as_ref().map(|did| did.as_str()),
-        Some("did:web:agent.example")
+        Some("ak:did_core:web:agent.example")
     );
     assert_eq!(
         parsed.authorization_ref.as_deref(),
@@ -649,7 +652,7 @@ fn space_create_emits_canonical_space_object() {
         "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
     );
     assert_eq!(op.payload["object"]["rank"], "U");
-    assert_eq!(op.payload["object"]["created_by"], "did:web:alice");
+    assert_eq!(op.payload["object"]["created_by"], "ak:did_core:web:alice");
     let created_at = op.payload["object"]["created_at"].as_str().unwrap();
     arkret_sdk::canonical::validate_timestamp_canonical(created_at).unwrap();
     let event_wire = serde_json::to_value(&op).unwrap();
@@ -762,7 +765,7 @@ fn require_proof_fails_when_unsigned() {
 fn invite_helpers_emit_canonical_kinds() {
     let invite_id = "ak:invite:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
     let invite_delivery_target = arkret_sdk::InviteDeliveryTarget {
-        recipient_service_id: arkret_sdk::ServiceId::new("ak:did_core:web:server.example").unwrap(),
+        recipient_service_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
         service_resolution: arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
             current_record_url: "https://server.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.example/resolution".to_owned(),
             pinned_record_digest: None,
@@ -773,7 +776,7 @@ fn invite_helpers_emit_canonical_kinds() {
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
     let create = ak_ops::invite_create_structured(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "ak:did_core:web:alice.example",
+        "did:web:alice.example",
         "ak:did_core:web:bob.example",
         Some("member"),
         invite_delivery_target.clone(),
@@ -831,7 +834,7 @@ fn invite_helpers_emit_canonical_kinds() {
 
     let accept = ak_ops::invite_accept(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "ak:did_core:web:bob.example",
+        "did:web:bob.example",
         invite_id,
     )
     .expect("builds")
@@ -846,7 +849,7 @@ fn invite_helpers_emit_canonical_kinds() {
 
     let cancel = ak_ops::invite_cancel(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "ak:did_core:web:alice.example",
+        "did:web:alice.example",
         invite_id,
         "ak:did_core:web:bob.example",
         "revoked",
@@ -897,7 +900,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(
         ak_ops::invite_cancel(
             "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-            "ak:did_core:web:alice.example",
+            "did:web:alice.example",
             invite_id,
             "ak:did_core:web:bob.example",
             "expired",
@@ -908,7 +911,7 @@ fn invite_helpers_emit_canonical_kinds() {
 
     let revoke = ak_ops::invite_revoke(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "ak:did_core:web:alice.example",
+        "did:web:alice.example",
         invite_id,
         None,
         "revoked",
@@ -1018,7 +1021,7 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     .expect("builds")
     .build("node");
     assert_eq!(err.kind.as_str(), "ak.applet.bridge_error");
-    assert_eq!(err.payload["applet_id"], applet_id);
+    assert_eq!(err.payload["applet_id"], "ak:did_core:web:applet.example");
     assert_eq!(
         err.payload["failed_transaction_ref"],
         "ak:event:ASAl6MaOVSeP0yXGVmHl5fA_Ch7m5_D_PgvPyd3UP2_9"
@@ -1090,13 +1093,15 @@ mod realm_organization_builder_tests {
     }
 
     fn direct_org_auth() -> RealmOrganizationAuthorization {
-        // OrganizationDid is a non-delegated role: no delegation_ref.
+        // OrganizationPrincipalId is a non-delegated role: no delegation_ref.
         RealmOrganizationAuthorization {
-            issuer: arkret_sdk::Did::new(ORG_DID).unwrap(),
-            issuer_role: RealmOrganizationIssuerRole::OrganizationDid,
+            issuer: crate::mls_api_helpers::principal_core_id(ORG_DID).unwrap(),
+            issuer_role: RealmOrganizationIssuerRole::OrganizationPrincipalId,
             verification_method: arkret_sdk::DidUrl::new(ORG_VM).unwrap(),
             delegation_ref: None,
-            executed_by: Some(arkret_sdk::Did::new("did:web:admin.example").unwrap()),
+            executed_by: Some(
+                crate::mls_api_helpers::principal_core_id("did:web:admin.example").unwrap(),
+            ),
             signed_at: signed_at(),
             proof: SignatureMaterial::NonEmptyString(
                 arkret_sdk::NonEmptyString::new("c2ln").unwrap(),
@@ -1106,7 +1111,7 @@ mod realm_organization_builder_tests {
 
     fn delegated_org_auth() -> RealmOrganizationAuthorization {
         RealmOrganizationAuthorization {
-            issuer: arkret_sdk::Did::new("did:web:gov.example").unwrap(),
+            issuer: crate::mls_api_helpers::principal_core_id("did:web:gov.example").unwrap(),
             issuer_role: RealmOrganizationIssuerRole::GovernanceService,
             verification_method: arkret_sdk::DidUrl::new("did:web:gov.example#k1").unwrap(),
             delegation_ref: Some(
@@ -1143,7 +1148,10 @@ mod realm_organization_builder_tests {
         assert_eq!(event.kind.as_str(), "ak.realm.organization");
         // The statement binds the organization DID, not a Space/Strand id.
         assert_eq!(event.local_target_ref(), Some(ORG_DID));
-        assert_eq!(event.payload["organization_id"], ORG_DID);
+        assert_eq!(
+            event.payload["organization_id"],
+            "ak:did_core:webvh:example.test"
+        );
         assert_eq!(event.payload["relationship"], "owner");
         assert_eq!(event.payload["status"], "active");
         assert!(!event.payload.contains_key("revokes_statement_id"));
@@ -1151,7 +1159,7 @@ mod realm_organization_builder_tests {
         // local login session.
         assert_eq!(
             event.payload["authorization"]["issuer_role"],
-            "organization_did"
+            "organization_principal_id"
         );
         assert_eq!(event.payload["authorization"]["proof"], "c2ln");
         assert_payload_field_names_are_spec_canonical(&event.payload);

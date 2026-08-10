@@ -10,7 +10,7 @@ const ALICE_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
 const BOB_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000002";
 const CAROL_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 const DAVE_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000004";
-const GROUP_ID: &[u8] = b"ak:realm:wasm-mls-data-plane";
+const GROUP_ID: &[u8] = b"ak:realm:AxfS5lL34ar8evkrjkj2VnQ9TZaIIN2algll426mYRJE";
 
 #[wasm_bindgen_test]
 fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
@@ -30,7 +30,10 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     carol.join_from_welcome(&add_carol.welcome).unwrap();
 
     let pre_remove = alice
-        .encrypt_message("ak:message:wasm-pre-remove", b"before remove")
+        .encrypt_message(
+            "ak:message:A6u77rrmwcqnlGOsjJ1NCtyWmSQNe4IqYUz4mjELtyso",
+            b"before remove",
+        )
         .unwrap();
     assert!(matches!(
         bob.decrypt_or_preserve(pre_remove).unwrap(),
@@ -48,7 +51,10 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     carol.apply_commit(&remove.commit).unwrap();
 
     let post_remove = alice
-        .encrypt_message("ak:message:wasm-post-remove", b"after remove")
+        .encrypt_message(
+            "ak:message:AQKPg68zbJImnDqlj1CYc3otm32z4cR6NCjKfy5qS5xU",
+            b"after remove",
+        )
         .unwrap();
     assert!(matches!(
         carol.decrypt_or_preserve(post_remove.clone()).unwrap(),
@@ -76,7 +82,10 @@ fn removed_member_cannot_decrypt_new_epoch_and_failures_are_distinct() {
     let mut independent = LocalMlsDevice::new("did:web:dave.example", DAVE_DEVICE).unwrap();
     independent.create_group(GROUP_ID).unwrap();
     let wrong_key = independent
-        .encrypt_message("ak:message:wasm-wrong-key", b"wrong key")
+        .encrypt_message(
+            "ak:message:AxNcKZEEPR7EFcSKxQ_Lptlgx8iJpZeZqrrfTAafbPbw",
+            b"wrong key",
+        )
         .unwrap();
     assert!(matches!(
         carol.decrypt_or_preserve(wrong_key).unwrap(),

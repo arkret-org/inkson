@@ -231,7 +231,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
         pinned: false,
         verified_title_at_save: Some("Engineering".to_owned()),
         verified_owning_organizations_at_save: vec![
-            arkret_sdk::Did::new("did:web:acme.example".to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id("did:web:acme.example").unwrap(),
         ],
         saved_at: "2026-06-01T00:00:00.000Z".parse().unwrap(),
         updated_at: Some("2026-06-01T00:00:00.000Z".parse().unwrap()),
@@ -286,12 +286,12 @@ fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
 #[test]
 fn contact_remark_serialises_minimal_private_payload() {
     let saved_at = "2026-06-05T00:00:00.000Z".parse().unwrap();
-    let actor_did = arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap();
+    let actor_did = crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap();
     let remark = ContactRemark::new(actor_did.clone(), "Alice from Ops", saved_at);
     let wire = serde_json::to_value(&remark).unwrap();
     assert_eq!(wire["version"], 1);
     assert_eq!(wire["subject"]["kind"], "actor");
-    assert_eq!(wire["subject"]["did"], "did:web:alice.example");
+    assert_eq!(wire["subject"]["actor_id"], actor_did.as_str());
     assert!(wire.get("actor_id").is_none());
     assert_eq!(wire["local_name"], "Alice from Ops");
     assert!(wire.get("note").is_none());
@@ -301,7 +301,7 @@ fn contact_remark_serialises_minimal_private_payload() {
         version: 1,
         subject: ContactRemarkSubject {
             kind: "actor".to_owned(),
-            did: actor_did,
+            actor_id: actor_did,
         },
         local_name: " ".to_owned(),
         note: String::new(),
@@ -317,12 +317,12 @@ fn contact_remark_serialises_minimal_private_payload() {
 #[test]
 fn contact_remark_pinned_builder_preserves_private_fields() {
     let actor_id = "did:web:alice.example";
-    let actor_did = arkret_sdk::Did::new(actor_id.to_owned()).unwrap();
+    let actor_did = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
     let existing = ContactRemark {
         version: 1,
         subject: ContactRemarkSubject {
             kind: "actor".to_owned(),
-            did: actor_did.clone(),
+            actor_id: actor_did.clone(),
         },
         local_name: "Alice from Ops".to_owned(),
         note: "met at launch".to_owned(),
@@ -442,7 +442,7 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
 fn blocklist_payload_uses_cas_revision_and_preserves_empty_clear() {
     let owner = "did:web:owner.example";
     let body = build_blocklist_account_data_body(owner, 7, &[]).unwrap();
-    assert_eq!(body["owner"], owner);
+    assert_eq!(body["owner"], "ak:did_core:web:owner.example");
     assert_eq!(body["version"], 7);
     assert_eq!(body["entries"], json!([]));
     assert!(
@@ -504,11 +504,17 @@ fn build_client_ui_body_only_emits_present_fields() {
     assert!(body.get("avatar_blob_ref").is_none());
 
     let mut per_realm = BTreeMap::new();
-    per_realm.insert("ak:realm:abc".to_owned(), "kanban".to_owned());
+    per_realm.insert(
+        "ak:realm:AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg".to_owned(),
+        "kanban".to_owned(),
+    );
     let body = build_client_ui_body(Some("night"), Some(true), &per_realm, None);
     assert_eq!(body["theme"], "night");
     assert_eq!(body["sidebar_collapsed"], true);
-    assert_eq!(body["per_realm_view"]["ak:realm:abc"], "kanban");
+    assert_eq!(
+        body["per_realm_view"]["ak:realm:AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg"],
+        "kanban"
+    );
 
     // Empty theme string is dropped (treated as unset).
     let body = build_client_ui_body(Some(""), Some(false), &BTreeMap::new(), None);
@@ -603,7 +609,7 @@ fn build_account_data_set_emits_canonical_kind() {
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
-    assert_eq!(op.payload["owner"], "did:web:alice");
+    assert_eq!(op.payload["owner"], "ak:did_core:web:alice");
     assert_eq!(op.payload["body"]["send"], false);
     assert!(op.payload["updated_at"].is_string());
 }
@@ -800,7 +806,7 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
-    assert_eq!(op.payload["owner"], "did:web:alice");
+    assert_eq!(op.payload["owner"], "ak:did_core:web:alice");
     assert_eq!(op.payload["expected_revision"], 3);
     assert_eq!(op.payload["tombstone"], true);
     assert!(op.payload["updated_at"].is_string());

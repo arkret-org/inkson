@@ -13,11 +13,8 @@ pub fn encrypt_account_data_value(
     plaintext: &Value,
 ) -> anyhow::Result<Value> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let account_secret = crate::mls::runtime::load_or_create_account_mls_secret(
-        secure_store.as_ref(),
-        actor_id,
-        "",
-    )?;
+    let account_secret =
+        crate::mls::runtime::load_or_create_account_mls_secret(secure_store.as_ref(), actor_id)?;
     let secret = URL_SAFE_NO_PAD
         .decode(account_secret)
         .map_err(|error| anyhow::anyhow!("account secret base64url: {error}"))?;

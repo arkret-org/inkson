@@ -467,7 +467,7 @@ pub(crate) mod tests {
         bindings: Vec<arkret_sdk::SupportedBinding>,
     ) -> arkret_sdk::ServiceDescribe {
         let mut describe = arkret_sdk::ServiceDescribe::development(
-            arkret_sdk::Did::new("did:web:server.example").unwrap(),
+            arkret_sdk::DidFullId::new("did:web:server.example").unwrap(),
             arkret_sdk::TypedTrustDomainId::new("ak:trust_domain:server.example").unwrap(),
             arkret_sdk::ServiceKind::PrincipalServer,
         );

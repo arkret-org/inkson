@@ -54,6 +54,48 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     claim_nonce: &str,
     claim_receipt: &arkret_sdk::MlsWelcomeClaimReceipt,
 ) -> Result<RealmMlsAdmissionEvents, String> {
+    if !matches!(
+        claim_receipt,
+        arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(_)
+    ) {
+        return Err(
+            "peer KeyPackage claim requires Garth target-evidence admission before MLS authoring"
+                .to_owned(),
+        );
+    }
+    let requester = crate::mls_api_helpers::principal_core_id(actor_id)
+        .map_err(|error| format!("invalid requester actor_id: {error}"))?;
+    if claim.principal_id != requester {
+        return Err(
+            "non-self KeyPackage claim requires exact peer authority evidence and Garth admission"
+                .to_owned(),
+        );
+    }
+    build_realm_mls_admission_events_from_verified_claim(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        requester_device_authorize_event_id,
+        claim,
+        claim_nonce,
+        claim_receipt,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_realm_mls_admission_events_from_verified_claim(
+    state_store: &LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    requester_device_authorize_event_id: &arkret_sdk::EventId,
+    claim: &arkret_sdk::KeyPackageClaimRecord,
+    claim_nonce: &str,
+    claim_receipt: &arkret_sdk::MlsWelcomeClaimReceipt,
+) -> Result<RealmMlsAdmissionEvents, String> {
     let member_key_package = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
         .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))?;
     let (add, snapshot, previous_governance_binding) =
@@ -187,6 +229,26 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
     if claims.is_empty() {
         return Err("MLS admission batch requires at least one claim".to_owned());
     }
+    if claims
+        .iter()
+        .any(|(_, _, receipt)| matches!(receipt, arkret_sdk::MlsWelcomeClaimReceipt::PeerClaim(_)))
+    {
+        return Err(
+            "peer KeyPackage admission batch requires one independently Garth-admitted target evidence per claim"
+                .to_owned(),
+        );
+    }
+    let requester = crate::mls_api_helpers::principal_core_id(actor_id)
+        .map_err(|error| format!("invalid requester actor_id: {error}"))?;
+    if claims
+        .iter()
+        .any(|(claim, ..)| claim.principal_id != requester)
+    {
+        return Err(
+            "non-self KeyPackage admission batch requires independently Garth-admitted peer outcomes"
+                .to_owned(),
+        );
+    }
     let member_key_packages = claims
         .iter()
         .map(|(claim, ..)| {
@@ -317,7 +379,7 @@ pub(crate) fn build_realm_key_share_event(
     let source_authorization_ref =
         arkret_sdk::EventId::new(source_authorization_ref.trim().to_owned())
             .map_err(|err| format!("invalid realm_key.share source_authorization_ref: {err:?}"))?;
-    let recipient_did = arkret_sdk::Did::new(recipient_principal_id.trim().to_owned())
+    let recipient_did = crate::mls_api_helpers::principal_core_id(recipient_principal_id)
         .map_err(|err| format!("invalid realm_key.share recipient DID: {err:?}"))?;
     let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
         .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
@@ -491,7 +553,7 @@ pub(crate) fn build_mls_welcome_payload(
 ) -> Result<arkret_sdk::MlsWelcomePayload, String> {
     let intended_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS Welcome Realm id: {err:?}"))?;
-    let requester_did = arkret_sdk::CoreId::new(actor_id.trim().to_owned())
+    let requester_did = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|err| format!("invalid MLS Welcome requester principal core id: {err:?}"))?;
     let sender_device_id = arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
         .map_err(|err| format!("invalid MLS Welcome sender device id: {err:?}"))?;
@@ -502,7 +564,7 @@ pub(crate) fn build_mls_welcome_payload(
             intended_realm_id,
             claim_id: arkret_sdk::NonEmptyString::new(claim.claim_id.clone())
                 .map_err(|err| format!("invalid MLS Welcome claim id: {err}"))?,
-            requester_did,
+            requester_actor_id: requester_did,
             trust_binding: arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
                 requester_device_id: sender_device_id.clone(),
                 requester_device_authorize_event_id: requester_device_authorize_event_id.clone(),
@@ -557,6 +619,29 @@ pub(crate) fn build_mls_welcome_payload(
         }
         _ => return Err("MLS KeyPackage claim has an invalid recipient branch".to_owned()),
     };
+    let expected_endpoint = match &recipient {
+        arkret_sdk::MlsWelcomeRecipient::Device {
+            recipient_device_id,
+        } => arkret_sdk::MlsEndpointIdentity::human_device(
+            claim.principal_id.clone(),
+            recipient_device_id.clone(),
+        ),
+        arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+            recipient_agent_id,
+            recipient_agent_verification_method,
+            agent_key_authorize_event_id,
+        } => arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+            recipient_agent_id.clone(),
+            recipient_agent_verification_method.clone(),
+            agent_key_authorize_event_id.clone(),
+        )
+        .map_err(|error| format!("invalid Native Agent Welcome endpoint: {error}"))?,
+    };
+    if welcome.recipient != expected_endpoint {
+        return Err(
+            "MLS Welcome recipient differs from the admitted KeyPackage endpoint".to_owned(),
+        );
+    }
     let payload = arkret_sdk::MlsWelcomePayload {
         mls_group_id: arkret_sdk::MlsGroupId::new(welcome.group_id.clone())
             .map_err(|err| format!("invalid MLS Welcome group id: {err}"))?,
@@ -650,15 +735,21 @@ mod tests {
         record: &arkret_sdk::MlsKeyPackageRecord,
         device_authorize_event_id: &str,
     ) -> arkret_sdk::KeyPackageClaimRecord {
+        let (principal_id, device_id) = match &record.endpoint {
+            arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                principal_id,
+                device_id,
+            } => (principal_id.clone(), device_id.clone()),
+            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
+                panic!("test fixture requires a human-device record")
+            }
+        };
         arkret_sdk::KeyPackageClaimRecord {
             claim_id: "ak:mls_keypackage:test:Y2xhaW0tbm9uY2U".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
             keypackage_digest: record.keypackage_ref.clone(),
-            principal_id: arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::FullId::new(record.principal_id.as_str().to_owned()).unwrap(),
-            )
-            .unwrap(),
-            device_id: Some(record.device_id.clone()),
+            principal_id: principal_id.clone(),
+            device_id: Some(device_id),
             agent_id: None,
             agent_verification_method: None,
             key_package: record.key_package.clone(),
@@ -672,11 +763,8 @@ mod tests {
             target_agent_signer_evidence: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
             device_signature: arkret_sdk::KeyOperationSignature {
-                kid: arkret_sdk::NonEmptyString::new(format!(
-                    "{}#device",
-                    record.principal_id.as_str()
-                ))
-                .unwrap(),
+                kid: arkret_sdk::NonEmptyString::new(format!("{}#device", principal_id.as_str()))
+                    .unwrap(),
                 signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
                 sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
             },
@@ -692,9 +780,9 @@ mod tests {
         claim_nonce: &str,
     ) -> arkret_sdk::MlsWelcomeClaimReceipt {
         let request = arkret_sdk::KeyPackagesClaimRequestBody {
-            target_principal_id: arkret_sdk::Did::new(requester.to_owned()).unwrap(),
+            target_principal_id: crate::mls_api_helpers::principal_core_id(requester).unwrap(),
             intended_realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
-            requester: arkret_sdk::Did::new(requester.to_owned()).unwrap(),
+            requester: crate::mls_api_helpers::principal_core_id(requester).unwrap(),
             required_capabilities: claim.capabilities.clone(),
             claim_nonce: arkret_sdk::Base64UrlString::new(claim_nonce.to_owned()).unwrap(),
             expires_at: claim.expires_at,
@@ -710,7 +798,7 @@ mod tests {
                 payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
                 created_at: crate::clock::now_utc(),
-                audience: arkret_sdk::Did::new("did:web:ps.example").unwrap(),
+                audience: crate::mls_api_helpers::principal_core_id("did:web:ps.example").unwrap(),
                 proof_purpose: arkret_sdk::KeyPackageClaimProofPurpose::HolderAcceptance,
                 jws: "eyJhbGciOiJFZDI1NTE5In0..YQ".to_owned(),
             },
@@ -722,12 +810,9 @@ mod tests {
             arkret_sdk::canonical::canonical_sha256(&vec![claim.clone()]).unwrap(),
         )
         .unwrap();
-        let authority = arkret_sdk::CoreId::new("ak:did_core:web:ps.example").unwrap();
+        let authority = arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap();
         arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(arkret_sdk::SelfKeyPackageClaimReceipt {
-            operation_id: arkret_sdk::ProtocolOperationId::new(
-                "ak.self.keys.keypackages.command.claim",
-            )
-            .unwrap(),
+            operation_id: arkret_sdk::ServiceOperationId::SelfKeysKeypackagesCommandClaim,
             claim_request_id: request.claim_nonce.clone(),
             request_digest,
             claims_digest,
@@ -771,12 +856,14 @@ mod tests {
                 )
                 .unwrap(),
                 claim_id: arkret_sdk::NonEmptyString::new("ak:mls:kp:test:nonce").unwrap(),
-                requester_did: arkret_sdk::CoreId::new("ak:did_core:web:alice.example".to_owned())
-                    .unwrap(),
+                requester_actor_id: arkret_sdk::DidCoreId::new(
+                    "ak:did_core:web:alice.example".to_owned(),
+                )
+                .unwrap(),
                 trust_binding: arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
                     requester_device_id: arkret_sdk::DeviceId::new(device).unwrap(),
                     requester_device_authorize_event_id: arkret_sdk::EventId::new(
-                        "ak:event:Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
                     )
                     .unwrap(),
                 },
@@ -875,97 +962,31 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn invite_admission_builds_schema_valid_welcome_and_recipient_can_apply_it() {
-        let mut alice_state = isolated_store_for_tests("invite-admission-alice");
-        let mut bob_state = isolated_store_for_tests("invite-admission-bob");
+    fn remote_self_claim_receipt_cannot_authorize_peer_welcome() {
+        let alice_state = isolated_store_for_tests("peer-self-claim-fail-closed");
         let secure = MemorySecureKeyStore::new();
         let realm = "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx";
         let alice = "did:web:alice.example";
         let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let bob = "did:web:bob.example";
         let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
-        let _signer_guard = ActiveSignerGuard::install([12u8; 32], alice);
-        let signer = crate::event_signer::build_ed25519_signer([12u8; 32], alice);
-        crate::identity::device_directory::seed_positive_for_test(
-            alice,
-            alice_device,
-            arkret_sdk::signatures::PublicKeyMaterial::Ed25519Multibase {
-                value: signer.public_key_multibase().unwrap(),
-            },
-        );
-
-        crate::mls::governance_proof::seed_test_governance_proof(
-            &mut alice_state,
-            realm,
-            None,
-            arkret_sdk::base64url_encode(realm.as_bytes()),
-            0,
-            0,
-        );
-        let genesis_summary =
-            ensure_creator_mls_snapshot(&mut alice_state, &secure, realm, alice, alice_device)
-                .unwrap()
-                .expect("creator snapshot");
-        let genesis_result = crate::mls::group_events::build_creator_mls_genesis_event(
-            &mut alice_state,
-            realm,
-            alice,
-            alice_device,
-            Some(&genesis_summary),
-        );
-        let genesis_event = match genesis_result {
-            Ok(event) => event.expect("creator genesis event"),
-            Err(error) => {
-                assert!(error.contains("state_mismatch"));
-                assert!(alice_state.mls_snapshot_for(realm).is_some());
-                return;
-            }
-        };
-        alice_state.mark_mls_genesis_emitted_with_event(realm, &genesis_event.event_id);
-        crate::mls::governance_proof::seed_test_governance_proof(
-            &mut alice_state,
-            realm,
-            None,
-            genesis_summary.group_id.clone(),
-            0,
-            1,
-        );
-        crate::mls::governance_proof::seed_test_governance_proof(
-            &mut bob_state,
-            realm,
-            None,
-            genesis_summary.group_id.clone(),
-            0,
-            1,
-        );
-
         let bob_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
-            arkret_sdk::Did::new(bob.to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id(bob).unwrap(),
             arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
         )
         .unwrap();
         let bob_key_package = bob_identity.key_package_record().unwrap();
-        let bob_private_state = bob_identity.export_private_state().unwrap();
-        store_mls_key_package_identity_state(
-            &secure,
-            bob,
-            bob_device,
-            bob_key_package.keypackage_ref.as_str(),
-            &bob_private_state,
-        )
-        .unwrap();
         let claim = claim_from_key_package(
             &bob_key_package,
-            "ak:event:Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
         );
-        let requester_device_authorize_event_id = arkret_sdk::EventId::new(
-            "ak:event:Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        )
-        .unwrap();
+        let requester_device_authorize_event_id =
+            arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc")
+                .unwrap();
 
         let claim_nonce = "Y2xhaW0tbm9uY2UtMDEyMzQ1Njc4OQ";
         let claim_receipt = self_claim_receipt(&claim, realm, alice, claim_nonce);
-        let admission = build_realm_mls_admission_events_from_claim(
+        let error = build_realm_mls_admission_events_from_claim(
             &alice_state,
             &secure,
             realm,
@@ -976,87 +997,10 @@ mod tests {
             claim_nonce,
             &claim_receipt,
         )
-        .unwrap();
+        .err()
+        .expect("remote claim must fail before MLS state mutation");
 
-        assert_eq!(admission.commit.kind.as_str(), "ak.mls.commit");
-        assert_eq!(
-            admission.commit.payload["base_epoch_ref"],
-            json!(genesis_event.event_id.as_str())
-        );
-        assert_eq!(
-            admission.commit.preconditions,
-            crate::mls::governance::mls_commit_preconditions(
-                admission.commit.payload["mls_group_id"]
-                    .as_str()
-                    .expect("commit carries its MLS group id"),
-                admission.commit.payload["base_epoch"]
-                    .as_u64()
-                    .expect("commit carries its base epoch"),
-                &serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(
-                    genesis_event.payload["governance_binding"].clone(),
-                )
-                .expect("genesis carries the exact key-schedule predecessor"),
-            )
-            .expect("canonical commit preconditions"),
-            "the admission path must retain both CAS predecessors"
-        );
-        assert_eq!(admission.welcome.kind.as_str(), "ak.mls.welcome");
-        assert_eq!(
-            admission.welcome.payload["ciphertext"],
-            admission.welcome_envelope.welcome
-        );
-        assert!(!admission.welcome.payload.contains_key("welcome_bytes_b64"));
-        assert!(!admission.welcome.payload.contains_key("key_package_id"));
-        assert!(
-            admission.welcome.payload["claim_envelope"]["signature"]["sig"]
-                .as_str()
-                .is_some_and(|sig| !sig.is_empty())
-        );
-        let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
-        catalog
-            .validate_payload(
-                admission.welcome.kind.as_str(),
-                &serde_json::to_value(&admission.welcome.payload).unwrap(),
-            )
-            .unwrap_or_else(|err| {
-                panic!(
-                    "ak.mls.welcome payload violates registered schema: {err}\npayload: {}",
-                    serde_json::to_string_pretty(&admission.welcome.payload).unwrap()
-                )
-            });
-
-        let messages = json!({
-            "messages": [{
-                "kind": "ak.mls.welcome",
-                "content": admission.welcome.payload.clone(),
-                "unsigned": {
-                    "key_package_id": claim.keypackage_ref,
-                },
-            }],
-        });
-        let outcome = apply_welcome_messages_with_device_snapshot(
-            &mut bob_state,
-            &secure,
-            realm,
-            bob,
-            bob_device,
-            &messages,
-        )
-        .unwrap();
-
-        assert_eq!(outcome.applied, 1, "{outcome:?}");
-        assert_eq!(outcome.failed, 0, "{outcome:?}");
-        let bob_snapshot = bob_state.mls_snapshot_for(realm).unwrap();
-        assert_eq!(
-            bob_state
-                .mls_group_state_ref_for_effective_scope(
-                    realm,
-                    None,
-                    &bob_snapshot.group_id,
-                    bob_snapshot.epoch,
-                )
-                .unwrap(),
-            admission.commit.event_id
-        );
+        assert!(error.contains("exact peer authority evidence"), "{error}");
+        assert!(alice_state.mls_snapshot_for(realm).is_none());
     }
 }

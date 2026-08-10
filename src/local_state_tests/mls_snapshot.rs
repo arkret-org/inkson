@@ -52,7 +52,7 @@ fn mls_snapshot_drop_clears_persisted_record() {
     use crate::mls::persistence::encrypt_state;
     let path = temp_state_path("mls-snapshot-drop");
     let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:drop-me";
+    let realm = "ak:realm:AqMKgDlGVwhh5DgFUoZSi6NygbNQ6qvY_UbnPExWaWJE";
     store.save_mls_snapshot(realm, encrypt_state(realm, "abcd", 1, b"x", "p", b"salt"));
     assert!(store.mls_snapshot_for(realm).is_some());
     store.drop_mls_snapshot(realm);
@@ -65,7 +65,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
 
     let path = temp_state_path("logout-preserves-mls");
-    let realm = "ak:realm:logout-preserves";
+    let realm = "ak:realm:A-N_iXmMKecT7eiNigY_lE4x2sHtoxNAzCJBl7ZBPa_M";
     let actor = "did:web:alice.example";
     let strand = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
     let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

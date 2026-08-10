@@ -19,7 +19,7 @@ pub fn discussion_strand_create(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let did = arkret_sdk::Did::new(actor.to_owned())
+    let did = crate::mls_api_helpers::principal_core_id(actor)
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     // No caller-supplied Strand id: the object is derived from this create
     // Event, and `TypedOperationBuilder` stamps that derived id as the client-local
@@ -74,7 +74,7 @@ pub fn scoped_discussion_strand_create(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let did = arkret_sdk::Did::new(actor.to_owned())
+    let did = crate::mls_api_helpers::principal_core_id(actor)
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
         .with_metadata_title(title)

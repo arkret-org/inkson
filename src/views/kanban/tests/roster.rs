@@ -9,9 +9,9 @@ fn realm_member_roster_reads_r32_wire_shape() {
     let projection = json!({
         "members": [
             {
-                "actor_id": "did:web:acme.example:users:alice",
+                "actor_id": "ak:did_core:web:acme.example:users:alice",
                 "membership": "join",
-                "subject_id": "did:web:acme.example:principals:alice",
+                "subject_id": "ak:did_core:web:acme.example:principals:alice",
                 "identity_event_ids": ["ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ"],
                 "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab",
                 "handle_claims": [{
@@ -22,7 +22,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 "handle_claims_limited": false
             },
             {
-                "actor_id": "did:webvh:zQmPr8",
+                "actor_id": "ak:did_core:webvh:zQmPr8",
                 "membership": "invite"
             }
         ]
@@ -63,7 +63,7 @@ fn realm_member_roster_reads_r32_digest_only() {
     // key is read.
     let projection = json!({
         "members": [{
-            "actor_id": "did:web:acme.example:users:v2",
+            "actor_id": "ak:did_core:web:acme.example:users:v2",
             "membership": "join",
             "member_display_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
         }]
@@ -78,7 +78,7 @@ fn realm_member_roster_ignores_removed_digest_key() {
     // The pre-R3.2 `identity_state_digest` key is NOT honoured.
     let projection = json!({
         "members": [{
-            "actor_id": "did:web:acme.example:users:removed",
+            "actor_id": "ak:did_core:web:acme.example:users:removed",
             "membership": "join",
             "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
         }]
@@ -101,24 +101,24 @@ fn realm_member_roster_ignores_bare_did_strings() {
 fn realm_member_roster_reads_only_root_members() {
     let projection = json!({
         "summary": {
-            "members": [{ "actor_id": "did:web:summary-member.example" }],
-            "participants": [{ "actor_id": "did:web:participant.example" }]
+            "members": [{ "actor_id": "ak:did_core:web:summary-member.example" }],
+            "participants": [{ "actor_id": "ak:did_core:web:participant.example" }]
         },
-        "owners": [{ "actor_id": "did:web:owner.example" }],
-        "members": [{ "actor_id": "did:web:canonical.example" }]
+        "owners": [{ "actor_id": "ak:did_core:web:owner.example" }],
+        "members": [{ "actor_id": "ak:did_core:web:canonical.example" }]
     });
 
     let rows = realm_member_roster(Some(&projection));
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].actor_id, "did:web:canonical.example");
+    assert_eq!(rows[0].actor_id, "ak:did_core:web:canonical.example");
 }
 
 #[test]
 fn realm_member_roster_keeps_first_duplicate_actor_entry() {
     let projection = json!({
         "members": [
-            { "actor_id": "did:web:alice.example", "membership": "join" },
-            { "actor_id": "did:web:alice.example", "membership": "invite" }
+            { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
+            { "actor_id": "ak:did_core:web:alice.example", "membership": "invite" }
         ]
     });
 
@@ -139,8 +139,10 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
         realm_id: arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
             .unwrap(),
-        actor_id: arkret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
-        subject_id: arkret_sdk::Did::new("did:web:acme.example:users:alice".to_owned()).unwrap(),
+        actor_id: crate::mls_api_helpers::principal_core_id("did:web:acme.example:users:alice")
+            .unwrap(),
+        subject_id: crate::mls_api_helpers::principal_core_id("did:web:acme.example:users:alice")
+            .unwrap(),
         display_profile: DisplayProfile {
             display_name: "Alice".to_owned(),
             avatar_blob_ref: None,
@@ -227,7 +229,7 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
                 "binding_state": "pending"
             }),
             json!({
-                "subject_id": "did:key:z6MkPrincipal",
+                "subject_id": "ak:did_core:key:z6MkPrincipal",
                 "handle": "legacy:acme.example",
                 "binding_state": "verified"
             }),
@@ -320,18 +322,26 @@ fn member_roster_realm_context_prefers_projection_realm_id() {
     assert_eq!(
         member_roster_realm_context(
             "ak:space:board",
-            "ak:realm:prop",
-            Some(&json!({"realm_id": "ak:realm:projection"})),
+            "ak:realm:AzFgbMgjZqbtbhJi4df_hVGsURuFaaKqsgvzmu2cW-dA",
+            Some(&json!({"realm_id": "ak:realm:ATn1eDmPIlZjKnyP4TfzoZJIT-CufZ-jFJZgOSyvBwKo"})),
         ),
-        "ak:realm:projection"
+        "ak:realm:ATn1eDmPIlZjKnyP4TfzoZJIT-CufZ-jFJZgOSyvBwKo"
     );
     assert_eq!(
-        member_roster_realm_context("ak:realm:board", "ak:realm:projection-fallback", None),
-        "ak:realm:projection-fallback"
+        member_roster_realm_context(
+            "ak:realm:AD7mrZtfTNN1HudeGAjpVIZoCycBIIpKGmT3Hbi6UJ7k",
+            "ak:realm:ArtCds6gQh96PTCABrrKYswyGOj4rLT3a_FT62MVBKug",
+            None
+        ),
+        "ak:realm:ArtCds6gQh96PTCABrrKYswyGOj4rLT3a_FT62MVBKug"
     );
     assert_eq!(
-        member_roster_realm_context("ak:realm:selected", "", None),
-        "ak:realm:selected"
+        member_roster_realm_context(
+            "ak:realm:AB8ClU7V2Rh794lMmCuSv9UkhOs5PtqZpBoIa_KSscNI",
+            "",
+            None
+        ),
+        "ak:realm:AB8ClU7V2Rh794lMmCuSv9UkhOs5PtqZpBoIa_KSscNI"
     );
 }
 

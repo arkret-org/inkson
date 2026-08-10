@@ -5,7 +5,7 @@ const AGENT_EVIDENCE_CACHE_MAX: usize = 4096;
 impl LocalStateStore {
     pub fn cached_agent_signer_evidence_for_agent(
         &self,
-        agent_id: &arkret_sdk::ActorId,
+        agent_id: &arkret_sdk::DidCoreId,
     ) -> Vec<CachedAgentSignerEvidence> {
         self.load()
             .agent_signer_evidence
@@ -17,7 +17,7 @@ impl LocalStateStore {
 
     pub fn cached_agent_signer_evidence(
         &self,
-        agent_id: &arkret_sdk::ActorId,
+        agent_id: &arkret_sdk::DidCoreId,
         verification_method: &arkret_sdk::DidUrl,
     ) -> Vec<CachedAgentSignerEvidence> {
         self.load()

@@ -31,7 +31,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
         arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AeI0Z4D734iPt9RpF51PAg0CRjLSQmxPqv9NgUmBJiQi").unwrap();
-    let service_id = arkret_sdk::Did::new("did:web:server.local").unwrap();
+    let service_id = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap();
     let items = vec![arkret_sdk::SnapshotMaterializedItem {
         kind: "realm".to_owned(),
         id: realm_id.to_string(),
@@ -94,7 +94,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
 #[test]
 fn inkson_accepts_server_contract_payloads() {
     let describe = parse_server_description(json!({
-        "service_id": "did:web:server.local",
+        "service_id": "ak:did_core:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -156,7 +156,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
 
     let identity: inkson::models::IdentityDescribeOutcome = serde_json::from_value(json!({
-        "service_id": "did:web:server.local",
+        "service_id": "ak:did_core:web:server.local",
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
         "protocol_version": "1.0",
@@ -180,7 +180,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
 
     let sync_describe: arkret_sdk::ServiceDescribe = serde_json::from_value(json!({
-        "service_id": "did:web:server.local",
+        "service_id": "ak:did_core:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -226,7 +226,7 @@ fn inkson_accepts_server_contract_payloads() {
     );
 
     let directory: inkson::models::ServiceDescribe = serde_json::from_value(json!({
-        "service_id": "did:web:server.local",
+        "service_id": "ak:did_core:web:server.local",
         "trust_domain": "ak:trust_domain:server.local",
         "service_kind": "directory_service",
         "protocol_version": "1.0",
@@ -278,7 +278,7 @@ fn inkson_accepts_server_contract_payloads() {
         "join_rule": "public",
         "join_candidates": [{
             "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
-            "service_id": "did:web:server.local",
+            "service_id": "ak:did_core:web:server.local",
             "service_kind": "principal_server",
             "role": "primary",
             "endpoint": "http://server",
@@ -358,7 +358,7 @@ fn inkson_accepts_server_contract_payloads() {
             "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
             "schema": arkret_wire::SchemaId::CAPABILITY_V1,
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "issuer": "did:web:server.local",
+            "issuer": "ak:did_core:web:server.local",
             "subject": "did:web:alice.example",
             "issuer_authority_refs": [{
                 "kind": "realm_root",
@@ -497,7 +497,7 @@ fn inkson_accepts_server_contract_payloads() {
 #[test]
 fn server_description_gates_event_envelope_write_plane() {
     let events_ready = parse_server_description(json!({
-        "service_id": "did:web:soland.local",
+        "service_id": "ak:did_core:web:soland.local",
         "trust_domain": "ak:trust_domain:soland.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -538,7 +538,7 @@ fn server_description_gates_event_envelope_write_plane() {
     )
     .unwrap();
     let described_with_external_compat_surface = parse_server_description(json!({
-        "service_id": "did:web:local.host",
+        "service_id": "ak:did_core:web:local.host",
         "trust_domain": "ak:trust_domain:local.host",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -589,7 +589,7 @@ fn server_description_gates_event_envelope_write_plane() {
     // This is the spec-correct fail-closed behaviour for v2.
     assert!(
         parse_server_description(json!({
-            "service_id": "did:web:minimal.local",
+            "service_id": "ak:did_core:web:minimal.local",
             "service_kind": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
@@ -602,7 +602,7 @@ fn server_description_gates_event_envelope_write_plane() {
     // A v2-shaped payload that still omits the event write requirements is
     // accepted by the SDK parser but flagged by the inkson helpers.
     let events_missing = parse_server_description(json!({
-        "service_id": "did:web:minimal.local",
+        "service_id": "ak:did_core:web:minimal.local",
         "trust_domain": "ak:trust_domain:minimal.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -704,7 +704,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 #[test]
 fn account_data_canonical_contact_and_realm_remark_keys_contract() {
     assert_eq!(
-        realm_remark_account_data_key("ak:realm:contract"),
+        realm_remark_account_data_key("ak:realm:AWBsC7hBNqnZ5M_TybXfFGKJokXyNzSLp3vORrEQnNLE"),
         "ak.contacts.realm.ak:realm:contract"
     );
     assert_eq!(
@@ -737,7 +737,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
 
     let secret = "Alice from Ops Private";
     let contact_remark = ContactRemark::new(
-        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
         secret,
         chrono::Utc::now(),
     );
@@ -776,7 +776,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         results: vec![json!({
             "kind": "message",
             "space_id": "ak:space:contract",
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "content": {"body": "hello"}
         })],
         next_cursor: None,
@@ -792,7 +792,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             alias: None,
             title: Some("Contract Realm".to_owned()),
             avatar_blob_ref: None,
-            organization_did: None,
+            organization_principal_id: None,
             join_rule: Some("public".to_owned()),
             member_count_bucket: Some(arkret_models_discovery::RealmMemberCountBucket::Bucket(
                 arkret_models_discovery::RealmMemberCountBucketLabel::OneToTen,
@@ -852,7 +852,7 @@ fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
 
     let encrypted = alice
         .encrypt_message(
-            "ak:message:contract-1",
+            "ak:message:A10jpjj6ScpTkLqE508SW4sm_E2frv4jFA-B0WD69I1A",
             br#"{"content":{"kind":"ak.content.text","body":"hello via MLS"}}"#,
         )
         .unwrap();

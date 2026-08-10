@@ -592,7 +592,7 @@ mod tests {
                 signal,
             },
             &arkret_sdk::RealmId::new(TEST_REALM).unwrap(),
-            &arkret_sdk::Did::new(actor).unwrap(),
+            &crate::mls_api_helpers::principal_core_id(actor).unwrap(),
             &arkret_sdk::DeviceId::new(device).unwrap(),
             crate::signal::SignalSequence::new(seq),
         )
@@ -611,7 +611,7 @@ mod tests {
             arkret_sdk::CallSignalData::Invite(_)
         ));
         assert_eq!(decoded.call_id, TEST_CALL);
-        assert_eq!(decoded.sender_actor, PEER_ACTOR);
+        assert_eq!(decoded.sender_actor, "ak:did_core:web:bob.example");
         assert_eq!(decoded.sender_device, PEER_DEVICE);
         assert_eq!(decoded.realm_id, TEST_REALM);
         assert!(matches!(
@@ -715,7 +715,9 @@ mod tests {
         let kick = decoded(
             arkret_sdk::CallSignalData::Moderation(arkret_sdk::CallModerationSignalData {
                 action: arkret_sdk::CallModerationAction::Kick,
-                target_actor_id: Some(arkret_sdk::Did::new("did:web:carol").unwrap()),
+                target_actor_id: Some(
+                    crate::mls_api_helpers::principal_core_id("did:web:carol").unwrap(),
+                ),
                 target_device_id: Some(
                     arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-00000000000c")
                         .unwrap(),
@@ -730,7 +732,9 @@ mod tests {
                 audio_muted: true,
                 video_muted: false,
                 changed_by: arkret_sdk::MuteChangedBy::Moderator,
-                target_actor_id: Some(arkret_sdk::Did::new("did:web:carol").unwrap()),
+                target_actor_id: Some(
+                    crate::mls_api_helpers::principal_core_id("did:web:carol").unwrap(),
+                ),
                 target_device_id: Some(
                     arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-00000000000c")
                         .unwrap(),
@@ -821,7 +825,9 @@ mod tests {
         let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
         assert!(verify_decoded_proof(&decoded, &key));
         match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
-            RouteDecision::Ring(info) => assert_eq!(info.peer_actor, actor),
+            RouteDecision::Ring(info) => {
+                assert_eq!(info.peer_actor, "ak:did_core:web:caller.example")
+            }
             other => panic!("expected Ring, got {other:?}"),
         }
     }

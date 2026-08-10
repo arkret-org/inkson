@@ -299,7 +299,7 @@ pub async fn author_pairing_request_body(
         }
     }
 
-    let principal = arkret_sdk::Did::new(
+    let principal = arkret_sdk::DidFullId::new(
         crate::secure_key_store::active_device_seed_scope()
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| anyhow::anyhow!("no active principal can approve device pairing"))?,
@@ -320,8 +320,9 @@ pub async fn author_pairing_request_body(
         _ => anyhow::bail!("accepted-device target attestation must use a base64url signature"),
     };
     let created_at = chrono::Utc::now();
+    let principal_actor = arkret_sdk::project_full_id_to_core_id(&principal)?;
     let authorize_payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
-        principal.clone(),
+        principal_actor.clone(),
         attestation.device_id.clone(),
         arkret_sdk::NonEmptyString::new(attestation.device_public_key.as_str().to_owned())
             .map_err(anyhow::Error::msg)?,
@@ -337,7 +338,8 @@ pub async fn author_pairing_request_body(
     )?
     .attach_signature(device_signature)?;
     let http = api.sdk_http_client()?;
-    let realm_id = crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
+    let realm_id =
+        crate::identity::principal_control::resolve_accepted(&http, &principal_actor).await?;
     let authorize = crate::operation::TypedOperationBuilder::new::<
         arkret_sdk::event_spec::DeviceAuthorize,
     >(realm_id.as_str(), principal.as_str(), authorize_payload)
@@ -405,7 +407,7 @@ pub async fn author_pairing_request_body(
 /// and its target-owned attestation binding.
 pub async fn verify_authorized_pairing_event(
     http: &arkret_sdk::http_client::Client,
-    principal: &arkret_sdk::Did,
+    principal: &arkret_sdk::DidFullId,
     outcome: &arkret_sdk::DevicePairingStatusOutcome,
     attestation: &arkret_sdk::DevicePairingTargetAttestation,
 ) -> anyhow::Result<arkret_sdk::Event> {
@@ -435,14 +437,13 @@ pub async fn verify_authorized_pairing_event(
         .find(|event| &event.event_id == event_ref)
         .ok_or_else(|| anyhow::anyhow!("authorized device Event is not accepted"))?;
     event.verify_event_id_matches_content()?;
-    let principal_actor =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(principal)?);
+    let principal_actor = arkret_sdk::project_full_id_to_core_id(principal)?;
     if event.kind != arkret_sdk::EventKind::DeviceAuthorize || event.actor_id != principal_actor {
         anyhow::bail!(
             "authorized pairing status does not reference this principal's authorize Event"
         );
     }
-    let pcr = crate::identity::principal_control::resolve_accepted(http, principal).await?;
+    let pcr = crate::identity::principal_control::resolve_accepted(http, &principal_actor).await?;
     if event.realm_id != pcr {
         anyhow::bail!("authorized pairing Event is outside the principal control Realm");
     }
@@ -456,7 +457,7 @@ pub async fn verify_authorized_pairing_event(
     }
     let payload: arkret_sdk::DeviceAuthorizePayload =
         serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-    if payload.principal_id != *principal
+    if payload.principal_id != principal_actor
         || payload.device_id != attestation.device_id
         || payload.device_public_key.as_str() != attestation.device_public_key.as_str()
         || payload.hpke_key != attestation.hpke_key

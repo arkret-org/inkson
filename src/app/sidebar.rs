@@ -234,7 +234,7 @@ pub(super) fn toggle_sidebar_contact_pin(
     base_url: String,
     api_token: String,
 ) {
-    let Ok(actor_did) = arkret_sdk::Did::new(actor_id.clone()) else {
+    let Ok(actor_did) = crate::mls_api_helpers::principal_core_id(&actor_id) else {
         return;
     };
     let next = crate::account_data::ContactRemark::with_pinned_preserving_fields(

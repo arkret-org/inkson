@@ -226,7 +226,6 @@ fn generate_account_mls_secret() -> Result<String, SecureKeyStoreError> {
 pub fn load_or_create_account_mls_secret(
     store: &dyn SecureKeyStore,
     actor_id: &str,
-    _device_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
     let actor = actor_id.trim();
     if actor.is_empty() {
@@ -240,18 +239,6 @@ pub fn load_or_create_account_mls_secret(
     let secret = generate_account_mls_secret()?;
     store_account_mls_secret(store, actor, &secret)?;
     Ok(secret)
-}
-
-/// Load-or-create the snapshot secret for `(actor, device)`.
-///
-/// The `device_id` parameter is retained for source compatibility; the secret
-/// is account-scoped and shared by every device.
-pub fn load_or_create_device_snapshot_secret(
-    store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
-) -> Result<String, SecureKeyStoreError> {
-    load_or_create_account_mls_secret(store, actor_id, device_id)
 }
 
 pub fn mls_key_package_identity_state_key(
@@ -444,7 +431,6 @@ pub fn load_device_snapshot_secret(
 pub fn prepare_account_mls_secret_rotation(
     store: &dyn SecureKeyStore,
     actor_id: &str,
-    device_id: &str,
     snapshots: &BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<AccountMlsSecretRotation, MlsRuntimeError> {
     let actor = actor_id.trim();
@@ -457,7 +443,7 @@ pub fn prepare_account_mls_secret_rotation(
         match load_account_mls_secret(store, actor).map_err(MlsRuntimeError::DeviceSecret)? {
             Some(secret) => secret,
             None => {
-                let _ = load_or_create_account_mls_secret(store, actor, device_id)
+                let _ = load_or_create_account_mls_secret(store, actor)
                     .map_err(MlsRuntimeError::DeviceSecret)?;
                 load_account_mls_secret(store, actor)
                     .map_err(MlsRuntimeError::DeviceSecret)?

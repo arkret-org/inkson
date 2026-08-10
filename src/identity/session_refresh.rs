@@ -553,7 +553,7 @@ fn session_grant_state_from_persisted(
         .grant_expires_at
         .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
     Ok(SessionGrantState {
-        principal_id: arkret_sdk::CoreId::new(grant.principal_id.trim().to_owned())
+        principal_id: arkret_sdk::DidCoreId::new(grant.principal_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid refresh principal_id: {error}"))?,
         device_id: Some(
             arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
@@ -622,11 +622,11 @@ fn mint_session_grant_refresh_proof(
     let principal_id = required_trimmed(&grant.principal_id, "principal_id")?;
     let device_id = required_trimmed(&grant.device_id, "device_id")?;
     let audience = required_trimmed(&grant.audience, "audience")?;
-    let principal_core = arkret_sdk::CoreId::new(principal_id.to_owned())
+    let principal_core = arkret_sdk::DidCoreId::new(principal_id.to_owned())
         .map_err(|error| anyhow::anyhow!("soft logout restore principal_id: {error}"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
-    let principal_full_id = arkret_sdk::FullId::new(signer.signer_did().to_owned())
+    let principal_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())
         .map_err(|error| anyhow::anyhow!("soft logout restore signer full_id: {error}"))?;
     if arkret_sdk::project_full_id_to_core_id(&principal_full_id)? != principal_core {
         anyhow::bail!("active signer full_id does not project to the refresh principal_id");
@@ -681,9 +681,9 @@ fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> 
     Ok(value)
 }
 
-fn session_audience(value: &str) -> anyhow::Result<arkret_sdk::ServiceId> {
+fn session_audience(value: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
     let value = required_trimmed(value, "audience")?;
-    arkret_sdk::ServiceId::new(value.to_owned())
+    arkret_sdk::DidCoreId::new(value.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid session audience service core_id: {error}"))
 }
 
@@ -734,7 +734,7 @@ mod tests {
 
     fn test_grant_state() -> SessionGrantState {
         SessionGrantState {
-            principal_id: arkret_sdk::CoreId::new(
+            principal_id: arkret_sdk::DidCoreId::new(
                 "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
             )
             .unwrap(),
@@ -750,7 +750,7 @@ mod tests {
             .unwrap(),
             grant_jwt: "grant.jwt.signature".to_owned(),
             expires_at: Utc::now() + chrono::Duration::hours(1),
-            audience: arkret_sdk::ServiceId::new(
+            audience: arkret_sdk::DidCoreId::new(
                 "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
             )
             .unwrap(),

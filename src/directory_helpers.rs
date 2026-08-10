@@ -38,14 +38,14 @@ pub(crate) fn resolve_handle_request_body(
     };
     let expected_did = match non_empty(context.expected_did) {
         Some(did) => Some(
-            arkret_sdk::Did::new(did.clone())
+            crate::mls_api_helpers::principal_core_id(&did)
                 .map_err(|err| anyhow::anyhow!("invalid expected_did `{did}`: {err}"))?,
         ),
         None => None,
     };
     let requester = match non_empty(context.requester) {
         Some(did) => Some(
-            arkret_sdk::Did::new(did.clone())
+            crate::mls_api_helpers::principal_core_id(&did)
                 .map_err(|err| anyhow::anyhow!("invalid requester `{did}`: {err}"))?,
         ),
         None => None,
@@ -60,7 +60,7 @@ pub(crate) fn resolve_handle_request_body(
     };
     Ok(arkret_models_discovery::DirectoryResolveHandleRequestBody {
         handle: handle.to_owned(),
-        expected_did,
+        expected_principal_id: expected_did,
         proof_challenge: non_empty(context.proof_challenge),
         claim_presentations: Vec::new(),
         intent,

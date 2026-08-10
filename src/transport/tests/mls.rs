@@ -12,7 +12,7 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
     );
     let timestamp = Utc.timestamp_opt(1_774_310_400, 0).single().unwrap();
     let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
-        principal_id: arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         device_id: arkret_sdk::DeviceId::new(
             "ak:device:0196419b-0000-7000-8000-000000000001".to_owned(),
         )

@@ -15,31 +15,30 @@ use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
-    AgentSigningKeyBinding, Did, DidUrl, Event, GrantConstraint, GrantConstraintEffect,
-    GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState, NonEmptyString, OpaqueLocalId,
-    Proof, RealmId, RequestId,
+    AgentSigningKeyBinding, DidCoreId, DidFullId, DidUrl, Event, GrantConstraint,
+    GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
+    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
 
 pub fn build_agent_provision_event_draft(
-    controller_id: &Did,
+    controller_id: &DidCoreId,
     controller_realm_id: &RealmId,
-    agent_id: &Did,
+    agent_id: &DidCoreId,
     principal_control_realm_id: &RealmId,
     controller_authorization_ref: &DidUrl,
     agent_slug: &str,
     requested_scope_digest: &Hash,
 ) -> anyhow::Result<Event> {
     let created_at = crate::clock::now_utc();
-    let controller_actor_id =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
+    let controller_actor_id = controller_id.clone();
     let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
         controller_actor_id.as_str(),
         controller_realm_id.as_str(),
     )?;
     Ok(arkret_bootstrap::build_agent_provision_event_draft(
-        controller_id,
+        &controller_actor_id,
         controller_realm_id,
         agent_id,
         principal_control_realm_id,
@@ -379,7 +378,8 @@ pub fn build_agent_pairing_bootstrap_json(
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {
         arkret_base_url: base_url.to_owned(),
-        service_id: Did::new(service_id.trim().to_owned()).map_err(json_invalid_input)?,
+        service_id: arkret_sdk::DidCoreId::new(service_id.trim().to_owned())
+            .map_err(json_invalid_input)?,
         agent_id: outcome.agent_id.clone(),
         pairing_request_id: outcome.pairing_request_id.clone(),
         pairing_code: outcome.pairing_code.clone().unwrap_or_default(),
@@ -453,12 +453,11 @@ pub fn build_requested_scope_disclosure_for_pairing(
     key_state: &KeyState,
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
-    let controller_id = Did::new(controller_id.trim().to_owned())?;
+    let controller_id = DidFullId::new(controller_id.trim().to_owned())?;
     let agent_id = request.agent_id.clone();
     let controller_actor_id =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&controller_id)?);
-    let agent_actor_id =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&agent_id)?);
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&controller_id)?);
+    let agent_actor_id = agent_id.clone();
     if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }
@@ -479,15 +478,15 @@ pub fn build_requested_scope_disclosure_for_pairing(
     let requested_scope = key_state.requested_scope.clone();
     let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
         &agent_id,
-        &controller_id,
+        &controller_actor_id,
         &requested_scope,
     )?;
     if requested_scope_digest != key_state.requested_scope_digest {
         anyhow::bail!("agent key_state requested_scope digest does not match its trusted scope");
     }
-    let verifier_did = arkret_sdk::FullId::new(service_full_id.trim().to_owned())?;
+    let verifier_did = arkret_sdk::DidFullId::new(service_full_id.trim().to_owned())?;
     let verifier_service_id =
-        arkret_sdk::ServiceId::from(arkret_sdk::project_full_id_to_core_id(&verifier_did)?);
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&verifier_did)?);
     if request.proof_of_possession.audience != verifier_service_id {
         anyhow::bail!("runtime request audience does not match the current service");
     }
@@ -512,10 +511,10 @@ pub fn build_requested_scope_disclosure_for_pairing(
         schema: arkret_sdk::SchemaId::AgentRequestedScopeDisclosureV1,
         request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,
         agent_id,
-        controller_id,
+        controller_id: controller_actor_id,
         requested_scope,
         requested_scope_digest,
-        verifier_did,
+        verifier_service_id,
         audience: NonEmptyString::new("ak.gate.account.command.pair_agent_key")
             .map_err(anyhow::Error::msg)?,
         challenge: NonEmptyString::new(pairing_request_id.as_str().to_owned())
@@ -551,7 +550,7 @@ pub fn parse_runtime_key_approval_request(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeKeyApprovalSummary {
     pub pairing_request_id: OpaqueLocalId,
-    pub agent_id: Did,
+    pub agent_id: DidCoreId,
     pub verification_method: DidUrl,
     pub public_key_fingerprint: Hash,
     pub proof_expires_at: String,
@@ -615,14 +614,13 @@ pub fn build_agent_key_authorization_for_pairing(
     key_state: &KeyState,
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentKeyAuthorizationForPairing> {
-    let controller = Did::new(controller_id.trim().to_owned())?;
+    let controller = DidFullId::new(controller_id.trim().to_owned())?;
     let controller_actor_id =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&controller)?);
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&controller)?);
     if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }
-    let request_agent_actor_id =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&request.agent_id)?);
+    let request_agent_actor_id = request.agent_id.clone();
     if request_agent_actor_id != key_state.agent_id {
         anyhow::bail!("runtime request agent_id does not match this agent key state");
     }
@@ -655,12 +653,12 @@ pub fn build_agent_key_authorization_for_pairing(
     let pairing_digest =
         arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
             arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY,
-            &controller,
+            &controller_actor_id,
             &request.agent_id,
             &request.pairing_request_id,
             pairing_code,
             pairing_expires_at,
-            &arkret_sdk::ServiceId::new(service_id.trim().to_owned())?,
+            &arkret_sdk::DidCoreId::new(service_id.trim().to_owned())?,
             &request.proof_of_possession.runtime_key_binding_digest,
             &request.proof_of_possession,
         )?;
@@ -714,7 +712,7 @@ pub fn build_agent_key_authorization_for_pairing(
         .map_err(anyhow::Error::msg)?;
     let signing_key_binding_core =
         arkret_signatures::agent_evidence::prepare_agent_signing_key_binding_core(
-            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&request.agent_id)?),
+            request.agent_id.clone(),
             agent_key_id.clone(),
             request.verification_method.clone(),
             &request.public_key,
@@ -734,7 +732,7 @@ pub fn build_agent_key_authorization_for_pairing(
         verification_method: request.verification_method.clone(),
         public_key_digest: validated_runtime_public_key.authorization_digest,
         signing_key_binding_digest,
-        accountable_principal_id: controller.clone(),
+        accountable_principal_id: controller_actor_id.clone(),
         agent_key_scope: requested_scope,
         audience: vec![service_id.to_owned()],
         issued_at,
@@ -746,7 +744,7 @@ pub fn build_agent_key_authorization_for_pairing(
             evidence_ref: None,
             request_canonical_digest: Some(Hash::new(pairing_digest.as_str().to_owned())?),
             pairing_request_id: Some(request.pairing_request_id.clone()),
-            approved_by: Some(controller.clone()),
+            approved_by: Some(controller_actor_id.clone()),
         },
         supersedes,
         revocation_check_ref: None,
@@ -761,7 +759,7 @@ pub fn build_agent_key_authorization_for_pairing(
     let mut event = arkret_event_draft::build_agent_key_authorize_event(
         &payload,
         arkret_sdk::ScopeRef::Realm { realm_id },
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&request.agent_id)?),
+        request.agent_id.clone(),
         controller_actor_id,
         authorization_ref,
         1,
@@ -1065,8 +1063,8 @@ pub fn build_action_approve_payload(
         approval_id: format!("ak:agent_approval:{}", crate::operation::uuid_v7()),
         request_id: non_empty_field(request, "request_id"),
         draft_id: non_empty_field(request, "draft_id"),
-        agent_id: arkret_sdk::Did::new(agent_id.to_owned())?,
-        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+        agent_id: arkret_sdk::DidCoreId::new(agent_id.to_owned())?,
+        controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
         proposed_action: proposed_action.to_owned(),
         target: serde_json::from_value(target)?,
         approved_payload_digest: arkret_sdk::Hash::new(approved_payload_digest)?,
@@ -1091,14 +1089,14 @@ pub fn build_action_reject_payload(
         rejection_id: format!("ak:agent_rejection:{}", crate::operation::uuid_v7()),
         request_id: non_empty_field(request, "request_id"),
         draft_id: non_empty_field(request, "draft_id"),
-        agent_id: arkret_sdk::Did::new(
+        agent_id: arkret_sdk::DidCoreId::new(
             request
                 .get("agent_id")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_owned(),
         )?,
-        controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+        controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
         reason: reason
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -1122,7 +1120,7 @@ pub fn build_act_on_behalf_message_operation(
     let mut payload =
         arkret_sdk::MessageCreatePayload::with_content(strand_id_typed, "discussion", content);
     payload.agent_context = Some(arkret_sdk::MessageAgentContext {
-        agent_id: arkret_sdk::Did::new(agent_id.to_owned())?,
+        agent_id: arkret_sdk::DidCoreId::new(agent_id.to_owned())?,
         operator_or_controller: controller_id.to_owned(),
         execution_purpose: "act_on_behalf".to_owned(),
         authorization_ref: authorization_ref.to_owned(),

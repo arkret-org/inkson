@@ -496,12 +496,12 @@ mod tests {
 
     #[test]
     fn from_audit_policy_access_carries_late_recovery_original_event_id() {
-        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, EventId, RealmId};
+        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, DidFullId, EventId, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
             realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap(),
-            actor: Did::new("did:web:alice.example").unwrap(),
+            actor: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             access_kind: AccessKind::E2EELateRecovery,
             late_recovery_original_event_id: Some(
                 EventId::new("ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN").unwrap(),
@@ -519,12 +519,12 @@ mod tests {
 
     #[test]
     fn from_audit_policy_access_rejects_wrong_access_kind() {
-        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, Did, RealmId};
+        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, DidFullId, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
             realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap(),
-            actor: Did::new("did:web:alice.example").unwrap(),
+            actor: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             access_kind: AccessKind::Audit,
             late_recovery_original_event_id: None,
             observed_at: base,

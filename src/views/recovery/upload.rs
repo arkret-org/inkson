@@ -69,7 +69,7 @@ pub(crate) fn upload_recovery_key_account_backup(
         let session_for_sidecar = session.clone();
         let mut state_store = state_store;
         let result = with_authed_api(&base, session, |api| async move {
-            let actor_did = arkret_sdk::Did::new(actor.clone())?;
+            let actor_did = arkret_sdk::DidFullId::new(actor.clone())?;
             let http = api.sdk_http_client()?;
             let principal_control_realm_id =
                 crate::identity::principal_control::resolve_accepted(&http, &actor_did).await?;
@@ -82,12 +82,8 @@ pub(crate) fn upload_recovery_key_account_backup(
             )
             .await?;
             let secure = crate::secure_key_store::default_secure_key_store("inkson");
-            crate::mls::runtime::load_or_create_account_mls_secret(
-                secure.as_ref(),
-                &actor,
-                &device,
-            )
-            .map_err(|err| anyhow::anyhow!("ensure account MLS secret before backup: {err}"))?;
+            crate::mls::runtime::load_or_create_account_mls_secret(secure.as_ref(), &actor)
+                .map_err(|err| anyhow::anyhow!("ensure account MLS secret before backup: {err}"))?;
             let account_backup_id = Some(
                 crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                     &api,

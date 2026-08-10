@@ -46,10 +46,10 @@ pub(crate) fn upsert_participant(
     let Some(did) = normalize_participant_id(did) else {
         return;
     };
-    let is_self = did == account_did;
+    let is_self = same_principal_core(&did, account_did);
     if let Some(existing) = participants
         .iter_mut()
-        .find(|candidate| candidate.did == did)
+        .find(|candidate| same_principal_core(&candidate.did, &did))
     {
         existing.is_self |= is_self;
         if let Some((display_name, rank)) = display_name
@@ -91,20 +91,23 @@ pub(crate) fn participant_roster_rows(
         .collect::<std::collections::BTreeSet<_>>();
     let mut agents_by_controller =
         std::collections::BTreeMap::<String, Vec<SpaceParticipant>>::new();
-    for participant in participants
-        .iter()
-        .filter(|participant| participant.is_agent && visible_agent_dids.contains(&participant.did))
-    {
+    for participant in participants.iter().filter(|participant| {
+        participant.is_agent
+            && visible_agent_dids
+                .iter()
+                .any(|visible| same_principal_core(visible, &participant.did))
+    }) {
         let Some(metadata) = participant.agent_metadata.as_ref() else {
             continue;
         };
-        if metadata.controller_id.is_empty()
-            || !visible_dids.contains(metadata.controller_id.as_str())
-        {
+        let Some(controller_id) = visible_dids
+            .iter()
+            .find(|visible| same_principal_core(visible, &metadata.controller_id))
+        else {
             continue;
-        }
+        };
         agents_by_controller
-            .entry(metadata.controller_id.clone())
+            .entry((*controller_id).to_owned())
             .or_default()
             .push(participant.clone());
     }
@@ -125,7 +128,11 @@ pub(crate) fn participant_roster_rows(
 
     let mut rows = Vec::new();
     for participant in participants {
-        if participant.is_agent && !visible_agent_dids.contains(&participant.did) {
+        if participant.is_agent
+            && !visible_agent_dids
+                .iter()
+                .any(|visible| same_principal_core(visible, &participant.did))
+        {
             continue;
         }
         if grouped_agent_dids.contains(participant.did.as_str()) {
@@ -174,8 +181,11 @@ pub(crate) fn space_participants(
     let mut participants = Vec::new();
 
     for row in crate::views::member_display::realm_member_roster(projection) {
-        let is_self = row.actor_id.trim() == account_did.trim()
-            || row.subject_id.as_deref().map(str::trim) == Some(account_did.trim());
+        let is_self = same_principal_core(&row.actor_id, account_did)
+            || row
+                .subject_id
+                .as_deref()
+                .is_some_and(|subject| same_principal_core(subject, account_did));
         let display =
             crate::views::member_display::resolve_member_display(state_store, realm_id, &row);
         upsert_participant(
@@ -383,7 +393,7 @@ pub(crate) fn mention_candidate_for_participant(
         let selector = metadata.and_then(|metadata| {
             if metadata.agent_slug.trim().is_empty() {
                 None
-            } else if metadata.controller_id.trim() == account_did.trim() {
+            } else if same_principal_core(&metadata.controller_id, account_did) {
                 Some(format!("me/{}", metadata.agent_slug.trim()))
             } else {
                 agent_selector_label(participant)

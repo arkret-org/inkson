@@ -196,7 +196,7 @@ pub fn build_call_recording_start(
     let payload = arkret_sdk::CallRecordingStartPayload {
         call_id: arkret_sdk::CallId::new(call_id.to_owned())?,
         recording_id: arkret_sdk::CallRecordingId::new(recording_id.to_owned())?,
-        recording_agent: arkret_sdk::Did::new(actor.to_owned())?,
+        recording_agent: crate::mls_api_helpers::principal_core_id(actor)?,
         capture_kind,
         mode,
         visible_notice: arkret_sdk::VisibleCaptureNotice,
@@ -278,7 +278,7 @@ mod tests {
         .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.call.recording.start");
-        assert_eq!(op.payload["recording_agent"], "did:web:alice");
+        assert_eq!(op.payload["recording_agent"], "ak:did_core:web:alice");
         assert_eq!(op.payload["capture_kind"], "recording");
         assert_eq!(op.payload["mode"], "audio_video");
         assert_eq!(op.payload["visible_notice"], true);
@@ -341,7 +341,7 @@ mod tests {
             signal,
         }
         .to_plaintext(
-            &arkret_sdk::Did::new(TEST_ACTOR).unwrap(),
+            &crate::mls_api_helpers::principal_core_id(TEST_ACTOR).unwrap(),
             crate::signal::SignalSequence::new(seq),
         )
         .expect("call signal plaintext must encode");

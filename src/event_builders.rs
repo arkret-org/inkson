@@ -273,8 +273,8 @@ pub fn build_realm_bootstrap_events(
         BindingScope, BindingSource, DeliveryMode, MemberDeliveryBinding, RecipientServiceKind,
     };
     let creator_delivery_binding = MemberDeliveryBinding {
-        recipient_service_id: arkret_sdk::ServiceId::from(arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::Did::new(notary_did.to_owned())
+        recipient_service_id: arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::DidFullId::new(notary_did.to_owned())
                 .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
         )?),
         recipient_service_kind: RecipientServiceKind::PrincipalServer,
@@ -565,8 +565,9 @@ pub fn build_managed_agent_pcr_create_event(
     let created_at = event_timestamp();
     let payload = arkret_bootstrap::build_managed_agent_pcr_create_payload(
         arkret_bootstrap::ManagedAgentPcrCreatePayloadInput {
-            agent_id: arkret_sdk::Did::new(agent_id.to_owned())?,
-            controller_id: arkret_sdk::Did::new(controller_id.to_owned())?,
+            agent_full_id: arkret_sdk::DidFullId::new(agent_id.to_owned())?,
+            agent_id: crate::mls_api_helpers::principal_core_id(agent_id)?,
+            controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
             trust_domain: arkret_sdk::TypedTrustDomainId::new(trust_domain.to_owned())?,
             capability_action_registry_digest:
@@ -615,8 +616,8 @@ pub fn build_managed_agent_pcr_bootstrap_events(
 /// resolver's verbatim authoring material.  All identifiers are derived from
 /// the finalized Event bytes; no service allocation or local UUID participates.
 pub fn build_direct_conversation_founding_events(
-    founder_id: &arkret_sdk::Did,
-    peer_id: &arkret_sdk::Did,
+    founder_id: &arkret_sdk::DidFullId,
+    peer_id: &arkret_sdk::DidFullId,
     input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     let created_at = event_timestamp();
@@ -641,8 +642,8 @@ pub fn build_direct_conversation_founding_events(
 
     let realm_id = create.realm_id.clone();
     let founder_actor =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
-    let peer_actor = arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(peer_id)?);
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
+    let peer_actor = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(peer_id)?);
     let membership = arkret_sdk::direct_conversation_peer_membership_bootstrap(
         realm_id.clone(),
         &founder_actor,
@@ -664,7 +665,7 @@ pub fn build_direct_conversation_founding_events(
 
     let strand_payload = arkret_sdk::direct_conversation_main_strand_create_payload(
         realm_id,
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?),
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?),
         created_at,
     );
     let mut strand = TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(
@@ -726,7 +727,7 @@ fn build_realm_delivery_binding_policy(
 ) -> anyhow::Result<arkret_sdk::RealmDeliveryBindingPolicyPayload> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| anyhow::anyhow!("invalid realm_id for delivery_binding_policy: {err:?}"))?;
-    let recipient_service = arkret_sdk::Did::new(notary_did.to_owned())
+    let recipient_service = arkret_sdk::DidFullId::new(notary_did.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid delivery binding recipient service DID: {err}"))?;
     Ok(arkret_sdk::RealmDeliveryBindingPolicyPayload {
         realm_id: Some(realm_id),
@@ -786,8 +787,9 @@ fn realm_genesis_notary(
     notary_did: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
     use arkret_sdk::NotaryProfile;
-    let notary_did = arkret_sdk::Did::new(notary_did.to_owned())
+    let notary_did = arkret_sdk::DidFullId::new(notary_did.to_owned())
         .map_err(|e| anyhow::anyhow!("Realm notary DID `{notary_did}` invalid: {e}"))?;
+    let notary_core_id = crate::mls_api_helpers::principal_core_id(notary_did.as_str())?;
     // Exhaustive over the profile enum: `Realm::validate_kind_invariants`
     // rejects a `notary_profile` that disagrees with `notary.kind`, so the
     // mapping must not have a catch-all arm that silently lands on single_did.
@@ -797,12 +799,12 @@ fn realm_genesis_notary(
             // forensic-attribution mode is `quorum_intersection`.
             arkret_sdk::NotaryValue::Threshold {
                 threshold: 1,
-                members: vec![notary_did.clone()],
+                members: vec![notary_core_id.clone()],
                 forensic_attribution: arkret_sdk::ForensicAttribution::QuorumIntersection,
             }
         }
         NotaryProfile::OpenSet => arkret_sdk::NotaryValue::OpenSet {
-            members: vec![notary_did.clone()],
+            members: vec![notary_core_id],
         },
         NotaryProfile::Mixed => arkret_sdk::NotaryValue::Mixed {
             did: notary_did.clone(),
@@ -842,9 +844,9 @@ fn realm_genesis_notary(
     Ok(notary)
 }
 
-/// Parse a client-derived notary DID string into the SDK [`arkret_sdk::Did`].
-fn parse_derived_did(did: &str) -> anyhow::Result<arkret_sdk::Did> {
-    arkret_sdk::Did::new(did.to_owned())
+/// Parse a client-derived notary DID string into the SDK [`arkret_sdk::DidFullId`].
+fn parse_derived_did(did: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
+    crate::mls_api_helpers::principal_core_id(did)
         .map_err(|e| anyhow::anyhow!("derived notary DID `{did}` invalid: {e}"))
 }
 
@@ -862,7 +864,7 @@ fn inferred_controller_organization_did(actor_id: &str) -> Option<String> {
     let actor_id = actor_id.trim();
     // Default `did:webvh` actors: org webvh DID requires the org's own SCID,
     // which is not knowable client-side — fail closed.
-    if let Ok(did) = arkret_sdk::Did::new(actor_id.to_owned())
+    if let Ok(did) = arkret_sdk::DidFullId::new(actor_id.to_owned())
         && arkret_sdk::identity::did_webvh_parts(&did).is_some()
     {
         return None;
@@ -912,7 +914,7 @@ pub fn build_space_create_event(
     // effects copy.
     let space_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id for space.create: {e:?}"))?;
-    let space_created_by = arkret_sdk::ActorId::new(actor_id.to_owned())
+    let space_created_by = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|e| anyhow::anyhow!("invalid created_by core_id for space.create: {e:?}"))?;
     let mut space_object =
         arkret_sdk::Space::create_object(space_realm_id, kind, title, space_created_by);
@@ -1048,7 +1050,7 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
     let scope_ref = arkret_sdk::ScopeRef::Realm {
         realm_id: realm_id.clone(),
     };
-    let actor_id = arkret_sdk::ActorId::new(actor_id.trim().to_owned())?;
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
     let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")?;
     let mut event = arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)?
         .author(0, hlc, created_at)?;
@@ -1128,12 +1130,12 @@ pub fn build_realm_destroy_event(
 fn realm_authority_builder_context(
     realm_id: &arkret_sdk::RealmId,
     actor_id: &str,
-) -> anyhow::Result<(arkret_sdk::ScopeRef, arkret_sdk::Did, arkret_sdk::Hlc)> {
+) -> anyhow::Result<(arkret_sdk::ScopeRef, arkret_sdk::DidCoreId, arkret_sdk::Hlc)> {
     Ok((
         arkret_sdk::ScopeRef::Realm {
             realm_id: realm_id.clone(),
         },
-        arkret_sdk::Did::new(actor_id.to_owned())
+        crate::mls_api_helpers::principal_core_id(actor_id)
             .map_err(|error| anyhow::anyhow!("invalid Realm authority actor DID: {error}"))?,
         arkret_sdk::Hlc::new("000000000000-0000-00000000")
             .map_err(|error| anyhow::anyhow!("invalid authoring HLC placeholder: {error}"))?,
@@ -1311,7 +1313,7 @@ pub fn build_plaintext_visible_services_event(
         .map(|service| service.trim())
         .filter(|service| !service.is_empty())
         .map(|service| -> anyhow::Result<PlaintextVisibleService> {
-            let service_id = arkret_sdk::Did::new(service.to_owned()).map_err(|err| {
+            let service_id = crate::mls_api_helpers::principal_core_id(service).map_err(|err| {
                 anyhow::anyhow!("invalid plaintext service DID {service:?}: {err}")
             })?;
             Ok(PlaintextVisibleService::new(
@@ -1392,7 +1394,7 @@ fn build_member_state_transition_event_with_binding(
         "ban" => MembershipPayloadState::Ban,
         other => return Err(anyhow::anyhow!("unknown membership state {other}")),
     };
-    let member_did = arkret_sdk::ActorId::new(member_actor_id.to_owned())
+    let member_did = crate::mls_api_helpers::principal_core_id(member_actor_id)
         .map_err(|err| anyhow::anyhow!("member actor_id not a valid core_id: {err}"))?;
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's
     // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
@@ -1676,14 +1678,17 @@ mod notary_derivation_tests {
         )
         .unwrap();
         assert_eq!(notary["kind"], "single_did");
-        assert_eq!(notary["controller_organization"], "did:web:alice.example");
+        assert_eq!(
+            notary["controller_organization"],
+            "ak:did_core:web:alice.example"
+        );
         assert_eq!(
             notary["recovery_members"][0],
-            "did:web:alice.example:recovery:notary"
+            "ak:did_core:web:alice.example:recovery:notary"
         );
         assert_eq!(
             notary["recovery_controller_organizations"][0],
-            "did:web:alice.example:recovery"
+            "ak:did_core:web:alice.example:recovery"
         );
     }
 
@@ -1833,7 +1838,7 @@ mod notary_derivation_tests {
             "realm_id": realm,
             "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
             "patch": {
-                "controller_id": "did:web:bob.example",
+                "controller_id": "ak:did_core:web:bob.example",
                 "controller_epoch": 1
             },
             "successor_acceptance": "successor-detached-proof"

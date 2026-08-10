@@ -162,12 +162,9 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
         ));
     }
     for state in &decoded {
-        let secret = crate::mls::runtime::load_or_create_device_snapshot_secret(
-            secure_store,
-            &state.owner_id,
-            device_id,
-        )
-        .map_err(|error| anyhow!("prepare restored MLS snapshot secret: {error}"))?;
+        let secret =
+            crate::mls::runtime::load_or_create_account_mls_secret(secure_store, &state.owner_id)
+                .map_err(|error| anyhow!("prepare restored MLS snapshot secret: {error}"))?;
         if state.owner_id != actor_id {
             crate::mls::runtime::mark_account_mls_secret_verified(secure_store, &state.owner_id)
                 .map_err(|error| anyhow!("mark restored managed MLS secret verified: {error}"))?;
@@ -606,7 +603,7 @@ async fn fetch_authoritative_active_series(
     api: &crate::transport::TransportClient,
     actor_id: &str,
 ) -> Result<Vec<Value>> {
-    let actor = arkret_sdk::Did::new(actor_id.to_owned())
+    let actor = arkret_sdk::DidFullId::new(actor_id.to_owned())
         .map_err(|error| anyhow!("invalid backup actor_id: {error}"))?;
     let http = api.http();
     let realm_id = crate::identity::principal_control::resolve_accepted(http, &actor).await?;
@@ -681,8 +678,9 @@ async fn fetch_authoritative_active_series(
             serde_json::to_value(&event.payload)?,
         )
         .map_err(|error| anyhow!("accepted active-series Event is invalid: {error}"))?;
-        let actor_core = arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&actor)?);
-        if record.actor_id != actor || event.actor_id != actor_core {
+        let actor_core =
+            arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&actor)?);
+        if record.actor_id != actor_core || event.actor_id != actor_core {
             return Err(anyhow!(
                 "accepted active-series Event actor does not match its principal control realm"
             ));
@@ -771,32 +769,33 @@ async fn verify_active_series_range_completeness(
                 continue;
             }
         };
-        let issuer_core = match arkret_sdk::project_full_id_to_core_id(&payload.issuer) {
-            Ok(core) => core,
-            Err(error) => {
-                first_error.get_or_insert_with(|| {
-                    format!("range-completeness issuer full_id is invalid: {error}")
-                });
-                continue;
-            }
-        };
-        let issuer_actor = arkret_sdk::ActorId::from(issuer_core.clone());
-        if arkret_sdk::ServiceId::from(issuer_core) != describe.service_id
-            || attestation_event.actor_id != issuer_actor
-        {
+        let issuer_actor = payload.issuer.clone();
+        if issuer_actor != describe.service_id || attestation_event.actor_id != issuer_actor {
             first_error.get_or_insert_with(|| {
                 "active-series completeness issuer does not match the described service".to_owned()
             });
             continue;
         }
+        let issuer_full_id = attestation_event
+            .proofs
+            .first()
+            .and_then(|proof| proof.verification_method.as_str().split_once('#'))
+            .map(|(controller, _)| controller.to_owned())
+            .ok_or_else(|| anyhow!("range-completeness proof omits issuer DID fragment"))?;
+        let issuer_full_id = arkret_sdk::DidFullId::new(issuer_full_id)?;
+        if arkret_sdk::project_full_id_to_core_id(&issuer_full_id)? != issuer_actor {
+            return Err(anyhow!(
+                "range-completeness proof controller differs from issuer"
+            ));
+        }
         let document =
-            crate::mls::governance_proof::resolve_proof_signer_document(api, &payload.issuer)
+            crate::mls::governance_proof::resolve_proof_signer_document(api, &issuer_full_id)
                 .await
                 .map_err(anyhow::Error::msg)?;
         let mut resolver = crate::mls::governance_proof::StaticProofDidResolver::default();
         resolver
             .documents
-            .insert(payload.issuer.as_str().to_owned(), document);
+            .insert(issuer_full_id.as_str().to_owned(), document);
         let outer_verified = attestation_event.proofs.iter().all(|proof| {
             let Ok(mut context) = arkret_sdk::event_proof_verification_context_with_digest_suite(
                 attestation_event,
@@ -865,7 +864,7 @@ async fn verify_active_series_range_completeness(
             });
             continue;
         }
-        if !resolver.supports(&payload.issuer) {
+        if !resolver.supports(&issuer_full_id) {
             first_error.get_or_insert_with(|| {
                 "range-completeness issuer DID was not authority-resolved".to_owned()
             });

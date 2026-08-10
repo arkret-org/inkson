@@ -39,7 +39,7 @@ use arkret_sdk::identity::{
 };
 #[cfg(test)]
 use arkret_sdk::identity::{FreshnessProfile, FreshnessRequirement};
-use arkret_sdk::{Did, DidDocument, DidUrl, Hash, TypedTrustDomainId};
+use arkret_sdk::{DidDocument, DidFullId, DidUrl, Hash, TypedTrustDomainId};
 use chrono::{DateTime, Duration, Utc};
 
 /// Hard cap on persisted bindings per account.
@@ -157,7 +157,7 @@ impl DidBindingScope {
     /// resolution, so a reader cannot know it before the lookup.
     pub(crate) fn key(
         &self,
-        did: &Did,
+        did: &DidFullId,
         purpose: DidBindingPurpose,
         verification_method: Option<DidUrl>,
     ) -> VerifiedDidBindingKey {
@@ -368,16 +368,16 @@ impl VerifiedDidBindingStore for InksonDidBindingStore {
     }
 }
 
-/// Freshness an inkson *authority* call site demands.
+/// Freshness required only by an explicit registration-current call site.
 ///
 /// §5.4 derives this from a registered profile rather than letting a call site
 /// hand-write a window: `fresh_for_seconds` is simultaneously the
 /// `refresh_after` offset and the authority `max_age`, so the two cannot drift.
-/// The controller profile is the one that matches inkson's client-side triggers.
+/// Ordinary PCR authorization never calls this helper or a current DID resolver.
 #[cfg(test)]
-pub(crate) fn authority_freshness() -> FreshnessRequirement {
+pub(crate) fn registration_freshness() -> FreshnessRequirement {
     FreshnessProfile::high_tier(
-        arkret_sdk::DidFreshnessProfileId::AuthorityControllerV1,
+        arkret_sdk::DidFreshnessProfileId::RegistrationCurrentV1,
         Duration::minutes(BINDING_REFRESH_MINUTES),
         Some(Duration::days(BINDING_HARD_EXPIRY_DAYS)),
     )
@@ -391,7 +391,7 @@ mod tests {
 
     pub(crate) fn document(did: &str) -> DidDocument {
         DidDocument {
-            id: Did::new(did.to_owned()).expect("valid did"),
+            id: DidFullId::new(did.to_owned()).expect("valid did"),
             verification_methods: std::collections::BTreeMap::from([(
                 format!("{did}#key-1"),
                 "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_owned(),
@@ -644,7 +644,7 @@ mod tests {
         assert_eq!(hit.binding().status(), DidBindingStatus::Stale);
         assert!(
             !hit.binding()
-                .is_usable_for_authority(&authority_freshness(), now)
+                .is_usable_for_authority(&registration_freshness(), now)
         );
     }
 

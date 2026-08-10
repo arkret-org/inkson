@@ -120,9 +120,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         &reserved.did_operation,
     )
     .map_err(|error| anyhow!("reserved DID inception operation is invalid: {error}"))?;
-    if arkret_sdk::CoreId::from(arkret_sdk::project_full_id_to_core_id(
-        &validated.principal_id,
-    )?) != reserved.principal_id
+    if validated.principal_id != reserved.principal_id
         || validated.operation_digest != reserved.operation_digest
     {
         anyhow::bail!("reserved DID operation digest or principal does not match its checkpoint");
@@ -279,7 +277,7 @@ pub fn prepare_genesis_draft(
     hpke_key: String,
     device_signer: &crate::event_signer::InksonEventSigner,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
-    audience: arkret_sdk::ServiceId,
+    audience: arkret_sdk::DidCoreId,
 ) -> anyhow::Result<PendingPrincipalRegistration> {
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
     if checkpoint.stage != PendingPrincipalRegistrationStage::CustodyConfirmed {
@@ -316,7 +314,7 @@ pub fn prepare_genesis_draft(
         return Ok(checkpoint.clone());
     }
 
-    let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
+    let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.genesis_created_at)
         .context("persisted genesis creation time is invalid")?
         .with_timezone(&Utc);
@@ -365,7 +363,7 @@ pub struct IdentityBindingCompletion {
 /// generation.
 pub async fn ensure_principal_service_binding(
     http: &arkret_sdk::http_client::Client,
-    principal_id: &arkret_sdk::Did,
+    principal_id: &arkret_sdk::DidFullId,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<arkret_sdk::AcceptedAtServiceBinding> {
     let request_seed = format!(
@@ -378,7 +376,7 @@ pub async fn ensure_principal_service_binding(
     ))
     .map_err(anyhow::Error::msg)?;
     let principal_core =
-        arkret_sdk::PrincipalId::from(arkret_sdk::project_full_id_to_core_id(principal_id)?);
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(principal_id)?);
     let prepare_request = arkret_sdk::PrincipalServiceBindingPrepareRequestBody {
         request_id: request_id.clone(),
         expected_current_binding_digest: None,
@@ -521,7 +519,7 @@ pub async fn complete_account_handoff_binding(
     let register_outcome = account_client.account_register(&register_request).await?;
     garth::validate_identity_creation_outcome(&register_outcome, &register_request)?;
     let binding_receipt = register_outcome.binding_receipt.clone();
-    let checkpoint_full_id = arkret_sdk::FullId::new(checkpoint.did.clone())?;
+    let checkpoint_full_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
     if &binding_receipt.account_subject != expected_account_subject
         || binding_receipt.principal_id
             != arkret_sdk::project_full_id_to_core_id(&checkpoint_full_id)?
@@ -580,9 +578,21 @@ async fn verify_registration_terminal_evidence(
     receipt: &arkret_sdk::AccountBindingReceipt,
     account_client: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<()> {
+    let authority_full_id = arkret_sdk::DidFullId::new(
+        receipt
+            .proof
+            .verification_method
+            .as_str()
+            .split_once('#')
+            .map(|(controller, _)| controller.to_owned())
+            .context("Account Authority receipt proof omits DID fragment")?,
+    )?;
+    if arkret_sdk::project_full_id_to_core_id(&authority_full_id)? != receipt.account_authority_id {
+        anyhow::bail!("Account Authority receipt proof controller mismatch");
+    }
     let authority_history = crate::identity::history::fetch_complete_identity_history(
         account_client,
-        &receipt.account_authority_id,
+        &authority_full_id,
     )
     .await
     .context("fetch complete Account Authority DID history")?;
@@ -591,7 +601,7 @@ async fn verify_registration_terminal_evidence(
     garth::verify_binding_receipt_at_issuance(receipt, &authority_resolver)
         .map_err(|error| anyhow!("verify Account Authority receipt at issuance: {error}"))?;
 
-    let principal_id = arkret_sdk::Did::new(checkpoint.did.clone())?;
+    let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
     let principal_client =
         arkret_sdk::http_client::ClientBuilder::new(Url::parse(&checkpoint.principal_server_url)?)
             .allow_insecure_localhost()
@@ -627,7 +637,7 @@ async fn verify_registration_terminal_evidence(
         .identity_creation
         .as_ref()
         .context("identity-creation request lost its frozen registration")?;
-    if arkret_sdk::project_full_id_to_core_id(&validated.principal_id)? != receipt.principal_id
+    if validated.principal_id != receipt.principal_id
         || validated.operation_digest != receipt.operation_digest
         || validated.log_head_digest != receipt.head_event_digest
         || validated.did_version_id != registration.control_proof.did_version_id

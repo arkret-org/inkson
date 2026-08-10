@@ -885,7 +885,7 @@ fn request_fact_from_stored(
     Some(garth::projection::SidecarExchangeRequestFact {
         event_id: arkret_sdk::EventId::new(stored.request_event_id.clone()).ok()?,
         hlc: stored.request_event_hlc.clone(),
-        actor_id: arkret_sdk::Did::new(stored.controller_id.clone()).ok()?,
+        actor_id: crate::mls_api_helpers::principal_core_id(&stored.controller_id).ok()?,
         actor_seq: stored.request_event_actor_seq,
         event_digest: stored.request_event_digest.clone()?,
         exchange_id: stored.exchange_id.clone(),
@@ -992,16 +992,16 @@ fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
         .collect()
 }
 
-fn event_actor_full_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::FullId> {
+fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
     event.proofs.iter().find_map(|proof| {
         let controller = proof.verification_method.as_str().split_once('#')?.0;
-        let full_id = arkret_sdk::FullId::new(controller.to_owned()).ok()?;
+        let full_id = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
         (arkret_sdk::project_full_id_to_core_id(&full_id)
             .ok()
-            .map(arkret_sdk::ActorId::from)
+            .map(arkret_sdk::DidCoreId::from)
             .as_ref()
             == Some(&event.actor_id))
-        .then_some(full_id)
+        .then(|| event.actor_id.clone())
     })
 }
 
@@ -1361,7 +1361,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(hlc) = event.hlc.clone() else {
                     continue;
                 };
-                let Some(actor_full_id) = event_actor_full_id(&event) else {
+                let Some(actor_full_id) = event_actor_id(&event) else {
                     continue;
                 };
                 let exchange_key = (strand_id.clone(), binding.exchange_id.as_str().to_owned());
@@ -1417,7 +1417,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(hlc) = event.hlc.clone() else {
                     continue;
                 };
-                let Some(actor_full_id) = event_actor_full_id(&event) else {
+                let Some(actor_full_id) = event_actor_id(&event) else {
                     continue;
                 };
                 let exchange_key = (strand_id, control.exchange_id.as_str().to_owned());
@@ -1471,7 +1471,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 continue;
             };
             let (Ok(controller_did), Ok(exchange_id)) = (
-                arkret_sdk::Did::new(controller_id.to_owned()),
+                crate::mls_api_helpers::principal_core_id(controller_id),
                 arkret_sdk::AgentSidecarExchangeId::new(exchange_id_raw.clone()),
             ) else {
                 continue;
@@ -1817,7 +1817,7 @@ pub fn push_sidecar_display_mode(
     let context_ref = match (
         arkret_sdk::RealmId::new(session.source_realm_id.clone()),
         arkret_sdk::StrandId::new(session.source_strand_id.clone()),
-        arkret_sdk::Did::new(controller_id.clone()),
+        crate::mls_api_helpers::principal_core_id(&controller_id),
         arkret_sdk::DeviceId::new(device_id.clone()),
     ) {
         (Ok(realm_id), Ok(strand_id), Ok(controller_id), Ok(origin_device_id)) => {
@@ -1950,7 +1950,8 @@ mod tests {
     #[test]
     fn pending_reconciliation_is_not_ready() {
         let session = session(vec![arkret_sdk::PendingSidecarAccessReconciliationItem {
-            agent_id: arkret_sdk::Did::new("did:web:agents.example:assistant").unwrap(),
+            agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:assistant")
+                .unwrap(),
             provisioning_phase:
                 arkret_sdk::PendingSidecarAccessReconciliationStage::BackingScopeMembership,
             reason: arkret_sdk::NonEmptyString::new("membership_projection_pending").unwrap(),
@@ -2011,7 +2012,7 @@ mod tests {
         let session = session(Vec::new());
         let view_state = |mode, hlc: &str, device: &str| arkret_sdk::AgentSidecarViewState {
             schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
-            controller_id: arkret_sdk::Did::new(account).unwrap(),
+            controller_id: crate::mls_api_helpers::principal_core_id(account).unwrap(),
             sidecar_id: session.sidecar_id.clone(),
             context_ref: arkret_sdk::AgentSidecarStrandContextRef {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
@@ -2053,13 +2054,14 @@ mod tests {
         let realm = "ak:realm:AVMbYk6SunkGxvNL1uT9AigkdS6j5xko3u7tklJAzK1-";
         let other_realm = "ak:realm:AYJtJTaob5e3AuBrnCd-oA9WPc3ZrZyc-0GC98V_h0Qh";
         let projection = |realm_id: &str, exchange: &str| {
-            let coordinator = arkret_sdk::Did::new("did:web:agents.example:assistant").unwrap();
+            let coordinator =
+                arkret_sdk::DidCoreId::new("ak:did_core:web:agents.example:assistant").unwrap();
             let request_event =
                 arkret_sdk::EventId::new("ak:event:AZWFWsK0mBAgeYWLiO1LU1RYz_ZXWHWYNdJDwfzCxKCG")
                     .unwrap();
             arkret_sdk::AgentSidecarExchangeProjection {
                 schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
-                controller_id: arkret_sdk::Did::new(account).unwrap(),
+                controller_id: crate::mls_api_helpers::principal_core_id(account).unwrap(),
                 sidecar_id: arkret_sdk::SidecarId::new(
                     "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
                 )
@@ -2173,7 +2175,9 @@ mod tests {
             },
             source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
             client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
-            addressed_agent_ids: vec![arkret_sdk::Did::new(EXCHANGE_AGENT).unwrap()],
+            addressed_agent_ids: vec![
+                crate::mls_api_helpers::principal_core_id(EXCHANGE_AGENT).unwrap(),
+            ],
             completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
             coordinator_agent_id: None,
             source_frontier_anchor: None,
@@ -2210,7 +2214,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             7,
             arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2399,7 +2403,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::ActorId::new("ak:did_core:web:agent.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2512,7 +2516,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             2,
             arkret_sdk::Hlc::new("01970e589d21-0003-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2603,7 +2607,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::ActorId::new("ak:did_core:web:agent.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2669,7 +2673,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             7,
             arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2752,7 +2756,8 @@ mod tests {
         .unwrap();
         let response_event_id = arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap();
         cached.status = arkret_sdk::AgentSidecarExchangeStatus::Responding;
-        cached.participating_agent_ids = vec![arkret_sdk::Did::new(EXCHANGE_AGENT).unwrap()];
+        cached.participating_agent_ids =
+            vec![crate::mls_api_helpers::principal_core_id(EXCHANGE_AGENT).unwrap()];
         cached.user_facing_response_event_ids = vec![response_event_id.clone()];
         cached.folded_frontier = arkret_sdk::AgentSidecarExchangeFoldedFrontier {
             event_ids: vec![response_event_id.clone()],

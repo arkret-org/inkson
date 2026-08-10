@@ -277,12 +277,12 @@ fn calendar_editor_round_trips_the_complete_v1_schedule() {
         "call_id": "ak:call:AWXbZ-mBelWXBOM1haN1Q6WcwR_RscrylSZph2icMZ6y",
         "attendees": [
             {
-                "actor_id": "did:web:alice.example",
+                "actor_id": "ak:did_core:web:alice.example",
                 "role": "organizer",
                 "display_name_snapshot": "Alice"
             },
             {
-                "actor_id": "did:web:bob.example",
+                "actor_id": "ak:did_core:web:bob.example",
                 "role": "required",
                 "display_name_snapshot": "Bob"
             }
@@ -315,8 +315,8 @@ fn calendar_editor_rejects_duplicate_attendee_actor_ids() {
         tzdb_version: DEFAULT_CALENDAR_TZDB_VERSION.to_owned(),
         status: "confirmed".to_owned(),
         attendees_json: json!([
-            {"actor_id": "did:web:alice.example", "role": "organizer"},
-            {"actor_id": "did:web:alice.example", "role": "required"}
+            {"actor_id": "ak:did_core:web:alice.example", "role": "organizer"},
+            {"actor_id": "ak:did_core:web:alice.example", "role": "required"}
         ])
         .to_string(),
         ..CalendarCardFields::default()

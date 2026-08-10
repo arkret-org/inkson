@@ -46,7 +46,7 @@ pub async fn download_verify_and_apply_snapshot<R>(
     api: &TransportClient,
     store: &mut LocalStateStore,
     realm_id: &str,
-    service_id: &arkret_sdk::Did,
+    service_id: &arkret_sdk::DidCoreId,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<SnapshotBootstrapResult, SnapshotFallbackReason>
@@ -101,7 +101,7 @@ where
 pub fn verify_snapshot_package<R>(
     manifest: &arkret_sdk::SnapshotManifest,
     chunks: &[arkret_sdk::SnapshotChunkPayload],
-    service_id: &arkret_sdk::Did,
+    service_id: &arkret_sdk::DidCoreId,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<SnapshotBootstrapResult, SnapshotFallbackReason>
@@ -134,7 +134,7 @@ where
 
 pub fn verify_snapshot_signature_and_authority<R>(
     manifest: &arkret_sdk::SnapshotManifest,
-    service_id: &arkret_sdk::Did,
+    service_id: &arkret_sdk::DidCoreId,
     resolver: &R,
     now: DateTime<Utc>,
 ) -> Result<(), SnapshotFallbackReason>
@@ -167,14 +167,7 @@ where
         )
     })?;
     let proof = manifest.signature_as_proof();
-    let created_by_actor = arkret_sdk::ActorId::from(
-        arkret_sdk::project_full_id_to_core_id(&manifest.created_by).map_err(|error| {
-            SnapshotFallbackReason::new(
-                arkret_sdk::SnapshotValidationCode::SnapshotAuthorityUnverified.as_str(),
-                format!("snapshot created_by full_id is invalid: {error}"),
-            )
-        })?,
-    );
+    let created_by_actor = manifest.created_by.clone();
     let mut context = arkret_sdk::signatures::ProofVerificationContext::new(
         created_by_actor.clone(),
         expected_digest,

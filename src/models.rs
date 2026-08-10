@@ -56,8 +56,8 @@ pub fn direct_conversation_binding_state_wire(
     }
 }
 
-pub fn contact_peer_id(contact: &ContactListRow) -> &arkret_sdk::Did {
-    contact.peer.subject_id()
+pub fn contact_peer_id(contact: &ContactListRow) -> arkret_sdk::DidCoreId {
+    contact.peer.contact_actor_id()
 }
 
 pub fn contact_scope_wire(scope: ContactScope) -> &'static str {
@@ -190,7 +190,7 @@ pub fn service_is_v1_principal_server_ready(description: &ServiceDescribe) -> bo
 }
 
 // R35: `ak.identity.describe` body. The SDK's canonical type is
-// `IdentityDescription` (same fields, with `service_id: Did` validated on
+// `IdentityDescription` (same fields, with `service_id: DidCoreId` validated on
 // construction); the SDK's own `IdentityDescribeOutcome` is a transparent
 // newtype around it. We re-export the inner struct under the inkson-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
@@ -488,7 +488,7 @@ mod tests {
     fn contact_list_sidebar_fixture_decodes_direct_chat_targets() {
         let value = serde_json::json!({
             "contacts": [{
-                "peer": {"kind": "human", "principal_id": "did:web:bob.example"},
+                "peer": {"kind": "human", "principal_id": "ak:did_core:web:bob.example"},
                 "state": "accepted",
                 "next_prepare_input": {
                     "basis_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -506,8 +506,8 @@ mod tests {
                     "state": "found"
                 },
                 "agents": [{
-                    "agent_id": "did:web:agents.example:bob-helper",
-                    "controller_id": "did:web:bob.example",
+                    "agent_id": "ak:did_core:web:agents.example:bob-helper",
+                    "controller_id": "ak:did_core:web:bob.example",
                     "display_name": "Bob Helper",
                     "agent_slug": "helper",
                     "avatar_blob_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
@@ -532,7 +532,7 @@ mod tests {
         // renames.json rejection policy: the removed flat `{event_id,
         // sync_token, …}` shape MUST NOT decode — canonical-only parser.
         let value = serde_json::json!({
-            "event_id": "ak:event:removed",
+            "event_id": "ak:event:AIMXMvRgtsczspdHMyMNgDLk0MhursEZ9NBFfIYA6jyE",
             "status": "accepted",
             "sync_token": "sx:removed",
         });
@@ -583,36 +583,46 @@ mod tests {
     #[test]
     fn projection_realm_id_uses_space_home_realm() {
         let spaces = vec![
-            preview("ak:realm:root", RealmTreeNodeKind::Realm, "", None),
+            preview(
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
+                RealmTreeNodeKind::Realm,
+                "",
+                None,
+            ),
             preview(
                 "ak:space:child",
                 RealmTreeNodeKind::Space,
-                "ak:realm:root",
-                Some("ak:realm:root"),
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
+                Some("ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"),
             ),
         ];
 
         assert_eq!(
             projection_realm_id_for_node(&spaces, "ak:space:child"),
-            "ak:realm:root"
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
         );
     }
 
     #[test]
     fn projection_realm_id_climbs_parent_links_to_realm() {
         let spaces = vec![
-            preview("ak:realm:root", RealmTreeNodeKind::Realm, "", None),
+            preview(
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
+                RealmTreeNodeKind::Realm,
+                "",
+                None,
+            ),
             preview(
                 "ak:space:child",
                 RealmTreeNodeKind::Space,
                 "",
-                Some("ak:realm:root"),
+                Some("ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"),
             ),
         ];
 
         assert_eq!(
             projection_realm_id_for_node(&spaces, "ak:space:child"),
-            "ak:realm:root"
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
         );
     }
 
@@ -632,13 +642,13 @@ mod tests {
         // never touches.
         let value = serde_json::json!({
             "schema": SchemaId::INVITE_RECEIVE_POLICY_V1,
-            "subject_id": "did:web:me.example",
+            "subject_id": "ak:did_core:web:me.example",
             "holder_allowed_introduction_kinds": ["consent_grant", "locator_ref"],
             "explicit_address_behavior": "drop",
             "unknown_invites": "quarantine",
             "trusted_realm_ids": ["ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"],
-            "trusted_principal_services": ["did:web:ps.example"],
-            "denied_subjects": ["did:web:spammer.example"],
+            "trusted_principal_services": ["ak:did_core:web:ps.example"],
+            "denied_subjects": ["ak:did_core:web:spammer.example"],
             "disclosure": {"high_trust": "opaque", "low_trust": "opaque"},
         });
         let policy: super::InviteReceivePolicy =
@@ -649,7 +659,10 @@ mod tests {
         );
         // The trust lists survive a re-encode (no silent wipe on save).
         let re = serde_json::to_value(&policy).expect("re-encode policy");
-        assert_eq!(re["trusted_principal_services"][0], "did:web:ps.example");
+        assert_eq!(
+            re["trusted_principal_services"][0],
+            "ak:did_core:web:ps.example"
+        );
         assert_eq!(
             re["trusted_realm_ids"][0],
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
@@ -658,10 +671,10 @@ mod tests {
 
     #[test]
     fn default_invite_receive_policy_carries_schema_and_subject() {
-        let subject_id = arkret_sdk::Did::new("did:web:me.example").unwrap();
+        let subject_id = crate::mls_api_helpers::principal_core_id("did:web:me.example").unwrap();
         let policy = super::InviteReceivePolicy::spec_default(subject_id);
         assert_eq!(policy.schema, SchemaId::INVITE_RECEIVE_POLICY_V1);
-        assert_eq!(policy.subject_id.as_str(), "did:web:me.example");
+        assert_eq!(policy.subject_id.as_str(), "ak:did_core:web:me.example");
         assert_eq!(
             policy.explicit_address_behavior,
             super::InviteReceiveAction::Quarantine
@@ -673,7 +686,8 @@ mod tests {
     fn contact_row_invite_gate_uses_directional_contact_scopes() {
         let row = super::ContactListRow {
             peer: arkret_sdk::contact_operations::ContactPeer::Human {
-                principal_id: arkret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
+                principal_id: crate::mls_api_helpers::principal_core_id("did:web:bob.example")
+                    .unwrap(),
             },
             state: arkret_sdk::ContactState::Accepted,
             request_event_ref: None,
@@ -800,7 +814,7 @@ pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
 pub use arkret_models_collaboration::governance::authorization::GrantList;
 /// `POST /_arkret/self/moderation/report` response. soland emits the SDK
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
-/// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
+/// `routed_to: Vec<DidFullId>` — scalar DIDs only, no fragments, per
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
 pub use arkret_models_collaboration::governance::moderation::ModerationReportOutcome;
 pub use arkret_models_collaboration::objects::blob::BlobUploadOutcome;
@@ -902,7 +916,7 @@ impl From<arkret_models_discovery::DirectoryHandleResolutionOutcome> for Resolve
         // `did_document` field (this resolve endpoint never emits one), so it
         // is always `None` here — behavior-equivalent to the prior wire decode.
         Self {
-            did: outcome.did.as_str().to_owned(),
+            did: outcome.principal_id.as_str().to_owned(),
             handle: outcome.handle,
             did_document: None,
             verified: outcome.verified,
@@ -927,7 +941,7 @@ impl From<arkret_models_discovery::DirectoryHandleResolutionOutcome> for Resolve
 ///
 /// YOU-05-006: the former hand-rolled weakly-typed mirror (all-`String`
 /// fields) duplicated the SDK's authoritative strongly-typed model
-/// (`Did` / `Handle` / `DateTime<Utc>`) and had already drifted in field
+/// (`DidFullId` / `Handle` / `DateTime<Utc>`) and had already drifted in field
 /// declaration order. Re-export the SDK type; `subject_id` (principal
 /// DID) remains the ONLY authoritative field — the `*_at_time` fields
 /// are compose-time audit metadata only.

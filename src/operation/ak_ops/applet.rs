@@ -12,7 +12,7 @@
 use arkret_models_integration::{
     AppletBridgeErrorClass, AppletBridgeErrorPayload, AppletBridgeVisibilityScope,
 };
-use arkret_wire::{AppletId, AppletIdentifier, Did, NonEmptyString, RealmId};
+use arkret_wire::{AppletId, AppletIdentifier, DidFullId, NonEmptyString, RealmId};
 
 use super::TypedOperationBuilder;
 
@@ -53,10 +53,10 @@ pub fn applet_discovery(
 /// can stash it without re-parsing. Wire-breaking: plain strings
 /// outside these two forms are rejected.
 pub fn parse_applet_identifier(applet_id: &str) -> Result<AppletIdentifier, String> {
-    if applet_id.starts_with("did:") {
-        Did::new(applet_id)
-            .map(AppletIdentifier::Did)
-            .map_err(|e| format!("invalid applet DID: {e}"))
+    if applet_id.starts_with("did:") || applet_id.starts_with("ak:did_core:") {
+        crate::mls_api_helpers::principal_core_id(applet_id)
+            .map(AppletIdentifier::Service)
+            .map_err(|e| format!("invalid applet service identity: {e}"))
     } else if applet_id.starts_with("ak:applet:") {
         AppletId::new(applet_id)
             .map(AppletIdentifier::Cx)

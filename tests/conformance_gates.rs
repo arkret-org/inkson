@@ -317,7 +317,8 @@ fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
 /// key, it never selects a capability.
 fn test_auth_context() -> arkret_sdk::AuthContext {
     arkret_sdk::AuthContext {
-        did: arkret_sdk::Did::new(TEST_ACTOR_ID.to_owned()).expect("test actor DID is canonical"),
+        actor_id: arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example")
+            .expect("test actor core is canonical"),
         // `key_id` is the bare verification-method fragment (the schema
         // pattern forbids `#`), which is what `data_event_key_id_for`
         // produces from the active signer's device id.
@@ -361,10 +362,10 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
 
     // Correct envelope shape but an invalid Event identity token.
     let bogus = serde_json::json!({
-        "event_id": "ak:event:not-a-uuid",
+        "event_id": "ak:event:ARVsG4AMRBL8f5CJIY_5XgOEXn-Y-qGjMws333Urc-KI",
         "kind": "ak.realm.create",
         "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00.000Z",
         "prev_refs": [],
@@ -385,7 +386,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "event_id": "ak:event:AZEAhO4CFzelWMJKtLZI-HSeK3Nh28YP3M24_4uLoFAF",
         "kind": "ak.realm.create",
         "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00.000Z",
         "prev_refs": [],
@@ -936,7 +937,7 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
     )
     .expect("typed key-verification target")
     .single_recipient(
-        arkret_sdk::Did::new("did:web:bob.example").expect("fixture recipient"),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").expect("fixture recipient"),
         arkret_sdk::DeviceId::new(target_device).expect("fixture target device"),
     )
     .expect("build typed device-message request");
@@ -957,7 +958,7 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
         "kind": target["kind"],
         "sender_principal_id": TEST_ACTOR_ID,
         "sender_device_id": from_device,
-        "recipient_principal_id": "did:web:bob.example",
+        "recipient_principal_id": "ak:did_core:web:bob.example",
         "recipient_device_id": target_device,
         "sent_at": "2026-04-26T00:00:00.000Z",
         "expires_at": target["expires_at"],

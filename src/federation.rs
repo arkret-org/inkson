@@ -217,7 +217,7 @@ mod tests {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
         let record = WellKnownArkretServer {
-            service_id: arkret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap(),
+            service_id: crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
             base_url: "https://bob.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
             endpoints: Vec::new(),
@@ -235,7 +235,7 @@ mod tests {
         let mut bundle = TrustBundle::new();
         bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
         let record = WellKnownArkretServer {
-            service_id: arkret_sdk::Did::new("did:web:eve.example".to_owned()).unwrap(),
+            service_id: crate::mls_api_helpers::principal_core_id("did:web:eve.example").unwrap(),
             base_url: "https://eve.example".to_owned(),
             protocol_versions: vec!["1.0".to_owned()],
             endpoints: Vec::new(),

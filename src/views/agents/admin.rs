@@ -243,7 +243,8 @@ mod directory_refresh_tests {
         runtime_state: AgentRuntimeState,
     ) -> arkret_sdk::AgentProjection {
         arkret_sdk::AgentProjection {
-            agent_id: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
+            agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
+                .unwrap(),
             display_name: None,
             slug: "summary".to_owned(),
             avatar_blob_ref: None,
@@ -348,15 +349,15 @@ mod directory_refresh_tests {
         status: AgentLifecycleState,
         runtime_state: AgentRuntimeState,
     ) -> AgentView {
-        let agent_id = arkret_sdk::ActorId::from(
+        let agent_id = arkret_sdk::DidCoreId::from(
             arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::FullId::new("did:web:agents.example:summary").unwrap(),
+                &arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
             )
             .unwrap(),
         );
-        let controller_id = arkret_sdk::ActorId::from(
+        let controller_id = arkret_sdk::DidCoreId::from(
             arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::FullId::new("did:web:alice.example").unwrap(),
+                &arkret_sdk::DidFullId::new("did:web:alice.example").unwrap(),
             )
             .unwrap(),
         );
@@ -569,10 +570,7 @@ fn apply_renewed_pairing(
         .key_state
         .as_mut()
         .ok_or("renewed Agent details are not loaded")?;
-    let outcome_agent_actor_id = arkret_sdk::ActorId::from(
-        arkret_sdk::project_full_id_to_core_id(&outcome.agent_id)
-            .map_err(|_| "renewed pairing response carried an invalid Agent full_id")?,
-    );
+    let outcome_agent_actor_id = outcome.agent_id.clone();
     if key_state.agent_id != outcome_agent_actor_id
         || key_state.principal_control_realm_id != outcome.principal_control_realm_id
         || key_state.controller_authorization_ref != outcome.controller_authorization_ref
@@ -767,12 +765,12 @@ fn spawn_set_agent_enabled(
             );
             return;
         };
-        let selected_agent_actor_id = arkret_sdk::FullId::new(id.clone())
+        let selected_agent_actor_id = arkret_sdk::DidFullId::new(id.clone())
             .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-            .map(arkret_sdk::ActorId::from);
-        let selected_controller_actor_id = arkret_sdk::FullId::new(controller_id.clone())
+            .map(arkret_sdk::DidCoreId::from);
+        let selected_controller_actor_id = arkret_sdk::DidFullId::new(controller_id.clone())
             .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-            .map(arkret_sdk::ActorId::from);
+            .map(arkret_sdk::DidCoreId::from);
         if selected_agent_actor_id.as_ref().ok() != Some(&key_state.agent_id)
             || selected_controller_actor_id.as_ref().ok() != Some(&key_state.controller_id)
         {
@@ -828,7 +826,7 @@ fn spawn_set_agent_enabled(
             }
         };
         let result = with_event_submitter(&base, api_token, move |submitter| async move {
-            let controller_did = arkret_sdk::Did::new(controller_id.clone())?;
+            let controller_did = arkret_sdk::DidFullId::new(controller_id.clone())?;
             let signer = crate::event_signer::active_signer()
                 .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
             let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
@@ -957,12 +955,12 @@ fn spawn_deactivate_agent(
             );
             return;
         };
-        let selected_agent_actor_id = arkret_sdk::FullId::new(id.clone())
+        let selected_agent_actor_id = arkret_sdk::DidFullId::new(id.clone())
             .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-            .map(arkret_sdk::ActorId::from);
-        let selected_controller_actor_id = arkret_sdk::FullId::new(controller_id.clone())
+            .map(arkret_sdk::DidCoreId::from);
+        let selected_controller_actor_id = arkret_sdk::DidFullId::new(controller_id.clone())
             .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-            .map(arkret_sdk::ActorId::from);
+            .map(arkret_sdk::DidCoreId::from);
         if selected_agent_actor_id.as_ref().ok() != Some(&key_state.agent_id)
             || selected_controller_actor_id.as_ref().ok() != Some(&key_state.controller_id)
         {
@@ -1082,7 +1080,7 @@ fn spawn_provision_agent(
             last_op_status.set(format!("Slug is invalid: {error}"));
             return;
         }
-        let controller_id = match arkret_sdk::Did::new(controller_id.trim().to_owned()) {
+        let controller_id = match crate::mls_api_helpers::principal_core_id(&controller_id) {
             Ok(value) => value,
             Err(error) => {
                 last_op_status.set(format!("Create failed: signed-in controller DID: {error}"));
@@ -1581,13 +1579,10 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     );
     let selected_pcr_bootstrap_target = selected_agent.as_ref().and_then(|agent| {
         let key_state = agent.key_state.as_ref()?;
-        let full_id = agent.agent.agent_id.clone();
-        let projected = arkret_sdk::project_full_id_to_core_id(&full_id)
-            .ok()
-            .map(arkret_sdk::ActorId::from)?;
-        (projected == key_state.agent_id).then(|| {
+        let agent_id = agent.agent.agent_id.clone();
+        (agent_id == key_state.agent_id).then(|| {
             (
-                full_id,
+                agent_id,
                 key_state.principal_control_realm_id.clone(),
                 key_state.controller_authorization_ref.clone(),
             )

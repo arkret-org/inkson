@@ -611,43 +611,46 @@ mod tests {
     fn merge_prefers_live_scalar_but_unions_stored_only_map_entries() {
         let mut live = state_with_cursor("sx:live");
         live.realm_tree_projections.insert(
-            "ak:realm:a".to_owned(),
+            "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk".to_owned(),
             serde_json::json!({"name": "A-live"}),
         );
 
         let mut stored = state_with_cursor("sx:stored");
         // Same-key projection: live must win.
         stored.realm_tree_projections.insert(
-            "ak:realm:a".to_owned(),
+            "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk".to_owned(),
             serde_json::json!({"name": "A-stored"}),
         );
         // Stored-only projection: must be recovered into the merge.
         stored.realm_tree_projections.insert(
-            "ak:realm:b".to_owned(),
+            "ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo".to_owned(),
             serde_json::json!({"name": "B-stored"}),
         );
         // Stored-only cursor entry: must be recovered.
-        stored
-            .realm_events_cursors
-            .insert("ak:realm:b".to_owned(), "cursor-b".to_owned());
+        stored.realm_events_cursors.insert(
+            "ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo".to_owned(),
+            "cursor-b".to_owned(),
+        );
 
         let merged = merge_persisted_into_live(live, stored);
 
         // Live wins the scalar and the shared projection key.
         assert_eq!(merged.sync_cursor.as_deref(), Some("sx:live"));
         assert_eq!(
-            merged.realm_tree_projections["ak:realm:a"]["name"],
+            merged.realm_tree_projections["ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk"]
+                ["name"],
             "A-live"
         );
         // Stored-only entries are recovered.
         assert_eq!(
-            merged.realm_tree_projections["ak:realm:b"]["name"],
+            merged.realm_tree_projections["ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo"]
+                ["name"],
             "B-stored"
         );
         assert_eq!(
             merged
                 .realm_events_cursors
-                .get("ak:realm:b")
+                .get("ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo")
                 .map(String::as_str),
             Some("cursor-b")
         );
@@ -657,7 +660,7 @@ mod tests {
     fn merge_preserves_live_memory_only_plaintext_sidecars() {
         let mut live = state_with_cursor("sx:live");
         live.mls_decrypted_plaintext
-            .entry("ak:realm:a".to_owned())
+            .entry("ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk".to_owned())
             .or_default()
             .insert("digest-1".to_owned(), "plaintext-1".to_owned());
 
@@ -666,7 +669,8 @@ mod tests {
 
         // The skip_serializing sidecar survived the JSON round-trip merge.
         assert_eq!(
-            merged.mls_decrypted_plaintext["ak:realm:a"]["digest-1"],
+            merged.mls_decrypted_plaintext["ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk"]
+                ["digest-1"],
             "plaintext-1"
         );
     }

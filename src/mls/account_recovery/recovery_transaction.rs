@@ -40,6 +40,7 @@ pub(crate) struct CompletedFreshDeviceRecovery {
 
 pub(crate) async fn prepare_root_anchored_recovery(
     api: &crate::transport::TransportClient,
+    principal_full_id: &arkret_sdk::DidFullId,
     session: &arkret_sdk::RecoverySessionState,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
@@ -53,6 +54,9 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .recovery_session(session.recovery_session_id.as_str())
         .await?;
     verified_session.validate()?;
+    if arkret_sdk::project_full_id_to_core_id(principal_full_id)? != verified_session.principal_id {
+        anyhow::bail!("selected recovery principal full_id does not match the verified session");
+    }
     if verified_session.state != arkret_sdk::SessionState::Verified
         || verified_session.identity_model != arkret_sdk::RecoveryIdentityModel::RootAnchored
         || verified_session.recovery_session_id != session.recovery_session_id
@@ -80,11 +84,8 @@ pub(crate) async fn prepare_root_anchored_recovery(
         )?;
 
     let http = api.sdk_http_client()?;
-    let history = crate::identity::history::fetch_complete_identity_history(
-        &http,
-        &verified_session.principal_id,
-    )
-    .await?;
+    let history =
+        crate::identity::history::fetch_complete_identity_history(&http, principal_full_id).await?;
     if history.method != "did:webvh" || history.native_history != Some(true) {
         anyhow::bail!("principal DID does not expose native did:webvh history");
     }
@@ -102,7 +103,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         anyhow::bail!("DID history head changed after the recovery snapshot");
     }
     let document = http
-        .identity_document(verified_session.principal_id.as_str(), None)
+        .identity_document(principal_full_id.as_str(), None)
         .await?;
     if document.head_event_digest.as_ref() != Some(&verified_session.registry_head) {
         anyhow::bail!("DID document head changed after the recovery snapshot");
@@ -114,8 +115,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
             .into_iter()
             .collect::<serde_json::Map<_, _>>(),
     );
-    let local_id = verified_session
-        .principal_id
+    let local_id = principal_full_id
         .as_str()
         .rsplit(':')
         .next()
@@ -123,7 +123,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .ok_or_else(|| anyhow::anyhow!("principal did:webvh has no local id"))?;
     let rotation = arkret_sdk::webvh::prepare_principal_rotation(
         &arkret_sdk::webvh::PrincipalRotationInput {
-            did: verified_session.principal_id.as_str(),
+            did: principal_full_id.as_str(),
             local_id,
             previous_entries: &history.entries,
             version_time: crate::clock::now_utc(),
@@ -176,7 +176,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         non_empty(hpke_key)?,
         algorithms,
         Some(non_empty("Ed25519".to_owned())?),
-        DeviceOrPrincipalRef::Did(verified_session.principal_id.clone()),
+        DeviceOrPrincipalRef::Principal(verified_session.principal_id.clone()),
         None,
         created_at,
         None,
@@ -190,17 +190,12 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let authorize_payload = authorize_payload.attach_signature(authorize_signature)?;
     let authorize_payload_wire = serde_json::to_value(&authorize_payload)?;
     let digest_suite = arkret_sdk::canonical::DigestSuite::Sha256;
-    let reanchor_payload = DeviceReanchorPayload {
-        principal_id: verified_session.principal_id.clone(),
-        did_version_id: non_empty(rotation.version_id.clone())?,
-        previous_device_generation: non_empty(previous_generation.clone())?,
-        new_device_generation: non_empty(rotation.version_id.clone())?,
-        pre_fence_basis: verified_session.accepted_seal_frontier.clone(),
-        replacement_authorize_payload_digest: device_authorize_payload_digest(
-            &authorize_payload_wire,
-            digest_suite,
-        )?,
-    };
+    let reanchor_payload = exact_device_reanchor_payload(
+        &verified_session,
+        current_root_generation,
+        did_webvh_version_sequence(&rotation.version_id)?,
+        device_authorize_payload_digest(&authorize_payload_wire, digest_suite)?,
+    )?;
 
     let reanchor_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
         verified_session.principal_id.as_str(),
@@ -212,9 +207,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
     )?;
     let mut reanchor = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceReanchor>::new(
         scope_ref.clone(),
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
-            &verified_session.principal_id,
-        )?),
+        verified_session.principal_id.clone(),
         reanchor_payload,
     )?
     .with_prev_refs(frontier.frontier_event_ids)
@@ -223,7 +216,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         "did_recovery_anchor",
     ))
     .author(frontier.next_actor_seq, reanchor_hlc, created_at)?;
-    let root_did = arkret_sdk::Did::new(
+    let root_did = arkret_sdk::DidFullId::new(
         rotation
             .current_root_verification_method
             .split_once('#')
@@ -252,9 +245,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             scope_ref,
-            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
-                &verified_session.principal_id,
-            )?),
+            verified_session.principal_id.clone(),
             authorize_payload,
         )?
         .with_prev_refs(vec![reanchor_event_id.clone()])
@@ -280,7 +271,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         verified_session.principal_id, rotation.version_id
     );
     let did_entry = CanonicalPublicMaterial::canonical_json(rotation.log_entry)?;
-    let coordinator_service_id = arkret_sdk::Did::new(submitter.service_id().await?)?;
+    let coordinator_service_id = arkret_sdk::DidCoreId::new(submitter.service_id().await?)?;
     let did_publication = PreparedDidPublication {
         registry_service_id: coordinator_service_id.clone(),
         registry_endpoint: http
@@ -337,6 +328,17 @@ pub(crate) async fn prepare_root_anchored_recovery(
         recovery_private_key: Zeroizing::new(backup_material.backup_hpke_serialized_private_key),
         verified_session,
     })
+}
+
+fn exact_device_reanchor_payload(
+    _session: &arkret_sdk::RecoverySessionState,
+    _previous_device_generation: u64,
+    _new_device_generation: u64,
+    _replacement_authorize_payload_digest: Hash,
+) -> anyhow::Result<DeviceReanchorPayload> {
+    anyhow::bail!(
+        "root-anchored DeviceReanchor requires the frozen five-field principal authority instance; the current recovery-session contract does not relay principal_server_id, PCR realm, and principal genesis receipt digest"
+    )
 }
 
 fn did_webvh_version_sequence(version_id: &str) -> anyhow::Result<u64> {
@@ -408,12 +410,19 @@ fn reject_terminal_recovery_transaction(
 pub(crate) async fn execute_root_anchored_recovery(
     api: &crate::transport::TransportClient,
     mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    principal_full_id: &arkret_sdk::DidFullId,
     session: &arkret_sdk::RecoverySessionState,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
 ) -> anyhow::Result<CompletedFreshDeviceRecovery> {
-    let prepared =
-        prepare_root_anchored_recovery(api, session, proof_outcome, recovery_words).await?;
+    let prepared = prepare_root_anchored_recovery(
+        api,
+        principal_full_id,
+        session,
+        proof_outcome,
+        recovery_words,
+    )
+    .await?;
     let session = &prepared.verified_session;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let recovery_material =

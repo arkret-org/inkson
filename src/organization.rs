@@ -219,7 +219,7 @@ pub struct OrganizationStatementInput {
 /// reconstructs an identical payload so the canonical bytes — and therefore the
 /// proof — remain valid on the wire.
 ///
-/// `issuer_role` is always `OrganizationDid`: the organization DID controller
+/// `issuer_role` is always `OrganizationPrincipalId`: the organization principal controller
 /// signs directly, so no `delegation_ref` is involved.
 pub fn sign_organization_statement(
     input: &OrganizationStatementInput,
@@ -227,8 +227,8 @@ pub fn sign_organization_statement(
 ) -> anyhow::Result<RealmOrganizationPayload> {
     let realm_id = arkret_sdk::RealmId::new(input.realm_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid realm id `{}`: {err}", input.realm_id))?;
-    let organization_id =
-        arkret_sdk::Did::new(input.organization_did.trim().to_owned()).map_err(|err| {
+    let organization_id = crate::mls_api_helpers::principal_core_id(&input.organization_did)
+        .map_err(|err| {
             anyhow::anyhow!(
                 "invalid organization DID `{}`: {err}",
                 input.organization_did
@@ -266,7 +266,7 @@ pub fn sign_organization_statement(
         organization_policy_ref: None,
         authorization: RealmOrganizationAuthorization {
             issuer: organization_id,
-            issuer_role: RealmOrganizationIssuerRole::OrganizationDid,
+            issuer_role: RealmOrganizationIssuerRole::OrganizationPrincipalId,
             verification_method: arkret_sdk::DidUrl::new(input.verification_method.clone())
                 .map_err(anyhow::Error::msg)?,
             delegation_ref: None,

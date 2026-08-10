@@ -112,17 +112,29 @@ pub(crate) fn verified_inline_handle(row: &RealmMemberRow) -> Option<String> {
     })
 }
 
+fn principal_core_subject(value: &str) -> Option<String> {
+    let value = value.trim();
+    arkret_sdk::DidCoreId::new(value.to_owned())
+        .ok()
+        .map(|id| id.as_str().to_owned())
+        .or_else(|| {
+            arkret_sdk::DidFullId::new(value.to_owned())
+                .ok()
+                .and_then(|id| arkret_sdk::project_full_id_to_core_id(&id).ok())
+                .map(|id| id.as_str().to_owned())
+        })
+}
+
 pub(crate) fn member_lookup_subject(
     row: &RealmMemberRow,
     identity: Option<&arkret_sdk::MemberIdentity>,
 ) -> Option<String> {
     row.subject_id
         .as_deref()
-        .map(str::trim)
-        .filter(|subject| subject.starts_with("did:"))
-        .filter(|subject| !subject.is_empty())
-        .map(str::to_owned)
-        .or_else(|| identity.map(|identity| identity.subject_id.as_str().to_owned()))
+        .and_then(principal_core_subject)
+        .or_else(|| {
+            identity.and_then(|identity| principal_core_subject(identity.subject_id.as_str()))
+        })
 }
 
 fn member_handle_lookup_subject(
@@ -136,8 +148,7 @@ fn member_handle_lookup_subject(
         // Directory still has to return a verified claim for this exact DID
         // under the Realm context; a pairwise actor simply yields no claim.
         .or_else(|| {
-            let actor_id = row.actor_id.trim();
-            actor_id.starts_with("did:").then(|| actor_id.to_owned())
+            principal_core_subject(&row.actor_id)
         })
 }
 

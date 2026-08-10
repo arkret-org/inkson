@@ -384,7 +384,7 @@ fn build_notification_inbox_candidate(
     notification_id: &str,
     state: arkret_sdk::NotificationInboxState,
 ) -> anyhow::Result<arkret_sdk::NotificationInboxValue> {
-    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())
+    let actor = arkret_sdk::DidFullId::new(actor_id.trim().to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let updated_hlc =
         crate::signing_stamp::issue_account_data_hlc(actor.as_str(), device_id.trim())?;

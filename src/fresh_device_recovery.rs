@@ -10,7 +10,7 @@ use arkret_models_crypto::{
 };
 use arkret_wire::{
     BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan, BackupSeriesId,
-    CanonicalPublicMaterial, Did, EventId, EventsSubmitBatchRequestBody, Hash,
+    CanonicalPublicMaterial, DidCoreId, DidFullId, EventId, EventsSubmitBatchRequestBody, Hash,
     IssueRecoveryCompletionGrantOutcome, IssueRecoveryCompletionGrantRequest, PreparedEventUnit,
     RecoveryBinding, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
     SecurityRotationTransactionCreateRequest, SecurityTransaction, SecurityTransactionBinding,
@@ -110,7 +110,11 @@ pub fn sign_terminal_receipt_continue(
         .iter()
         .find(|step| step.step == SecurityTransactionStep::SubmitReanchorUnit)
         .ok_or_else(|| anyhow::anyhow!("accepted re-anchor unit is missing"))?;
-    let verification_method = signer.verification_method_for_principal(&resource.principal_id)?;
+    let signer_full_id = DidFullId::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != resource.principal_id {
+        anyhow::bail!("recovery receipt signer does not control the recovered principal");
+    }
+    let verification_method = signer.verification_method_for_principal(&signer_full_id)?;
     let receipt = UnsignedRecoveryReceipt::new(
         UnsignedRecoveryReceiptBody {
             receipt_id: binding.terminal_receipt_id.clone(),
@@ -353,7 +357,7 @@ pub struct SecurityRotationBackupDraft {
 #[derive(Clone, Debug)]
 pub struct SecurityRotationDraft {
     pub transaction_id: TransactionId,
-    pub principal_id: Did,
+    pub principal_id: DidCoreId,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub revoke_submission: EventsSubmitBatchRequestBody,
     pub new_secret_commitment: Hash,
@@ -363,7 +367,7 @@ pub struct SecurityRotationDraft {
 impl SecurityRotationDraft {
     pub fn into_create_request(
         self,
-        coordinator_service_id: Did,
+        coordinator_service_id: DidCoreId,
     ) -> anyhow::Result<SecurityRotationTransactionCreateRequest> {
         let revoke_event_id = exactly_one_event_id(&self.revoke_submission, "revoke")?;
         let revoke_unit = PreparedEventUnit::new(

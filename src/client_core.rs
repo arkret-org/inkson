@@ -66,12 +66,12 @@ pub trait LocalStateBackend: Send + Sync {
 }
 
 pub(crate) fn device_message_cursor_key(
-    service_id: Option<&arkret_sdk::Did>,
-    actor_id: &arkret_sdk::Did,
+    service_id: Option<&arkret_sdk::DidCoreId>,
+    actor_id: &arkret_sdk::DidCoreId,
     device_id: &arkret_sdk::DeviceId,
 ) -> arkret_sdk::Result<String> {
     serde_json::to_string(&serde_json::json!({
-        "service_id": service_id.map(arkret_sdk::Did::as_str),
+        "service_id": service_id.map(arkret_sdk::DidCoreId::as_str),
         "actor_id": actor_id.as_str(),
         "device_id": device_id.as_str(),
     }))
@@ -641,7 +641,10 @@ mod tests {
         );
         let account_scope = garth::CursorScope::Account {
             service_id: None,
-            actor_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+            actor_id: crate::mls_api_helpers::principal_core_id(
+                "did:webvh:z6mkfixture:alice.example",
+            )
+            .unwrap(),
             device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
                 .unwrap(),
         };
@@ -686,7 +689,10 @@ mod tests {
             adapter
                 .load(garth::CursorScope::Account {
                     service_id: None,
-                    actor_id: arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example").unwrap(),
+                    actor_id: crate::mls_api_helpers::principal_core_id(
+                        "did:webvh:z6mkfixture:alice.example",
+                    )
+                    .unwrap(),
                     device_id: arkret_sdk::DeviceId::new(
                         "ak:device:01904100-0000-7000-8000-000000000001",
                     )
@@ -764,7 +770,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: realm_id.clone(),
             },
-            arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             serde_json::json!({

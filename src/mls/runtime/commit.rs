@@ -250,10 +250,10 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let targets: Vec<arkret_sdk::Did> = target_principal_ids
+    let targets: Vec<arkret_sdk::DidCoreId> = target_principal_ids
         .iter()
         .map(|target| {
-            arkret_sdk::Did::new((*target).to_owned())
+            crate::mls_api_helpers::principal_core_id(target)
                 .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))
         })
         .collect::<Result<_, _>>()?;

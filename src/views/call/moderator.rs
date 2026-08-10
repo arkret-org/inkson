@@ -13,7 +13,9 @@ fn moderator_mute_signal(
             audio_muted: true,
             video_muted: false,
             changed_by: arkret_sdk::MuteChangedBy::Moderator,
-            target_actor_id: Some(arkret_sdk::Did::new(target_actor_id).ok()?),
+            target_actor_id: Some(
+                crate::mls_api_helpers::principal_core_id(&target_actor_id).ok()?,
+            ),
             target_device_id: Some(arkret_sdk::DeviceId::new(target_device_id).ok()?),
         },
     ))
@@ -27,7 +29,11 @@ fn moderation_signal(
     Some(arkret_sdk::CallSignalData::Moderation(
         arkret_sdk::CallModerationSignalData {
             action,
-            target_actor_id: target_actor_id.map(arkret_sdk::Did::new).transpose().ok()?,
+            target_actor_id: target_actor_id
+                .as_deref()
+                .map(crate::mls_api_helpers::principal_core_id)
+                .transpose()
+                .ok()?,
             target_device_id: target_device_id
                 .map(arkret_sdk::DeviceId::new)
                 .transpose()

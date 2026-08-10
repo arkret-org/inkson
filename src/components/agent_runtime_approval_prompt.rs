@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use arkret_sdk::{Did, DidUrl, Hash, KeyState, NotificationId, OpaqueLocalId};
+use arkret_sdk::{DidCoreId, DidUrl, Hash, KeyState, NotificationId, OpaqueLocalId};
 use dioxus::prelude::*;
 
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
@@ -22,7 +22,7 @@ const APPROVAL_FALLBACK_MAX_INTERVAL: Duration = Duration::from_secs(60);
 struct PendingAgentRuntimeApproval {
     notification_id: Option<NotificationId>,
     request_key: OpaqueLocalId,
-    agent_id: Did,
+    agent_id: DidCoreId,
     display_name: String,
     agent_slug: String,
     pairing_code: String,
@@ -479,7 +479,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
 struct AgentRuntimeApprovalNotification {
     notification_id: NotificationId,
     approval_request_id: OpaqueLocalId,
-    agent_id: Did,
+    agent_id: DidCoreId,
 }
 
 fn agent_runtime_approval_notification(

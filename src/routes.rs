@@ -429,7 +429,7 @@ mod tests {
             Route::Login,
             Route::Register,
             Route::Realm {
-                realm_id: "ak:realm:roundtrip".to_owned(),
+                realm_id: "ak:realm:Ah-TN8ceKyXkuwRp9fuEVw7pwATVHa-ISAbDJQgUm9hA".to_owned(),
             },
             Route::Directory,
             Route::FileTransfer,
@@ -441,11 +441,11 @@ mod tests {
             Route::Settings,
             Route::VerifyDevice,
             Route::RealmAdminSection {
-                realm_id: "ak:realm:roundtrip".to_owned(),
+                realm_id: "ak:realm:Ah-TN8ceKyXkuwRp9fuEVw7pwATVHa-ISAbDJQgUm9hA".to_owned(),
                 section: "access".to_owned(),
             },
             Route::RealmMembers {
-                realm_id: "ak:realm:roundtrip".to_owned(),
+                realm_id: "ak:realm:Ah-TN8ceKyXkuwRp9fuEVw7pwATVHa-ISAbDJQgUm9hA".to_owned(),
             },
             Route::Audit,
             Route::Developer,
@@ -481,25 +481,25 @@ mod tests {
     fn test_realm_id_extraction() {
         assert_eq!(
             Route::Realm {
-                realm_id: "ak:realm:home".to_owned()
+                realm_id: "ak:realm:A28oJpDpEI80mVokdt5Yo0vuv0Z1SXEPt1X593Rirmn8".to_owned()
             }
             .realm_id(),
-            Some("ak:realm:home")
+            Some("ak:realm:A28oJpDpEI80mVokdt5Yo0vuv0Z1SXEPt1X593Rirmn8")
         );
         assert_eq!(
             Route::RealmAdminSection {
-                realm_id: "ak:realm:admin".to_owned(),
+                realm_id: "ak:realm:AgQ3wZKVHQtgzsB-kFz2dtmKzjMrfywHYcRpK4h4_jbo".to_owned(),
                 section: "access".to_owned(),
             }
             .realm_id(),
-            Some("ak:realm:admin")
+            Some("ak:realm:AgQ3wZKVHQtgzsB-kFz2dtmKzjMrfywHYcRpK4h4_jbo")
         );
         assert_eq!(
             Route::RealmMembers {
-                realm_id: "ak:realm:members".to_owned()
+                realm_id: "ak:realm:AwwMJvEXGOqIP4f1n5k7Youiz7BKg0kUqt_LIVo22FFk".to_owned()
             }
             .realm_id(),
-            Some("ak:realm:members")
+            Some("ak:realm:AwwMJvEXGOqIP4f1n5k7Youiz7BKg0kUqt_LIVo22FFk")
         );
     }
 
@@ -536,7 +536,7 @@ mod tests {
     fn test_realm_admin_section_extraction() {
         assert_eq!(
             Route::RealmAdminSection {
-                realm_id: "ak:realm:ops".to_owned(),
+                realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
                 section: "repair".to_owned(),
             }
             .realm_admin_section(),
@@ -544,7 +544,7 @@ mod tests {
         );
         assert_eq!(
             Route::RealmAdmin {
-                realm_id: "ak:realm:ops".to_owned()
+                realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned()
             }
             .realm_admin_section(),
             None

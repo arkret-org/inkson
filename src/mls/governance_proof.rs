@@ -69,13 +69,13 @@ pub(crate) struct StaticProofDidResolver {
 }
 
 impl DidResolver for StaticProofDidResolver {
-    fn supports(&self, did: &arkret_sdk::Did) -> bool {
+    fn supports(&self, did: &arkret_sdk::DidFullId) -> bool {
         self.documents.contains_key(did.as_str())
     }
 
     fn resolve_did(
         &self,
-        did: &arkret_sdk::Did,
+        did: &arkret_sdk::DidFullId,
     ) -> arkret_sdk::identity::Result<arkret_sdk::identity::ResolvedDid> {
         self.documents
             .get(did.as_str())
@@ -440,7 +440,7 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
 
 pub(crate) async fn resolve_proof_signer_document(
     api: &crate::transport::TransportClient,
-    did: &arkret_sdk::Did,
+    did: &arkret_sdk::DidFullId,
 ) -> Result<arkret_sdk::DidDocument, String> {
     let http = api
         .sdk_http_client()
@@ -575,7 +575,7 @@ pub(crate) async fn ensure_governance_anchor<S: GovernanceProofStateStore>(
     ))
 }
 
-fn notary_signer_dids(seals: &[Seal]) -> Result<BTreeSet<arkret_sdk::Did>, String> {
+fn notary_signer_dids(seals: &[Seal]) -> Result<BTreeSet<arkret_sdk::DidFullId>, String> {
     let mut signers = BTreeSet::new();
     for seal in seals {
         match &seal.notary_signature {
@@ -597,7 +597,12 @@ fn notary_signer_dids(seals: &[Seal]) -> Result<BTreeSet<arkret_sdk::Did>, Strin
             // A threshold Seal names its signers as DIDs, not as verification
             // methods; `verify_seal` resolves each one's document itself.
             NotarySig::Threshold(threshold) => {
-                signers.extend(threshold.signers.iter().cloned());
+                if !threshold.signers.is_empty() {
+                    return Err(
+                        "threshold Seal signer cores do not carry resolvable full DID identities"
+                            .to_owned(),
+                    );
+                }
             }
         }
     }
@@ -606,7 +611,7 @@ fn notary_signer_dids(seals: &[Seal]) -> Result<BTreeSet<arkret_sdk::Did>, Strin
 
 pub(crate) fn authority_proof_signer_dids(
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
-) -> Result<BTreeSet<arkret_sdk::Did>, String> {
+) -> Result<BTreeSet<arkret_sdk::DidFullId>, String> {
     let mut signers = BTreeSet::new();
     for seal in &bundle.seal_path {
         match &seal.notary_signature {
@@ -667,7 +672,7 @@ fn event_device_proof_pair(
     let signer = verification_method_did(&proof.verification_method)
         .map_err(|error| format!("invalid Event verification method: {error}"))?;
     let signing_actor = event.executed_by.as_ref().unwrap_or(&event.actor_id);
-    if arkret_sdk::ActorId::from(
+    if arkret_sdk::DidCoreId::from(
         arkret_sdk::project_full_id_to_core_id(&signer)
             .map_err(|error| format!("project Event proof signer: {error}"))?,
     ) != *signing_actor
@@ -693,7 +698,7 @@ fn event_device_proof_pair(
 
 fn managed_seal_device_proof_pairs(
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
-    delegated_controller: Option<&arkret_sdk::Did>,
+    delegated_controller: Option<&arkret_sdk::DidFullId>,
 ) -> Result<BTreeSet<(String, String)>, String> {
     let mut pairs = BTreeSet::new();
     for seal in &bundle.seal_path {
@@ -706,7 +711,7 @@ fn managed_seal_device_proof_pairs(
 
 fn managed_seal_device_proof_pair(
     seal: &Seal,
-    delegated_controller: Option<&arkret_sdk::Did>,
+    delegated_controller: Option<&arkret_sdk::DidFullId>,
 ) -> Result<Option<(String, String)>, String> {
     let NotarySig::Single(signature) = &seal.notary_signature else {
         return Ok(None);
@@ -716,7 +721,7 @@ fn managed_seal_device_proof_pair(
 
 async fn ensure_managed_agent_pcr_seal_head_device_key_with<F, Fut>(
     seal: &Seal,
-    controller: &arkret_sdk::Did,
+    controller: &arkret_sdk::DidFullId,
     resolve: F,
 ) -> anyhow::Result<()>
 where
@@ -774,7 +779,7 @@ pub(crate) async fn prefetch_managed_agent_pcr_seal_head_device_key<
 >(
     http: &arkret_sdk::http_client::Client,
     seal: &Seal,
-    controller: &arkret_sdk::Did,
+    controller: &arkret_sdk::DidFullId,
     state_store: S,
 ) -> anyhow::Result<()> {
     let binding_scope = crate::identity::did_binding::DidBindingScope::for_server(
@@ -814,7 +819,7 @@ pub(crate) async fn prefetch_managed_agent_pcr_seal_head_device_key<
 
 fn delegated_device_verification_method_pair(
     verification_method: &str,
-    delegated_controller: Option<&arkret_sdk::Did>,
+    delegated_controller: Option<&arkret_sdk::DidFullId>,
 ) -> Result<Option<(String, String)>, String> {
     let signer = verification_method_did(verification_method)
         .map_err(|error| format!("invalid Seal verification method: {error}"))?;
@@ -1033,7 +1038,7 @@ pub(crate) fn singleton_security_frontier_leaf(
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     Ok(vec![arkret_sdk::MlsSecurityFrontierLeaf {
         leaf_index: 0,
-        principal_id: arkret_sdk::Did::new(principal_id.to_owned())
+        principal_id: crate::mls_api_helpers::principal_core_id(principal_id)
             .map_err(|error| format!("MLS leaf principal is invalid: {error}"))?,
         credential_ref: arkret_sdk::NonEmptyString::new(format!("{principal_id}#{device_id}"))
             .map_err(|error| format!("MLS leaf credential ref is invalid: {error}"))?,
@@ -1103,18 +1108,36 @@ pub(crate) fn security_frontier_with_added_claims(
         {
             return Err("claimed KeyPackage signer does not project to principal_id".to_owned());
         }
-        let device_id = record
-            .device_id
-            .as_ref()
-            .ok_or_else(|| "device KeyPackage claim omits device_id".to_owned())?;
+        let key_package = arkret_sdk::base64url_decode(record.key_package.as_bytes())
+            .map_err(|error| format!("claimed KeyPackage decode failed: {error}"))?;
+        let key_package_digest =
+            arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&key_package))
+                .map_err(|error| format!("claimed KeyPackage digest is invalid: {error}"))?;
+        if key_package_digest != record.keypackage_digest {
+            return Err("claimed KeyPackage bytes differ from keypackage_digest".to_owned());
+        }
+        let author_leaf = arkret_sdk::author_leaf_from_key_package_bytes(&key_package, next_index)
+            .map_err(|error| format!("claimed KeyPackage validation failed: {error}"))?;
+        let credential = match author_leaf.credential {
+            arkret_sdk::AuthorLeafCredential::Basic { identity } => identity,
+            arkret_sdk::AuthorLeafCredential::Other { .. } => {
+                return Err("claimed KeyPackage credential is not Basic".to_owned());
+            }
+        };
+        let credential = String::from_utf8(credential)
+            .map_err(|_| "claimed KeyPackage credential is not UTF-8".to_owned())?;
+        let credential_principal = credential
+            .rsplit_once('#')
+            .map(|(principal, _)| principal)
+            .ok_or_else(|| "claimed KeyPackage credential has no endpoint fragment".to_owned())?;
+        if credential_principal != record.principal_id.as_str() {
+            return Err("claimed KeyPackage credential principal mismatch".to_owned());
+        }
         leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
             leaf_index: next_index,
-            principal_id: signer_full_id,
-            credential_ref: arkret_sdk::NonEmptyString::new(format!(
-                "{}#{}",
-                record.principal_id, device_id
-            ))
-            .map_err(|error| format!("claimed MLS credential ref is invalid: {error}"))?,
+            principal_id: record.principal_id.clone(),
+            credential_ref: arkret_sdk::NonEmptyString::new(credential)
+                .map_err(|error| format!("claimed MLS credential ref is invalid: {error}"))?,
         });
         next_index = next_index.saturating_add(1);
     }
@@ -1290,7 +1313,7 @@ fn target_notary_value(
 fn managed_agent_pcr_delegated_controller(
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     notary: &arkret_sdk::NotaryValue,
-) -> Result<Option<arkret_sdk::Did>, String> {
+) -> Result<Option<arkret_sdk::DidFullId>, String> {
     let managed = bundle
         .frontier_events
         .iter()
@@ -1365,7 +1388,7 @@ fn managed_agent_pcr_delegated_controller(
         .find(|full_id| {
             arkret_sdk::project_full_id_to_core_id(full_id)
                 .ok()
-                .map(arkret_sdk::ActorId::from)
+                .map(arkret_sdk::DidCoreId::from)
                 .as_ref()
                 == Some(&controller)
         })
@@ -1377,27 +1400,22 @@ fn managed_agent_pcr_delegated_controller(
 
 fn notary_primary_projects_to_actor(
     notary: &arkret_sdk::NotaryValue,
-    actor_id: &arkret_sdk::ActorId,
+    actor_id: &arkret_sdk::DidCoreId,
 ) -> bool {
-    let projects = |full_id: &arkret_sdk::Did| {
-        arkret_sdk::project_full_id_to_core_id(full_id)
-            .ok()
-            .map(arkret_sdk::ActorId::from)
-            .as_ref()
-            == Some(actor_id)
-    };
     match notary {
         arkret_sdk::NotaryValue::SingleDid { did, .. }
-        | arkret_sdk::NotaryValue::Mixed { did, .. } => projects(did),
+        | arkret_sdk::NotaryValue::Mixed { did, .. } => {
+            arkret_sdk::project_full_id_to_core_id(did).is_ok_and(|core_id| &core_id == actor_id)
+        }
         arkret_sdk::NotaryValue::Threshold { members, .. }
-        | arkret_sdk::NotaryValue::OpenSet { members } => members.iter().any(projects),
+        | arkret_sdk::NotaryValue::OpenSet { members } => members.contains(actor_id),
     }
 }
 
 fn verify_seal<R>(
     seal: &Seal,
     notary: &arkret_sdk::NotaryValue,
-    delegated_controller: Option<&arkret_sdk::Did>,
+    delegated_controller: Option<&arkret_sdk::DidFullId>,
     resolver: &R,
 ) -> arkret_sdk::Result<()>
 where
@@ -1413,7 +1431,13 @@ where
         }
     };
     let signer = verification_method_did(&signature.verification_method)?;
-    if !notary.includes_signer_as_primary(&signer) && delegated_controller != Some(&signer) {
+    let signer_core = arkret_sdk::project_full_id_to_core_id(&signer)?;
+    let delegated_matches = delegated_controller
+        .map(arkret_sdk::project_full_id_to_core_id)
+        .transpose()?
+        .as_ref()
+        == Some(&signer_core);
+    if !notary.includes_signer_as_primary(&signer_core) && !delegated_matches {
         return Err(arkret_sdk::Error::Protocol(format!(
             "Seal signer {signer} is not authorized by the materialized Realm notary cell"
         )));
@@ -1468,7 +1492,7 @@ where
 /// predecessor for a controller-authored successor Seal.
 pub(crate) fn verify_managed_agent_pcr_seal_head(
     seal: &Seal,
-    controller: &arkret_sdk::Did,
+    controller: &arkret_sdk::DidFullId,
 ) -> arkret_sdk::Result<()> {
     seal.validate_structural()?;
     seal.validate_id()?;
@@ -1538,9 +1562,9 @@ mod tests {
                 )
                 .unwrap(),
             },
-            arkret_sdk::ActorId::from(
+            arkret_sdk::DidCoreId::from(
                 arkret_sdk::project_full_id_to_core_id(
-                    &arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+                    &arkret_sdk::DidFullId::new(actor.to_owned()).unwrap(),
                 )
                 .unwrap(),
             ),
@@ -1611,9 +1635,9 @@ mod tests {
         let controller = "did:webvh:zfixture:controller.example";
         let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let mut event = frontier_event(actor);
-        event.executed_by = Some(arkret_sdk::ActorId::from(
+        event.executed_by = Some(arkret_sdk::DidCoreId::from(
             arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
+                &arkret_sdk::DidFullId::new(controller.to_owned()).unwrap(),
             )
             .unwrap(),
         ));
@@ -1627,7 +1651,7 @@ mod tests {
     #[test]
     fn managed_seal_controller_device_uses_device_directory_pair() {
         let controller =
-            arkret_sdk::Did::new("did:webvh:zfixture:controller.example".to_owned()).unwrap();
+            arkret_sdk::DidFullId::new("did:webvh:zfixture:controller.example".to_owned()).unwrap();
         let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
 
         assert_eq!(
@@ -1643,7 +1667,7 @@ mod tests {
     #[test]
     fn managed_seal_non_controller_stays_on_notary_authority_path() {
         let controller =
-            arkret_sdk::Did::new("did:webvh:zfixture:controller.example".to_owned()).unwrap();
+            arkret_sdk::DidFullId::new("did:webvh:zfixture:controller.example".to_owned()).unwrap();
 
         assert_eq!(
             delegated_device_verification_method_pair(
@@ -1662,9 +1686,10 @@ mod tests {
 
         use ed25519_dalek::SigningKey;
 
-        let controller =
-            arkret_sdk::Did::new("did:webvh:zfixture:cold-cache-controller.example".to_owned())
-                .unwrap();
+        let controller = arkret_sdk::DidFullId::new(
+            "did:webvh:zfixture:cold-cache-controller.example".to_owned(),
+        )
+        .unwrap();
         let device = "ak:device:01904100-0000-7000-8000-0000000000c1";
         let root = arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
         let seal = arkret_sdk::Seal {

@@ -24,7 +24,7 @@ use arkret_sdk::identity::{
     DidWebvhLogOutcome, DidWebvhResolver, ResolverFailMode, ResolverPolicy,
     host_is_safe_for_outbound,
 };
-use arkret_sdk::{Did, DidDocument};
+use arkret_sdk::{DidDocument, DidFullId};
 use chrono::{DateTime, Duration, Utc};
 
 /// Deployment profile drives resolver policy for long-lived principals.
@@ -109,7 +109,7 @@ pub enum VerifyError {
 /// `DidWebResolver::insert_from_https_response`).
 pub fn verify_principal(
     resolver: &CompositeDidResolver,
-    principal: &Did,
+    principal: &DidFullId,
 ) -> Result<DidDocument, VerifyError> {
     resolver
         .policy()
@@ -261,7 +261,7 @@ impl ResolverDidAnchor {
     /// here on a hit. `did-usage-and-verification.md` §5: a `Stale` binding is
     /// still a hit — TTL expiry alone MUST NOT escalate an ordinary read into
     /// an online resolution.
-    fn accepted_document(&self, actor: &Did, now: DateTime<Utc>) -> Option<DidDocument> {
+    fn accepted_document(&self, actor: &DidFullId, now: DateTime<Utc>) -> Option<DidDocument> {
         let state = self.bindings.as_ref()?;
         let key = state.scope.key(actor, state.purpose, None);
         state
@@ -317,7 +317,7 @@ impl ResolverDidAnchor {
     /// can be exercised with synthetic responses. Returns whether ingest
     /// succeeded (the same fail-closed verdict the live fetch path applies).
     #[cfg(test)]
-    fn ingest_web_for_test(&self, actor: &Did, outcome: DidWebDocumentOutcome) -> bool {
+    fn ingest_web_for_test(&self, actor: &DidFullId, outcome: DidWebDocumentOutcome) -> bool {
         self.web
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -331,7 +331,7 @@ impl ResolverDidAnchor {
     /// fail-closed on any failure. A method not allowed by the active policy
     /// (including `did:key`) is a no-op `false` — the synchronous
     /// trait method then fails the policy gate too.
-    async fn ingest_actor_document(&self, http: &reqwest::Client, actor: &Did) -> bool {
+    async fn ingest_actor_document(&self, http: &reqwest::Client, actor: &DidFullId) -> bool {
         if !policy_for(self.profile).permits(actor) {
             return false;
         }
@@ -406,7 +406,7 @@ impl ResolverDidAnchor {
         &self,
         http: &reqwest::Client,
         trusted_base_url: &url::Url,
-        service: &Did,
+        service: &DidFullId,
     ) -> bool {
         if !policy_for(self.profile).permits(service) || service.method() != "webvh" {
             return false;
@@ -463,7 +463,7 @@ impl ResolverDidAnchor {
 }
 
 impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
-    fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument> {
+    fn resolve_did_document(&self, actor: &DidFullId) -> Option<DidDocument> {
         let now = Utc::now();
         // DID-P2-B step 1: a durable accepted binding is a zero-network hit and
         // is checked before the session cache, because it is the layer that
@@ -488,7 +488,7 @@ impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
     fn ensure_actor_document<'a>(
         &'a self,
         http: &'a reqwest::Client,
-        actor: &'a Did,
+        actor: &'a DidFullId,
     ) -> crate::identity::device_directory::DidAnchorFuture<'a> {
         Box::pin(self.ingest_actor_document(http, actor))
     }
@@ -605,7 +605,10 @@ async fn fetch_did_bytes_from_url(
     Some((content_type, body.to_vec()))
 }
 
-fn trusted_webvh_urls(trusted_base_url: &url::Url, service: &Did) -> Option<(url::Url, url::Url)> {
+fn trusted_webvh_urls(
+    trusted_base_url: &url::Url,
+    service: &DidFullId,
+) -> Option<(url::Url, url::Url)> {
     if !matches!(trusted_base_url.scheme(), "http" | "https") {
         return None;
     }
@@ -646,7 +649,7 @@ fn did_document_content_type_allowed(content_type: &str) -> bool {
 /// the URL, content-type and document `id`.
 async fn fetch_did_web_document(
     http: &reqwest::Client,
-    did: &Did,
+    did: &DidFullId,
 ) -> Option<DidWebDocumentOutcome> {
     let url = DidWebResolver::document_url(did).ok()?;
     let (content_type, body) = fetch_did_bytes(http, &url, DID_WEB_MAX_DOCUMENT_BYTES).await?;
@@ -663,7 +666,7 @@ async fn fetch_did_web_document(
 /// `ingest_log`, not here.
 async fn fetch_did_webvh_document(
     http: &reqwest::Client,
-    did: &Did,
+    did: &DidFullId,
 ) -> Option<(DidWebvhDocumentOutcome, DidWebvhLogOutcome)> {
     let doc_url = DidWebvhResolver::document_url(did).ok()?;
     let log_url = DidWebvhResolver::log_url(did).ok()?;
@@ -705,7 +708,7 @@ async fn fetch_did_webvh_document(
 /// the SDK resolver then fails closed with `durability_recovery_recipient_unverified`.
 pub async fn fetch_raw_did_document_json(
     http: &reqwest::Client,
-    did: &arkret_sdk::Did,
+    did: &arkret_sdk::DidFullId,
 ) -> Option<serde_json::Value> {
     match did.method() {
         "web" => {
@@ -750,7 +753,7 @@ pub async fn fetch_raw_did_document_json(
 pub fn resolve_with_cache(
     resolver: &CompositeDidResolver,
     cache: &DidResolutionCache,
-    principal: &Did,
+    principal: &DidFullId,
     now: DateTime<Utc>,
 ) -> Result<DidDocument, VerifyError> {
     // 1) Fresh cache hit: reuse directly. `get` also lazily evicts expired entries.
@@ -779,17 +782,15 @@ pub fn resolve_with_cache(
 mod tests {
     use super::*;
 
-    fn parse(did: &str) -> Did {
-        Did::new(did.to_owned()).expect("valid did")
+    fn parse(did: &str) -> DidFullId {
+        DidFullId::new(did.to_owned()).expect("valid did")
     }
 
     #[test]
-    fn personal_node_allows_did_web() {
+    fn personal_node_rejects_plain_did_web_principals() {
         let policy = policy_for(DeploymentProfile::PersonalNode);
-        assert!(policy.permits(&parse("did:web:alice.example")));
-        assert!(policy.permits(&parse(
-            "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
-        )));
+        assert!(!policy.permits(&parse("did:web:alice.example")));
+        assert!(policy.permits(&parse("did:webvh:QmExampleScidValue123456:alice.example")));
     }
 
     #[test]
@@ -811,17 +812,16 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_did_web_fails_closed() {
-        // Allowed method, but no document evidence ingested -> fail-closed.
+    fn plain_did_web_is_disallowed_before_resolution() {
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
         let did = parse("did:web:alice.example");
         match verify_principal(&resolver, &did) {
-            Err(VerifyError::Unresolved(_)) => {}
-            other => panic!("expected Unresolved, got {other:?}"),
+            Err(VerifyError::Disallowed(_)) => {}
+            other => panic!("expected Disallowed, got {other:?}"),
         }
     }
 
-    fn sample_document(did_str: &str) -> (Did, DidDocument) {
+    fn sample_document(did_str: &str) -> (DidFullId, DidDocument) {
         let did = parse(did_str);
         let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
         (did, doc)
@@ -858,7 +858,7 @@ mod tests {
         // Unresolved (fail-closed).
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
         let cache = DidResolutionCache::new(8);
-        let did = parse("did:web:alice.example");
+        let did = parse("did:webvh:QmExampleScidValue123456:alice.example");
         let t0 = Utc::now();
         match resolve_with_cache(&resolver, &cache, &did, t0) {
             Err(VerifyError::Unresolved(_)) => {}
@@ -875,7 +875,7 @@ mod tests {
         // evidence.
         let resolver = build_default_resolver(DeploymentProfile::PersonalNode);
         let cache = DidResolutionCache::new(8);
-        let (did, doc) = sample_document("did:web:alice.example");
+        let (did, doc) = sample_document("did:webvh:QmExampleScidValue123456:alice.example");
         let t0 = Utc::now();
         cache
             .insert(did.clone(), proofless(doc), t0, Duration::seconds(60))
@@ -913,37 +913,16 @@ mod tests {
     /// Serialize a `DidDocument` into the exact `did.json` body shape the SDK
     /// `insert_from_https_response` validates (the round-trip the helper's own
     /// tests use).
-    fn web_outcome(did: &Did, document: &DidDocument, content_type: &str) -> DidWebDocumentOutcome {
+    fn web_outcome(
+        did: &DidFullId,
+        document: &DidDocument,
+        content_type: &str,
+    ) -> DidWebDocumentOutcome {
         DidWebDocumentOutcome {
             url: DidWebResolver::document_url(did).unwrap(),
             content_type: content_type.to_owned(),
             body: serde_json::to_vec(document).unwrap(),
         }
-    }
-
-    #[test]
-    fn anchor_resolves_did_web_after_ingest() {
-        // Before ingest the anchor has no evidence → fail-closed (None). After a
-        // well-formed did.json is ingested (the offline half of the live
-        // fetch+ingest path) the SAME anchor resolves the document — proving
-        // Tier-2 anchoring is now reachable for did:web actors.
-        let anchor = ResolverDidAnchor::from_profile(
-            DeploymentProfile::PersonalNode,
-            DidResolutionCache::new(8),
-        );
-        let did = parse("did:web:tier2-anchor.example");
-        assert!(anchor.resolve_did_document(&did).is_none());
-
-        let document = DidDocument::new(did.clone(), "owner", "z6Mkanchorkey");
-        assert!(
-            anchor.ingest_web_for_test(&did, web_outcome(&did, &document, "application/did+json"))
-        );
-
-        let resolved = anchor
-            .resolve_did_document(&did)
-            .expect("ingested did:web document must resolve");
-        assert_eq!(resolved.id.as_str(), did.as_str());
-        assert_eq!(resolved.verification_methods["owner"], "z6Mkanchorkey");
     }
 
     #[test]
@@ -1111,34 +1090,5 @@ mod tests {
         let http = reqwest::Client::new();
         assert!(!anchor.ensure_actor_document(&http, &did).await);
         assert!(anchor.resolve_did_document(&did).is_none());
-    }
-
-    #[tokio::test]
-    async fn ensure_actor_document_peeks_and_skips_fetch_when_already_ingested() {
-        // Seed the offline did:web resolver with a valid document (the offline
-        // half of a prior fetch). A second ensure must short-circuit on the
-        // peek and return true WITHOUT any network — proven by handing it a
-        // client pointed at a guaranteed-dead address that would error if used.
-        let anchor = ResolverDidAnchor::from_profile(
-            DeploymentProfile::PersonalNode,
-            DidResolutionCache::new(8),
-        );
-        let did = parse("did:web:already-ingested.example");
-        let document = DidDocument::new(did.clone(), "owner", "z6Mkpeekkey");
-        assert!(
-            anchor.ingest_web_for_test(&did, web_outcome(&did, &document, "application/did+json"))
-        );
-
-        // A client whose only proxy is an unroutable address: if ensure tried
-        // to fetch, the request would fail and ensure would return false.
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(1))
-            .build()
-            .unwrap();
-        assert!(
-            anchor.ensure_actor_document(&http, &did).await,
-            "already-ingested actor must skip the fetch via peek"
-        );
-        assert!(anchor.resolve_did_document(&did).is_some());
     }
 }

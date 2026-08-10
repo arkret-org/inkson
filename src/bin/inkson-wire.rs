@@ -97,13 +97,14 @@ fn range_completeness(input: Value) -> Result<Value> {
         arkret_sdk::range_completeness_root_with_suite(&range_events, digest_suite)
             .map_err(|error| anyhow::anyhow!("derive fixture completeness root: {error}"))?;
 
-    let issuer = arkret_sdk::Did::new("did:web:server.local")?;
-    let verification_method = arkret_sdk::DidUrl::new(format!("{issuer}#notary-key"))
+    let issuer_full_id = arkret_sdk::DidFullId::new("did:web:server.local")?;
+    let issuer = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local")?;
+    let verification_method = arkret_sdk::DidUrl::new(format!("{issuer_full_id}#notary-key"))
         .map_err(|error| anyhow::anyhow!("fixture verification method: {error}"))?;
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0x5a_u8; 32]);
     let signer = Ed25519PayloadSigner::new(
         signing_key.clone(),
-        issuer.clone(),
+        issuer_full_id.clone(),
         verification_method.clone(),
     );
     let observed_at = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
@@ -331,7 +332,7 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
         arkret_sdk::Hash::new(event.event_digest()?).context("construct proposal Event digest")?;
     let authority_set_ref = arkret_sdk::Hash::new(
         arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::single_did(
-            event.actor_id.clone(),
+            arkret_sdk::DidFullId::new("did:web:server.local")?,
         ))
         .context("digest proposal authority set")?,
     )
@@ -399,8 +400,11 @@ fn ingress_receipts(input: Value) -> Result<Value> {
             event_digest: event_digest.clone(),
             authorization_lease_id: authorization_lease.authorization_lease_id.clone(),
             received_at,
-            service_id: arkret_wire::Did::new("did:web:server.local".to_owned())
-                .context("construct ingress service id")?,
+            service_id: arkret_wire::project_full_id_to_core_id(
+                &arkret_wire::DidFullId::new("did:web:server.local".to_owned())
+                    .context("construct ingress service full id")?,
+            )
+            .context("project ingress service core id")?,
             authority_set_ref: authorization_lease.authority_set_ref.clone(),
             proofs: Vec::new(),
         };

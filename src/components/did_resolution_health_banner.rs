@@ -188,14 +188,15 @@ pub fn DidResolutionHealthBanner(health: Signal<DidResolutionHealth>) -> Element
 
 #[cfg(test)]
 mod tests {
-    use arkret_sdk::{Did, DidDocument};
+    use arkret_sdk::{DidDocument, DidFullId};
     use chrono::Duration;
 
     use super::*;
 
     fn identity_description(protocol_version: &str) -> IdentityDescribeOutcome {
         IdentityDescribeOutcome {
-            service_id: Did::new("did:web:identity.example".to_owned()).expect("valid did"),
+            service_id: crate::mls_api_helpers::principal_core_id("did:web:identity.example")
+                .expect("valid did"),
             registry_mode: "local".to_owned(),
             supported_receipts: Vec::new(),
             protocol_version: protocol_version.to_owned(),
@@ -205,7 +206,7 @@ mod tests {
 
     fn cache_with_entry(ttl: Duration, now: DateTime<Utc>) -> DidResolutionCache {
         let cache = DidResolutionCache::new(8);
-        let did = Did::new("did:web:alice.example".to_owned()).expect("valid did");
+        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("valid did");
         let document = DidDocument::new(did.clone(), "owner", "z6Mksample");
         // `did:web` publishes no method proof.
         cache

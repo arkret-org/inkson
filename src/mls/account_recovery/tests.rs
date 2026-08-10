@@ -78,7 +78,7 @@ fn sign_wire_envelope(body: Value) -> Value {
     let device_id = envelope.device_id.clone().unwrap();
     let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
         device_id,
-        arkret_sdk::DidUrl::new(format!("{}#test-device", envelope.actor_id)).unwrap(),
+        arkret_sdk::DidUrl::new(format!("{ACTOR}#test-device")).unwrap(),
         arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
         arkret_sdk::EventId::new(
             "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD".to_owned(),
@@ -706,12 +706,12 @@ fn fresh_device_restores_via_recovery_key_no_passphrase() {
     // (empty secure store) recovers WITHOUT the passphrase, using only the
     // recovery PRIVATE key to HPKE-open the account secret. Fully end-to-end
     // on host (real OpenMLS group), no live soland.
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
     let realm = "ak:realm:AaaP6wEtKbZ9n8ohGefTx7GpDZNmZeC2QfGwbUk55gph";
     let identity = ArkretMlsIdentity::new_basic(
-        Did::new(ACTOR.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
         DeviceId::new(device_a.to_owned()).unwrap(),
     )
     .unwrap();
@@ -933,12 +933,12 @@ fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected()
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_replaces_stale_local_secret_before_history_replay() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
     let realm = "ak:realm:AaaP6wEtKbZ9n8ohGefTx7GpDZNmZeC2QfGwbUk55gph";
     let identity = ArkretMlsIdentity::new_basic(
-        Did::new(ACTOR.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
         DeviceId::new(device_a.to_owned()).unwrap(),
     )
     .unwrap();
@@ -1262,9 +1262,15 @@ fn sample_sidecar() -> std::collections::BTreeMap<
     fields.insert("body".to_owned(), "\"author body\"".to_owned());
     fields.insert("synthesis".to_owned(), "\"author synthesis\"".to_owned());
     let mut strands = std::collections::BTreeMap::new();
-    strands.insert("ak:strand:alpha".to_owned(), fields);
+    strands.insert(
+        "ak:strand:Ag0CE2EBjaYARZ8GMXa7liKkM90gtiQk9wVadXyPVDyc".to_owned(),
+        fields,
+    );
     let mut realms = std::collections::BTreeMap::new();
-    realms.insert("ak:realm:demo".to_owned(), strands);
+    realms.insert(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned(),
+        strands,
+    );
     realms
 }
 
@@ -1380,14 +1386,14 @@ fn select_sidecar_honors_active_series_record() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_brings_back_the_sidecar_into_the_store() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     // Build a real, decryptable account-secret + history backup so Step 1/2
     // succeed and the account secret is local for the sidecar KEK source.
     let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
     let realm = "ak:realm:AaaP6wEtKbZ9n8ohGefTx7GpDZNmZeC2QfGwbUk55gph";
     let identity = ArkretMlsIdentity::new_basic(
-        Did::new(ACTOR.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
         DeviceId::new(device_a.to_owned()).unwrap(),
     )
     .unwrap();
@@ -1453,11 +1459,19 @@ fn restore_brings_back_the_sidecar_into_the_store() {
         report.first_error
     );
     assert_eq!(
-        state.private_plaintext_for("ak:realm:demo", "ak:strand:alpha", "body"),
+        state.private_plaintext_for(
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+            "ak:strand:Ag0CE2EBjaYARZ8GMXa7liKkM90gtiQk9wVadXyPVDyc",
+            "body"
+        ),
         Some("\"author body\"".to_owned())
     );
     assert_eq!(
-        state.private_plaintext_for("ak:realm:demo", "ak:strand:alpha", "synthesis"),
+        state.private_plaintext_for(
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+            "ak:strand:Ag0CE2EBjaYARZ8GMXa7liKkM90gtiQk9wVadXyPVDyc",
+            "synthesis"
+        ),
         Some("\"author synthesis\"".to_owned())
     );
 }

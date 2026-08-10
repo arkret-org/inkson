@@ -25,7 +25,7 @@ pub async fn search_realms(
         .map(|cursor| cursor.into_string());
     let body = arkret_models_discovery::DirectorySearchRealmsRequestBody {
         query: Some(query.to_owned()),
-        organization_did: None,
+        organization_principal_id: None,
         source_realm_id: None,
         requester: None,
         proof_challenge: None,
@@ -150,7 +150,7 @@ pub async fn search_actors(
     let body = arkret_models_discovery::DirectorySearchActorsRequestBody {
         query: Some(query.to_owned()),
         realm_id: None,
-        organization_did: None,
+        organization_principal_id: None,
         cursor,
         limit: Some(20),
     };
@@ -200,7 +200,7 @@ pub async fn list_handles_for_subject(
 ) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
     use arkret_models_discovery::DirectoryListHandlesForSubjectRequestBody;
 
-    let subject_did = arkret_sdk::Did::new(subject.trim().to_owned())
+    let subject_did = crate::mls_api_helpers::principal_core_id(subject)
         .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
     let realm = match realm_id.map(str::trim).filter(|s| !s.is_empty()) {
         Some(r) => Some(

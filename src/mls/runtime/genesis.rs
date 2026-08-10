@@ -1,6 +1,6 @@
 //! Creator initial-group setup and the `ak.mls.genesis` event payload.
 
-use super::{MlsRuntimeError, load_device_snapshot_secret, load_or_create_device_snapshot_secret};
+use super::{MlsRuntimeError, load_device_snapshot_secret, load_or_create_account_mls_secret};
 use crate::secure_key_store::SecureKeyStore;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -106,9 +106,9 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         return Ok(None);
     }
 
-    let secret = load_or_create_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_or_create_account_mls_secret(secure_store, actor_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = arkret_sdk::Did::new(actor_id.to_owned())
+    let principal_did = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
@@ -327,9 +327,9 @@ pub fn build_mls_genesis_payload(
             .map_err(|error| MlsRuntimeError::Genesis(format!("invalid MLS group id: {error}")))?,
         effective_scope: governance_binding.effective_scope().clone(),
         epoch: arkret_sdk::MlsGenesisEpoch,
-        creator_principal_id: arkret_sdk::Did::new(actor_id.to_owned()).map_err(|error| {
-            MlsRuntimeError::Genesis(format!("invalid creator principal id: {error}"))
-        })?,
+        creator_principal_id: crate::mls_api_helpers::principal_core_id(actor_id).map_err(
+            |error| MlsRuntimeError::Genesis(format!("invalid creator principal id: {error}")),
+        )?,
         creator_device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).map_err(|error| {
             MlsRuntimeError::Genesis(format!("invalid creator device id: {error}"))
         })?,

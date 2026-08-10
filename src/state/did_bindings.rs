@@ -40,7 +40,7 @@
 //! `raw_operations` (512) and `mls_governance_proofs` (16) already use.
 
 use arkret_sdk::identity::{AcceptedDidBinding, BindingInvalidation};
-use arkret_sdk::{Did, TypedTrustDomainId};
+use arkret_sdk::{DidFullId, TypedTrustDomainId};
 
 use super::*;
 #[cfg(test)]
@@ -104,7 +104,7 @@ impl LocalStateStore {
     /// being upgraded — matching the store's own downgrade rule.
     pub(crate) fn accepted_did_binding_status(
         &self,
-        did: &Did,
+        did: &DidFullId,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Option<arkret_sdk::identity::DidBindingStatus> {
         use arkret_sdk::identity::{BindingFreshness, DidBindingStatus, binding_freshness_at};
@@ -221,7 +221,7 @@ impl LocalStateStore {
     /// cross-account regression test to assert that switching principals never
     /// exposes the previous account's acceptances.
     #[cfg(test)]
-    pub fn accepted_did_binding_dids(&self) -> Vec<Did> {
+    pub fn accepted_did_binding_dids(&self) -> Vec<DidFullId> {
         self.load()
             .accepted_did_bindings
             .iter()
@@ -259,7 +259,7 @@ impl LocalStateStore {
 /// them.
 pub(crate) fn binding_invalidations_for_event(
     kind: &str,
-    did: &Did,
+    did: &DidFullId,
     _verification_method: Option<&arkret_sdk::DidUrl>,
 ) -> Vec<BindingInvalidation> {
     use arkret_sdk::identity::DidBindingPurpose as Purpose;
@@ -334,7 +334,7 @@ mod tests {
 
     fn document(did: &str) -> arkret_sdk::DidDocument {
         arkret_sdk::DidDocument {
-            id: Did::new(did.to_owned()).expect("valid did"),
+            id: DidFullId::new(did.to_owned()).expect("valid did"),
             verification_methods: BTreeMap::from([(
                 format!("{did}#key-1"),
                 "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_owned(),
@@ -381,7 +381,7 @@ mod tests {
         let new = scope("https://alpha.example");
         assert_eq!(old.trust_domain(), new.trust_domain());
 
-        let did = Did::new("did:web:alice.example".to_owned()).expect("did");
+        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("did");
         let (mut store, path) = temp_store("policy-digest-upgrade");
         store.store_accepted_did_bindings(vec![record(
             &old,
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn device_revoke_keeps_the_principal_acceptance() {
         let scope = scope("https://alpha.example");
-        let did = Did::new("did:web:alice.example".to_owned()).expect("did");
+        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("did");
         let (mut store, _path) = temp_store("case");
         store.store_accepted_did_bindings(vec![
             record(&scope, did.as_str(), DidBindingPurpose::Principal),
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn deactivation_removes_every_purpose_for_that_did_only() {
         let scope = scope("https://alpha.example");
-        let alice = Did::new("did:web:alice.example".to_owned()).expect("did");
+        let alice = DidFullId::new("did:web:alice.example".to_owned()).expect("did");
         let (mut store, _path) = temp_store("case");
         store.store_accepted_did_bindings(vec![
             record(&scope, alice.as_str(), DidBindingPurpose::Principal),
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn unrelated_event_kinds_produce_no_selectors() {
-        let did = Did::new("did:web:alice.example".to_owned()).expect("did");
+        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("did");
         assert!(binding_invalidations_for_event("ak.message.create", &did, None).is_empty());
         assert!(!is_binding_invalidating_kind("ak.message.create"));
     }
@@ -549,7 +549,7 @@ mod tests {
                 .hydrate_did_binding_store()
                 .ordinary_lookup(
                     &scope.key(
-                        &Did::new(peer.to_owned()).expect("did"),
+                        &DidFullId::new(peer.to_owned()).expect("did"),
                         DidBindingPurpose::Principal,
                         None
                     ),
@@ -562,7 +562,7 @@ mod tests {
         store.switch_active_account(alice);
         assert_eq!(
             store.accepted_did_binding_dids(),
-            vec![Did::new(peer.to_owned()).expect("did")],
+            vec![DidFullId::new(peer.to_owned()).expect("did")],
             "switching away and back must not destroy the original acceptance"
         );
         let _ = std::fs::remove_file(path);
@@ -589,13 +589,13 @@ mod tests {
         }
 
         impl DidResolver for CountingDidResolver {
-            fn supports(&self, _did: &Did) -> bool {
+            fn supports(&self, _did: &DidFullId) -> bool {
                 true
             }
 
             fn resolve_did(
                 &self,
-                did: &Did,
+                did: &DidFullId,
             ) -> arkret_sdk::identity::Result<arkret_sdk::identity::ResolvedDid> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Err(arkret_sdk::identity::IdentityError::Protocol(format!(
@@ -606,7 +606,7 @@ mod tests {
 
         let scope = scope("https://alpha.example");
         let peer = "did:web:peer.example";
-        let peer_did = Did::new(peer.to_owned()).expect("did");
+        let peer_did = DidFullId::new(peer.to_owned()).expect("did");
         let (mut first_boot, path) = temp_store("restart");
         first_boot.switch_active_account("did:web:alice.example");
         first_boot.store_accepted_did_bindings(vec![record(
@@ -639,7 +639,7 @@ mod tests {
 
         // An unknown DID misses locally; only *then* may a caller escalate.
         let unknown = scope.key(
-            &Did::new("did:web:stranger.example".to_owned()).expect("did"),
+            &DidFullId::new("did:web:stranger.example".to_owned()).expect("did"),
             DidBindingPurpose::DeviceSigner,
             None,
         );

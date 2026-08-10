@@ -555,13 +555,13 @@ impl LocalStateStore {
 }
 
 fn realm_scan_cursor_key(
-    service_id: Option<&arkret_sdk::Did>,
+    service_id: Option<&arkret_sdk::DidCoreId>,
     realm_id: &arkret_sdk::RealmId,
     order: Option<&str>,
 ) -> String {
     format!(
         "{}\n{}\n{}",
-        service_id.map(arkret_sdk::Did::as_str).unwrap_or(""),
+        service_id.map(arkret_sdk::DidCoreId::as_str).unwrap_or(""),
         realm_id.as_str(),
         order.unwrap_or("")
     )

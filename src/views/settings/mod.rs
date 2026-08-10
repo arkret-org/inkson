@@ -1713,7 +1713,7 @@ pub fn SettingsPanel(
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let plaintext = br#"{"source_format":"text/markdown;variant=GFM-MIMI","body":"MIMI interop test from inkson","mimi_room_uri":"mimi://mimi.example.com/rooms/01JSMIMI"}"#;
                                             let request = arkret_sdk::MimiSubmitMessageRequestBody {
-                                                sender_actor_id: arkret_sdk::Did::new(actor.trim().to_owned())?,
+                                                sender_actor_id: crate::mls_api_helpers::principal_core_id(&actor)?,
                                                 device_id: arkret_sdk::DeviceId::new(device.trim().to_owned())?,
                                                 ciphertext: arkret_sdk::MimiCiphertext {
                                                     content_type: arkret_sdk::NonEmptyString::new("application/json")
@@ -1780,7 +1780,7 @@ pub fn SettingsPanel(
                                                     "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
                                                 )
                                                 .map_err(anyhow::Error::msg)?,
-                                                requester: arkret_sdk::Did::new(actor.trim().to_owned())?,
+                                                requester: crate::mls_api_helpers::principal_core_id(&actor)?,
                                                 strand_id: None,
                                                 ohttp_context: None,
                                                 range: None,
@@ -2481,7 +2481,7 @@ pub fn SettingsPanel(
                     div { class: "actions", "data-testid": "read-receipt-add-override",
                         Input {
                             r#type: "text",
-                            placeholder: "ak:realm:...",
+                            placeholder: "ak:realm:ANdHzqrrf1Z2KXHMDZ24Qwje2JXNuOzgDexjxj3KVNBY",
                             value: "{read_receipt_override_input()}",
                             oninput: move |event: FormEvent| read_receipt_override_input.set(event.value()),
                         }
@@ -2733,7 +2733,7 @@ pub fn SettingsPanel(
                         Input {
                             r#type: "text",
                             "data-testid": "realm-remark-add-id",
-                            placeholder: "ak:realm:...",
+                            placeholder: "ak:realm:ANdHzqrrf1Z2KXHMDZ24Qwje2JXNuOzgDexjxj3KVNBY",
                             value: "{new_realm_remark_id()}",
                             oninput: move |event: FormEvent| new_realm_remark_id.set(event.value()),
                         }
@@ -2895,7 +2895,7 @@ pub fn SettingsPanel(
                                                                 state_store.read().contact_remarks(),
                                                             );
                                                             let Ok(contact_did) =
-                                                                arkret_sdk::Did::new(did.clone())
+                                                                crate::mls_api_helpers::principal_core_id(&did)
                                                             else {
                                                                 crate::components::feedback::toast_error(
                                                                     "feedback.invalid_actor_identifier",
@@ -2963,7 +2963,7 @@ pub fn SettingsPanel(
                                     return;
                                 }
                                 let mut remark = crate::account_data::ContactRemark::new(
-                                    arkret_sdk::Did::new(actor_id.clone())
+                                    crate::mls_api_helpers::principal_core_id(&actor_id)
                                         .expect("normalized actor DID is valid"),
                                     local_name.clone(),
                                     chrono::Utc::now(),

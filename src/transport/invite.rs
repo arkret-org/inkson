@@ -16,7 +16,7 @@ pub struct InviteeResolution {
 }
 
 pub(crate) struct ContactRequestAddressing {
-    pub(crate) target: arkret_sdk::Did,
+    pub(crate) target: arkret_sdk::DidCoreId,
     pub(crate) introduction_evidence: arkret_sdk::ContactIntroductionEvidence,
 }
 
@@ -61,9 +61,9 @@ fn invite_address(
     subject_id: &str,
     recipient_service_id: &str,
 ) -> anyhow::Result<arkret_sdk::InviteAddress> {
-    let _subject = arkret_sdk::CoreId::new(subject_id.trim().to_owned())
+    let _subject = arkret_sdk::DidCoreId::new(subject_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid invite subject core_id `{subject_id}`: {err}"))?;
-    let _recipient_service = arkret_sdk::ServiceId::new(recipient_service_id.trim().to_owned())
+    let _recipient_service = arkret_sdk::DidCoreId::new(recipient_service_id.trim().to_owned())
         .map_err(|err| {
             anyhow::anyhow!(
                 "invalid invite recipient service core_id `{recipient_service_id}`: {err}"
@@ -196,7 +196,7 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
     let core_ids: Vec<&str> = tokens
         .iter()
         .copied()
-        .filter(|token| arkret_sdk::CoreId::new((*token).to_owned()).is_ok())
+        .filter(|token| arkret_sdk::DidCoreId::new((*token).to_owned()).is_ok())
         .collect();
     if core_ids.len() == 2 {
         let (subject, server) =
@@ -228,11 +228,11 @@ fn resolved_member_delivery_binding(
     Ok(resolved.member_delivery_binding_ref().cloned())
 }
 
-fn resolved_by_did(resolved: &ResolveHandleView) -> Option<arkret_sdk::Did> {
+fn resolved_by_did(resolved: &ResolveHandleView) -> Option<arkret_sdk::DidCoreId> {
     resolved
         .via_services
         .iter()
-        .find_map(|did| arkret_sdk::Did::new(did.clone()).ok())
+        .find_map(|did| arkret_sdk::DidCoreId::new(did.clone()).ok())
 }
 
 fn resolved_at(resolved: &ResolveHandleView) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -273,14 +273,14 @@ impl crate::transport::TransportClient {
             })?;
         arkret_models_identity::validate_agent_slug(agent_slug)
             .map_err(|err| anyhow::anyhow!("invalid agent_slug `{agent_slug}`: {err}"))?;
-        let requester = arkret_sdk::Did::new(requester.trim().to_owned())
+        let requester = crate::mls_api_helpers::principal_core_id(requester)
             .map_err(|err| anyhow::anyhow!("invalid requester DID `{requester}`: {err}"))?;
         let realm_id = arkret_sdk::RealmId::new(realm_id.trim().to_owned())
             .map_err(|err| anyhow::anyhow!("invalid realm_id `{realm_id}`: {err}"))?;
         let body = arkret_models_discovery::DirectoryResolveAgentSelectorRequestBody {
             controller_handle,
             agent_slug: agent_slug.to_owned(),
-            expected_agent_did: None,
+            expected_actor_id: None,
             proof_challenge: None,
             intent: arkret_models_discovery::DirectoryIntent::Mention,
             realm_id: Some(realm_id),
@@ -369,7 +369,7 @@ impl crate::transport::TransportClient {
             let subject = resolved.subject_did().ok_or_else(|| {
                 anyhow::anyhow!("directory resolve_handle response did not include subject DID")
             })?;
-            let target_did = arkret_sdk::Did::new(subject.to_owned()).map_err(|err| {
+            let target_did = crate::mls_api_helpers::principal_core_id(subject).map_err(|err| {
                 anyhow::anyhow!("directory resolved invalid DID `{subject}`: {err}")
             })?;
             let handle = arkret_models_identity::Handle::parse(&resolved.handle)
@@ -389,7 +389,7 @@ impl crate::transport::TransportClient {
                 introduction_evidence,
             });
         }
-        let target_did = arkret_sdk::Did::new(target.to_owned())
+        let target_did = crate::mls_api_helpers::principal_core_id(target)
             .map_err(|err| anyhow::anyhow!("invalid contact target DID `{target}`: {err}"))?;
         Ok(ContactRequestAddressing {
             target: target_did,
@@ -411,7 +411,7 @@ impl crate::transport::TransportClient {
         recipient_service_id: Option<&str>,
     ) -> anyhow::Result<(String, String)> {
         let contact_did = contact_did.trim();
-        arkret_sdk::Did::new(contact_did.to_owned())
+        arkret_sdk::DidFullId::new(contact_did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid contact DID `{contact_did}`: {err}"))?;
         let recipient_service_id = recipient_service_id
             .map(str::trim)
@@ -421,7 +421,7 @@ impl crate::transport::TransportClient {
                     "contact `{contact_did}` has no attested recipient service; use the invite link path instead"
                 )
             })?;
-        let _recipient_service = arkret_sdk::ServiceId::new(recipient_service_id.to_owned())
+        let _recipient_service = arkret_sdk::DidCoreId::new(recipient_service_id.to_owned())
             .map_err(|err| {
                 anyhow::anyhow!("invalid contact recipient service `{recipient_service_id}`: {err}")
             })?;
@@ -474,7 +474,7 @@ impl crate::transport::TransportClient {
         if let Some(invitee) = parse_explicit_invite_target(target)? {
             return Ok(invitee);
         }
-        if arkret_sdk::Did::new(target.to_owned()).is_ok() {
+        if arkret_sdk::DidFullId::new(target.to_owned()).is_ok() {
             anyhow::bail!("raw DID invite target also needs a recipient server DID");
         }
         anyhow::bail!(

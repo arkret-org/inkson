@@ -747,7 +747,7 @@ pub async fn run_sync_engine(
     ctx: SyncEngineContext,
 ) {
     ctx.projection_sink.sync_status(SyncStatusEvent::Connecting);
-    let actor_id = match arkret_sdk::Did::new(ctx.account_did.trim().to_owned()) {
+    let actor_id = match arkret_sdk::DidFullId::new(ctx.account_did.trim().to_owned()) {
         Ok(actor_id) => actor_id,
         Err(error) => {
             ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
@@ -761,6 +761,15 @@ pub async fn run_sync_engine(
         Err(error) => {
             ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
                 reason: format!("invalid device id: {error}"),
+            });
+            return;
+        }
+    };
+    let actor_core_id = match crate::mls_api_helpers::principal_core_id(actor_id.as_str()) {
+        Ok(actor_core_id) => actor_core_id,
+        Err(error) => {
+            ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
+                reason: format!("invalid account principal identity: {error}"),
             });
             return;
         }
@@ -780,7 +789,7 @@ pub async fn run_sync_engine(
         .client_runtime
         .client()
         .run_account_steps(
-            actor_id,
+            actor_core_id,
             device_id,
             &provider,
             AccountStepHandlers::new(&committer, &hook),
@@ -2695,7 +2704,7 @@ fn ingest_member_identity_events_from_projection(
 ///
 /// Actor DID is read from the event `actor_id` / `did`, falling back to the
 /// roster entry `actor_id` / `did`. Forbidden `actor` / `sender` fields are
-/// ignored. The value is validated via `Did::new`; invalid DID syntax is
+/// ignored. The value is validated via `DidFullId::new`; invalid DID syntax is
 /// skipped because this best-effort invalidation hook must not panic.
 ///
 /// TRUST-CACHE boundary: this only clears cache entries so the next resolution
@@ -2727,7 +2736,7 @@ fn invalidate_cache_for_revocation_events(
 fn collect_binding_invalidations(
     body: &Value,
 ) -> Vec<(
-    arkret_sdk::Did,
+    arkret_sdk::DidFullId,
     Vec<arkret_sdk::identity::BindingInvalidation>,
 )> {
     /// The concrete rotated key, when the event names one. Absent → the whole
@@ -2753,7 +2762,7 @@ fn collect_binding_invalidations(
         // Invalid DID syntax is skipped: this hook must not panic, and a
         // malformed identity event is not authority to evict anything.
         let Some(did) = projection_event_actor_id(event, fallback)
-            .and_then(|value| arkret_sdk::Did::new(value.to_owned()).ok())
+            .and_then(|value| arkret_sdk::DidFullId::new(value.to_owned()).ok())
         else {
             return;
         };
@@ -3103,14 +3112,14 @@ mod tests {
         let projection = json!({
             "members_limited": false,
             "members": [{
-                "actor_id": "did:webvh:z6mkfixture:alice.example",
+                "actor_id": "ak:did_core:webvh:z6mkfixture:alice.example",
                 "membership": "join"
             }],
             "state": {"events": [{
                 "event_id": removal_event,
                 "kind": "ak.member.state",
                 "payload": {
-                    "actor_id": "did:webvh:z6mkfixture:bob.example",
+                    "actor_id": "ak:did_core:webvh:z6mkfixture:bob.example",
                     "membership": "ban"
                 }
             }]}
@@ -3239,26 +3248,26 @@ mod tests {
             "summary": {"title": "Shared history"},
             "state": {"events": [
                 {
-                    "event_id": "ak:event:create",
+                    "event_id": "ak:event:AOPouRuEAbPjs9CNNW54RZQ5izPb-t3rASYtAKICB4_4",
                     "kind": "ak.realm.create",
                     "effects": [{"cell": "ak:cell:realm.create"}]
                 },
                 {
-                    "event_id": "ak:event:policy",
+                    "event_id": "ak:event:AYwttCl6UHftOF7dIFruPKJ1OzaTcqP5xL4VBoi3jCV0",
                     "kind": "ak.realm.policy_bundle",
                     "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                     "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
                 }
             ]},
-            "timeline": {"events": [{"event_id": "ak:event:one"}]}
+            "timeline": {"events": [{"event_id": "ak:event:ArdiKvN1WdQsibAXsFKmzazqXR5bjyMgrLwAYfQJlfNg"}]}
         });
         let incoming = json!({
             "summary": {"joined_member_count": 1},
             "state": {"events": [{
-                "event_id": "ak:event:genesis",
+                "event_id": "ak:event:AbY3zzcatsuTwazU86xXdmZh0E8aA5G_xs4cT5T1GSt4",
                 "kind": "ak.mls.genesis"
             }]},
-            "timeline": {"events": [{"event_id": "ak:event:two"}]}
+            "timeline": {"events": [{"event_id": "ak:event:ArUan4HuaK0xF-YoPctbaNdHflOJq9noQhgxcuPYUjFc"}]}
         });
 
         let merged = merge_incremental_realm_projection(Some(&cached), &incoming);
@@ -3274,13 +3283,13 @@ mod tests {
     fn incremental_state_delta_replaces_the_same_reducer_cell() {
         let cached = json!({
             "state": {"events": [{
-                "event_id": "ak:event:old-policy",
+                "event_id": "ak:event:AeNOC6NPDq283vfH6UTqiJq9Uy2DXQQ01SIj_J7jhkO0",
                 "kind": "ak.realm.policy_bundle",
                 "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_rfc9420"}}
             }]},
             "state_after": {"events": [{
-                "event_id": "ak:event:old-policy-after",
+                "event_id": "ak:event:AHofA7a120KAdEJgSXxs6l9Nnna66PU65X3xDL_awEBw",
                 "kind": "ak.realm.policy_bundle",
                 "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_rfc9420"}}
@@ -3288,7 +3297,7 @@ mod tests {
         });
         let incoming = json!({
             "state": {"events": [{
-                "event_id": "ak:event:new-policy",
+                "event_id": "ak:event:Avv2ZpC4D6LojRWUseH7_Cn0rzqd7GLMSKGeMxqLlY44",
                 "kind": "ak.realm.policy_bundle",
                 "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
@@ -3299,7 +3308,10 @@ mod tests {
         let events = merged["state"]["events"].as_array().unwrap();
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0]["event_id"], "ak:event:new-policy");
+        assert_eq!(
+            events[0]["event_id"],
+            "ak:event:Avv2ZpC4D6LojRWUseH7_Cn0rzqd7GLMSKGeMxqLlY44"
+        );
         assert!(
             merged["state_after"]["events"]
                 .as_array()
@@ -3312,7 +3324,7 @@ mod tests {
     fn incremental_state_after_delta_shadows_the_same_current_state_cell() {
         let cached = json!({
             "state": {"events": [{
-                "event_id": "ak:event:old-policy",
+                "event_id": "ak:event:AeNOC6NPDq283vfH6UTqiJq9Uy2DXQQ01SIj_J7jhkO0",
                 "kind": "ak.realm.policy_bundle",
                 "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_rfc9420"}}
@@ -3320,7 +3332,7 @@ mod tests {
         });
         let incoming = json!({
             "state_after": {"events": [{
-                "event_id": "ak:event:new-policy",
+                "event_id": "ak:event:Avv2ZpC4D6LojRWUseH7_Cn0rzqd7GLMSKGeMxqLlY44",
                 "kind": "ak.realm.policy_bundle",
                 "effects": [{"cell": "ak:cell:realm.policy_bundle"}],
                 "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
@@ -3332,7 +3344,7 @@ mod tests {
         assert!(merged["state"]["events"].as_array().unwrap().is_empty());
         assert_eq!(
             merged["state_after"]["events"][0]["event_id"],
-            "ak:event:new-policy"
+            "ak:event:Avv2ZpC4D6LojRWUseH7_Cn0rzqd7GLMSKGeMxqLlY44"
         );
     }
 
@@ -3408,8 +3420,8 @@ mod tests {
         arkret_sdk::RealmId::new("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j").unwrap()
     }
 
-    fn sdk_actor_id() -> arkret_sdk::ActorId {
-        arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
+    fn sdk_actor_id() -> arkret_sdk::DidCoreId {
+        arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
     }
 
     fn sdk_event(kind: &str, payload: Value) -> arkret_sdk::Event {
@@ -3434,14 +3446,14 @@ mod tests {
         // does. This is the receiver-side "principal_directory_queries = 0"
         // guarantee — no pair, no query.
         let pairwise_envelope = json!({
-            "actor_id": "did:key:z6MkpairwiseAlice",
+            "actor_id": "ak:did_core:key:z6MkpairwiseAlice",
             "device_id": "ak:device:0196419b-0000-7000-8000-0000000000aa",
             "proofs": [{
                 "verification_method": "did:key:z6MkpairwiseAlice#z6MkpairwiseAuthorKey"
             }],
         });
         let directory_envelope = json!({
-            "actor_id": "did:webvh:z6mkfixture:bob.example",
+            "actor_id": "ak:did_core:webvh:z6mkfixture:bob.example",
             "device_id": "ak:device:0196419b-0000-7000-8000-0000000000bb",
             "proofs": [{
                 "verification_method": "did:webvh:z6mkfixture:bob.example#key-1"
@@ -3618,7 +3630,7 @@ mod tests {
             sdk_event(
                 arkret_sdk::EventKind::MemberState.as_str(),
                 json!({
-                    "actor_id": "did:web:bob.example",
+                    "actor_id": "ak:did_core:web:bob.example",
                     "membership": "join"
                 }),
             ),
@@ -3654,7 +3666,7 @@ mod tests {
             "kind": kind,
             "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-            "recipient_principal_id": "did:webvh:z6mkfixture:bob.example",
+            "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:bob.example",
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
             "sent_at": "2026-07-15T00:00:00.000Z",
             "expires_at": "2026-07-16T00:00:00.000Z",
@@ -3716,7 +3728,7 @@ mod tests {
                 }
             }),
         );
-        event.actor_id = arkret_sdk::ActorId::new("ak:did_core:web:bob.example").unwrap();
+        event.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
 
         let changed =
             ingest_kanban_projection_events(&mut store, sdk_realm_id().as_str(), &[event]);
@@ -3744,7 +3756,7 @@ mod tests {
             "state": { "events": [{
                     "event_id": "ak:event:AZaaHAEvC1DejakImwHCcJHb0F1pgE-Jd-3_9BGirbuW",
                     "event_kind": "ak.pin.add",
-                    "actor_id": "did:web:mei.example",
+                    "actor_id": "ak:did_core:web:mei.example",
                     "created_at": "2026-06-24T10:00:00.000Z",
                     "realm_id": realm_id,
                     "payload": {
@@ -3781,7 +3793,7 @@ mod tests {
                     {
                         "event_id": "ak:event:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN",
                         "event_kind": "ak.message.revise",
-                        "actor_id": "did:web:bob.example",
+                        "actor_id": "ak:did_core:web:bob.example",
                         "created_at": "2026-06-24T10:00:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
@@ -3797,7 +3809,7 @@ mod tests {
                     {
                         "event_id": "ak:event:Adpb76fsaup_4Y_cV39of-L1_k6Nv1kSoCzXa9TM4szu",
                         "event_kind": "ak.message.redact",
-                        "actor_id": "did:web:bob.example",
+                        "actor_id": "ak:did_core:web:bob.example",
                         "created_at": "2026-06-24T10:01:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
@@ -3809,7 +3821,7 @@ mod tests {
                     {
                         "event_id": "ak:event:AR9d8WoyQJCOjt6n46diPUzg9zsrG9OZ9TAgE1rz6tJa",
                         "event_kind": "ak.reaction.add",
-                        "actor_id": "did:web:carol.example",
+                        "actor_id": "ak:did_core:web:carol.example",
                         "created_at": "2026-06-24T10:02:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
@@ -3849,22 +3861,22 @@ mod tests {
                     "events": [
                         {
                             "event": {
-                                "actor_id": "did:web:alice.example",
+                                "actor_id": "ak:did_core:web:alice.example",
                                 "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                                 "proofs": [{"verification_method": "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001"}]
                             }
                         },
                         {
-                            "actor_id": "did:web:alice.example",
+                            "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                             "proofs": [{"verification_method": "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001"}]
                         },
                         {
-                            "actor_id": "did:web:bob.example",
+                            "actor_id": "ak:did_core:web:bob.example",
                             "proofs": [{"verification_method": "did:web:bob.example#device"}]
                         },
                         {
-                            "actor_id": "did:web:carol.example",
+                            "actor_id": "ak:did_core:web:carol.example",
                             "proofs": [{"verification_method": "did:web:carol.example#ak:device:01904100-0000-7000-8000-000000000002"}]
                         }
                     ]
@@ -4020,21 +4032,25 @@ mod tests {
         // remain, plus nested Space containers under still-joined
         // Realms".
         let mut store = temp_store("prune");
-        store.save_realm_tree_projection("ak:realm:a", json!({"summary": {"title": "A"}}));
+        store.save_realm_tree_projection(
+            "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk",
+            json!({"summary": {"title": "A"}}),
+        );
         store.save_realm_tree_projection(
             "ak:space:child",
             json!({
                 "__kind": "space",
-                "realm_id": "ak:realm:a",
+                "realm_id": "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk",
                 "summary": {"title": "Child"}
             }),
         );
         store.save_realm_tree_projection("ak:space:b", json!({"summary": {"title": "B"}}));
 
         let mut response = empty_response("sx:42");
-        response
-            .realm_projections
-            .insert("ak:realm:a".to_owned(), json!({"summary": {"title": "A"}}));
+        response.realm_projections.insert(
+            "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk".to_owned(),
+            json!({"summary": {"title": "A"}}),
+        );
 
         // Mirror the engine's full-sync prune step.
         let server_set: BTreeSet<String> = response.realm_projections.keys().cloned().collect();
@@ -4046,7 +4062,11 @@ mod tests {
         assert_eq!(pruned, vec!["ak:space:b".to_owned()]);
 
         let state = store.load();
-        assert!(state.realm_tree_projections.contains_key("ak:realm:a"));
+        assert!(
+            state
+                .realm_tree_projections
+                .contains_key("ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk")
+        );
         assert!(state.realm_tree_projections.contains_key("ak:space:child"));
         assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
     }
@@ -4054,11 +4074,11 @@ mod tests {
     // ── Y2 invalidation hook ──────────────────────────────────────────
 
     use arkret_sdk::identity::DidResolutionCache;
-    use arkret_sdk::{Did, DidDocument};
+    use arkret_sdk::{DidDocument, DidFullId};
 
-    fn seed_cache(did_str: &str) -> (DidResolutionCache, Did) {
+    fn seed_cache(did_str: &str) -> (DidResolutionCache, DidFullId) {
         let cache = DidResolutionCache::new(8);
-        let did = Did::new(did_str.to_owned()).expect("valid did");
+        let did = DidFullId::new(did_str.to_owned()).expect("valid did");
         let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
         cache
             .insert(
@@ -4079,7 +4099,7 @@ mod tests {
         let (mut cache, did) = seed_cache("did:web:bob.example");
         let body = json!({
             "state": { "events": [
-                { "event_id": "e9", "kind": "ak.device.revoke", "actor_id": "did:web:bob.example" }
+                { "event_id": "e9", "kind": "ak.device.revoke", "actor_id": "ak:did_core:web:bob.example" }
             ] }
         });
         invalidate_cache_for_revocation_events(&mut cache, &body);
@@ -4097,11 +4117,11 @@ mod tests {
                 {
                     "event_id": "e1",
                     "kind": "ak.device.revoke",
-                    "actor_id": "did:web:author.example",
-                    "payload": { "principal_id": "did:web:subject.example" }
+                    "actor_id": "ak:did_core:web:author.example",
+                    "payload": { "principal_id": "ak:did_core:web:subject.example" }
                 },
-                { "event_id": "e2", "kind": "ak.device.list_update", "actor_id": "did:web:bob.example" },
-                { "event_id": "e3", "kind": "ak.message.create", "actor_id": "did:web:carol.example" }
+                { "event_id": "e2", "kind": "ak.device.list_update", "actor_id": "ak:did_core:web:bob.example" },
+                { "event_id": "e3", "kind": "ak.message.create", "actor_id": "ak:did_core:web:carol.example" }
             ] }
         });
 
@@ -4197,7 +4217,7 @@ mod tests {
         let (mut cache, did) = seed_cache("did:web:carol.example");
         let body = json!({
             "members": [{
-                "actor_id": "did:web:carol.example",
+                "actor_id": "ak:did_core:web:carol.example",
                 "identity_events": [
                     { "event_id": "e2", "kind": "ak.member.identity.update" }
                 ]
@@ -4217,7 +4237,7 @@ mod tests {
         let (mut cache, alice) = seed_cache("did:web:alice.example");
         let body = json!({
             "members": [{
-                "actor_id": "did:web:mallory.example",
+                "actor_id": "ak:did_core:web:mallory.example",
                 "identity_events": [
                     { "event_id": "e3", "kind": "ak.device.revoke" }
                 ]

@@ -175,7 +175,7 @@ impl TypedOperationBuilder {
                     realm_id: realm_id.clone(),
                 }
             };
-            let actor_id = arkret_sdk::ActorId::new(actor.into())
+            let actor_id = crate::mls_api_helpers::principal_core_id(&actor.into())
                 .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
             let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
                 .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
@@ -206,8 +206,9 @@ impl TypedOperationBuilder {
 
     pub fn executed_by(self, executed_by: impl Into<String>) -> Self {
         self.map_event(|event| {
+            let executed_by = executed_by.into();
             event.executed_by = Some(
-                arkret_sdk::ActorId::new(executed_by.into())
+                crate::mls_api_helpers::principal_core_id(&executed_by)
                     .map_err(|err| anyhow::anyhow!("invalid executed_by core_id: {err}"))?,
             );
             Ok(())

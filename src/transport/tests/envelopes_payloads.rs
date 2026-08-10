@@ -451,7 +451,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
         event.payload["realm_id"],
         "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"
     );
-    assert_eq!(event.payload["actor_id"], "did:web:bob.example");
+    assert_eq!(event.payload["actor_id"], "ak:did_core:web:bob.example");
     assert_eq!(event.payload["membership"], "ban");
     assert_eq!(event.preconditions.len(), 1);
     assert_eq!(

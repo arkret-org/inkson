@@ -285,7 +285,7 @@ impl ChatController {
                     return;
                 }
             };
-        let actor = match arkret_sdk::Did::new(context.account_did.clone()) {
+        let actor = match arkret_sdk::DidFullId::new(context.account_did.clone()) {
             Ok(actor) => actor,
             Err(error) => {
                 self.status_msg

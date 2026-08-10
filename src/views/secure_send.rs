@@ -44,7 +44,7 @@ pub(crate) type LocalEncryptedMessage = (
 ///   `ak.mls.commit` (persist-on-accept).
 pub(crate) type LocalMlsEncryptResult = (
     Option<arkret_sdk::Hash>,
-    Vec<arkret_sdk::Did>,
+    Vec<arkret_sdk::DidCoreId>,
     Option<LocalEncryptedMessage>,
     Option<LocalEncryptedMessage>,
     Option<crate::mls::runtime::PreparedMlsCommit>,
@@ -249,7 +249,7 @@ pub(crate) fn build_secure_send(
         .realm_projection_is_minimal_metadata(realm_id)
     {
         return Err(
-            "minimal_metadata_pairwise_author_unavailable: authoring requires a Realm-scoped pairwise Core ActorId, its did:key proof FullId, and the exact accepted MLS LeafNode signing key"
+            "minimal_metadata_pairwise_author_unavailable: authoring requires a Realm-scoped pairwise DidCoreId, its did:key proof DidFullId, and the exact accepted MLS LeafNode signing key"
                 .to_owned(),
         );
     }

@@ -96,9 +96,9 @@ pub fn build_card_comment_payload(comment: &CardComment) -> anyhow::Result<Value
         .iter()
         .map(|did| {
             // YOU-05-006: `Mention` is now the SDK's strongly-typed model,
-            // so the extracted string is validated into a `Did` here and a
+            // so the extracted string is validated into a `DidFullId` here and a
             // malformed mention surfaces as a recoverable error.
-            let subject_id = arkret_sdk::Did::new(did.clone())
+            let subject_id = crate::mls_api_helpers::principal_core_id(did)
                 .map_err(|err| anyhow::anyhow!("invalid mention DID {did:?}: {err:?}"))?;
             serde_json::to_value(Mention::new(subject_id))
                 .map_err(|err| anyhow::anyhow!("mention serialize: {err}"))
@@ -215,7 +215,7 @@ mod tests {
         // Mentions are structured nodes inside the content block.
         assert_eq!(
             payload["content"]["mentions"][0]["subject_id"],
-            "did:web:bob.example"
+            "ak:did_core:web:bob.example"
         );
         // Author is reducer-derived from the envelope, never in the payload.
         assert!(payload.get("author_did").is_none());

@@ -1024,7 +1024,7 @@ mod tests {
             realm_id: if kind == RealmTreeNodeKind::Realm {
                 id.to_owned()
             } else {
-                "ak:realm:root".to_owned()
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned()
             },
         }
     }
@@ -1277,20 +1277,28 @@ mod tests {
     #[test]
     fn optimistic_space_projection_serializes_optional_parent_links() {
         let body = OptimisticRealmTreeProjection::space(SpaceProjectionInput {
-            realm_id: "ak:realm:root".to_owned(),
+            realm_id: "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned(),
             kind: "collection".to_owned(),
             title: "Specs".to_owned(),
             summary: "Spec work".to_owned(),
             parent_space_id: Some("ak:space:parent".to_owned()),
-            default_realm_id: Some("ak:realm:default".to_owned()),
+            default_realm_id: Some(
+                "ak:realm:A-acoX0-9_g-lyPSEFQ3Dcqq43BtmQvHsFu10frgX6Zc".to_owned(),
+            ),
         })
         .into_value();
 
         assert_eq!(body["__kind"], "space");
-        assert_eq!(body["realm_id"], "ak:realm:root");
+        assert_eq!(
+            body["realm_id"],
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
+        );
         assert_eq!(body["kind"], "collection");
         assert_eq!(body["parent_space_id"], "ak:space:parent");
-        assert_eq!(body["default_realm_id"], "ak:realm:default");
+        assert_eq!(
+            body["default_realm_id"],
+            "ak:realm:A-acoX0-9_g-lyPSEFQ3Dcqq43BtmQvHsFu10frgX6Zc"
+        );
         assert_eq!(body["summary"]["kind"], "collection");
         assert_eq!(body["timeline"]["events"], json!([]));
     }
@@ -1298,7 +1306,11 @@ mod tests {
     #[test]
     fn realm_tree_uses_parent_links_for_nested_spaces() {
         let spaces = vec![
-            preview("ak:realm:root", "Root", None),
+            preview(
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
+                "Root",
+                None,
+            ),
             preview("ak:space:child", "Child", None),
             preview("ak:space:deep", "Deep", Some("ak:space:child")),
         ];
@@ -1306,7 +1318,10 @@ mod tests {
         let items = realm_tree_items(&spaces);
 
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0].node.id, "ak:realm:root");
+        assert_eq!(
+            items[0].node.id,
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
+        );
         assert_eq!(items[0].depth, 0);
         assert_eq!(items[0].descendant_count, 2);
         assert_eq!(items[1].node.id, "ak:space:child");
@@ -1318,16 +1333,25 @@ mod tests {
     #[test]
     fn pinned_realms_sort_before_unpinned_roots_without_splitting_subtrees() {
         let mut a_child = preview("ak:space:a-child", "A child", None);
-        a_child.realm_id = "ak:realm:a".to_owned();
+        a_child.realm_id = "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk".to_owned();
         let mut b_child = preview("ak:space:b-child", "B child", None);
-        b_child.realm_id = "ak:realm:b".to_owned();
+        b_child.realm_id = "ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo".to_owned();
         let nodes = vec![
-            preview("ak:realm:a", "A", None),
+            preview(
+                "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk",
+                "A",
+                None,
+            ),
             a_child,
-            preview("ak:realm:b", "B", None),
+            preview(
+                "ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo",
+                "B",
+                None,
+            ),
             b_child,
         ];
-        let pinned = BTreeSet::from(["ak:realm:b".to_owned()]);
+        let pinned =
+            BTreeSet::from(["ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo".to_owned()]);
 
         let items = realm_tree_items_with_pinned_realms(&nodes, &pinned);
         let ids: Vec<_> = items
@@ -1338,9 +1362,9 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                ("ak:realm:b", 0),
+                ("ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo", 0),
                 ("ak:space:b-child", 1),
-                ("ak:realm:a", 0),
+                ("ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk", 0),
                 ("ak:space:a-child", 1),
             ]
         );
@@ -1348,19 +1372,40 @@ mod tests {
 
     #[test]
     fn ordinary_navigation_omits_direct_conversation_realms_even_when_pinned() {
-        let mut dm = preview("ak:realm:dm", "DM", None);
+        let mut dm = preview(
+            "ak:realm:AXXj-3yEyHv7Kyo7niHWuUuucolddHsvAd2DXS2jtgDA",
+            "DM",
+            None,
+        );
         dm.direct_conversation = true;
         let nodes = vec![
             dm,
-            preview("ak:realm:work", "Work", None),
-            preview("ak:realm:later", "Later", None),
+            preview(
+                "ak:realm:AWG6UBspWdU4JTNRCHibEMTsPmT7o6cbDYSeoEcQkMQw",
+                "Work",
+                None,
+            ),
+            preview(
+                "ak:realm:Ai5i4v2IpgBcXOnqXG0qYJ4y_Zz5Xs359i6Ubynu-D1s",
+                "Later",
+                None,
+            ),
         ];
-        let pinned = BTreeSet::from(["ak:realm:dm".to_owned(), "ak:realm:later".to_owned()]);
+        let pinned = BTreeSet::from([
+            "ak:realm:AXXj-3yEyHv7Kyo7niHWuUuucolddHsvAd2DXS2jtgDA".to_owned(),
+            "ak:realm:Ai5i4v2IpgBcXOnqXG0qYJ4y_Zz5Xs359i6Ubynu-D1s".to_owned(),
+        ]);
 
         let items = realm_tree_items_with_pinned_realms(&nodes, &pinned);
         let ids: Vec<_> = items.iter().map(|item| item.node.id.as_str()).collect();
 
-        assert_eq!(ids, vec!["ak:realm:later", "ak:realm:work"]);
+        assert_eq!(
+            ids,
+            vec![
+                "ak:realm:Ai5i4v2IpgBcXOnqXG0qYJ4y_Zz5Xs359i6Ubynu-D1s",
+                "ak:realm:AWG6UBspWdU4JTNRCHibEMTsPmT7o6cbDYSeoEcQkMQw"
+            ]
+        );
     }
 
     #[test]
@@ -1411,19 +1456,30 @@ mod tests {
     #[test]
     fn descendant_node_ids_walks_full_subtree_and_ignores_unknown_root() {
         let spaces = vec![
-            preview("ak:realm:root", "Root", None),
+            preview(
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
+                "Root",
+                None,
+            ),
             preview("ak:space:child", "Child", None),
             preview("ak:space:deep", "Deep", Some("ak:space:child")),
             RealmTreeNode {
-                realm_id: "ak:realm:other".to_owned(),
-                ..preview("ak:realm:other", "Other", None)
+                realm_id: "ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo".to_owned(),
+                ..preview(
+                    "ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo",
+                    "Other",
+                    None,
+                )
             },
         ];
 
         assert_eq!(
-            descendant_node_ids(&spaces, "ak:realm:root"),
+            descendant_node_ids(
+                &spaces,
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
+            ),
             vec![
-                "ak:realm:root".to_owned(),
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned(),
                 "ak:space:child".to_owned(),
                 "ak:space:deep".to_owned(),
             ]
@@ -1441,7 +1497,11 @@ mod tests {
     #[test]
     fn normalize_realm_tree_hierarchy_rebuilds_children_from_parent_links() {
         let mut spaces = vec![
-            preview("ak:realm:root", "Root", None),
+            preview(
+                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
+                "Root",
+                None,
+            ),
             preview("ak:space:child", "Child", None),
             preview("ak:space:deep", "Deep", Some("ak:space:child")),
             // Parent points at an unknown id — must be dropped, not panic.
@@ -1452,7 +1512,7 @@ mod tests {
 
         let root = spaces
             .iter()
-            .find(|s| s.id == "ak:realm:root")
+            .find(|s| s.id == "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY")
             .expect("root");
         let child = spaces
             .iter()
@@ -1502,7 +1562,7 @@ mod tests {
         assert_eq!(
             extract_parent_space_id(
                 "ak:space:child",
-                &json!({"summary": {"parent_space_id": "ak:strand:root"}})
+                &json!({"summary": {"parent_space_id": "ak:strand:AfgHwnXHiCs7a-wo4z0oefee77xm8izLuvRq5QV231-4"}})
             ),
             None
         );
@@ -1555,9 +1615,13 @@ mod tests {
 
     #[test]
     fn is_realm_or_space_projection_id_matches_realm_and_space_prefixes() {
-        assert!(is_realm_or_space_projection_id("ak:realm:abc"));
+        assert!(is_realm_or_space_projection_id(
+            "ak:realm:AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg"
+        ));
         assert!(is_realm_or_space_projection_id("ak:space:abc"));
-        assert!(!is_realm_or_space_projection_id("ak:strand:abc"));
+        assert!(!is_realm_or_space_projection_id(
+            "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"
+        ));
         assert!(!is_realm_or_space_projection_id("realm:abc"));
     }
 
@@ -1565,7 +1629,7 @@ mod tests {
     fn sync_projection_parses_realm_and_space_hierarchy_fields() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ak:realm:root".to_owned(),
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned(),
             json!({
                 "schema": "ak.schema.realm.v1",
                 "summary": {
@@ -1578,7 +1642,7 @@ mod tests {
             "ak:space:child".to_owned(),
             json!({
                 "schema": "ak.schema.space.v1",
-                "realm_id": "ak:realm:root",
+                "realm_id": "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
                 "summary": {
                     "title": "Child",
                     "summary": "Child Space"
@@ -1589,7 +1653,7 @@ mod tests {
         let previews = realm_tree_nodes_from_sync_realms(&spaces);
         let root = previews
             .iter()
-            .find(|node| node.id == "ak:realm:root")
+            .find(|node| node.id == "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY")
             .expect("root preview");
         let child = previews
             .iter()
@@ -1606,7 +1670,7 @@ mod tests {
     fn sync_projection_marks_schema_space_with_home_realm() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ak:realm:root".to_owned(),
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned(),
             json!({
                 "schema": "ak.schema.realm.v1",
                 "summary": {"title": "Root"}
@@ -1616,7 +1680,7 @@ mod tests {
             "ak:space:child".to_owned(),
             json!({
                 "schema": "ak.schema.space.v1",
-                "realm_id": "ak:realm:root",
+                "realm_id": "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
                 "summary": {"title": "Child"}
             }),
         );
@@ -1628,7 +1692,10 @@ mod tests {
             .expect("child preview");
 
         assert_eq!(child.kind, RealmTreeNodeKind::Space);
-        assert_eq!(child.realm_id, "ak:realm:root");
+        assert_eq!(
+            child.realm_id,
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
+        );
         assert_eq!(child.parent_space_id, None);
 
         let items = realm_tree_items(&previews);
@@ -1643,7 +1710,7 @@ mod tests {
     fn sync_projection_filters_strand_entries_out_of_realm_tree() {
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ak:realm:root".to_owned(),
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned(),
             json!({
                 "schema": "ak.schema.realm.v1",
                 "summary": {
@@ -1653,9 +1720,9 @@ mod tests {
             }),
         );
         spaces.insert(
-            "ak:strand:discussion".to_owned(),
+            "ak:strand:AsLgUd73PSI9_dWVG49ZfkmPc0yCUf4zdrfGlSidlNnU".to_owned(),
             json!({
-                "strand_id": "ak:strand:discussion",
+                "strand_id": "ak:strand:AsLgUd73PSI9_dWVG49ZfkmPc0yCUf4zdrfGlSidlNnU",
                 "summary": {
                     "title": "Should not be a node"
                 }
@@ -1664,7 +1731,7 @@ mod tests {
         spaces.insert(
             "ak:space:strand-projection".to_owned(),
             json!({
-                "strand_id": "ak:strand:nested",
+                "strand_id": "ak:strand:AHJT0IVSFPGYRqWgOGcbtadQgIfN5QfHj6vRKazew2F8",
                 "summary": {
                     "title": "Strand projection",
                     "category": "discussion"
@@ -1675,7 +1742,10 @@ mod tests {
         let previews = realm_tree_nodes_from_sync_realms(&spaces);
 
         assert_eq!(previews.len(), 1);
-        assert_eq!(previews[0].id, "ak:realm:root");
+        assert_eq!(
+            previews[0].id,
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
+        );
     }
 
     /// Regression: soland inlines the primary strand under `summary.strand`
@@ -1774,18 +1844,18 @@ mod tests {
     #[test]
     fn full_sync_keep_set_preserves_local_space_under_joined_realm() {
         let mut server_set = BTreeSet::new();
-        server_set.insert("ak:realm:root".to_owned());
+        server_set.insert("ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned());
 
         let mut cached = BTreeMap::new();
         cached.insert(
-            "ak:realm:root".to_owned(),
+            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned(),
             json!({"summary": {"title": "Root"}}),
         );
         cached.insert(
             "ak:space:child".to_owned(),
             json!({
                 "__kind": "space",
-                "realm_id": "ak:realm:root",
+                "realm_id": "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
                 "summary": {"title": "Child"}
             }),
         );
@@ -1793,24 +1863,25 @@ mod tests {
             "ak:space:stale".to_owned(),
             json!({
                 "__kind": "space",
-                "realm_id": "ak:realm:missing",
+                "realm_id": "ak:realm:ARqzW2I_OXIxwHkOIvi8k8VhtCj9leT2DmU_Ul-1pvdM",
                 "summary": {"title": "Stale"}
             }),
         );
 
         let keep = full_sync_projection_keep_set(&server_set, &cached);
 
-        assert!(keep.contains("ak:realm:root"));
+        assert!(keep.contains("ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"));
         assert!(keep.contains("ak:space:child"));
         assert!(!keep.contains("ak:space:stale"));
     }
 
     #[test]
     fn full_sync_keep_set_preserves_acknowledged_optimistic_realm() {
-        let server_set = BTreeSet::from(["ak:realm:control".to_owned()]);
+        let server_set =
+            BTreeSet::from(["ak:realm:APCEv_eZJS-G3Rl9hDcbEIFNJxcYpqP2nkoGb6FOPmVc".to_owned()]);
         let cached = BTreeMap::from([
             (
-                "ak:realm:optimistic".to_owned(),
+                "ak:realm:ADcY1l6arU8aWTG833dzn0XOnraiPVcEnyYyorj3d24Q".to_owned(),
                 json!({
                     "__kind": "realm",
                     "content_scheme": "mls_exporter_aead_v1",
@@ -1818,16 +1889,16 @@ mod tests {
                 }),
             ),
             (
-                "ak:realm:stale".to_owned(),
+                "ak:realm:AJIK0c_n94vFOvyinK1wQTDDmt5QyZdwqgEiYhO3X-RI".to_owned(),
                 json!({"summary": {"title": "Stale authoritative projection"}}),
             ),
         ]);
 
         let keep = full_sync_projection_keep_set(&server_set, &cached);
 
-        assert!(keep.contains("ak:realm:control"));
-        assert!(keep.contains("ak:realm:optimistic"));
-        assert!(!keep.contains("ak:realm:stale"));
+        assert!(keep.contains("ak:realm:APCEv_eZJS-G3Rl9hDcbEIFNJxcYpqP2nkoGb6FOPmVc"));
+        assert!(keep.contains("ak:realm:ADcY1l6arU8aWTG833dzn0XOnraiPVcEnyYyorj3d24Q"));
+        assert!(!keep.contains("ak:realm:AJIK0c_n94vFOvyinK1wQTDDmt5QyZdwqgEiYhO3X-RI"));
     }
 
     #[test]
@@ -1837,9 +1908,9 @@ mod tests {
         // strand-like projections out of the sidebar — verify that here.
         let mut spaces = BTreeMap::new();
         spaces.insert(
-            "ak:strand:discussion".to_owned(),
+            "ak:strand:AsLgUd73PSI9_dWVG49ZfkmPc0yCUf4zdrfGlSidlNnU".to_owned(),
             json!({
-                "strand_id": "ak:strand:discussion",
+                "strand_id": "ak:strand:AsLgUd73PSI9_dWVG49ZfkmPc0yCUf4zdrfGlSidlNnU",
                 "summary": {"title": "Discussion", "category": "discussion"}
             }),
         );
@@ -1847,7 +1918,7 @@ mod tests {
             "ak:space:real".to_owned(),
             json!({
                 "schema": "ak.schema.space.v1",
-                "realm_id": "ak:realm:root",
+                "realm_id": "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
                 "summary": {"title": "Real Space"}
             }),
         );

@@ -489,7 +489,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         }
     }
 
-    let principal = arkret_sdk::Did::new(actor_id.trim().to_owned())
+    let principal = crate::mls_api_helpers::principal_core_id(&actor_id)
         .map_err(|error| format!("MLS principal_id: {error:?}"))?;
     let device = arkret_sdk::DeviceId::new(device_id.trim().to_owned())
         .map_err(|error| format!("MLS device_id: {error:?}"))?;
@@ -996,7 +996,7 @@ mod tests {
             "kind": "ak.mls.welcome",
             "sender_principal_id": "did:webvh:alice.example",
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-            "recipient_principal_id": "did:webvh:bob.example",
+            "recipient_principal_id": "ak:did_core:webvh:bob.example",
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
             "sent_at": "2099-01-01T00:00:00.000Z",
             "expires_at": "2100-01-01T00:00:00.000Z",

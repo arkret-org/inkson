@@ -91,12 +91,24 @@ pub async fn verify_recovery_recipients(
 ) -> Vec<RecoveryRecipientCheck> {
     let mut out = Vec::with_capacity(recipients.len());
     for recipient in recipients {
-        let principal_did = recipient.principal_id.as_str().to_owned();
-        let document = crate::identity::did_resolver::fetch_raw_did_document_json(
-            http,
-            &recipient.principal_id,
-        )
-        .await;
+        let principal_full_id = recipient
+            .verification_method
+            .as_str()
+            .split_once('#')
+            .and_then(|(controller, _)| arkret_sdk::DidFullId::new(controller.to_owned()).ok())
+            .filter(|full_id| {
+                arkret_sdk::project_full_id_to_core_id(full_id)
+                    .is_ok_and(|core_id| core_id == recipient.principal_id)
+            });
+        let principal_did = principal_full_id
+            .as_ref()
+            .map_or_else(|| recipient.principal_id.to_string(), ToString::to_string);
+        let document = match principal_full_id {
+            Some(full_id) => {
+                crate::identity::did_resolver::fetch_raw_did_document_json(http, &full_id).await
+            }
+            None => None,
+        };
         let verified = document
             .as_ref()
             .is_some_and(|document| resolve_recovery_recipient(recipient, document).is_ok());
@@ -415,7 +427,7 @@ pub fn build_eager_seal_events(
 #[cfg(test)]
 mod tests {
     use arkret_models_collaboration::objects::realm::DurabilityThreshold;
-    use arkret_sdk::Did;
+    use arkret_sdk::DidFullId;
     use serde_json::json;
 
     use super::*;
@@ -454,7 +466,8 @@ mod tests {
     fn recipient() -> RealmRecoveryRecipient {
         RealmRecoveryRecipient {
             recipient_id: "acme-org-rrk-1".to_owned(),
-            principal_id: Did::new("did:web:acme.example").unwrap(),
+            principal_id: crate::mls_api_helpers::principal_core_id("did:web:acme.example")
+                .unwrap(),
             verification_method: arkret_sdk::DidUrl::new(
                 "did:web:acme.example#realm-history-recovery-1",
             )

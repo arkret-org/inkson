@@ -443,7 +443,7 @@ fn CalendarScheduleEditForm(
                     class: "input",
                     "data-testid": "card-detail-calendar-attendees-input",
                     value: "{calendar().attendees_json}",
-                    placeholder: r#"[{{"actor_id":"did:web:alice.example","role":"required"}}]"#,
+                    placeholder: r#"[{{"actor_id":"ak:did_core:web:alice.example","role":"required"}}]"#,
                     oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.attendees_json = event.value()),
                 }
             }

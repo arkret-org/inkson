@@ -13,7 +13,7 @@
 use arkret_models_collaboration::objects::realm::{
     DurabilityMode, DurabilityPolicy, DurabilityThreshold, RealmRecoveryRecipient,
 };
-use arkret_sdk::Did;
+use arkret_sdk::DidFullId;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -69,7 +69,7 @@ fn parse_recipients(raw: &str) -> Result<Vec<RealmRecoveryRecipient>, FormError>
                     .arg("line", (index + 1).to_string()),
             );
         }
-        let principal_id = Did::new(fields[1].to_owned()).map_err(|err| {
+        let principal_id = crate::mls_api_helpers::principal_core_id(fields[1]).map_err(|err| {
             FormError::new("realm_admin.durability_err_principal_did")
                 .arg("line", (index + 1).to_string())
                 .arg("error", format!("{err:?}"))
@@ -78,7 +78,7 @@ fn parse_recipients(raw: &str) -> Result<Vec<RealmRecoveryRecipient>, FormError>
             .get(3)
             .map(|did| did.trim())
             .filter(|did| !did.is_empty())
-            .map(|did| Did::new(did.to_owned()))
+            .map(crate::mls_api_helpers::principal_core_id)
             .transpose()
             .map_err(|err| {
                 FormError::new("realm_admin.durability_err_org_did")
@@ -403,7 +403,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .as_str(),
-            "did:web:acme.example"
+            "ak:did_core:web:acme.example"
         );
     }
 

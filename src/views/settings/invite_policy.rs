@@ -154,7 +154,7 @@ fn constraints_lines(constraints: &arkret_wire::ReceivePolicyConstraints) -> Vec
 
 #[component]
 pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<String>) -> Element {
-    let subject_id = match arkret_sdk::Did::new(account_did()) {
+    let subject_id = match crate::mls_api_helpers::principal_core_id(&account_did()) {
         Ok(subject_id) => subject_id,
         Err(error) => {
             return rsx! {
@@ -175,7 +175,10 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<Strin
 }
 
 #[component]
-fn InvitePolicySettingsCardBody(token: Signal<String>, subject_id: arkret_sdk::Did) -> Element {
+fn InvitePolicySettingsCardBody(
+    token: Signal<String>,
+    subject_id: arkret_sdk::DidCoreId,
+) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::get().base_url;
     let initial_subject_id = subject_id.clone();

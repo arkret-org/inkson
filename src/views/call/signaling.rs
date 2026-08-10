@@ -265,7 +265,7 @@ fn apply_peer_state(participants: &mut Signal<Vec<CallParticipant>>, item: &Call
         arkret_sdk::CallSignalData::MuteState(data) => data
             .target_actor_id
             .as_ref()
-            .map_or(item.sender_actor.as_str(), arkret_sdk::Did::as_str),
+            .map_or(item.sender_actor.as_str(), arkret_sdk::DidCoreId::as_str),
         _ => item.sender_actor.as_str(),
     };
     let mut roster = participants();
@@ -495,7 +495,9 @@ mod tests {
                 audio_muted: true,
                 video_muted: false,
                 changed_by: arkret_sdk::MuteChangedBy::Moderator,
-                target_actor_id: Some(arkret_sdk::Did::new("did:web:alice.example").unwrap()),
+                target_actor_id: Some(
+                    crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+                ),
                 target_device_id: Some(
                     arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000004")
                         .unwrap(),

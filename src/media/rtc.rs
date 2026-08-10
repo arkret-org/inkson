@@ -26,8 +26,8 @@ pub use arkret_crypto::sframe::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use arkret_crypto::sframe::{FrameKeyContext, MlsExporterSource, derive_frame_key};
 use arkret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, Did, DidDocument, MediaIceConfigRequestBody,
-    MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
+    CallMediaTokenExchangeRequestBody, DeviceId, DidCoreId, DidDocument, DidFullId,
+    MediaIceConfigRequestBody, MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
     PlaintextVisibleServicesPayload, RealmId, resolve_verification_method_key_from_document,
 };
 use arkret_signatures::media::{
@@ -261,8 +261,8 @@ impl MediaJoinRequest {
             RealmId::new(self.realm_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
         let call_id =
             CallId::new(self.call_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
-        let actor_id =
-            Did::new(self.actor_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
+        let actor_id = crate::mls_api_helpers::principal_core_id(&self.actor_id)
+            .map_err(|_| RtcClientError::FocusMismatch)?;
         let device_id =
             DeviceId::new(self.device_id.clone()).map_err(|_| RtcClientError::FocusMismatch)?;
         Ok(TypedJoinIds {
@@ -273,11 +273,11 @@ impl MediaJoinRequest {
         })
     }
 
-    fn anchor_dids(&self) -> Result<Vec<Did>, RtcClientError> {
+    fn anchor_dids(&self) -> Result<Vec<DidFullId>, RtcClientError> {
         let dids = self
             .media_service_ids
             .iter()
-            .map(|did| Did::new(did.clone()))
+            .map(|did| DidFullId::new(did.clone()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
         if dids.is_empty() {
@@ -351,7 +351,7 @@ impl MediaGovernanceEvidence {
             .plaintext_visible_services_payload
             .as_ref()
             .ok_or(RtcClientError::MediaPlaintextServiceNotAuthorised)?;
-        let service_id = Did::new(service_id.to_owned())
+        let service_id = crate::mls_api_helpers::principal_core_id(service_id)
             .map_err(|_| RtcClientError::MediaPlaintextServiceNotAuthorised)?;
         let authorized = plaintext_payload.services.iter().any(|service| {
             service.service_id == service_id
@@ -453,7 +453,7 @@ fn normalize_verification_method_kid(service_id: &str, method: &str) -> String {
 struct TypedJoinIds {
     realm_id: RealmId,
     call_id: CallId,
-    actor_id: Did,
+    actor_id: DidCoreId,
     device_id: DeviceId,
 }
 
@@ -949,7 +949,7 @@ mod tests {
         media_plaintext_ui_confirmed: bool,
     ) -> MediaGovernanceEvidence {
         let media_service_payload = json!({
-            "service_id": "did:web:media.example",
+            "service_id": "ak:did_core:web:media.example",
             "ice_config_endpoint": "https://media.example/_arkret/self/rtc/ice-config",
             "foci": [
                 {
@@ -967,7 +967,7 @@ mod tests {
         });
         let plaintext_visible_services_payload = media_service_decrypts.then(|| {
             PlaintextVisibleServicesPayload::new(vec![arkret_sdk::PlaintextVisibleService::new(
-                Did::new("did:web:media.example".to_owned()).unwrap(),
+                crate::mls_api_helpers::principal_core_id("did:web:media.example").unwrap(),
                 "media_service",
                 vec![PlaintextDataClassKind::MediaPlaintext],
                 vec!["video_transcoding".to_owned()],
@@ -1038,16 +1038,12 @@ mod tests {
     fn seed_realm_snapshot(
         store: &crate::secure_key_store::MemorySecureKeyStore,
     ) -> crate::mls::persistence::MlsSnapshotEnvelope {
-        use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
-        let secret = crate::mls::runtime::load_or_create_device_snapshot_secret(
-            store,
-            EXPORTER_ACTOR,
-            EXPORTER_DEVICE,
-        )
-        .unwrap();
+        let secret =
+            crate::mls::runtime::load_or_create_account_mls_secret(store, EXPORTER_ACTOR).unwrap();
         let identity = ArkretMlsIdentity::new_basic(
-            Did::new(EXPORTER_ACTOR.to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id(EXPORTER_ACTOR).unwrap(),
             DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
@@ -1102,12 +1098,8 @@ mod tests {
         let store = crate::secure_key_store::MemorySecureKeyStore::new();
         // Even with the account secret present, no snapshot means no synced
         // group on this device: honest fail-closed, no fabricated key.
-        let _ = crate::mls::runtime::load_or_create_device_snapshot_secret(
-            &store,
-            EXPORTER_ACTOR,
-            EXPORTER_DEVICE,
-        )
-        .unwrap();
+        let _ =
+            crate::mls::runtime::load_or_create_account_mls_secret(&store, EXPORTER_ACTOR).unwrap();
 
         let result = RealmMlsExporter::for_realm(None, &store, EXPORTER_ACTOR, EXPORTER_DEVICE);
         assert!(matches!(
@@ -1170,9 +1162,7 @@ mod tests {
         actor: &str,
         device: &str,
     ) -> RealmMlsExporter {
-        let secret =
-            crate::mls::runtime::load_or_create_device_snapshot_secret(store, actor, device)
-                .unwrap();
+        let secret = crate::mls::runtime::load_or_create_account_mls_secret(store, actor).unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = crate::mls::persistence::encrypt_state(
@@ -1188,16 +1178,16 @@ mod tests {
 
     #[test]
     fn receiver_recomputes_remote_sender_frame_key_cross_member() {
-        use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
         // Build a REAL two-member MLS group: Alice creates, Bob joins via Welcome.
         let alice_identity = ArkretMlsIdentity::new_basic(
-            Did::new(ALICE_ACTOR.to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id(ALICE_ACTOR).unwrap(),
             DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
         let bob_identity = ArkretMlsIdentity::new_basic(
-            Did::new(BOB_ACTOR.to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id(BOB_ACTOR).unwrap(),
             DeviceId::new(BOB_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();

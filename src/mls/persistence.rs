@@ -443,7 +443,7 @@ impl MlsSnapshotEnvelope {
         frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
     ) -> anyhow::Result<arkret_sdk::KeyBackup> {
         let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
-        let actor_id = arkret_sdk::Did::new(actor_id.to_owned())?;
+        let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
         let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
         let backup_kind = arkret_sdk::BackupKind::MlsHistory;
         let backup_version = "kb_mls_snapshot_v1".to_owned();
@@ -704,7 +704,7 @@ mod tests {
         // native by the dedicated `sdk_round_trip` test below.
         let body = json!({
             "group_id": group_id,
-            "principal_id": "did:web:alice.example",
+            "principal_id": "ak:did_core:web:alice.example",
             "device_id": "dev_alice_1",
             "epoch": epoch,
             "serialized_state": [1, 2, 3, 4, 5, 6, 7, 8],
@@ -717,14 +717,17 @@ mod tests {
     fn persist_restore_round_trip_recovers_group_state() {
         let bytes = fake_state_record_bytes("aabbccdd", 7);
         let envelope = encrypt_state(
-            "ak:realm:demo",
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
             "aabbccdd",
             7,
             &bytes,
             "correct horse battery staple",
             &fixed_salt(),
         );
-        assert_eq!(envelope.realm_id, "ak:realm:demo");
+        assert_eq!(
+            envelope.realm_id,
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"
+        );
         assert_eq!(envelope.group_id, "aabbccdd");
         assert_eq!(envelope.epoch, 7);
         // Ciphertext is not the plaintext — encryption did something.
@@ -739,7 +742,7 @@ mod tests {
     fn snapshot_secret_mismatch_is_rejected_distinct_from_other_errors() {
         let bytes = fake_state_record_bytes("dead", 1);
         let envelope = encrypt_state(
-            "ak:realm:demo",
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
             "dead",
             1,
             &bytes,
@@ -766,7 +769,14 @@ mod tests {
     #[test]
     fn outdated_snapshot_is_rejected_via_epoch_check() {
         let bytes = fake_state_record_bytes("beef", 3);
-        let envelope = encrypt_state("ak:realm:demo", "beef", 3, &bytes, "p1", &fixed_salt());
+        let envelope = encrypt_state(
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+            "beef",
+            3,
+            &bytes,
+            "p1",
+            &fixed_salt(),
+        );
 
         // current_epoch_floor == 3 → still acceptable (>=).
         let ok = decrypt_with_epoch_check(&envelope, "p1", 3);
@@ -793,7 +803,14 @@ mod tests {
 
     #[test]
     fn malformed_hex_surfaces_typed_error() {
-        let mut envelope = encrypt_state("ak:realm:demo", "feed", 1, b"abc", "p", &fixed_salt());
+        let mut envelope = encrypt_state(
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+            "feed",
+            1,
+            b"abc",
+            "p",
+            &fixed_salt(),
+        );
         envelope.ciphertext_hex = "zzzz".to_owned(); // not hex
         let result = decrypt_envelope(&envelope, "p");
         assert!(matches!(result, Err(EnvelopeError::Malformed(_))));
@@ -915,7 +932,7 @@ mod tests {
         // inner bytes don't parse as `MlsGroupStateRecord`. The error
         // is `InvalidStateRecord`, distinct from `SecretMismatch`.
         let envelope = encrypt_state(
-            "ak:realm:demo",
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
             "z",
             0,
             b"this is not json",
@@ -938,10 +955,10 @@ mod tests {
         // End-to-end: SDK creates a group → export_state_record →
         // encrypt → decrypt → SDK restore. The restored group must
         // report the same group_id + epoch.
-        use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
         let identity = ArkretMlsIdentity::new_basic(
-            Did::new("did:web:alice.example".to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             // SDK 0.7 requires the canonical `ak:device:<uuid7>` form.
             DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),
         )

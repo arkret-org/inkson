@@ -79,7 +79,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
         "did:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         "ak:space:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
-        "ak:message:kanban-patch-test",
+        "ak:message:AsfAZBQhs6SPcFLENwhdXzoZil0YA-V859Z-Be8K189A",
         "private synthesis",
     )
     .expect("test encryption should produce payload")
@@ -149,18 +149,18 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let alice = ArkretMlsIdentity::new_basic(
-        Did::new("did:web:alice.example".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
     let bob = ArkretMlsIdentity::new_basic(
-        Did::new(bob_actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -215,18 +215,18 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let alice = ArkretMlsIdentity::new_basic(
-        Did::new("did:web:alice.example".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
     let bob = ArkretMlsIdentity::new_basic(
-        Did::new(bob_actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -470,17 +470,16 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, Did};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut state = temp_state_store("ready-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
-    let secret =
-        crate::mls::runtime::load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
+    let secret = crate::mls::runtime::load_or_create_account_mls_secret(&secure, actor).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
-        Did::new(actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
@@ -805,15 +804,14 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     let circle = "ak:circle:ATglM2Ok0jsPzyPkbQub_EuKAtcyKvX2itC1Y7229amh";
     let strand = "ak:strand:AWSjtu5m07wmq4GIr0siQOr8dsPMpOK3Wel8pRMGO3ZU";
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
     let group = identity.create_group(circle.as_bytes()).unwrap();
     let post_state = group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
-    let secret =
-        crate::mls::runtime::load_or_create_device_snapshot_secret(&secure, actor, device).unwrap();
+    let secret = crate::mls::runtime::load_or_create_account_mls_secret(&secure, actor).unwrap();
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt).unwrap();
     let snapshot = crate::mls::persistence::encrypt_state(
@@ -825,7 +823,7 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         &salt,
     );
     let realm_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new(actor.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();

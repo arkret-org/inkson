@@ -208,7 +208,14 @@ mod tests {
         let first_key = kanban_projection_refresh_key(" ak:realm:r1 ", "", true, 0, "");
 
         assert_eq!(
-            next_kanban_projection_refresh_key(&first_key, "ak:realm:r1", "", true, 0, ""),
+            next_kanban_projection_refresh_key(
+                &first_key,
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+                "",
+                true,
+                0,
+                ""
+            ),
             None,
             "a newly signed token for the same ready account frontier is not a durable change"
         );
@@ -217,7 +224,14 @@ mod tests {
     #[test]
     fn kanban_projection_refresh_waits_for_a_real_freshness_axis() {
         assert_eq!(
-            next_kanban_projection_refresh_key("", "ak:realm:r1", "", false, 0, ""),
+            next_kanban_projection_refresh_key(
+                "",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+                "",
+                false,
+                0,
+                ""
+            ),
             None
         );
         assert_eq!(
@@ -231,14 +245,24 @@ mod tests {
         // Account cursor is still the bootstrap sentinel (the cross-member
         // bug case), but the realm events engine bumped its epoch: the panel
         // must still refresh off that second freshness axis.
-        let key = next_kanban_projection_refresh_key("", "ak:realm:r1", "", false, 1, "");
-        assert_eq!(key, Some("ak:realm:r1||0|1|".to_owned()));
+        let key = next_kanban_projection_refresh_key(
+            "",
+            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "",
+            false,
+            1,
+            "",
+        );
+        assert_eq!(
+            key,
+            Some("ak:realm:A9OzOxL7AbjP906JsdSpcyaRgJKWUkrxOe9U_OEvt1Zk".to_owned())
+        );
 
         // Same epoch + same inputs → no churn.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:r1||0|1|",
-                "ak:realm:r1",
+                "ak:realm:A9OzOxL7AbjP906JsdSpcyaRgJKWUkrxOe9U_OEvt1Zk",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 "",
                 false,
                 1,
@@ -250,14 +274,14 @@ mod tests {
         // A later epoch advances the key again.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:r1||0|1|",
-                "ak:realm:r1",
+                "ak:realm:A9OzOxL7AbjP906JsdSpcyaRgJKWUkrxOe9U_OEvt1Zk",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 "",
                 false,
                 2,
                 ""
             ),
-            Some("ak:realm:r1||0|2|".to_owned())
+            Some("ak:realm:AaqOo-i2sxEu89KI1VK_wzBF3Z5ZzJ8pHZHvSY_26TPw".to_owned())
         );
 
         // Still no realm/view selector → no refresh even with an epoch.
@@ -288,23 +312,45 @@ mod tests {
         // the pre-join history can decrypt, instead of waiting for a manual
         // page refresh.
         let before = kanban_mls_unlock_signature(false, 0);
-        let boot_key = kanban_projection_refresh_key("ak:realm:r1", "", false, 0, &before);
+        let boot_key = kanban_projection_refresh_key(
+            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "",
+            false,
+            0,
+            &before,
+        );
         assert_eq!(
-            next_kanban_projection_refresh_key(&boot_key, "ak:realm:r1", "", false, 0, &before),
+            next_kanban_projection_refresh_key(
+                &boot_key,
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+                "",
+                false,
+                0,
+                &before
+            ),
             None,
             "no cursor, no live epoch, no snapshot → still idle"
         );
 
         let after = kanban_mls_unlock_signature(true, 1);
-        let unlocked =
-            next_kanban_projection_refresh_key(&boot_key, "ak:realm:r1", "", false, 0, &after);
-        assert_eq!(unlocked, Some("ak:realm:r1||0|0|snap:1|ep:1".to_owned()));
+        let unlocked = next_kanban_projection_refresh_key(
+            &boot_key,
+            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "",
+            false,
+            0,
+            &after,
+        );
+        assert_eq!(
+            unlocked,
+            Some("ak:realm:A7gGTcN1qMQ_-FpM9r_GW-66OMf7JtA-pqvxvBXsibWA".to_owned())
+        );
 
         // Same snapshot signature again → no churn.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:r1||0|0|snap:1|ep:1",
-                "ak:realm:r1",
+                "ak:realm:A7gGTcN1qMQ_-FpM9r_GW-66OMf7JtA-pqvxvBXsibWA",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 "",
                 false,
                 0,

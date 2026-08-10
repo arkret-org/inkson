@@ -54,7 +54,7 @@ async fn current_controller_backup_trust_anchor(
     controller_id: &str,
     device_id: &str,
 ) -> anyhow::Result<ControllerBackupTrustAnchor> {
-    let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
+    let controller = crate::mls_api_helpers::principal_core_id(controller_id)?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let outcome = crate::transport::keys::query_keys(http, controller_id, device_id).await?;
     resolve_controller_backup_trust_anchor(&outcome, &controller, &device)
@@ -138,7 +138,7 @@ async fn current_mls_history_active_series(
     controller_id: &str,
     highest_seen: Option<u64>,
 ) -> anyhow::Result<Option<MlsHistoryActiveSeries>> {
-    let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
+    let controller = arkret_sdk::DidFullId::new(controller_id.to_owned())?;
     let realm_id =
         crate::identity::principal_control::resolve_accepted(submitter.http(), &controller).await?;
     let backfill = submitter.backfill(realm_id.as_str()).await?;
@@ -545,7 +545,7 @@ fn build_active_mls_history_series_event(
         .ok_or_else(|| anyhow::anyhow!("active controller signer is required"))?;
     let verification_method =
         principal_bound_active_series_verification_method(controller_id, signer.as_ref())?;
-    let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
+    let controller = crate::mls_api_helpers::principal_core_id(controller_id)?;
     let unsigned = arkret_sdk::UnsignedKeyBackupActiveSeries::new(
         controller.clone(),
         BackupKind::MlsHistory,
@@ -653,9 +653,9 @@ async fn collect_current_managed_pcr_backup_items(
     device_id: &str,
     current: ManagedPcrBackupItem,
 ) -> anyhow::Result<Vec<ManagedPcrBackupItem>> {
-    let controller_full_id = arkret_sdk::FullId::new(controller_id.to_owned())?;
+    let controller_full_id = arkret_sdk::DidFullId::new(controller_id.to_owned())?;
     let controller_actor_id =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&controller_full_id)?);
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&controller_full_id)?);
     let current_binding = current
         .binding
         .as_ref()
@@ -688,8 +688,7 @@ async fn collect_current_managed_pcr_backup_items(
                 agent.agent_id.as_str()
             ));
         };
-        let agent_actor_id =
-            arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&agent.agent_id)?);
+        let agent_actor_id = agent.agent_id.clone();
         if key_state.agent_id != agent_actor_id {
             anyhow::bail!(
                 "Agent {} full_id does not project to its key-state agent_id",
@@ -765,8 +764,10 @@ async fn collect_current_managed_pcr_backup_items(
                 )
             })?;
         let binding = ManagedPrincipalBinding {
-            managed_principal_id: agent.agent_id,
-            controller_id: controller_full_id.clone(),
+            managed_principal_id: crate::mls_api_helpers::principal_core_id(
+                agent.agent_id.as_str(),
+            )?,
+            controller_id: crate::mls_api_helpers::principal_core_id(controller_full_id.as_str())?,
             principal_control_realm_id: key_state.principal_control_realm_id,
             authorization_ref: key_state.controller_authorization_ref.to_string(),
             managed_frontier_ref: ManagedFrontierRef {
@@ -838,7 +839,7 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
 async fn submit_managed_agent_pcr_seal(
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
-    controller_id: &arkret_sdk::Did,
+    controller_id: &arkret_sdk::DidFullId,
     device_id: &str,
     realm_id: &str,
     events: &[arkret_sdk::Event],
@@ -876,7 +877,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     submitter: &crate::event_submit::EventSubmitter,
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
-    controller_id: &arkret_sdk::Did,
+    controller_id: &arkret_sdk::DidFullId,
     device_id: &str,
     realm_id: &str,
     state_store: S,
@@ -998,7 +999,7 @@ pub(crate) async fn seal_managed_agent_pcr_current(
         signer.as_ref(),
         signer_account_scope.as_deref(),
     )?;
-    let controller_did = arkret_sdk::Did::new(controller_id)?;
+    let controller_did = arkret_sdk::DidFullId::new(controller_id)?;
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
     let (_, seal) = ensure_managed_agent_pcr_seal_current(
@@ -1021,7 +1022,7 @@ pub(crate) async fn seal_managed_agent_pcr_current(
 pub(crate) async fn bootstrap_provisioned_agent(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
-    agent_id: &arkret_sdk::Did,
+    agent_id: &arkret_sdk::DidCoreId,
     realm_id: &arkret_sdk::RealmId,
     controller_authorization_ref: &str,
     previous_seal_id: Option<&str>,
@@ -1039,7 +1040,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         signer.as_ref(),
         signer_account_scope.as_deref(),
     )?;
-    let controller_did = arkret_sdk::Did::new(controller_id.clone())?;
+    let controller_did = arkret_sdk::DidFullId::new(controller_id.clone())?;
     let agent_id = agent_id.as_str();
     let realm_id = realm_id.as_str();
     let submitter = api.event_submitter()?;
@@ -1174,8 +1175,10 @@ pub(crate) async fn bootstrap_provisioned_agent(
             .map_err(anyhow::Error::msg)?
         }
         .ok_or_else(|| anyhow::anyhow!("Agent PCR MLS genesis was not built"))?;
-        genesis.executed_by = Some(arkret_sdk::ActorId::from(
-            arkret_sdk::project_full_id_to_core_id(&arkret_sdk::Did::new(controller_id.clone())?)?,
+        genesis.executed_by = Some(arkret_sdk::DidCoreId::from(
+            arkret_sdk::project_full_id_to_core_id(&arkret_sdk::DidFullId::new(
+                controller_id.clone(),
+            )?)?,
         ));
         genesis.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
@@ -1231,8 +1234,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
         .await?
         .ok_or_else(|| anyhow::anyhow!("active controller recovery policy is unavailable"))?;
     let binding = ManagedPrincipalBinding {
-        managed_principal_id: arkret_sdk::Did::new(agent_id.to_owned())?,
-        controller_id: arkret_sdk::Did::new(controller_id.clone())?,
+        managed_principal_id: crate::mls_api_helpers::principal_core_id(agent_id)?,
+        controller_id: crate::mls_api_helpers::principal_core_id(&controller_id)?,
         principal_control_realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
         authorization_ref: controller_authorization_ref.to_owned(),
         managed_frontier_ref: ManagedFrontierRef {
@@ -1741,8 +1744,12 @@ mod tests {
             b"0123456789abcdef",
         );
         let binding = ManagedPrincipalBinding {
-            managed_principal_id: arkret_sdk::Did::new("did:web:agent.example").unwrap(),
-            controller_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            managed_principal_id: crate::mls_api_helpers::principal_core_id(
+                "did:web:agent.example",
+            )
+            .unwrap(),
+            controller_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+                .unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(snapshot.realm_id.clone())
                 .unwrap(),
             authorization_ref: "did:web:agent.example#managed-controller".to_owned(),
@@ -1764,8 +1771,12 @@ mod tests {
             b"fedcba9876543210",
         );
         let second_binding = ManagedPrincipalBinding {
-            managed_principal_id: arkret_sdk::Did::new("did:web:agent-two.example").unwrap(),
-            controller_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            managed_principal_id: crate::mls_api_helpers::principal_core_id(
+                "did:web:agent-two.example",
+            )
+            .unwrap(),
+            controller_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+                .unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(second_snapshot.realm_id.clone())
                 .unwrap(),
             authorization_ref: "did:web:agent-two.example#managed-controller".to_owned(),
@@ -1890,7 +1901,7 @@ mod tests {
         let controller_realm = "ak:realm:ATG7Fk8hBMQ6qaWDHI0VKYaWkLN1UoOWA3Dg8A8Cvk9k";
         let agent_realm = "ak:realm:AWOXX4XSfA3Q3eldR3dS6QQYT7Ao6hia5pA4bLuXey0J";
         let controller_identity = ArkretMlsIdentity::new_basic(
-            arkret_sdk::Did::new(controller_id.to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id(controller_id).unwrap(),
             DeviceId::new(device_id.to_owned()).unwrap(),
         )
         .unwrap();
@@ -1901,7 +1912,7 @@ mod tests {
             .unwrap();
         let controller_bytes = serde_json::to_vec(&controller_record).unwrap();
         let agent_identity = ArkretMlsIdentity::new_basic(
-            arkret_sdk::Did::new(agent_id.to_owned()).unwrap(),
+            crate::mls_api_helpers::principal_core_id(agent_id).unwrap(),
             DeviceId::new(device_id.to_owned()).unwrap(),
         )
         .unwrap();
@@ -1928,8 +1939,8 @@ mod tests {
             b"agent-state-salt",
         );
         let binding = ManagedPrincipalBinding {
-            managed_principal_id: arkret_sdk::Did::new(agent_id.to_owned()).unwrap(),
-            controller_id: arkret_sdk::Did::new(controller_id.to_owned()).unwrap(),
+            managed_principal_id: crate::mls_api_helpers::principal_core_id(agent_id).unwrap(),
+            controller_id: crate::mls_api_helpers::principal_core_id(controller_id).unwrap(),
             principal_control_realm_id: arkret_sdk::RealmId::new(agent_realm.to_owned()).unwrap(),
             authorization_ref: format!("{agent_id}#managed-controller"),
             managed_frontier_ref: ManagedFrontierRef {

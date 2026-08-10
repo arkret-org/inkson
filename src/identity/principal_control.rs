@@ -13,7 +13,7 @@ fn create_object_field<'a>(
 
 pub fn realm_from_create(
     create: &arkret_sdk::Event,
-    expected_principal: &arkret_sdk::ActorId,
+    expected_principal: &arkret_sdk::DidCoreId,
 ) -> anyhow::Result<arkret_sdk::RealmId> {
     if create.kind != arkret_sdk::EventKind::RealmCreate
         || &create.actor_id != expected_principal
@@ -37,8 +37,8 @@ pub fn realm_from_registration(
     )?;
     realm_from_create(
         unit.create(),
-        &arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::Did::new(registration.did.clone())?,
+        &arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::DidFullId::new(registration.did.clone())?,
         )?),
     )
 }
@@ -49,74 +49,27 @@ pub fn unavailable(context: &str) -> anyhow::Error {
     )
 }
 
-pub async fn resolve_accepted(
-    http: &arkret_sdk::http_client::Client,
-    principal: &arkret_sdk::Did,
+pub(crate) trait PrincipalCoreInput: std::fmt::Display {
+    fn principal_core_id(&self) -> anyhow::Result<arkret_sdk::DidCoreId>;
+}
+
+impl PrincipalCoreInput for arkret_sdk::DidCoreId {
+    fn principal_core_id(&self) -> anyhow::Result<arkret_sdk::DidCoreId> {
+        Ok(self.clone())
+    }
+}
+
+impl PrincipalCoreInput for arkret_sdk::DidFullId {
+    fn principal_core_id(&self) -> anyhow::Result<arkret_sdk::DidCoreId> {
+        arkret_sdk::project_full_id_to_core_id(self).map_err(anyhow::Error::msg)
+    }
+}
+
+pub(crate) async fn resolve_accepted<P: PrincipalCoreInput + ?Sized>(
+    _http: &arkret_sdk::http_client::Client,
+    _principal: &P,
 ) -> anyhow::Result<arkret_sdk::RealmId> {
-    let principal_actor =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(principal)?);
-    let page = http
-        .events_read(&arkret_sdk::EventsQueryPostRequestBody {
-            realms: Vec::new(),
-            actors: vec![principal.clone()],
-            before: None,
-            after: None,
-            order: Some("ascending".to_owned()),
-            limit: Some(500),
-            filters: None,
-            include_completeness: Some(false),
-        })
-        .await?;
-    if page.has_more || page.next_cursor.is_some() {
-        anyhow::bail!("principal PCR actor history exceeds the bounded authoritative scan");
-    }
-    let complete_events = page
-        .events
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| {
-            row.into_event().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "principal PCR history requires complete Events; row {index} is redacted or reference-locked"
-                )
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let mut creates = complete_events
-        .into_iter()
-        .filter(|event| {
-            event.kind == arkret_sdk::EventKind::RealmCreate
-                && event.actor_id == principal_actor
-                && create_object_field(event, "purpose").and_then(serde_json::Value::as_str)
-                    == Some("principal_control")
-        })
-        .collect::<Vec<_>>();
-    if creates.len() != 1 {
-        anyhow::bail!(
-            "principal {} has {} accepted PCR create Events; expected exactly one",
-            principal,
-            creates.len()
-        );
-    }
-    let create = creates.remove(0);
-    let realm_id = realm_from_create(&create, &principal_actor)?;
-    let digest = arkret_sdk::Hash::new(create.event_digest()?)?;
-    let resolved = http
-        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-            event_ids: vec![create.event_id.clone()],
-            event_digests: vec![digest.clone()],
-            seal_refs: Vec::new(),
-            include_payload: Some(true),
-        })
-        .await?;
-    if !resolved.events.iter().any(|event| event == &create)
-        || !resolved.seals.iter().any(|seal| {
-            seal.realm_id == realm_id
-                && seal.delta.contains(&digest)
-                && seal.covered_event_digests.contains(&digest)
-        })
-    {
-        anyhow::bail!("principal PCR create is not covered by an accepted Seal");
-    }
-    Ok(realm_id)
+    anyhow::bail!(
+        "principal-control operation requires a frozen PCR authority context; current actor-history resolution is disabled"
+    )
 }

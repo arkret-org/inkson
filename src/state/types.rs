@@ -723,7 +723,7 @@ pub struct PendingIdentityAbandonment {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecoveryMaterialEvidence {
-    pub principal_id: arkret_sdk::Did,
+    pub principal_id: arkret_sdk::DidFullId,
     pub device_id: arkret_sdk::DeviceId,
     pub principal_control_realm_id: arkret_sdk::RealmId,
     pub pcr_genesis_unit: arkret_wire::PcrGenesisUnit,
@@ -800,8 +800,8 @@ pub enum CachedAgentSignerEvidenceContext {
     CurrentSignal {
         operation_id: arkret_sdk::ProtocolOperationId,
         request_digest: arkret_sdk::Hash,
-        verifier_id: arkret_sdk::ServiceId,
-        audience: arkret_sdk::ServiceId,
+        verifier_id: arkret_sdk::DidCoreId,
+        audience: arkret_sdk::DidCoreId,
         challenge: arkret_sdk::NonEmptyString,
     },
     HistoricalEvent {
@@ -809,7 +809,7 @@ pub enum CachedAgentSignerEvidenceContext {
         event_id: arkret_sdk::EventId,
         event_digest: arkret_sdk::Hash,
         event_admitted_seal_id: arkret_sdk::SealId,
-        receiver_service_id: arkret_sdk::ServiceId,
+        receiver_service_id: arkret_sdk::DidCoreId,
     },
 }
 

@@ -147,7 +147,8 @@ pub(super) async fn submit_call_state_participant(
             sig: binding.sig.clone(),
         };
         let participant = arkret_sdk::CallParticipant {
-            actor_id: arkret_sdk::Did::new(actor.to_owned()).map_err(|err| err.to_string())?,
+            actor_id: crate::mls_api_helpers::principal_core_id(actor)
+                .map_err(|err| err.to_string())?,
             device_id: device.to_owned(),
             joined_at: None,
             foci_preferred: Some(vec![session.focus_id.clone()]),

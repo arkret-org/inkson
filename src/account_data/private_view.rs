@@ -149,7 +149,7 @@ mod tests {
             "title": "Quarterly plan",
             "query": {"realm_ids": ["ak:realm:AX-N4k3nJ3KKtkbL-adKMKRyKUlTWlwhxQVvjmvEBEVB"]},
             "collection": {},
-            "created_by": "did:web:alice.example",
+            "created_by": "ak:did_core:web:alice.example",
             "created_at": "2026-06-01T00:00:00.000Z"
         })
     }

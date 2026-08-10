@@ -919,7 +919,7 @@ fn AppBootstrap() -> Element {
         right_pinned
             .cmp(&left_pinned)
             .then_with(|| left_label.cmp(&right_label))
-            .then_with(|| left_peer.cmp(right_peer))
+            .then_with(|| left_peer.cmp(&right_peer))
     });
     let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
         active_realm_id.as_str()

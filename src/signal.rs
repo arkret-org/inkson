@@ -323,7 +323,7 @@ impl SignalPayload {
     /// emitting a body its own receiver cannot parse.
     pub fn to_plaintext(
         &self,
-        actor_id: &arkret_sdk::Did,
+        actor_id: &arkret_sdk::DidCoreId,
         sequence: SignalSequence,
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = |result: Result<Vec<u8>, arkret_wire::Error>, what: &str| {
@@ -463,7 +463,7 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
 #[derive(Clone, Debug)]
 pub struct SignalHeader {
     pub scope_ref: arkret_sdk::ScopeRef,
-    pub sender_actor_id: arkret_sdk::Did,
+    pub sender_actor_id: arkret_sdk::DidCoreId,
     pub sender_device_id: arkret_sdk::DeviceId,
     pub seal_ref: arkret_sdk::SealId,
     pub signal_class: arkret_wire::SignalClass,
@@ -475,7 +475,7 @@ impl SignalHeader {
     /// Header at `sent_at` with the maximum TTL its class allows.
     pub fn new(
         scope_ref: arkret_sdk::ScopeRef,
-        sender_actor_id: arkret_sdk::Did,
+        sender_actor_id: arkret_sdk::DidCoreId,
         sender_device_id: arkret_sdk::DeviceId,
         seal_ref: arkret_sdk::SealId,
         signal_class: arkret_wire::SignalClass,
@@ -707,11 +707,19 @@ pub fn seal_signal_envelope(
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured — cannot send a Signal without a device proof")
     })?;
-    let verification_method = arkret_sdk::DidUrl::new(format!(
-        "{}#{}",
-        header.sender_actor_id, header.sender_device_id
-    ))
-    .map_err(|error| anyhow::anyhow!("signal proof verification method is invalid: {error}"))?;
+    let verification_method = arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+        .map_err(anyhow::Error::msg)?;
+    let signer_full_id = arkret_sdk::DidFullId::new(
+        verification_method
+            .as_str()
+            .split_once('#')
+            .map(|(controller, _)| controller)
+            .ok_or_else(|| anyhow::anyhow!("signal signer method has no controller"))?
+            .to_owned(),
+    )?;
+    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != header.sender_actor_id {
+        anyhow::bail!("signal signer does not control sender_actor_id");
+    }
     let mut envelope = arkret_wire::SignalEnvelope {
         realm_id: header.scope_ref.realm_id().clone(),
         scope_ref: header.scope_ref,
@@ -796,11 +804,13 @@ pub(crate) mod test_support {
             encrypted_payload: encrypted.clone(),
             proof: arkret_wire::SignalProof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: arkret_sdk::DidUrl::new(format!(
-                    "{}#{}",
-                    header.sender_actor_id, header.sender_device_id
-                ))
-                .unwrap(),
+                verification_method: arkret_sdk::DidUrl::new(
+                    crate::event_signer::active_signer()
+                        .expect("sealed Signal test fixture requires an active signer")
+                        .verification_method()
+                        .to_owned(),
+                )
+                .expect("test signer verification method must be a DID URL"),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
                 created_at: header.sent_at,
@@ -818,7 +828,7 @@ pub(crate) mod test_support {
     pub(crate) fn sealed_signal(
         payload: &SignalPayload,
         realm_id: &arkret_sdk::RealmId,
-        actor_id: &arkret_sdk::Did,
+        actor_id: &arkret_sdk::DidCoreId,
         device_id: &arkret_sdk::DeviceId,
         sequence: SignalSequence,
     ) -> anyhow::Result<(arkret_wire::SignalEnvelope, Value)> {
@@ -850,8 +860,8 @@ mod tests {
         arkret_sdk::RealmId::new("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j").unwrap()
     }
 
-    fn actor() -> arkret_sdk::Did {
-        arkret_sdk::Did::new("did:web:alice.example").unwrap()
+    fn actor() -> arkret_sdk::DidCoreId {
+        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap()
     }
 
     /// The deleted plaintext rail put `typing` / `strand_id` / `track_name` on

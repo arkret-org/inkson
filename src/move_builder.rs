@@ -75,11 +75,11 @@ mod tests {
     fn strand_position_cell_id_is_composite_board_strand() {
         let cell = strand_position_cell_id(
             "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
-            "ak:strand:01abcd",
+            "ak:strand:AR0yYaLgfEhMOjzAp9eFpdYOf2dma-COBObvEGjj8NN0",
         );
         assert_eq!(
             cell,
-            "ak:cell:ak.component.strand.position.v1:ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo:ak:strand:01abcd"
+            "ak:cell:ak.component.strand.position.v1:ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo:ak:strand:AR0yYaLgfEhMOjzAp9eFpdYOf2dma-COBObvEGjj8NN0"
         );
     }
 }

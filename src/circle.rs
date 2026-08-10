@@ -386,7 +386,7 @@ mod tests {
     fn summary_into_scope_round_trips() {
         let summary = CircleSummary {
             id: "ak:circle:opsroom".to_owned(),
-            realm_id: "ak:realm:home".to_owned(),
+            realm_id: "ak:realm:A28oJpDpEI80mVokdt5Yo0vuv0Z1SXEPt1X593Rirmn8".to_owned(),
             title: "Ops Room".to_owned(),
             short_name: "Ops".to_owned(),
             color_token: "indigo".to_owned(),

@@ -51,7 +51,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
-use arkret_sdk::{Did, DidUrl, Hash, PayloadSigner, WireError};
+use arkret_sdk::{DidFullId, DidUrl, Hash, PayloadSigner, WireError};
 use arkret_wire::PayloadSignature;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -179,7 +179,7 @@ pub struct InksonEventSigner {
 
 struct InksonPayloadSignerAdapter<'a> {
     owner: &'a InksonEventSigner,
-    did: Did,
+    did: DidFullId,
     /// Typed DID URL: `arkret_wire::PayloadSigner::verification_method_id`
     /// returns `&DidUrl`, so the adapter owns the validated form rather than
     /// re-parsing a `String` on every call.
@@ -187,7 +187,7 @@ struct InksonPayloadSignerAdapter<'a> {
 }
 
 impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
-    fn signer_did(&self) -> &Did {
+    fn signer_did(&self) -> &DidFullId {
         &self.did
     }
 
@@ -231,10 +231,13 @@ impl std::fmt::Debug for InksonEventSigner {
 }
 
 impl InksonEventSigner {
-    fn full_id_for_actor(&self, actor_id: &arkret_sdk::ActorId) -> Result<Did, EventSignerError> {
-        let full_id = Did::new(self.signer_did.clone())
+    fn full_id_for_actor(
+        &self,
+        actor_id: &arkret_sdk::DidCoreId,
+    ) -> Result<DidFullId, EventSignerError> {
+        let full_id = DidFullId::new(self.signer_did.clone())
             .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
-        let projected = arkret_sdk::ActorId::from(
+        let projected = arkret_sdk::DidCoreId::from(
             arkret_sdk::project_full_id_to_core_id(&full_id)
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         );
@@ -352,7 +355,7 @@ impl InksonEventSigner {
     /// identity, not the local key DID.
     pub(crate) fn payload_signer_adapter_for_principal(
         &self,
-        principal_id: &Did,
+        principal_id: &DidFullId,
     ) -> Result<impl PayloadSigner + '_, EventSignerError> {
         let verification_method = self.verification_method_for_principal(principal_id)?;
         Ok(InksonPayloadSignerAdapter {
@@ -368,7 +371,7 @@ impl InksonEventSigner {
     /// real error, not a case to paper over with a `String`.
     pub(crate) fn verification_method_for_principal(
         &self,
-        principal_id: &Did,
+        principal_id: &DidFullId,
     ) -> Result<DidUrl, EventSignerError> {
         let raw = match self.device_id.as_deref() {
             Some(device_id) => format!("{principal_id}#{device_id}"),
@@ -438,7 +441,7 @@ impl InksonEventSigner {
             .transpose()?;
         let signer = InksonPayloadSignerAdapter {
             owner: self,
-            did: Did::new(self.signer_did.clone())
+            did: DidFullId::new(self.signer_did.clone())
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
             verification_method: verification_method.clone(),
         };
@@ -563,7 +566,7 @@ impl InksonEventSigner {
     /// controller DID and the authenticated `<controller>#<device_id>` method.
     pub fn sign_managed_agent_pcr_event_seal(
         &self,
-        controller_id: &arkret_sdk::Did,
+        controller_id: &arkret_sdk::DidFullId,
         events: &[arkret_sdk::Event],
         predecessor: Option<&arkret_sdk::Seal>,
         hlc: arkret_sdk::Hlc,
@@ -644,11 +647,19 @@ impl InksonEventSigner {
         &self,
         event: &arkret_sdk::Event,
     ) -> Result<DidUrl, EventSignerError> {
-        let controller = event
-            .executed_by
-            .as_ref()
-            .map(|did| did.as_str())
-            .unwrap_or_else(|| event.actor_id.as_str());
+        // Event actors are canonical core ids, while a proof verification
+        // method is necessarily a full DID URL. For directly-authored events,
+        // recover only the already-installed signer's exact full id and prove
+        // that it projects to this actor; never resolve a generic "current"
+        // DID from the core id. Delegated events already carry their exact
+        // executor full id in `executed_by`.
+        let direct_controller;
+        let controller = if let Some(executed_by) = event.executed_by.as_ref() {
+            executed_by.as_str()
+        } else {
+            direct_controller = self.full_id_for_actor(&event.actor_id)?;
+            direct_controller.as_str()
+        };
         let raw = if let Some(device_id) = self.device_id.as_deref() {
             format!("{controller}#{device_id}")
         } else {
@@ -695,8 +706,14 @@ pub fn build_ed25519_device_signer(
     signer_did: impl Into<String>,
     device_id: impl Into<String>,
 ) -> InksonEventSigner {
-    let mut signer = build_ed25519_signer(seed, signer_did);
-    signer.device_id = normalize_signer_device_id(Some(device_id.into()));
+    let signer_did = signer_did.into();
+    let device_id = device_id.into();
+    let mut signer = build_ed25519_signer_with_verification_method(
+        seed,
+        signer_did.clone(),
+        format!("{signer_did}#{device_id}"),
+    );
+    signer.device_id = normalize_signer_device_id(Some(device_id));
     signer
 }
 
@@ -1202,7 +1219,7 @@ mod tests {
         let _g = reset();
         let signer =
             build_ed25519_device_signer([19u8; 32], "did:key:zlocal-device-key", TEST_DEVICE_ID);
-        let controller = Did::new("did:web:controller.example").unwrap();
+        let controller = DidFullId::new("did:web:controller.example").unwrap();
 
         let adapter = signer
             .payload_signer_adapter_for_principal(&controller)
@@ -1327,7 +1344,8 @@ mod tests {
     #[test]
     fn sign_envelope_roots_proof_in_event_actor() {
         let _g = reset();
-        let signer = build_ed25519_device_signer([9u8; 32], "did:key:zlocal", TEST_DEVICE_ID);
+        let signer =
+            build_ed25519_device_signer([9u8; 32], "did:web:alice.example", TEST_DEVICE_ID);
 
         let prior_mode = current_proof_mode();
         set_proof_mode(ProofMode::RealEd25519);
@@ -1341,7 +1359,7 @@ mod tests {
             proof.verification_method,
             format!("did:web:alice.example#{TEST_DEVICE_ID}")
         );
-        assert_eq!(event.actor_id.as_str(), "did:web:alice.example");
+        assert_eq!(event.actor_id.as_str(), "ak:did_core:web:alice.example");
     }
 
     #[test]
@@ -1381,12 +1399,7 @@ mod tests {
         // The binding transcript is the SDK's authoritative `canonical_binding_bytes`
         // (folds in the `context = "ak.event-proof-v1"` domain tag), matching the
         // production signer.
-        let did = arkret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
-        let proof_binding_bytes = proof
-            .canonical_binding_bytes(&arkret_sdk::ActorId::from(
-                arkret_sdk::project_full_id_to_core_id(&did).unwrap(),
-            ))
-            .unwrap();
+        let proof_binding_bytes = proof.canonical_binding_bytes(&event.actor_id).unwrap();
 
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1448,12 +1461,7 @@ mod tests {
         );
         // Binding transcript via the SDK's authoritative `canonical_binding_bytes`
         // (context tag + domain + audience folded in), matching the production signer.
-        let did = arkret_sdk::Did::new(event.actor_id.as_str().to_owned()).unwrap();
-        let proof_binding_bytes = proof
-            .canonical_binding_bytes(&arkret_sdk::ActorId::from(
-                arkret_sdk::project_full_id_to_core_id(&did).unwrap(),
-            ))
-            .unwrap();
+        let proof_binding_bytes = proof.canonical_binding_bytes(&event.actor_id).unwrap();
 
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1473,7 +1481,7 @@ mod tests {
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
-            "actor_id": "did:web:sdk.example",
+            "actor_id": "ak:did_core:web:sdk.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
@@ -1516,7 +1524,7 @@ mod tests {
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
-            "actor_id": "did:web:sdk.example",
+            "actor_id": "ak:did_core:web:sdk.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
@@ -1554,7 +1562,7 @@ mod tests {
             "kind": "ak.message.create",
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
-            "actor_id": "did:web:sdk.example",
+            "actor_id": "ak:did_core:web:sdk.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",

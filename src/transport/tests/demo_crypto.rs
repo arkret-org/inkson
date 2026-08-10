@@ -8,9 +8,10 @@
 async fn publish_mls_key_package_fails_closed_without_active_signer() {
     let record = arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: "ak:mls:kp:01904100-0000-7000-8000-000000000001".to_owned(),
-        principal_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
-        device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
-            .unwrap(),
+        endpoint: arkret_sdk::MlsEndpointIdentity::human_device(
+            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001").unwrap(),
+        ),
         key_package: "AAAA".to_owned(),
         keypackage_ref: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
         cipher_suites: vec!["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned()],
@@ -47,7 +48,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
 #[test]
 fn mls_key_package_upload_entry_carries_digest_and_ref() {
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
-        arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned())
             .unwrap(),
     )

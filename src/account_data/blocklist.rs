@@ -106,7 +106,8 @@ fn target_from_ui(
             };
             Ok(AccountBlocklistTarget::Did(AccountBlocklistDidTarget {
                 kind,
-                did: arkret_sdk::Did::new(value).map_err(|error| error.to_string())?,
+                actor_id: crate::mls_api_helpers::principal_core_id(&value)
+                    .map_err(|error| error.to_string())?,
             }))
         }
         BlocklistUiTargetKind::Domain => {
@@ -138,7 +139,7 @@ pub fn blocklist_target_kind_label(target: &AccountBlocklistTarget) -> &'static 
 
 pub fn blocklist_target_value(target: &AccountBlocklistTarget) -> &str {
     match target {
-        AccountBlocklistTarget::Did(target) => target.did.as_str(),
+        AccountBlocklistTarget::Did(target) => target.actor_id.as_str(),
         AccountBlocklistTarget::DeviceId(target) => target.object_ref.as_str(),
         AccountBlocklistTarget::DeviceVerificationMethod(target) => target.value.as_str(),
         AccountBlocklistTarget::Applet(target) => target.object_ref.as_str(),
@@ -237,14 +238,13 @@ fn actor_entries_filter_surface(
     surface: AccountBlocklistSurface,
     include_mute: bool,
 ) -> bool {
-    let needle = did.trim();
-    if needle.is_empty() {
+    let Ok(needle) = crate::mls_api_helpers::principal_core_id(did) else {
         return false;
-    }
+    };
     let now = chrono::Utc::now();
     list.iter().any(|entry| {
         target_is_actor(&entry.target)
-            && blocklist_target_value(&entry.target) == needle
+            && blocklist_target_value(&entry.target) == needle.as_str()
             && entry_filters_surface(entry, surface, include_mute, now)
     })
 }
@@ -309,13 +309,13 @@ pub fn block_target_in(
 }
 
 pub fn unblock_user_in(list: &mut Vec<AccountBlocklistPayloadEntry>, did: &str) -> bool {
-    let needle = did.trim();
-    if needle.is_empty() {
+    let Ok(needle) = crate::mls_api_helpers::principal_core_id(did) else {
         return false;
-    }
+    };
     let before = list.len();
     list.retain(|entry| {
-        !(target_is_actor(&entry.target) && blocklist_target_value(&entry.target) == needle)
+        !(target_is_actor(&entry.target)
+            && blocklist_target_value(&entry.target) == needle.as_str())
     });
     list.len() != before
 }
@@ -340,7 +340,8 @@ pub fn build_blocklist_account_data_body(
     entries: &[AccountBlocklistPayloadEntry],
 ) -> Result<Value, String> {
     let payload = AccountBlocklistPayload {
-        owner: arkret_sdk::Did::new(owner.trim().to_owned()).map_err(|error| error.to_string())?,
+        owner: crate::mls_api_helpers::principal_core_id(owner.trim())
+            .map_err(|error| error.to_string())?,
         version,
         entries: entries.to_vec(),
         updated_at: Some(chrono::Utc::now()),
@@ -369,7 +370,9 @@ pub fn blocklist_payload_from_account_data(
     let payload: AccountBlocklistPayload =
         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
     payload.validate().map_err(|error| error.to_string())?;
-    if payload.owner.as_str() != expected_owner.trim() {
+    let expected_owner = crate::mls_api_helpers::principal_core_id(expected_owner)
+        .map_err(|error| error.to_string())?;
+    if payload.owner != expected_owner {
         return Err("account blocklist owner does not match the active account".to_owned());
     }
     Ok(payload)

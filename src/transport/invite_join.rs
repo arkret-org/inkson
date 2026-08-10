@@ -45,15 +45,27 @@ impl crate::transport::TransportClient {
         if endpoint_url == *self.base_url() {
             return self.event_submitter()?.submit_sdk_event(event).await;
         }
+        reject_unauthenticated_remote_candidate()?;
+        unreachable!("remote candidate rejection always fails closed")
+    }
+}
 
-        let mut routed = crate::transport::TransportClient::unauthenticated(endpoint)?;
-        if !self.context().credential.trim().is_empty() {
-            routed = routed.with_bearer(self.context().credential.clone())?;
-        }
-        if let Some(sync_token) = self.context().cursor.as_deref() {
-            routed = routed.with_wait_for(sync_token.to_owned())?;
-        }
-        routed.event_submitter()?.submit_sdk_event(event).await
+fn reject_unauthenticated_remote_candidate() -> anyhow::Result<()> {
+    anyhow::bail!(
+        "remote invite join requires authenticated Garth service-route evidence; bare candidate endpoints are not transport authority"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bare_remote_candidate_fails_closed() {
+        let error = super::reject_unauthenticated_remote_candidate().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("authenticated Garth service-route")
+        );
     }
 }
 

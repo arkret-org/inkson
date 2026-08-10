@@ -241,8 +241,8 @@ mod tests {
 
     fn key(actor: &str) -> ReadPositionKey {
         ReadPositionKey {
-            realm_id: "ak:realm:r".to_owned(),
-            scope_ref: "ak:strand:s".to_owned(),
+            realm_id: "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI".to_owned(),
+            scope_ref: "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M".to_owned(),
             actor_id: actor.to_owned(),
         }
     }
@@ -250,15 +250,31 @@ mod tests {
     #[test]
     fn a_reordered_receipt_does_not_move_a_read_position_backwards() {
         let mut projection = ReadReceiptProjection::default();
-        assert!(projection.apply(key("did:web:a"), "ak:message:m2".to_owned(), 7));
-        assert!(!projection.apply(key("did:web:a"), "ak:message:m1".to_owned(), 6));
+        assert!(projection.apply(
+            key("did:web:a"),
+            "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
+            7
+        ));
+        assert!(!projection.apply(
+            key("did:web:a"),
+            "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c".to_owned(),
+            6
+        ));
         assert_eq!(
-            projection.readers_of("ak:realm:r", "ak:strand:s", "ak:message:m2"),
+            projection.readers_of(
+                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+                "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M",
+                "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo"
+            ),
             vec!["did:web:a".to_owned()]
         );
         assert!(
             projection
-                .readers_of("ak:realm:r", "ak:strand:s", "ak:message:m1")
+                .readers_of(
+                    "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+                    "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M",
+                    "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c"
+                )
                 .is_empty()
         );
     }
@@ -266,18 +282,26 @@ mod tests {
     #[test]
     fn readers_are_scoped_to_the_realm_and_strand() {
         let mut projection = ReadReceiptProjection::default();
-        projection.apply(key("did:web:a"), "ak:message:m2".to_owned(), 1);
+        projection.apply(
+            key("did:web:a"),
+            "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
+            1,
+        );
         projection.apply(
             ReadPositionKey {
-                realm_id: "ak:realm:other".to_owned(),
-                scope_ref: "ak:strand:s".to_owned(),
+                realm_id: "ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo".to_owned(),
+                scope_ref: "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M".to_owned(),
                 actor_id: "did:web:b".to_owned(),
             },
-            "ak:message:m2".to_owned(),
+            "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
             1,
         );
         assert_eq!(
-            projection.readers_of("ak:realm:r", "ak:strand:s", "ak:message:m2"),
+            projection.readers_of(
+                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+                "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M",
+                "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo"
+            ),
             vec!["did:web:a".to_owned()]
         );
     }
@@ -288,7 +312,7 @@ mod tests {
         for index in 0..(MAX_READ_POSITIONS + 5) {
             projection.apply(
                 key(&format!("did:web:a{index}")),
-                "ak:message:m2".to_owned(),
+                "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
                 1,
             );
         }
@@ -317,7 +341,7 @@ mod tests {
             .unwrap_or(EVENT_ID);
         arkret_sdk::ReadReceipt::new(
             3,
-            arkret_sdk::Did::new("did:web:a").unwrap(),
+            crate::mls_api_helpers::principal_core_id("did:web:a").unwrap(),
             arkret_sdk::EventId::new(event_id).unwrap(),
             read_scope,
         )
@@ -334,7 +358,7 @@ mod tests {
             // the same `read_scope` the test body varies rather than a fixed one.
             payload: garth::SdkSignalPlaintext::ReadReceipt(typed_receipt(&body)),
             kind: "ak.receipt.read".to_owned(),
-            actor_id: arkret_sdk::Did::new("did:web:a").unwrap(),
+            actor_id: crate::mls_api_helpers::principal_core_id("did:web:a").unwrap(),
             payload_sequence: 3,
             ttl_ms: None,
             sent_at: at,
@@ -365,7 +389,7 @@ mod tests {
     fn only_strand_scoped_receipts_have_a_timeline_to_land_on() {
         for scope in [
             json!({"kind": "realm"}),
-            json!({"kind": "thread", "object_ref": "ak:message:m"}),
+            json!({"kind": "thread", "object_ref": "ak:message:AyjAZDA-2_qXaYrBETl9zMunOsBPfG7IvtEWwgzr984I"}),
         ] {
             let plaintext = receipt(json!({
                 "kind": "ak.receipt.read",
@@ -384,7 +408,7 @@ mod tests {
         let (key, message_id) =
             strand_read_position(&plaintext, receipt_of(&plaintext)).expect("strand receipt");
         assert_eq!(key.scope_ref, strand);
-        assert_eq!(key.actor_id, "did:web:a");
+        assert_eq!(key.actor_id, "ak:did_core:web:a");
         assert_eq!(
             key.realm_id,
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"

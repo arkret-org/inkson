@@ -467,7 +467,7 @@ mod tests {
     ) -> arkret_sdk::Event {
         let mut object = arkret_sdk::StrandCreateObject::new(
             sdk_realm_id(),
-            arkret_sdk::Did::new(actor).unwrap(),
+            crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         )
         .with_metadata_title(title)
         .with_metadata_field("rank", json!(rank))
@@ -531,8 +531,8 @@ mod tests {
         arkret_sdk::RealmId::new(REALM).unwrap()
     }
 
-    fn sdk_actor_id() -> arkret_sdk::ActorId {
-        arkret_sdk::ActorId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
+    fn sdk_actor_id() -> arkret_sdk::DidCoreId {
+        arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap()
     }
 
     fn sdk_event(
@@ -754,7 +754,7 @@ mod tests {
                 json!({
                     "kind": "ak.strand.create",
                     "operation_id": "op-create-1",
-                    "actor_id": "did:web:alice.example",
+                    "actor_id": "ak:did_core:web:alice.example",
                     "created_at": "2026-06-28T00:05:00.000Z",
                     "wire_kind": "ak.strand.create",
                     "write_state": "queued",

@@ -4,7 +4,7 @@ use super::*;
 fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
     let contacts: Vec<crate::models::ContactListRow> = serde_json::from_value(serde_json::json!([
         {
-            "peer": {"kind": "human", "principal_id": "did:web:example.com:users:alice"},
+            "peer": {"kind": "human", "principal_id": "ak:did_core:web:example.com:users:alice"},
             "state": "accepted",
             "next_prepare_input": {
                 "basis_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -15,12 +15,13 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
             "granted_by_peer_scopes": ["direct_message"],
             "bidirectional_scopes": ["direct_message"],
             "agents": [{
-                "agent_id": "did:web:example.com:agents:aa",
-                "controller_id": "did:web:example.com:users:alice",
+                "agent_id": "ak:did_core:web:example.com:agents:aa",
+                "controller_id": "ak:did_core:web:example.com:users:alice",
                 "agent_slug": "aa",
                 "direct_conversation": {
                     "realm_id": "ak:realm:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog",
                     "main_strand_id": "ak:strand:AYdzR-cxE5CaMt7Xeab7lJ6oTMVcXRDFIfPqcXOahgQ4",
+                    "binding_event_ref": "ak:event:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c",
                     "state": "found"
                 }
             }]
@@ -34,7 +35,7 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
             "ak:realm:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog",
             "ak:strand:AYdzR-cxE5CaMt7Xeab7lJ6oTMVcXRDFIfPqcXOahgQ4",
         ),
-        "did:web:example.com:agents:aa"
+        "ak:did_core:web:example.com:agents:aa"
     );
 }
 
@@ -881,7 +882,7 @@ fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
 fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
     let mut store = isolated_store("mls-recovery-missing");
     store.save_realm_tree_projection(
-        "ak:realm:encrypted".to_owned(),
+        "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
         serde_json::json!({
             "summary": {
                 "title": "Encrypted",
@@ -906,7 +907,7 @@ fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
 fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     let mut store = isolated_store("mls-recovery-backed-up");
     store.save_realm_tree_projection(
-        "ak:realm:encrypted".to_owned(),
+        "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
         serde_json::json!({
             "summary": {
                 "title": "Encrypted",
@@ -918,7 +919,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     let payload = serde_json::json!({
         "active_series": [{
             "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "backup_kind": "secret_storage",
             "active_series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
         }],
@@ -948,7 +949,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
 fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() {
     let mut store = isolated_store("mls-recovery-account-configured");
     store.save_realm_tree_projection(
-        "ak:realm:encrypted".to_owned(),
+        "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
         serde_json::json!({
             "summary": {
                 "title": "Encrypted",
@@ -974,7 +975,7 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_stor
     let actor = "did:web:alice.example";
     let mut store = isolated_store("mls-recovery-local-did-backup");
     store.save_realm_tree_projection(
-        "ak:realm:encrypted".to_owned(),
+        "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
         serde_json::json!({
             "summary": {
                 "title": "Encrypted",
@@ -1055,16 +1056,17 @@ fn mls_key_package_publish_key_waits_for_e2ee_profile_and_sync() {
 #[test]
 fn merge_projection_events_keeps_existing_messages_on_summary_only_delta() {
     let mut summary = ProjectionEvent::system_notice("summary-ak:realm:test", "server", "old");
-    summary.realm_id = Some("ak:realm:test".to_owned());
+    summary.realm_id = Some("ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw".to_owned());
     let message = ProjectionEvent {
-        id: "ak:event:message".to_owned(),
-        realm_id: Some("ak:realm:test".to_owned()),
+        id: "ak:event:AMRFFcIrNlRzkEP8vLsl4eBWTFBOBX6eR89IhQWPENxE".to_owned(),
+        realm_id: Some("ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw".to_owned()),
         body: "welcome".to_owned(),
         ..ProjectionEvent::default()
     };
     let mut updated_summary =
         ProjectionEvent::system_notice("summary-ak:realm:test", "server", "new");
-    updated_summary.realm_id = Some("ak:realm:test".to_owned());
+    updated_summary.realm_id =
+        Some("ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw".to_owned());
 
     let merged = merge_projection_events(&[summary, message], vec![updated_summary]);
 

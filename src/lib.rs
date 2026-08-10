@@ -56,9 +56,6 @@ pub mod fresh_device_recovery;
 pub mod hpke_backup;
 pub mod i18n;
 pub(crate) mod identity;
-/// Round 4 (spec a77b995) — invite-claim strand (subject_proof +
-/// binding_proof transcript + 5 terminal states UI).
-pub mod invite_claim;
 pub mod key_backup;
 pub mod keyed_cooldown;
 /// Round R2/R3 (T16) — late key recovery UX helpers.

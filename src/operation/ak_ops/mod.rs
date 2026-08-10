@@ -53,13 +53,13 @@ pub use relation::*;
 pub use space::*;
 pub use strand::*;
 
-pub(super) fn did_id(value: &str) -> anyhow::Result<arkret_sdk::Did> {
-    arkret_sdk::Did::new(value.to_owned())
+pub(super) fn did_id(value: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
+    crate::mls_api_helpers::principal_core_id(value)
         .map_err(|err| anyhow::anyhow!("invalid DID {value:?}: {err:?}"))
 }
 
-pub(super) fn actor_id(value: &str) -> anyhow::Result<arkret_sdk::ActorId> {
-    arkret_sdk::ActorId::new(value.to_owned())
+pub(super) fn actor_id(value: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
+    crate::mls_api_helpers::principal_core_id(value)
         .map_err(|err| anyhow::anyhow!("invalid actor core_id {value:?}: {err:?}"))
 }
 
@@ -103,16 +103,9 @@ pub(crate) fn strand_create_payload(
             state_changed_at: None,
             stage: Some(object.stage),
             stage_changed_at: None,
-            created_by: arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
-                &object.created_by,
-            )?),
+            created_by: object.created_by,
             created_at: object.created_at,
-            updated_by: object
-                .updated_by
-                .as_ref()
-                .map(arkret_sdk::project_full_id_to_core_id)
-                .transpose()?
-                .map(arkret_sdk::ActorId::from),
+            updated_by: object.updated_by,
             updated_at: object.updated_at,
         },
         initial_relations: None,

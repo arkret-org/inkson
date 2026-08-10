@@ -1,7 +1,7 @@
 //! Backup / rotation upload flow and superseded-backup cleanup.
 
 use anyhow::{Result, anyhow};
-use arkret_wire::{BackupRotationKind, Did};
+use arkret_wire::{BackupRotationKind, DidFullId};
 use serde_json::Value;
 
 use super::backup_body::{
@@ -28,7 +28,7 @@ async fn current_backup_frontier_ref(
     actor_id: &str,
     device_id: &str,
 ) -> Result<arkret_sdk::KeyBackupFrontierRef> {
-    let principal = Did::new(actor_id.to_owned())?;
+    let principal = DidFullId::new(actor_id.to_owned())?;
     let http = api.sdk_http_client()?;
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
@@ -74,7 +74,7 @@ async fn ensure_initial_active_series(
         ));
     }
 
-    let principal = Did::new(actor_id.to_owned())?;
+    let principal = DidFullId::new(actor_id.to_owned())?;
     let http = api.sdk_http_client()?;
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;

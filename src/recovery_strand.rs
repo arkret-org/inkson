@@ -17,7 +17,7 @@ use arkret_models_crypto::{
     RecoverySessionCreateRequestBody, RecoverySessionProofSubmitRequestBody,
     UnsignedRecoveryPolicy, UnsignedRecoveryPolicyBody,
 };
-use arkret_sdk::{DeviceId, Did, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
+use arkret_sdk::{DeviceId, DidFullId, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
 use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -116,7 +116,7 @@ pub async fn verify_recovery_material_evidence(
 ) -> anyhow::Result<()> {
     evidence.pcr_genesis_unit.validate_ordered_envelopes()?;
     if evidence.pcr_genesis_unit.create().actor_id
-        != arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
+        != arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
             &evidence.principal_id,
         )?)
         || evidence.pcr_genesis_unit.create().realm_id != evidence.principal_control_realm_id
@@ -345,7 +345,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
     let policy_body = UnsignedRecoveryPolicyBody {
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
-        principal_id: Did::new(principal_id.to_owned())?,
+        principal_id: crate::mls_api_helpers::principal_core_id(principal_id)?,
         version: 1,
         supersedes: None,
         trust_domain: TypedTrustDomainId::new(trust_domain.to_owned())?,
@@ -754,7 +754,7 @@ pub fn create_session_body(
     expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<RecoverySessionCreateRequestBody> {
     Ok(RecoverySessionCreateRequestBody {
-        principal_id: Did::new(principal_id.trim().to_owned())?,
+        principal_id: crate::mls_api_helpers::principal_core_id(principal_id)?,
         requesting_device_id: DeviceId::new(requesting_device_id.trim().to_owned())?,
         trust_domain: TypedTrustDomainId::new(trust_domain.trim().to_owned())?,
         expected_recovery_policy_ref: match expected_recovery_policy_ref {

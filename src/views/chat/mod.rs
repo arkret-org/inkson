@@ -39,6 +39,26 @@ mod timeline_surface;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 
+fn principal_core_key(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    arkret_sdk::DidCoreId::new(value.to_owned())
+        .ok()
+        .map(|id| id.as_str().to_owned())
+        .or_else(|| {
+            crate::mls_api_helpers::principal_core_id(value)
+                .ok()
+                .map(|id| id.as_str().to_owned())
+        })
+}
+
+fn same_principal_core(left: &str, right: &str) -> bool {
+    principal_core_key(left)
+        .is_some_and(|left| principal_core_key(right).as_deref() == Some(left.as_str()))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionInsertRequest {
     request_id: String,
@@ -372,7 +392,7 @@ fn agent_selector_mention_is_already_resolved(
                 return mention
                     .controller_subject_id
                     .as_ref()
-                    .is_some_and(|controller| controller.as_str() == requester);
+                    .is_some_and(|controller| same_principal_core(controller.as_str(), requester));
             }
             mention
                 .controller_handle_at_time
@@ -389,7 +409,7 @@ fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) 
             mention
                 .controller_subject_id
                 .as_ref()
-                .is_some_and(|controller| controller.as_str() == controller_id)
+                .is_some_and(|controller| same_principal_core(controller.as_str(), controller_id))
         })
         .map(|mention| mention.subject_id.as_str().to_owned())
         .collect::<Vec<_>>();
@@ -418,12 +438,11 @@ fn owned_agent_ids_from_composer(
         picker
             .iter()
             .filter(|candidate| candidate.is_agent)
-            .filter(|candidate| candidate.controller_subject_id.trim() == controller_id.trim())
+            .filter(|candidate| {
+                same_principal_core(&candidate.controller_subject_id, controller_id)
+            })
             .filter(|candidate| selector_slugs.contains(candidate.agent_slug_at_time.trim()))
-            .filter_map(|candidate| {
-                let did = candidate.did.trim();
-                (!did.is_empty()).then(|| did.to_owned())
-            }),
+            .filter_map(|candidate| principal_core_key(&candidate.did)),
     );
     agent_ids.sort_unstable();
     agent_ids.dedup();
@@ -470,11 +489,11 @@ fn validate_native_prepared_sidecar_binding(
     context_attach_event: &arkret_sdk::Event,
     sidecar_id: &arkret_sdk::SidecarId,
     source_strand_id: &arkret_sdk::StrandId,
-    controller_id: &arkret_sdk::Did,
+    controller_id: &arkret_sdk::DidFullId,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<()> {
     let controller_actor =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
     if let Some(create) = create_event {
         if create.kind != arkret_sdk::EventKind::SidecarCreate
             || create.actor_id != controller_actor
@@ -570,12 +589,12 @@ fn accepted_native_sidecar_id(
 fn sign_prepared_sidecar_event(
     draft: &arkret_sdk::sidecar_operations::SidecarPreparedEventDraft,
     expected_kind: &str,
-    controller_id: &arkret_sdk::Did,
+    controller_id: &arkret_sdk::DidFullId,
     device_id: &str,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let controller_actor =
-        arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
     if draft.kind.as_str() != expected_kind {
         anyhow::bail!(
             "prepared Sidecar Event kind mismatch: expected {expected_kind}, got {}",
@@ -656,13 +675,14 @@ async fn ensure_owned_agent_sidecar(
     if addressed_agent_ids.is_empty() {
         return Ok(None);
     }
-    let controller = arkret_sdk::Did::new(controller_id.to_owned())?;
+    let controller_full_id = arkret_sdk::DidFullId::new(controller_id.to_owned())?;
+    let controller = crate::mls_api_helpers::principal_core_id(controller_id)?;
     let source_realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
     let source_strand = arkret_sdk::StrandId::new(strand_id.to_owned())?;
     let mut addressed = addressed_agent_ids
         .iter()
         .cloned()
-        .map(arkret_sdk::Did::new)
+        .map(|agent_id| crate::mls_api_helpers::principal_core_id(&agent_id))
         .collect::<Result<Vec<_>, _>>()?;
     addressed.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     addressed.dedup();
@@ -717,6 +737,7 @@ async fn ensure_owned_agent_sidecar(
     );
     let ceremony_operation_id = operation_id.clone();
     let ceremony_controller = controller.clone();
+    let ceremony_controller_full_id = controller_full_id.clone();
     let ceremony_realm = source_realm.clone();
     let ceremony_strand = source_strand.clone();
     let ceremony_context = context_ref.clone();
@@ -765,14 +786,14 @@ async fn ensure_owned_agent_sidecar(
                             let create_event = sign_prepared_sidecar_event(
                                 &create_event_draft,
                                 arkret_sdk::EventKind::SidecarCreate.as_str(),
-                                &ceremony_controller,
+                                &ceremony_controller_full_id,
                                 &ceremony_device,
                                 &ceremony_realm,
                             )?;
                             let context_attach_event = sign_prepared_sidecar_event(
                                 &context_attach_event_draft,
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
-                                &ceremony_controller,
+                                &ceremony_controller_full_id,
                                 &ceremony_device,
                                 &ceremony_realm,
                             )?;
@@ -781,7 +802,7 @@ async fn ensure_owned_agent_sidecar(
                                 &context_attach_event,
                                 &sidecar_id,
                                 &ceremony_strand,
-                                &ceremony_controller,
+                                &ceremony_controller_full_id,
                                 &ceremony_realm,
                             )?;
                             let request = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Commit(
@@ -837,7 +858,7 @@ async fn ensure_owned_agent_sidecar(
                             let context_attach_event = sign_prepared_sidecar_event(
                                 &context_attach_event_draft,
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
-                                &ceremony_controller,
+                                &ceremony_controller_full_id,
                                 &ceremony_device,
                                 &ceremony_realm,
                             )?;
@@ -846,7 +867,7 @@ async fn ensure_owned_agent_sidecar(
                                 &context_attach_event,
                                 &sidecar_id,
                                 &ceremony_strand,
-                                &ceremony_controller,
+                                &ceremony_controller_full_id,
                                 &ceremony_realm,
                             )?;
                             let request = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Attach(
@@ -1147,7 +1168,7 @@ async fn submit_source_routed_sidecar_message(
     }
     let mut addressed = addressed_agent_ids
         .iter()
-        .map(|agent_id| arkret_sdk::Did::new(agent_id.clone()))
+        .map(|agent_id| crate::mls_api_helpers::principal_core_id(agent_id))
         .collect::<Result<Vec<_>, _>>()?;
     addressed.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     addressed.dedup();
@@ -1652,11 +1673,11 @@ fn composer_mention_nodes(
     for chip in picker {
         if mentions.iter().any(|node| {
             node.as_mention()
-                .is_some_and(|mention| mention.subject_id.as_str() == chip.did)
+                .is_some_and(|mention| same_principal_core(mention.subject_id.as_str(), &chip.did))
         }) {
             continue;
         }
-        let Ok(subject_id) = arkret_sdk::Did::new(chip.did.clone()) else {
+        let Ok(subject_id) = crate::mls_api_helpers::principal_core_id(&chip.did) else {
             continue;
         };
         // `@me/<slug>` is allowed into the draft before the signed account
@@ -1685,7 +1706,7 @@ fn composer_mention_nodes(
             mention = mention.with_handle_at_time(handle);
         }
         if let (Ok(controller_subject_id), Ok(controller_handle)) = (
-            arkret_sdk::Did::new(chip.controller_subject_id.clone()),
+            crate::mls_api_helpers::principal_core_id(&chip.controller_subject_id),
             arkret_sdk::Handle::parse(&chip.controller_handle_at_time),
         ) && !chip.agent_slug_at_time.trim().is_empty()
         {
@@ -1699,10 +1720,11 @@ fn composer_mention_nodes(
     }
     if crate::messaging::mentions::contains_self_mention_token(body)
         && !mentions.iter().any(|node| {
-            node.as_mention()
-                .is_some_and(|mention| mention.subject_id.as_str() == account_did.trim())
+            node.as_mention().is_some_and(|mention| {
+                same_principal_core(mention.subject_id.as_str(), account_did)
+            })
         })
-        && let Ok(subject_id) = arkret_sdk::Did::new(account_did.trim().to_owned())
+        && let Ok(subject_id) = crate::mls_api_helpers::principal_core_id(account_did)
     {
         mentions.push(MentionNode::mention(
             arkret_sdk::Mention::new(subject_id).with_mention_text_original("@me".to_owned()),

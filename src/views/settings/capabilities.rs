@@ -248,7 +248,7 @@ mod tests {
             "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
             "schema": "ak.schema.capability.v1",
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "issuer": "did:web:alice.example",
+            "issuer": "ak:did_core:web:alice.example",
             "subject": subject,
             "actions": ["ak.message.create"],
             "resources": [
@@ -275,8 +275,8 @@ mod tests {
             "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X"
         );
         assert_eq!(row.action, "ak.message.create");
-        assert_eq!(row.issuer_did, "did:web:alice.example");
-        assert_eq!(row.subject_did, "did:web:bob.example");
+        assert_eq!(row.issuer_did, "ak:did_core:web:alice.example");
+        assert_eq!(row.subject_did, "ak:did_core:web:bob.example");
         assert!(row.expires_at.starts_with("2026-12-31"));
         assert_eq!(row.issuer_authority_refs.len(), 1);
     }

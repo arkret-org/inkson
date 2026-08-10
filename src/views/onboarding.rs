@@ -348,7 +348,7 @@ async fn recover_bound_principal_device(
         .ok_or_else(|| anyhow::anyhow!("the identity has no active Recovery Key policy"))?;
     let session = api
         .create_recovery_session(&arkret_models_crypto::RecoverySessionCreateRequestBody {
-            principal_id: arkret_sdk::Did::new(principal_id.to_owned())?,
+            principal_id: crate::mls_api_helpers::principal_core_id(principal_id)?,
             requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
             trust_domain: arkret_sdk::TypedTrustDomainId::new(handoff.trust_domain.clone())?,
             expected_recovery_policy_ref: Some(arkret_models_crypto::RecoveryPolicyRef {
@@ -371,6 +371,7 @@ async fn recover_bound_principal_device(
     let mut completed = crate::mls::account_recovery::execute_root_anchored_recovery(
         &api,
         state_store,
+        &arkret_sdk::DidFullId::new(principal_id.to_owned())?,
         &session,
         &proof_outcome,
         recovery_words,
@@ -435,7 +436,7 @@ async fn issue_recovery_completion_grant(
             let initial_session = arkret_sdk::InitialSessionGrantRequest {
                 device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
                 session_public_key: holder.canonical_session_public_jwk()?,
-                audience: arkret_sdk::ServiceId::new(handoff.audience.clone())?,
+                audience: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
                 requested_scope: vec!["ak.self.account.read.viewer".to_owned()],
             };
             initial_session.validate()?;
@@ -1149,7 +1150,7 @@ async fn create_and_bind_identity(
             hpke_key,
             signer.as_ref(),
             &dpop,
-            arkret_sdk::ServiceId::new(handoff.audience.clone())?,
+            arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
         )?;
         let barrier = {
             let mut store = state_store.write();
@@ -1414,7 +1415,7 @@ async fn finish_principal_setup(
     }
 
     if registration.principal_service_binding.is_none() {
-        let principal_id = arkret_sdk::Did::new(actor.to_owned())?;
+        let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())?;
         let signer = crate::event_signer::active_signer()
             .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
         if signer.device_id() != Some(device) {
@@ -1507,7 +1508,7 @@ async fn finish_principal_setup(
             .context("recovery-material evidence omits PCR genesis unit")?,
     )?;
     let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
-        principal_id: arkret_sdk::Did::new(actor.to_owned())?,
+        principal_id: arkret_sdk::DidFullId::new(actor.to_owned())?,
         device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
         principal_control_realm_id: bootstrap_seal.realm_id.clone(),
         pcr_genesis_unit,

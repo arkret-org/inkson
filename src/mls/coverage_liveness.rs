@@ -277,7 +277,11 @@ mod tests {
         let mut scopes = store.stale_mls_coverage_scopes(REALM);
         scopes.sort();
         assert_eq!(scopes, vec![None, Some("ak:circle:demo".to_owned())]);
-        assert!(store.stale_mls_coverage_scopes("ak:realm:other").is_empty());
+        assert!(
+            store
+                .stale_mls_coverage_scopes("ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo")
+                .is_empty()
+        );
     }
 
     #[test]

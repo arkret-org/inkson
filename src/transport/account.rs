@@ -27,9 +27,12 @@ use crate::models::{
     ContactListView, CurrentAccount, IdentityDescribeOutcome, IdentityResolveOutcome,
 };
 
-pub(crate) fn did_for_request_field(field: &str, value: &str) -> anyhow::Result<arkret_sdk::Did> {
+pub(crate) fn did_for_request_field(
+    field: &str,
+    value: &str,
+) -> anyhow::Result<arkret_sdk::DidCoreId> {
     let value = value.trim();
-    arkret_sdk::Did::new(value.to_owned())
+    crate::mls_api_helpers::principal_core_id(value)
         .map_err(|err| anyhow::anyhow!("invalid {field} DID `{value}`: {err}"))
 }
 
@@ -314,10 +317,21 @@ async fn verify_contact_request_receipt(
         anyhow::bail!("Contact request receipt Event lacks its exact accepted covering Seal");
     }
 
+    let issuer_full_id = arkret_sdk::DidFullId::new(
+        receipt
+            .signature
+            .verification_method
+            .as_str()
+            .split_once('#')
+            .map(|(controller, _)| controller.to_owned())
+            .ok_or_else(|| anyhow::anyhow!("Contact receipt verification method omits fragment"))?,
+    )?;
+    if arkret_sdk::project_full_id_to_core_id(&issuer_full_id)? != receipt.core.issuer {
+        anyhow::bail!("Contact receipt proof controller differs from issuer");
+    }
     let history =
-        crate::identity::history::fetch_complete_identity_history(http, &receipt.core.issuer)
-            .await?;
-    if history.did != receipt.core.issuer
+        crate::identity::history::fetch_complete_identity_history(http, &issuer_full_id).await?;
+    if history.did != issuer_full_id
         || history.method != "did:webvh"
         || history.native_history == Some(false)
         || history.has_more
@@ -326,7 +340,7 @@ async fn verify_contact_request_receipt(
         anyhow::bail!("Contact receipt issuer did not return complete native did:webvh history");
     }
     let history_point = arkret_signatures::webvh::validate_webvh_history_at(
-        &receipt.core.issuer,
+        &issuer_full_id,
         &history.entries,
         receipt.core.accepted_at,
     )
@@ -340,7 +354,7 @@ async fn verify_contact_request_receipt(
     }
     let resolved_key =
         arkret_sdk::resolve_verification_method_key_from_document(&document, verification_method)?;
-    if resolved_key.absolutize(&receipt.core.issuer)? != receipt.signature.verification_method {
+    if resolved_key.absolutize(&issuer_full_id)? != receipt.signature.verification_method {
         anyhow::bail!("Contact receipt verification method resolved to another issuer key");
     }
     let verifying_key =
@@ -358,7 +372,7 @@ fn did_document_assertion_method_contains(
     document: &arkret_sdk::DidDocument,
     expected: &str,
 ) -> bool {
-    fn matches_reference(issuer: &arkret_sdk::Did, reference: &str, expected: &str) -> bool {
+    fn matches_reference(issuer: &arkret_sdk::DidFullId, reference: &str, expected: &str) -> bool {
         if reference == expected {
             return true;
         }
@@ -533,8 +547,8 @@ pub(crate) fn direct_conversation_current_generation_value_digest(
 pub async fn create_direct_conversation_from_resolve(
     submitter: &crate::event_submit::EventSubmitter,
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
-    founder_id: &arkret_sdk::Did,
-    peer_id: &arkret_sdk::Did,
+    founder_id: &arkret_sdk::DidFullId,
+    peer_id: &arkret_sdk::DidFullId,
 ) -> anyhow::Result<arkret_sdk::DirectConversationFoundingAcceptanceOutcome> {
     let arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
         next_founding_input,
@@ -832,7 +846,7 @@ pub async fn identity_resolve(
     http: &arkret_sdk::http_client::Client,
     did: &str,
 ) -> anyhow::Result<IdentityResolveOutcome> {
-    let subject = arkret_sdk::Did::new(did.to_owned())
+    let subject = arkret_sdk::DidFullId::new(did.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid did `{did}`: {err}"))?;
     let body = arkret_models_identity::IdentityResolveRequestBody {
         did: subject,
@@ -1088,8 +1102,8 @@ pub async fn request_consent(
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
     let body = arkret_sdk::ConsentRequestRequestBody {
-        holder_did: did_for_request_field("holder", holder)?,
-        peer_did: Some(did_for_request_field("peer", peer)?),
+        holder_principal_id: crate::mls_api_helpers::principal_core_id(holder)?,
+        peer_principal_id: Some(crate::mls_api_helpers::principal_core_id(peer)?),
         consent_scope: Some(scope.trim().to_owned()),
     };
     http.post(arkret_wire::PATH_SELF_CONSENT_REQUEST, &body)
@@ -1186,11 +1200,11 @@ pub(crate) async fn account_data_snapshot(
 /// is resolved here rather than left to the server — soland used to author these
 /// Events under its own DID, which put every holder's value for one key into a
 /// single cell keyed by the service.
-fn account_data_holder() -> anyhow::Result<arkret_sdk::Did> {
+fn account_data_holder() -> anyhow::Result<arkret_sdk::DidFullId> {
     let actor = crate::secure_key_store::active_device_seed_scope()
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(|| anyhow::anyhow!("no active account; cannot author an account_data Event"))?;
-    arkret_sdk::Did::new(actor).map_err(anyhow::Error::from)
+    arkret_sdk::DidFullId::new(actor).map_err(anyhow::Error::from)
 }
 
 /// Build and sign the `ak.account_data.set` the endpoint now requires.
@@ -1313,7 +1327,7 @@ pub async fn submit_read_cursor_advance(
     let payload = arkret_sdk::ReadCursor {
         id: arkret_sdk::ReadCursorId::new(marker.body.id.clone())?,
         schema: marker.body.schema.clone(),
-        actor_id: arkret_sdk::Did::new(marker.actor.clone())?,
+        actor_id: crate::mls_api_helpers::principal_core_id(&marker.actor)?,
         device_id: arkret_sdk::DeviceId::new(marker.device_id.clone())?,
         realm_id: arkret_sdk::RealmId::new(marker.body.realm_id.clone())?,
         read_scope: marker.body.read_scope.clone(),
@@ -1400,7 +1414,7 @@ mod tests {
     fn account_viewer_projection_uses_signed_handle_claim() {
         let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
             serde_json::from_value(json!({
-                "principal_id": "did:web:alice.example",
+                "principal_id": "ak:did_core:web:alice.example",
                 "state": "active",
                 "devices": [],
                 "primary_handle_claim": {
@@ -1412,7 +1426,7 @@ mod tests {
                 "profile": {
                     "id": "ak:actor_profile:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
                     "schema": "ak.schema.actor_profile.v1",
-                    "principal_id": "did:web:alice.example",
+                    "principal_id": "ak:did_core:web:alice.example",
                     "actor_kind": "user",
                     "display_name": "Alice",
                     "created_at": "2026-06-12T08:00:00.000Z"
@@ -1422,7 +1436,7 @@ mod tests {
 
         let account = current_account_from_viewer(viewer);
 
-        assert_eq!(account.did, "did:web:alice.example");
+        assert_eq!(account.did, "ak:did_core:web:alice.example");
         assert_eq!(account.handle, "alice:local.host");
         assert_eq!(account.display_name.as_deref(), Some("Alice"));
         assert_eq!(account.created_at, "2026-06-12T08:00:00.000Z");
@@ -1436,7 +1450,7 @@ mod tests {
         ] {
             let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
                 serde_json::from_value(json!({
-                    "principal_id": "did:web:alice.example",
+                    "principal_id": "ak:did_core:web:alice.example",
                     "state": "active",
                     "devices": [],
                     "primary_handle_claim": {
@@ -1456,7 +1470,7 @@ mod tests {
     fn account_viewer_projection_does_not_invent_handle() {
         let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
             serde_json::from_value(json!({
-                "principal_id": "did:web:alice.example",
+                "principal_id": "ak:did_core:web:alice.example",
                 "state": "active",
                 "devices": []
             }))
@@ -1464,7 +1478,7 @@ mod tests {
 
         let account = current_account_from_viewer(viewer);
 
-        assert_eq!(account.did, "did:web:alice.example");
+        assert_eq!(account.did, "ak:did_core:web:alice.example");
         assert_eq!(account.handle, "");
         assert_eq!(account.display_name, None);
         assert_eq!(account.created_at, "");
@@ -1484,7 +1498,7 @@ mod tests {
         };
         let outcome: arkret_sdk::AgentParticipationOutcome = serde_json::from_value(json!({
             "ok": true,
-            "agent_id": "did:web:agent.example",
+            "agent_id": "ak:did_core:web:agent.example",
             "entries": [{
                 "target_scope": scope,
                 "selection": {
@@ -1548,8 +1562,8 @@ mod tests {
             serde_json::to_value(peer).expect("serialize peer"),
             json!({
                 "kind": "agent",
-                "agent_id": "did:web:agents.example:assistant",
-                "controller_id": "did:web:alice.example"
+                "agent_id": "ak:did_core:web:agents.example:assistant",
+                "controller_id": "ak:did_core:web:alice.example"
             })
         );
     }

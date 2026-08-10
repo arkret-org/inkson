@@ -308,7 +308,7 @@ pub(super) fn inject_test_session_grant(
     } else {
         account_did
     };
-    if arkret_sdk::Did::new(account_did.to_owned()).is_err() {
+    if arkret_sdk::DidFullId::new(account_did.to_owned()).is_err() {
         tracing::warn!(
             principal_id = %account_did,
             "test session injection skipped: principal_id is not a valid DID"

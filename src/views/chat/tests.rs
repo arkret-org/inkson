@@ -16,7 +16,12 @@ fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
 }
 
 fn sidecar_projection_message(id: &str, strand_id: &str, body: &str) -> ChatMessage {
-    sidecar_projection_message_for_realm("ak:realm:test", id, strand_id, body)
+    sidecar_projection_message_for_realm(
+        "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw",
+        id,
+        strand_id,
+        body,
+    )
 }
 
 fn sidecar_projection_message_for_realm(
@@ -50,14 +55,24 @@ fn sidecar_projection_message_for_realm(
 
 #[test]
 fn chat_message_matches_protocol_id_after_server_rekeys_render_id() {
-    let mut message =
-        sidecar_projection_message("ak:message:local", "ak:strand:discussion", "hello");
-    message.protocol_message_id = Some("ak:message:local".to_owned());
-    message.id = "ak:event:accepted".to_owned();
+    let mut message = sidecar_projection_message(
+        "ak:message:Ams1BtISTcaHSjyArAO3RssCwK-vFi70Bs1FzWVrXhck",
+        "ak:strand:AsLgUd73PSI9_dWVG49ZfkmPc0yCUf4zdrfGlSidlNnU",
+        "hello",
+    );
+    message.protocol_message_id =
+        Some("ak:message:Ams1BtISTcaHSjyArAO3RssCwK-vFi70Bs1FzWVrXhck".to_owned());
+    message.id = "ak:event:ApfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30".to_owned();
 
-    assert!(message.matches_id_or_protocol("ak:event:accepted"));
-    assert!(message.matches_id_or_protocol("ak:message:local"));
-    assert!(!message.matches_id_or_protocol("ak:message:other"));
+    assert!(
+        message.matches_id_or_protocol("ak:event:ApfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30")
+    );
+    assert!(
+        message.matches_id_or_protocol("ak:message:Ams1BtISTcaHSjyArAO3RssCwK-vFi70Bs1FzWVrXhck")
+    );
+    assert!(
+        !message.matches_id_or_protocol("ak:message:A8a_riy5QTAQw2ZF0lV4Wr_lyFIe2yzXKQYapE970EXw")
+    );
 }
 
 /// A valid `delivered` Event-fold projection (§7.2.4 shape: no Pending, no
@@ -68,11 +83,13 @@ fn delivered_exchange_projection_fixture(
     source_frontier_anchor: Option<&str>,
     request_event_id: &str,
 ) -> arkret_sdk::AgentSidecarExchangeProjection {
-    let coordinator = arkret_sdk::Did::new("did:web:example.test:agents:assistant").unwrap();
+    let coordinator =
+        crate::mls_api_helpers::principal_core_id("did:web:example.test:agents:assistant").unwrap();
     let request_event = arkret_sdk::EventId::new(request_event_id).unwrap();
     arkret_sdk::AgentSidecarExchangeProjection {
         schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
-        controller_id: arkret_sdk::Did::new("did:web:example.test:alice").unwrap(),
+        controller_id: crate::mls_api_helpers::principal_core_id("did:web:example.test:alice")
+            .unwrap(),
         sidecar_id: arkret_sdk::SidecarId::new(
             "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
         )
@@ -180,7 +197,8 @@ fn routed_request_binding_travels_only_in_encrypted_metadata_plaintext() {
         source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
         client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
         addressed_agent_ids: vec![
-            arkret_sdk::Did::new("did:web:example.test:agents:assistant").unwrap(),
+            crate::mls_api_helpers::principal_core_id("did:web:example.test:agents:assistant")
+                .unwrap(),
         ],
         completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
         coordinator_agent_id: None,
@@ -250,16 +268,25 @@ fn sign_chat_fixture(value: &mut Value) {
             else {
                 return;
             };
-            if !actor_id.starts_with("did:") {
-                return;
-            }
+            let actor_core_id = if actor_id.starts_with("did:") {
+                crate::mls_api_helpers::principal_core_id(&actor_id).unwrap()
+            } else {
+                arkret_sdk::DidCoreId::new(actor_id.clone()).unwrap()
+            };
+            // Proof fixtures need an exact full DID for their verification
+            // URL. These fixtures use reversible did:web ids only; production
+            // code never performs this core-to-full reconstruction.
+            let signer_full_id = actor_id
+                .strip_prefix("ak:did_core:web:")
+                .map(|suffix| format!("did:web:{suffix}"))
+                .unwrap_or_else(|| actor_id.clone());
             object.insert("device_id".to_owned(), json!(CHAT_FIXTURE_DEVICE));
             object.remove("proofs");
             object.remove("unsigned");
             let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
                 CHAT_FIXTURE_SEED,
-                &actor_id,
-                format!("{actor_id}#{CHAT_FIXTURE_DEVICE}"),
+                &signer_full_id,
+                format!("{signer_full_id}#{CHAT_FIXTURE_DEVICE}"),
             );
             // The `encoding.md` §6 preimage comes from the SDK. A fixture signer
             // that restates the rule is how this file once signed bytes no
@@ -282,12 +309,7 @@ fn sign_chat_fixture(value: &mut Value) {
                 proof_purpose: None,
                 jws: String::new(),
             };
-            let actor = arkret_sdk::Did::new(actor_id.clone()).unwrap();
-            let binding = proof
-                .canonical_binding_bytes(&arkret_sdk::ActorId::from(
-                    arkret_sdk::project_full_id_to_core_id(&actor).unwrap(),
-                ))
-                .unwrap();
+            let binding = proof.canonical_binding_bytes(&actor_core_id).unwrap();
             proof.jws = signer.detached_jws_over(&binding).unwrap();
             value
                 .as_object_mut()
@@ -301,7 +323,7 @@ fn sign_chat_fixture(value: &mut Value) {
                 crate::identity::device_directory::public_key_from_directory_value(&did_key)
                     .unwrap();
             crate::identity::device_directory::seed_positive_for_test(
-                &actor_id,
+                actor_core_id.as_str(),
                 CHAT_FIXTURE_DEVICE,
                 public_key,
             );
@@ -355,58 +377,84 @@ fn collect_welcome_entries_tolerates_missing_events_envelope() {
 #[test]
 fn parses_message_event_with_operation_body_shape() {
     let event = json!({
-        "id": "ak:event:body-shape",
+        "id": "ak:event:AZccWZlaAUrqgOzXQ7OucnyL0J8C4O-JnwPOLdtlGX9k",
         "type": "ak.message.create",
         "actor": "did:web:alice.example",
-        "realm_id": "ak:realm:demo",
+        "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "created_at": "2026-05-14T01:23:45.000Z",
         "causal": {"actor_seq": 42},
         "body": {
             "body": "restored from durable history",
-            "strand_id": "ak:strand:announce",
+            "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
             "message_id": "chat-msg-local",
             "mentions": [{
                 "kind": "mention",
-                "subject_id": "did:web:bob.example",
+                "subject_id": "ak:did_core:web:bob.example",
                 "mention_text_original": "@bob"
             }]
         }
     });
 
-    let message = chat_message_from_event("ak:realm:fallback", &event).unwrap();
+    let message = chat_message_from_event(
+        "ak:realm:Ag51V75jn75rRYCrxiU0PfMG0uo93vCh_5AfJiv15VPU",
+        &event,
+    )
+    .unwrap();
 
-    assert_eq!(message.id, "ak:event:body-shape");
-    assert_eq!(message.realm_id, "ak:realm:demo");
-    assert_eq!(message.strand_id, "ak:strand:announce");
+    assert_eq!(
+        message.id,
+        "ak:event:AZccWZlaAUrqgOzXQ7OucnyL0J8C4O-JnwPOLdtlGX9k"
+    );
+    assert_eq!(
+        message.realm_id,
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"
+    );
+    assert_eq!(
+        message.strand_id,
+        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
+    );
     assert_eq!(message.body, "restored from durable history");
     assert_eq!(message.sender, "did:web:alice.example");
-    assert_eq!(message.mentions[0].target_id(), "did:web:bob.example");
+    assert_eq!(
+        message.mentions[0].target_id(),
+        "ak:did_core:web:bob.example"
+    );
 }
 
 #[test]
 fn parses_message_event_with_nested_envelope_payload_shape() {
     let mut event = json!({
         "event": {
-            "event_id": "ak:event:nested",
+            "event_id": "ak:event:Ah6V68zzvc5Qi7Qo6XcK38HBtXkkopkL0Y-dhmOTIlmE",
             "kind": "ak.message.create",
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "actor_seq": 43,
             "payload": {
                 "content": {
                     "kind": "ak.content.text",
                     "body": "nested payload message"
                 },
-                "strand_id": "ak:strand:support",
+                "strand_id": "ak:strand:A-KafHE4KSJLkmXVT_Mi2jvxt9YuOP_vQeOTOtjeaXSc",
                 "message_id": "chat-msg-nested"
             }
         }
     });
     sign_chat_fixture(&mut event);
 
-    let message = chat_message_from_event("ak:realm:demo", &event).unwrap();
+    let message = chat_message_from_event(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &event,
+    )
+    .unwrap();
 
-    assert_eq!(message.id, "ak:event:nested");
-    assert_eq!(message.strand_id, "ak:strand:support");
+    assert_eq!(
+        message.id,
+        "ak:event:Ah6V68zzvc5Qi7Qo6XcK38HBtXkkopkL0Y-dhmOTIlmE"
+    );
+    assert_eq!(
+        message.strand_id,
+        "ak:strand:A-KafHE4KSJLkmXVT_Mi2jvxt9YuOP_vQeOTOtjeaXSc"
+    );
     assert_eq!(message.body, "nested payload message");
 }
 
@@ -418,24 +466,31 @@ fn folds_received_redaction_tombstone_onto_message() {
     // though this is the only copy of the message the reader ever sees.
     let mut event = json!({
         "kind": "ak.message.create",
-        "event_id": "ak:event:tombstone",
-        "message_id": "ak:message:tombstone",
-        "realm_id": "ak:realm:demo",
-        "strand_id": "ak:strand:support",
+        "event_id": "ak:event:AOpOUPvtrgs_YaMdpjTSrJvTrtQP8fvBxcu1UnOriMzY",
+        "message_id": "ak:message:AST13ozMXrAgNmz6E-qiQFr9vg-w3JDZGPHpHPq_JTpY",
+        "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        "strand_id": "ak:strand:A-KafHE4KSJLkmXVT_Mi2jvxt9YuOP_vQeOTOtjeaXSc",
         "sender": "did:web:bob.example",
-        "actor_id": "did:web:bob.example",
+        "actor_id": "ak:did_core:web:bob.example",
         "created_at": "2026-05-14T01:23:45.000Z",
         "redacted": true,
         "state": "redacted",
         "redacted_at": "2026-05-14T02:00:00.000Z",
-        "redaction_ref": "ak:event:redact-1",
+        "redaction_ref": "ak:event:A-RSupDyayuw4R7tIwZPpZWnF36wsoZuXYPDzQJ-jmhk",
         "content": {"kind": "ak.content.text", "body": "[redacted]"}
     });
     sign_chat_fixture(&mut event);
 
-    let message = chat_message_from_event("ak:realm:demo", &event).unwrap();
+    let message = chat_message_from_event(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &event,
+    )
+    .unwrap();
 
-    assert_eq!(message.id, "ak:event:tombstone");
+    assert_eq!(
+        message.id,
+        "ak:event:AOpOUPvtrgs_YaMdpjTSrJvTrtQP8fvBxcu1UnOriMzY"
+    );
     assert!(message.redacted);
     assert_eq!(message.body, "");
 }
@@ -446,33 +501,39 @@ fn chat_visible_read_receipt_send_respects_preferences() {
     let mut store = LocalStateStore::with_path(temp);
     assert!(chat_visible_read_receipt_should_send(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
     store.set_read_receipt_default_send(false);
     assert!(!chat_visible_read_receipt_should_send(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
-    store.set_read_receipt_realm_override("ak:realm:demo", Some(true));
+    store.set_read_receipt_realm_override(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        Some(true),
+    );
     assert!(chat_visible_read_receipt_should_send(
         &store,
-        "ak:strand:other",
-        "ak:realm:demo",
+        "ak:strand:A4EpRDvQloG8EYOGEPnGhe1SLpxBiLQbOvlptwBvvPkA",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
-    store.set_read_receipt_strand_override("ak:strand:demo", Some(false));
+    store.set_read_receipt_strand_override(
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        Some(false),
+    );
     assert!(!chat_visible_read_receipt_should_send(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
     store.set_read_receipt_policy_snapshot(
-        "ak:realm:demo",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         Some(crate::state::ReadReceiptPolicySnapshot {
             disclosure: "required".to_owned(),
             visibility: Some("public".to_owned()),
@@ -480,12 +541,12 @@ fn chat_visible_read_receipt_send_respects_preferences() {
     );
     assert!(chat_visible_read_receipt_should_send(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
     store.set_read_receipt_policy_snapshot(
-        "ak:realm:demo",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         Some(crate::state::ReadReceiptPolicySnapshot {
             disclosure: "disabled".to_owned(),
             visibility: Some("private".to_owned()),
@@ -493,8 +554,8 @@ fn chat_visible_read_receipt_send_respects_preferences() {
     );
     assert!(!chat_visible_read_receipt_should_send(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 }
 
@@ -504,33 +565,39 @@ fn chat_visible_read_receipt_display_respects_local_preferences() {
     let mut store = LocalStateStore::with_path(temp);
     assert!(chat_visible_read_receipt_should_display(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
     store.set_read_receipt_default_display(false);
     assert!(!chat_visible_read_receipt_should_display(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
-    store.set_read_receipt_realm_display_override("ak:realm:demo", Some(true));
+    store.set_read_receipt_realm_display_override(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        Some(true),
+    );
     assert!(chat_visible_read_receipt_should_display(
         &store,
-        "ak:strand:other",
-        "ak:realm:demo",
+        "ak:strand:A4EpRDvQloG8EYOGEPnGhe1SLpxBiLQbOvlptwBvvPkA",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
-    store.set_read_receipt_strand_display_override("ak:strand:demo", Some(false));
+    store.set_read_receipt_strand_display_override(
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        Some(false),
+    );
     assert!(!chat_visible_read_receipt_should_display(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 
     store.set_read_receipt_policy_snapshot(
-        "ak:realm:demo",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         Some(crate::state::ReadReceiptPolicySnapshot {
             disclosure: "required".to_owned(),
             visibility: Some("public".to_owned()),
@@ -538,8 +605,8 @@ fn chat_visible_read_receipt_display_respects_local_preferences() {
     );
     assert!(!chat_visible_read_receipt_should_display(
         &store,
-        "ak:strand:demo",
-        "ak:realm:demo",
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
     ));
 }
 
@@ -707,18 +774,20 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
 #[test]
 fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     let mentions = vec![MentionNode::mention(
-        arkret_sdk::Mention::new(arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap())
-            .with_agent_selector_metadata(
-                arkret_sdk::Did::new("did:web:example.com:users:alice".to_owned()).unwrap(),
-                arkret_sdk::Handle::parse("alice:example.com").unwrap(),
-                "summary",
-            )
-            .with_mention_text_original("@alice:example.com/summary")
-            .with_resolved_at(
-                chrono::DateTime::parse_from_rfc3339("2026-06-11T00:00:00.000Z")
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-            ),
+        arkret_sdk::Mention::new(
+            crate::mls_api_helpers::principal_core_id("did:web:agent.example").unwrap(),
+        )
+        .with_agent_selector_metadata(
+            crate::mls_api_helpers::principal_core_id("did:web:example.com:users:alice").unwrap(),
+            arkret_sdk::Handle::parse("alice:example.com").unwrap(),
+            "summary",
+        )
+        .with_mention_text_original("@alice:example.com/summary")
+        .with_resolved_at(
+            chrono::DateTime::parse_from_rfc3339("2026-06-11T00:00:00.000Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        ),
     )];
     let op = chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
@@ -736,11 +805,11 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     assert_eq!(mention["kind"].as_str(), Some("mention"));
     assert_eq!(
         mention["subject_id"].as_str(),
-        Some("did:web:agent.example")
+        Some("ak:did_core:web:agent.example")
     );
     assert_eq!(
         mention["controller_subject_id"].as_str(),
-        Some("did:web:example.com:users:alice")
+        Some("ak:did_core:web:example.com:users:alice")
     );
     assert_eq!(
         mention["controller_handle_at_time"].as_str(),
@@ -759,47 +828,13 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
 }
 
 #[test]
-fn mention_sidecar_digestes_are_applied_to_replayed_events() {
-    let realm = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
-    let mentions = vec![MentionNode::mention(arkret_sdk::Mention::new(
-        arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap(),
-    ))];
-    let mut event = chat_message_create_operation(
-        realm,
-        "did:web:alice.example",
-        "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
-        "ak:message:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
-        "hello agent",
-        &mentions,
-        None,
-    )
-    .expect("builds");
-
-    apply_mention_sidecar_digestes(&mut event, &mentions, Some(&[0x42; 32]));
-
-    // `message_create_payload` is a closed object that declares
-    // `mention_sidecar_digest` at its root, not inside `content`.
-    let digests = event.payload["mention_sidecar_digest"]
-        .as_array()
-        .expect("mention sidecar digests");
-    assert_eq!(digests.len(), 1);
-    assert_eq!(digests[0].as_str().map(str::len), Some(64));
-    assert!(
-        event.payload["content"]
-            .get("mention_sidecar_digest")
-            .is_none()
-    );
-}
-
-#[test]
 fn mention_sidecar_is_omitted_without_an_epoch_routing_key() {
     // Realm policy that never opted in — and a device that cannot reach its
     // MLS group — both arrive here as `None`, and both must send no sidecar
     // rather than a tag derived from anything else.
     let realm = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
     let mentions = vec![MentionNode::mention(arkret_sdk::Mention::new(
-        arkret_sdk::Did::new("did:web:agent.example".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:agent.example").unwrap(),
     ))];
     let mut event = chat_message_create_operation(
         realm,
@@ -866,7 +901,7 @@ fn chat_message_create_operation_rejects_event_id_reply_target() {
 #[test]
 fn chat_message_reply_target_prefers_protocol_message_id() {
     let message = ChatMessage {
-        realm_id: "ak:realm:demo".to_owned(),
+        realm_id: "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned(),
         id: "ak:event:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5".to_owned(),
         protocol_message_id: Some(
             "ak:message:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N".to_owned(),
@@ -876,7 +911,7 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
         body: "hello".to_owned(),
         timestamp: "10:00".to_owned(),
         created_at: None,
-        strand_id: "ak:strand:demo".to_owned(),
+        strand_id: "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
         redacted: false,
@@ -898,7 +933,7 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
 #[test]
 fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
     let message = ChatMessage {
-        realm_id: "ak:realm:demo".to_owned(),
+        realm_id: "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned(),
         id: "ak:operation:01964137-0000-7000-8000-000000000001".to_owned(),
         protocol_message_id: Some(
             "ak:message:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N".to_owned(),
@@ -908,7 +943,7 @@ fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
         body: "edited".to_owned(),
         timestamp: "10:00".to_owned(),
         created_at: None,
-        strand_id: "ak:strand:demo".to_owned(),
+        strand_id: "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
         redacted: false,
@@ -1054,7 +1089,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
     let records = vec![
         crate::state::RawOperationRecord {
             operation_id: "ak:operation:pin-add".to_owned(),
-            realm_id: Some("ak:realm:demo".to_owned()),
+            realm_id: Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ak.pin.add",
@@ -1067,7 +1102,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
         },
         crate::state::RawOperationRecord {
             operation_id: "ak:operation:saved-private".to_owned(),
-            realm_id: Some("ak:realm:demo".to_owned()),
+            realm_id: Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ak.account_data.set",
@@ -1084,7 +1119,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
         },
         crate::state::RawOperationRecord {
             operation_id: "ak:operation:other-pin".to_owned(),
-            realm_id: Some("ak:realm:demo".to_owned()),
+            realm_id: Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ak.pin.add",
@@ -1097,7 +1132,7 @@ fn shared_pin_projection_ignores_private_saved_account_data() {
         },
         crate::state::RawOperationRecord {
             operation_id: "ak:operation:pin-reorder".to_owned(),
-            realm_id: Some("ak:realm:demo".to_owned()),
+            realm_id: Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned()),
             received_at: Utc::now(),
             payload: json!({
                 "kind": "ak.pin.reorder",
@@ -1127,7 +1162,9 @@ fn optimistic_chat_ids_do_not_claim_protocol_identity() {
 
     assert!(id.starts_with("local-message:"));
     assert!(!is_schema_message_id(&id));
-    assert!(!is_schema_message_id("ak:message:local-1"));
+    assert!(!is_schema_message_id(
+        "ak:message:AHbH2yLChpf91PjGaWTBKXEDczbsLgmfYK-BPnehnlGI"
+    ));
     assert!(!is_schema_message_id("chat-msg-local"));
     assert!(message_id_or_new_local_id("chat-msg-local").starts_with("local-message:"));
 }
@@ -1137,14 +1174,14 @@ fn restores_messages_from_local_raw_operations() {
     let state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
-            realm_id: Some("ak:realm:local".to_owned()),
+            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "event_id": "ak:event:local",
+                "event_id": "ak:event:A4z3EXS8Sy0uqnc2LYMOAl9wdzpzu9JxTnPoGI2aWOf0",
                 "kind": "ak.message.create",
                 "actor": "did:web:alice.example",
                 "body": "local fallback message",
-                "strand_id": "ak:strand:announce",
+                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
                 "message_id": "chat-msg-local"
             }),
         }],
@@ -1154,8 +1191,14 @@ fn restores_messages_from_local_raw_operations() {
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].realm_id, "ak:realm:local");
-    assert_eq!(messages[0].strand_id, "ak:strand:announce");
+    assert_eq!(
+        messages[0].realm_id,
+        "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q"
+    );
+    assert_eq!(
+        messages[0].strand_id,
+        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
+    );
     assert_eq!(messages[0].sender, "did:web:alice.example");
     assert_eq!(messages[0].body, "local fallback message");
 }
@@ -1165,15 +1208,15 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
     let mut state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
-            realm_id: Some("ak:realm:local".to_owned()),
+            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
             received_at: chrono::Utc::now(),
             payload: json!({
-                "event_id": "ak:event:local",
+                "event_id": "ak:event:A4z3EXS8Sy0uqnc2LYMOAl9wdzpzu9JxTnPoGI2aWOf0",
                 "kind": "ak.message.create",
-                "actor_id": "did:web:local.host:users:alice",
-                "realm_id": "ak:realm:local",
+                "actor_id": "ak:did_core:web:local.host:users:alice",
+                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
                 "body": "canonical local message",
-                "strand_id": "ak:strand:announce",
+                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
                 "message_id": "chat-msg-local"
             }),
         }],
@@ -1184,7 +1227,7 @@ fn restores_canonical_actor_id_from_local_raw_operations() {
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].sender, "did:web:local.host:users:alice");
+    assert_eq!(messages[0].sender, "ak:did_core:web:local.host:users:alice");
     assert_eq!(messages[0].body, "canonical local message");
 }
 
@@ -1196,28 +1239,37 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     // renders WITHOUT any backfill — the event-sourced replacement for the
     // per-open realm refetch.
     let mut create = json!({
-        "event_id": "ak:event:msg-1",
+        "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
         "kind": "ak.message.create",
-        "actor_id": "did:web:bob.example",
-        "realm_id": "ak:realm:r1",
+        "actor_id": "ak:did_core:web:bob.example",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "strand_id": "ak:strand:topic",
-        "message_id": "ak:message:m1",
+        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
         "body": "hello from bob"
     });
     sign_chat_fixture(&mut create);
     // A non-message timeline event (e.g. a poll close) MUST be ignored.
     let poll = json!({
-        "event_id": "ak:event:poll-1",
+        "event_id": "ak:event:A-mHyQfTHaRP4hPsEzDRoY0ybwSW0ZIu_kPanXYJ_cJ8",
         "kind": "ak.content.poll.close",
-        "realm_id": "ak:realm:r1",
-        "strand_id": "ak:strand:topic"
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
     });
 
-    let records = message_operations_from_events("ak:realm:r1", &[create.clone(), poll]);
+    let records = message_operations_from_events(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &[create.clone(), poll],
+    );
     assert_eq!(records.len(), 1, "only the message-create event is folded");
-    assert_eq!(records[0].operation_id, "ak:event:msg-1");
-    assert_eq!(records[0].realm_id.as_deref(), Some("ak:realm:r1"));
+    assert_eq!(
+        records[0].operation_id,
+        "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc"
+    );
+    assert_eq!(
+        records[0].realm_id.as_deref(),
+        Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0")
+    );
     assert_eq!(
         records[0].payload, create,
         "full event stored for proof/ciphertext"
@@ -1229,21 +1281,24 @@ fn message_operations_from_events_folds_create_and_renders_local_first() {
     };
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].strand_id, "ak:strand:topic");
-    assert_eq!(messages[0].sender, "did:web:bob.example");
+    assert_eq!(
+        messages[0].strand_id,
+        "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
+    );
+    assert_eq!(messages[0].sender, "ak:did_core:web:bob.example");
     assert_eq!(messages[0].body, "hello from bob");
 }
 
 #[test]
 fn chat_messages_read_projected_reaction_summary() {
     let mut events = vec![json!({
-        "event_id": "ak:event:msg-1",
+        "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
         "kind": "ak.message.create",
-        "actor_id": "did:web:alice.example",
-        "realm_id": "ak:realm:r1",
+        "actor_id": "ak:did_core:web:alice.example",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "strand_id": "ak:strand:topic",
-        "message_id": "ak:message:m1",
+        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
         "body": "hello from alice",
         "reaction_summary": {
             "+1": ["did:web:bob.example", "did:web:carol.example"]
@@ -1251,7 +1306,12 @@ fn chat_messages_read_projected_reaction_summary() {
     })];
     sign_chat_fixtures(&mut events);
 
-    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
@@ -1270,51 +1330,62 @@ fn chat_messages_read_projected_reaction_summary() {
 fn chat_messages_fold_reaction_events_by_target_ref() {
     let mut events = vec![
         json!({
-            "event_id": "ak:event:msg-1",
+            "event_id": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
             "kind": "ak.message.create",
-            "actor_id": "did:web:alice.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:alice.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:00:00.000Z",
-            "strand_id": "ak:strand:topic",
-            "message_id": "ak:message:m1",
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+            "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
             "body": "hello from alice"
         }),
         json!({
-            "event_id": "ak:event:react-bob",
+            "event_id": "ak:event:AgnQ4vQpIlqkjkQiXR6H-aFpDQtU9QIqZUUOyhD651bQ",
             "kind": "ak.reaction.add",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
-            "target_ref": "ak:message:m1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "target_ref": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
             "key": "+1"
         }),
         json!({
-            "event_id": "ak:event:react-carol",
+            "event_id": "ak:event:AYAHWeIu5Mo1OonYBugKyH6S4a3sR2DjsutRWGcM-7UY",
             "kind": "ak.reaction.add",
-            "actor_id": "did:web:carol.example",
-            "realm_id": "ak:realm:r1",
-            "target_ref": "ak:event:msg-1",
+            "actor_id": "ak:did_core:web:carol.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "target_ref": "ak:event:AeXSP2D5ttfuvggcWpTJuFUXOvTRhSBXonyaWHskxaqc",
             "key": "+1"
         }),
         json!({
-            "event_id": "ak:event:remove-bob",
+            "event_id": "ak:event:A09fNJ-s5wHOmkdCxh3R42mSETgDQzmk3fMm-gCnHXXw",
             "kind": "ak.reaction.remove",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
-            "target_ref": "ak:message:m1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "target_ref": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
             "key": "+1"
         }),
     ];
     sign_chat_fixtures(&mut events);
 
-    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
         messages[0].reactions,
-        vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
+        vec![(
+            "+1".to_owned(),
+            vec!["ak:did_core:web:carol.example".to_owned()]
+        )]
     );
 
-    let records = message_operations_from_events("ak:realm:r1", &events);
+    let records = message_operations_from_events(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+    );
     assert_eq!(
         records.len(),
         4,
@@ -1328,7 +1399,10 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
     assert_eq!(restored.len(), 1);
     assert_eq!(
         restored[0].reactions,
-        vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
+        vec![(
+            "+1".to_owned(),
+            vec!["ak:did_core:web:carol.example".to_owned()]
+        )]
     );
 }
 
@@ -1336,58 +1410,69 @@ fn chat_messages_fold_reaction_events_by_target_ref() {
 fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() {
     let mut events = vec![
         json!({
-            "event_id": "ak:event:create-projection",
+            "event_id": "ak:event:AOOI0zLj06bpcNgRMFMP4JOl0MZWGhQZ5j0hTISOImcg",
             "event_kind": "ak.message.create",
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "sender_actor_id": "did:web:alice.example",
-            "realm_id": "ak:realm:r1",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-07-08T01:44:39.000Z",
-            "strand_id": "ak:strand:topic",
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
             "track_name": "discussion",
-            "message_id": "ak:message:envelope-create",
+            "message_id": "ak:message:AIWq0lfBWlF1m50KYI9kpAdern2SCswm8T4YkkWyU17c",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "projection hello"},
-                "event_id": "ak:event:create-projection",
-                "message_id": "ak:message:canonical-target",
+                "event_id": "ak:event:AOOI0zLj06bpcNgRMFMP4JOl0MZWGhQZ5j0hTISOImcg",
+                "message_id": "ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY",
                 "sender": "did:web:alice.example",
-                "strand_id": "ak:strand:topic",
-                "thread_id": "ak:strand:topic",
+                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+                "thread_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
                 "track_name": "discussion"
             }
         }),
         json!({
-            "event_id": "ak:event:reaction-projection",
+            "event_id": "ak:event:AzxKx70X-Q4e1QAhFVEYl97CXxmGGxXPaB1SM9Qi_kO0",
             "event_kind": "ak.reaction.add",
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "sender_actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-07-08T01:44:43.000Z",
-            "strand_id": "ak:strand:topic",
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
             "track_name": "discussion",
-            "message_id": "ak:message:envelope-reaction",
+            "message_id": "ak:message:Al5XZBjhevpsMMLoRMInf3P3NfbsDatZjIxno3fG8-BU",
             "payload": {
-                "event_id": "ak:event:reaction-projection",
+                "event_id": "ak:event:AzxKx70X-Q4e1QAhFVEYl97CXxmGGxXPaB1SM9Qi_kO0",
                 "key": "+1",
                 "sender": "did:web:bob.example",
-                "target_ref": "ak:message:canonical-target"
+                "target_ref": "ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY"
             }
         }),
     ];
     sign_chat_fixtures(&mut events);
 
-    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
         messages[0].protocol_message_id.as_deref(),
-        Some("ak:message:canonical-target")
+        Some("ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY")
     );
     assert_eq!(
         messages[0].reactions,
-        vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])]
+        vec![(
+            "+1".to_owned(),
+            vec!["ak:did_core:web:bob.example".to_owned()]
+        )]
     );
 
-    let records = message_operations_from_events("ak:realm:r1", &events);
+    let records = message_operations_from_events(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+    );
     assert_eq!(
         records.len(),
         2,
@@ -1401,11 +1486,14 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
     assert_eq!(restored.len(), 1);
     assert_eq!(
         restored[0].protocol_message_id.as_deref(),
-        Some("ak:message:canonical-target")
+        Some("ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY")
     );
     assert_eq!(
         restored[0].reactions,
-        vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])]
+        vec![(
+            "+1".to_owned(),
+            vec!["ak:did_core:web:bob.example".to_owned()]
+        )]
     );
 }
 
@@ -1417,7 +1505,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "kind": "ak.message.create",
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-07-08T01:44:39.000Z",
             "hlc": "01970e589d21-0004-a13f9c2e",
@@ -1434,7 +1522,7 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "kind": "ak.reaction.add",
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "actor_seq": 2,
             "created_at": "2026-07-08T01:44:43.000Z",
             "hlc": "01970e589d22-0004-a13f9c2e",
@@ -1465,7 +1553,10 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
     );
     assert_eq!(
         messages[0].reactions,
-        vec![("👍".to_owned(), vec!["did:web:bob.example".to_owned()])]
+        vec![(
+            "👍".to_owned(),
+            vec!["ak:did_core:web:bob.example".to_owned()]
+        )]
     );
 }
 
@@ -1479,7 +1570,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "kind": "ak.message.create",
             "realm_id": realm_id,
             "scope_ref": {"kind": "realm", "realm_id": realm_id},
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "actor_seq": 1,
             "created_at": "2026-07-08T01:44:39.000Z",
             "hlc": "01970e589d21-0004-a13f9c2e",
@@ -1496,7 +1587,7 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "kind": "ak.reaction.add",
             "realm_id": realm_id,
             "scope_ref": {"kind": "realm", "realm_id": realm_id},
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "actor_seq": 2,
             "created_at": "2026-07-08T01:44:43.000Z",
             "hlc": "01970e589d22-0004-a13f9c2e",
@@ -1519,7 +1610,10 @@ fn durable_reaction_folds_onto_controller_only_create() {
     assert_eq!(messages.len(), 1);
     assert_eq!(
         messages[0].reactions,
-        vec![("👍".to_owned(), vec!["did:web:bob.example".to_owned()])]
+        vec![(
+            "👍".to_owned(),
+            vec!["ak:did_core:web:bob.example".to_owned()]
+        )]
     );
 }
 
@@ -1553,7 +1647,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         "kind": "ak.message.redact",
         "realm_id": realm_id,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "actor_seq": 2,
         "created_at": "2026-07-08T01:44:43.000Z",
         "hlc": "01970e589d22-0004-a13f9c2e",
@@ -1578,42 +1672,54 @@ fn durable_redaction_folds_onto_controller_only_create() {
 fn chat_messages_fold_revision_chain_into_latest_message() {
     let mut events = vec![
         json!({
-            "event_id": "ak:event:msg-3",
+            "event_id": "ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
             "kind": "ak.message.create",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:00:00.000Z",
-            "strand_id": "ak:strand:topic",
-            "message_id": "ak:message:m3",
-            "content": {"kind": "ak.content.text", "body": "v1"}
+            "payload": {
+                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+                "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
+                "content": {"kind": "ak.content.text", "body": "v1"}
+            }
         }),
         json!({
-            "event_id": "ak:event:msg-3-rev-1",
+            "event_id": "ak:event:AugQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo",
             "kind": "ak.message.revise",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:01:00.000Z",
-            "strand_id": "ak:strand:topic",
-            "target_ref": "ak:message:m3",
-            "content": {"kind": "ak.content.text", "body": "v2"}
+            "payload": {
+                "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
+                "content": {"kind": "ak.content.text", "body": "v2"}
+            }
         }),
         json!({
-            "event_id": "ak:event:msg-3-rev-2",
+            "event_id": "ak:event:AmDOsZS5t1FOYT8QB0mLKRUnOOqWz9iWSIfk6RKZ91T8",
             "kind": "ak.message.revise",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:02:00.000Z",
-            "strand_id": "ak:strand:topic",
-            "target_ref": "ak:message:m3",
-            "content": {"kind": "ak.content.text", "body": "v3"}
+            "payload": {
+                "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
+                "content": {"kind": "ak.content.text", "body": "v3"}
+            }
         }),
     ];
     sign_chat_fixtures(&mut events);
 
-    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].id, "ak:event:msg-3");
+    assert_eq!(
+        messages[0].id,
+        "ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs"
+    );
     assert_eq!(messages[0].body, "v3");
     assert!(messages[0].edited);
     assert_eq!(
@@ -1622,7 +1728,10 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
     );
 
     let stale_state = ClientLocalState {
-        raw_operations: message_operations_from_events("ak:realm:r1", &events[..2]),
+        raw_operations: message_operations_from_events(
+            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            &events[..2],
+        ),
         ..ClientLocalState::default()
     };
     let optimistic = fold_local_state_into_chat_messages_with_sidecar(
@@ -1638,7 +1747,10 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         "an older durable fold must not replace a locally projected later revision"
     );
 
-    let records = message_operations_from_events("ak:realm:r1", &events);
+    let records = message_operations_from_events(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+    );
     assert_eq!(
         records.len(),
         3,
@@ -1671,31 +1783,31 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
         json!({
             "event_id": "ak:event:AadoaZa-0djgJsY3CYuv_X3xsG9VX8MDqugQkXxFqVPK",
             "kind": "ak.message.revise",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-07-07T05:58:23.000Z",
-            "strand_id": "ak:strand:topic",
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
             "target_ref": message_id,
             "content": {"kind": "ak.content.text", "body": "edited body"}
         }),
         json!({
             "event_id": "ak:event:AQeShrdBR3zl1gbuH87IF4AakXuLntks0PE5vC00cCYC",
             "kind": "ak.message.create",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-07-07T05:58:22.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "original body"},
                 "reply_to": reply_to,
-                "strand_id": "ak:strand:topic",
+                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
                 "track_name": "discussion"
             }
         }),
         json!({
             "event_id": "ak:event:AadoaZa-0djgJsY3CYuv_X3xsG9VX8MDqugQkXxFqVPK",
             "kind": "ak.message.revise",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-07-07T05:58:23.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "edited body"},
@@ -1705,7 +1817,12 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
     ];
     sign_chat_fixtures(&mut events);
 
-    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
 
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].protocol_message_id.as_deref(), Some(message_id));
@@ -1719,25 +1836,25 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
 fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
     let mut events = vec![
         json!({
-            "event_id": "ak:event:msg-4-rev-1",
+            "event_id": "ak:event:AfxNwg4EH3ln9hAfUC_K-ohgQR9Kaedpmn99LHxDfocw",
             "kind": "ak.message.revise",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:01:00.000Z",
-            "strand_id": "ak:strand:topic",
-            "target_ref": "ak:message:m4",
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+            "target_ref": "ak:message:AALmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
             "redacted": true,
             "state": "redacted",
             "content": {"kind": "ak.content.text", "body": "[redacted]"}
         }),
         json!({
-            "event_id": "ak:event:msg-4",
+            "event_id": "ak:event:AJyIPFgvmgij09wqLnZMFu6qyMVd1cGRZ3bq2gvBKEfQ",
             "kind": "ak.message.create",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:00:00.000Z",
-            "strand_id": "ak:strand:topic",
-            "message_id": "ak:message:m4",
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+            "message_id": "ak:message:AALmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
             "redacted": true,
             "state": "redacted",
             "content": {"kind": "ak.content.text", "body": "[redacted]"}
@@ -1745,7 +1862,12 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
     ];
     sign_chat_fixtures(&mut events);
 
-    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
 
     assert_eq!(messages.len(), 1);
     assert!(messages[0].redacted);
@@ -1754,32 +1876,37 @@ fn chat_messages_fold_redacted_revision_tombstone_into_root_tombstone() {
 #[test]
 fn chat_messages_keep_standalone_server_redacted_revision_tombstone() {
     let events = vec![json!({
-        "event_id": "ak:event:msg-4-rev-2",
+        "event_id": "ak:event:Al7Qnsn3l-7MwwweunecsEKX84zMkYIeBOIm-5M-YYkQ",
         "kind": "ak.message.revise",
-        "actor_id": "did:web:bob.example",
-        "realm_id": "ak:realm:r1",
+        "actor_id": "ak:did_core:web:bob.example",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "created_at": "2026-05-22T10:02:00.000Z",
         "payload": {
             "content": {"kind": "ak.content.text", "body": "[redacted]"},
-            "message_id": "ak:message:m4",
+            "message_id": "ak:message:AALmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
             "redacted": true,
             "redacted_at": "2026-05-22T10:05:00.000Z",
-            "redaction_ref": "ak:event:redact-4",
+            "redaction_ref": "ak:event:ACDsFwzGYsHL_LWmOT3j7ExtCtCKAbGiXAZDrawyms2Y",
             "state": "redacted"
         },
         "unsigned": {
-            "local_target_ref": "ak:message:m4",
+            "local_target_ref": "ak:message:AALmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E",
             "projection_only": true
         },
         "proofs": []
     })];
 
-    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
 
     assert_eq!(messages.len(), 1);
     assert_eq!(
         messages[0].protocol_message_id.as_deref(),
-        Some("ak:message:m4")
+        Some("ak:message:AALmz4zWkDYecrEZnVupSWR2EqdHzYP-bSwUXf4qQ82E")
     );
     assert!(messages[0].redacted);
     assert!(messages[0].body.is_empty());
@@ -1789,49 +1916,57 @@ fn chat_messages_keep_standalone_server_redacted_revision_tombstone() {
 fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombstone() {
     let mut events = vec![
         json!({
-            "event_id": "ak:event:msg-5",
+            "event_id": "ak:event:AXLf0mAo4UUC50gymplf5Oowi6lfIjnA1pl45rHyZXXs",
             "kind": "ak.message.create",
-            "realm_id": "ak:realm:r1",
-            "actor_id": "did:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "actor_id": "ak:did_core:web:bob.example",
             "created_at": "2026-05-22T10:00:00.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "[redacted]"},
-                "event_id": "ak:event:msg-5",
-                "message_id": "ak:message:m5",
+                "event_id": "ak:event:AXLf0mAo4UUC50gymplf5Oowi6lfIjnA1pl45rHyZXXs",
+                "message_id": "ak:message:AXLf0mAo4UUC50gymplf5Oowi6lfIjnA1pl45rHyZXXs",
                 "redacted": true,
                 "redacted_at": "2026-05-22T10:05:00.000Z",
-                "redaction_ref": "ak:event:redact-5",
+                "redaction_ref": "ak:event:A1Dqt89EJm8Vurg41PAsnseqxyxB0Gg-Xr0WywWjcia0",
                 "sender": "did:web:bob.example",
                 "state": "redacted",
-                "strand_id": "ak:strand:topic"
+                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
             },
             "proofs": []
         }),
         json!({
-            "event_id": "ak:event:msg-5-rev-1",
+            "event_id": "ak:event:AjU1l-Eisb3OsJErxiFpnMdIrcBcnCih6I8bEfreUYQ4",
             "kind": "ak.message.revise",
-            "realm_id": "ak:realm:r1",
-            "actor_id": "did:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "actor_id": "ak:did_core:web:bob.example",
             "created_at": "2026-05-22T10:01:00.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "[redacted]"},
-                "event_id": "ak:event:msg-5-rev-1",
+                "event_id": "ak:event:AjU1l-Eisb3OsJErxiFpnMdIrcBcnCih6I8bEfreUYQ4",
                 "redacted": true,
                 "redacted_at": "2026-05-22T10:05:00.000Z",
-                "redaction_ref": "ak:event:redact-5",
+                "redaction_ref": "ak:event:A1Dqt89EJm8Vurg41PAsnseqxyxB0Gg-Xr0WywWjcia0",
                 "sender": "did:web:bob.example",
                 "state": "redacted",
-                "target_ref": "ak:message:m5"
+                "message_id": "ak:message:AXLf0mAo4UUC50gymplf5Oowi6lfIjnA1pl45rHyZXXs"
             },
             "proofs": []
         }),
     ];
     sign_chat_fixtures(&mut events);
 
-    let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+    let messages = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
 
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].id, "ak:event:msg-5");
+    assert_eq!(
+        messages[0].id,
+        "ak:event:AXLf0mAo4UUC50gymplf5Oowi6lfIjnA1pl45rHyZXXs"
+    );
     assert!(messages[0].redacted);
 }
 
@@ -1839,7 +1974,7 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
 fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
     fn redacted_message(id: &str, protocol_message_id: &str) -> ChatMessage {
         ChatMessage {
-            realm_id: "ak:realm:r1".to_owned(),
+            realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
             sender: "did:web:bob.example".to_owned(),
@@ -1847,7 +1982,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
             body: String::new(),
             timestamp: "10:05".to_owned(),
             created_at: None,
-            strand_id: "ak:strand:topic".to_owned(),
+            strand_id: "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE".to_owned(),
             reply_to: None,
             reactions: Vec::new(),
             redacted: true,
@@ -1861,16 +1996,27 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
         }
     }
 
-    let protocol_message_id = "ak:message:m6";
+    let protocol_message_id = "ak:message:A3VgsB123jP90mQo21keg3CLCveTDRLikepykbzkqVDU";
     let mut target = vec![
-        redacted_message("ak:event:msg-6", protocol_message_id),
-        redacted_message("ak:event:msg-6-rev-1", protocol_message_id),
+        redacted_message(
+            "ak:event:AcKQoR8zOkA_YLRPM8kfj-LWD-gFyGj0gDzDi1yR8__w",
+            protocol_message_id,
+        ),
+        redacted_message(
+            "ak:event:AJIef_emAh7eYAOuF7eGO1bNoy3aKoOtR486JTWV0mwU",
+            protocol_message_id,
+        ),
         ChatMessage {
             body: "unrelated".to_owned(),
             redacted: false,
-            protocol_message_id: Some("ak:message:other".to_owned()),
-            id: "ak:event:other".to_owned(),
-            ..redacted_message("ak:event:other", "ak:message:other")
+            protocol_message_id: Some(
+                "ak:message:A8a_riy5QTAQw2ZF0lV4Wr_lyFIe2yzXKQYapE970EXw".to_owned(),
+            ),
+            id: "ak:event:A0KTSEncSq-7S2g7j9s8ssEEgqbX4On6J9NtKdAwE9rI".to_owned(),
+            ..redacted_message(
+                "ak:event:A0KTSEncSq-7S2g7j9s8ssEEgqbX4On6J9NtKdAwE9rI",
+                "ak:message:A8a_riy5QTAQw2ZF0lV4Wr_lyFIe2yzXKQYapE970EXw",
+            )
         },
     ];
     target[0].edited = true;
@@ -1878,7 +2024,10 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
 
     merge_chat_messages(
         &mut target,
-        vec![redacted_message("ak:event:msg-6", protocol_message_id)],
+        vec![redacted_message(
+            "ak:event:AcKQoR8zOkA_YLRPM8kfj-LWD-gFyGj0gDzDi1yR8__w",
+            protocol_message_id,
+        )],
     );
 
     let matching = target
@@ -1886,11 +2035,18 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
         .filter(|message| message.protocol_message_id.as_deref() == Some(protocol_message_id))
         .collect::<Vec<_>>();
     assert_eq!(matching.len(), 1);
-    assert_eq!(matching[0].id, "ak:event:msg-6");
+    assert_eq!(
+        matching[0].id,
+        "ak:event:AcKQoR8zOkA_YLRPM8kfj-LWD-gFyGj0gDzDi1yR8__w"
+    );
     assert!(matching[0].redacted);
     assert!(matching[0].edited);
     assert_eq!(matching[0].revisions, vec!["v1".to_owned()]);
-    assert!(target.iter().any(|message| message.id == "ak:event:other"));
+    assert!(
+        target
+            .iter()
+            .any(|message| message.id == "ak:event:A0KTSEncSq-7S2g7j9s8ssEEgqbX4On6J9NtKdAwE9rI")
+    );
 }
 
 #[test]
@@ -1905,7 +2061,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
 
     fn message(id: &str, protocol_message_id: &str, body: &str, created_at: &str) -> ChatMessage {
         ChatMessage {
-            realm_id: "ak:realm:r1".to_owned(),
+            realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
             sender: "did:web:bob.example".to_owned(),
@@ -1913,8 +2069,8 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
             body: body.to_owned(),
             timestamp: "10:00".to_owned(),
             created_at: at(created_at),
-            strand_id: "ak:strand:topic".to_owned(),
-            reply_to: Some("ak:message:m1".to_owned()),
+            strand_id: "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE".to_owned(),
+            reply_to: Some("ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c".to_owned()),
             reactions: Vec::new(),
             redacted: false,
             edited: false,
@@ -1927,9 +2083,9 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
         }
     }
 
-    let protocol_message_id = "ak:message:m2";
+    let protocol_message_id = "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo";
     let mut target = vec![message(
-        "ak:event:msg-2-rev-1",
+        "ak:event:AnDTUwNSETOJ-pBxghvljssZF9_39FJn1yECyAVFAlFU",
         protocol_message_id,
         "edited body",
         "2026-07-07T06:19:22.000Z",
@@ -1937,7 +2093,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
     target[0].edited = true;
 
     let mut incoming = message(
-        "ak:event:msg-2",
+        "ak:event:A7K5Uaew7bX6Q59MX37cd5ChptN8Mn4AORWZkldj0FBk",
         protocol_message_id,
         "original body",
         "2026-07-07T06:19:20.000Z",
@@ -1953,11 +2109,17 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
     merge_chat_messages(&mut target, vec![incoming]);
 
     assert_eq!(target.len(), 1);
-    assert_eq!(target[0].id, "ak:event:msg-2-rev-1");
+    assert_eq!(
+        target[0].id,
+        "ak:event:AnDTUwNSETOJ-pBxghvljssZF9_39FJn1yECyAVFAlFU"
+    );
     assert_eq!(target[0].body, "edited body");
     assert!(target[0].edited);
     assert_eq!(target[0].revisions, vec!["original body"]);
-    assert_eq!(target[0].reply_to.as_deref(), Some("ak:message:m1"));
+    assert_eq!(
+        target[0].reply_to.as_deref(),
+        Some("ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c")
+    );
     assert_eq!(
         target[0].reactions,
         vec![(
@@ -1972,18 +2134,31 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
 
 #[test]
 fn durable_echo_settles_newer_optimistic_message_by_protocol_id() {
-    let mut optimistic = sidecar_projection_message("ak:message:local", "ak:strand:topic", "hello");
-    optimistic.protocol_message_id = Some("ak:message:local".to_owned());
+    let mut optimistic = sidecar_projection_message(
+        "ak:message:Ams1BtISTcaHSjyArAO3RssCwK-vFi70Bs1FzWVrXhck",
+        "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "hello",
+    );
+    optimistic.protocol_message_id =
+        Some("ak:message:Ams1BtISTcaHSjyArAO3RssCwK-vFi70Bs1FzWVrXhck".to_owned());
     optimistic.created_at = Some(chrono::Utc::now());
     optimistic.pending = true;
 
-    let mut durable = sidecar_projection_message("ak:event:accepted", "ak:strand:topic", "hello");
-    durable.protocol_message_id = Some("ak:message:local".to_owned());
+    let mut durable = sidecar_projection_message(
+        "ak:event:ApfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30",
+        "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "hello",
+    );
+    durable.protocol_message_id =
+        Some("ak:message:Ams1BtISTcaHSjyArAO3RssCwK-vFi70Bs1FzWVrXhck".to_owned());
     durable.created_at = None;
 
     merge_duplicate_create_message(&mut optimistic, durable);
 
-    assert_eq!(optimistic.id, "ak:message:local");
+    assert_eq!(
+        optimistic.id,
+        "ak:message:Ams1BtISTcaHSjyArAO3RssCwK-vFi70Bs1FzWVrXhck"
+    );
     assert!(!optimistic.pending);
     assert!(!optimistic.failed);
     assert!(optimistic.error.is_none());
@@ -1996,28 +2171,34 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
     // `operation_id`, so `upsert_raw_operation` replaces the create with the
     // tombstone and the local-first render shows the redacted marker.
     let create = json!({
-        "event_id": "ak:event:msg-2",
+        "event_id": "ak:event:A7K5Uaew7bX6Q59MX37cd5ChptN8Mn4AORWZkldj0FBk",
         "kind": "ak.message.create",
-        "actor_id": "did:web:bob.example",
-        "realm_id": "ak:realm:r1",
+        "actor_id": "ak:did_core:web:bob.example",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "strand_id": "ak:strand:topic",
-        "message_id": "ak:message:m2",
+        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "message_id": "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo",
         "body": "secret"
     });
     let tombstone = json!({
-        "event_id": "ak:event:msg-2",
+        "event_id": "ak:event:A7K5Uaew7bX6Q59MX37cd5ChptN8Mn4AORWZkldj0FBk",
         "kind": "ak.message.create",
-        "actor_id": "did:web:bob.example",
-        "realm_id": "ak:realm:r1",
+        "actor_id": "ak:did_core:web:bob.example",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "created_at": "2026-05-22T10:05:00.000Z",
-        "strand_id": "ak:strand:topic",
-        "message_id": "ak:message:m2",
+        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "message_id": "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo",
         "redacted": true
     });
 
-    let create_record = message_operations_from_events("ak:realm:r1", &[create]);
-    let tombstone_record = message_operations_from_events("ak:realm:r1", &[tombstone]);
+    let create_record = message_operations_from_events(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &[create],
+    );
+    let tombstone_record = message_operations_from_events(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &[tombstone],
+    );
     assert_eq!(
         create_record[0].operation_id,
         tombstone_record[0].operation_id
@@ -2027,25 +2208,25 @@ fn message_operations_redaction_tombstone_dedupes_over_create_by_event_id() {
 #[test]
 fn message_operations_fold_independent_redaction_event_by_message_id() {
     let mut create = json!({
-        "event_id": "ak:event:msg-3",
+        "event_id": "ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
         "kind": "ak.message.create",
-        "actor_id": "did:web:bob.example",
-        "realm_id": "ak:realm:r1",
+        "actor_id": "ak:did_core:web:bob.example",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "strand_id": "ak:strand:topic",
-        "message_id": "ak:message:m3",
+        "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+        "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
         "body": "secret"
     });
     sign_chat_fixture(&mut create);
     let mut redaction = json!({
-        "event_id": "ak:event:redact-3",
-        "event_kind": "ak.message.redact",
-        "actor_id": "did:web:bob.example",
-        "realm_id": "ak:realm:r1",
+        "event_id": "ak:event:AtY-hYO7pukUvpVZYBYuADSkUgaU1o6T5TbYmPtzUnco",
+        "kind": "ak.message.redact",
+        "actor_id": "ak:did_core:web:bob.example",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "created_at": "2026-05-22T10:05:00.000Z",
         "payload": {
-            "event_id": "ak:event:redact-3",
-            "message_id": "ak:message:m3",
+            "event_id": "ak:event:AtY-hYO7pukUvpVZYBYuADSkUgaU1o6T5TbYmPtzUnco",
+            "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
             "reason": "user requested tombstone"
         }
     });
@@ -2055,7 +2236,10 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
         vec![create.clone(), redaction.clone()],
         vec![redaction, create],
     ] {
-        let records = message_operations_from_events("ak:realm:r1", &events);
+        let records = message_operations_from_events(
+            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            &events,
+        );
         assert_eq!(records.len(), 2);
         let state = ClientLocalState {
             raw_operations: records,
@@ -2070,14 +2254,14 @@ fn message_operations_fold_independent_redaction_event_by_message_id() {
 
 #[test]
 fn message_operations_from_events_folds_shared_pin_control_events() {
-    let strand_id = "ak:strand:topic";
+    let strand_id = "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE";
     let pin_scope = SharedPinScope::strand(strand_id);
-    let target_ref = "ak:message:pinned";
+    let target_ref = "ak:message:Aj8ObsRsspa-eB4BB9XHU491RECO-qv_y2FbDrDKRo74";
     let pin = json!({
-        "event_id": "ak:event:pin-1",
+        "event_id": "ak:event:At7uZHFkaOZeWWKBxVQkHwbJkLtnGHpMCcZYcFcswPgc",
         "event_kind": "ak.pin.add",
-        "actor_id": "did:web:mei.example",
-        "realm_id": "ak:realm:r1",
+        "actor_id": "ak:did_core:web:mei.example",
+        "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "created_at": "2026-05-22T10:10:00.000Z",
         "payload": {
             "pin_scope": {"kind": "strand", "id": strand_id},
@@ -2086,10 +2270,19 @@ fn message_operations_from_events_folds_shared_pin_control_events() {
         }
     });
 
-    let records = message_operations_from_events("ak:realm:r1", &[pin]);
+    let records = message_operations_from_events(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &[pin],
+    );
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].operation_id, "ak:event:pin-1");
-    assert_eq!(records[0].realm_id.as_deref(), Some("ak:realm:r1"));
+    assert_eq!(
+        records[0].operation_id,
+        "ak:event:At7uZHFkaOZeWWKBxVQkHwbJkLtnGHpMCcZYcFcswPgc"
+    );
+    assert_eq!(
+        records[0].realm_id.as_deref(),
+        Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0")
+    );
 
     let pins = shared_message_pins_from_raw_operations(&records, &pin_scope);
     assert_eq!(
@@ -2108,15 +2301,17 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         .unwrap()
         .with_timezone(&chrono::Utc);
     let message = ChatMessage {
-        realm_id: "ak:realm:r1".to_owned(),
-        id: "ak:event:msg-3".to_owned(),
-        protocol_message_id: Some("ak:message:m3".to_owned()),
+        realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
+        id: "ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs".to_owned(),
+        protocol_message_id: Some(
+            "ak:message:Asg8IZtPYZi06QwoJAIWUIU5xUWxDRtHCQPTUuSSipb8".to_owned(),
+        ),
         sender: "did:web:bob.example".to_owned(),
         executed_by: None,
         body: "secret".to_owned(),
         timestamp: "10:00".to_owned(),
         created_at: None,
-        strand_id: "ak:strand:topic".to_owned(),
+        strand_id: "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
         redacted: false,
@@ -2129,13 +2324,22 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         crypto_state: MessageCryptoState::Plaintext,
     };
 
-    let tombstone =
-        local_redaction_tombstone_for_message(&message, redacted_at, Some("ak:event:redact-1"));
+    let tombstone = local_redaction_tombstone_for_message(
+        &message,
+        redacted_at,
+        Some("ak:event:A-RSupDyayuw4R7tIwZPpZWnF36wsoZuXYPDzQJ-jmhk"),
+    );
     assert_eq!(tombstone["event_id"], message.id);
-    assert_eq!(tombstone["message_id"], "ak:message:m3");
+    assert_eq!(
+        tombstone["message_id"],
+        "ak:message:Asg8IZtPYZi06QwoJAIWUIU5xUWxDRtHCQPTUuSSipb8"
+    );
     assert_eq!(tombstone["redacted"], true);
     assert_eq!(tombstone["state"], "redacted");
-    assert_eq!(tombstone["redaction_ref"], "ak:event:redact-1");
+    assert_eq!(
+        tombstone["redaction_ref"],
+        "ak:event:A-RSupDyayuw4R7tIwZPpZWnF36wsoZuXYPDzQJ-jmhk"
+    );
     assert_eq!(
         tombstone["content"]["body"],
         arkret_sdk::events::REDACTED_MESSAGE_PLACEHOLDER
@@ -2163,7 +2367,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
 #[test]
 fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let appellant = "did:web:appellant.example";
+    let appellant = "ak:did_core:web:appellant.example";
     let events = vec![
         json!({
             "event_id": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
@@ -2172,7 +2376,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "body": {
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "decision": "quarantine",
-                "issuer": "did:web:moderator.example",
+                "issuer": "ak:did_core:web:moderator.example",
                 "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
             }
         }),
@@ -2195,7 +2399,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "body": {
                 "appeal_id": "ak:appeal:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 "realm_id": realm_id,
-                "reviewer": "did:web:reviewer.example",
+                "reviewer": "ak:did_core:web:reviewer.example",
                 "verdict": "uphold",
                 "reason_text_ref": "ak:text:decision-reason",
                 "decided_at": "2026-07-19T00:00:02.000Z"
@@ -2239,13 +2443,13 @@ fn moderation_appeal_prompts_read_control_plane_sync_state() {
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
         },
-        arkret_sdk::ActorId::new("ak:did_core:web:moderator.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:moderator.example").unwrap(),
         1,
         arkret_sdk::Hlc::new("019f73a34c00-0000-12345678").unwrap(),
         json!({
             "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
             "decision": "quarantine",
-            "issuer": "did:web:moderator.example",
+            "issuer": "ak:did_core:web:moderator.example",
             "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         }),
     )
@@ -2280,7 +2484,7 @@ fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
         "kind": "ak.moderation.decision",
         "realm_id": realm_id,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
-        "actor_id": "did:web:moderator.example",
+        "actor_id": "ak:did_core:web:moderator.example",
         "actor_seq": 1,
         "created_at": "2026-07-19T00:00:00.000Z",
         "hlc": "019f73a34c00-0000-12345678",
@@ -2290,7 +2494,7 @@ fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
         "payload": {
             "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
             "decision": "quarantine",
-            "issuer": "did:web:moderator.example",
+            "issuer": "ak:did_core:web:moderator.example",
             "reason_code": "abuse_review",
             "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         },
@@ -2347,8 +2551,8 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-x10_6-rebuild-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     store.save_private_plaintext(
-        "ak:realm:local",
-        "ak:strand:announce",
+        "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
         "message:chat-msg-enc",
         "secret discussion body",
     );
@@ -2356,15 +2560,15 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     let mut state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:enc".to_owned(),
-            realm_id: Some("ak:realm:local".to_owned()),
+            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
             received_at: chrono::Utc::now(),
             // Encrypted stub: identity only, NO plaintext body.
             payload: json!({
-                "event_id": "ak:event:enc",
+                "event_id": "ak:event:AwF-oOhhx26_6pizrJdZKnGd4znSSuoeNZmFDAJWlc70",
                 "kind": "ak.message.create",
-                "actor_id": "did:web:alice.example",
-                "realm_id": "ak:realm:local",
-                "strand_id": "ak:strand:announce",
+                "actor_id": "ak:did_core:web:alice.example",
+                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
                 "message_id": "chat-msg-enc",
                 "encrypted_content": true,
                 "status": "accepted"
@@ -2379,8 +2583,11 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // discussion does not look empty.
     let without_sidecar = chat_messages_from_local_state_with_sidecar(&state, None, None);
     assert_eq!(without_sidecar.len(), 1);
-    assert_eq!(without_sidecar[0].strand_id, "ak:strand:announce");
-    assert_eq!(without_sidecar[0].sender, "did:web:alice.example");
+    assert_eq!(
+        without_sidecar[0].strand_id,
+        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
+    );
+    assert_eq!(without_sidecar[0].sender, "ak:did_core:web:alice.example");
     assert_eq!(without_sidecar[0].body, "");
     assert!(matches!(
         without_sidecar[0].crypto_state,
@@ -2391,8 +2598,11 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // restored and the message is fully resolved (not stuck decrypting).
     let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
     assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].strand_id, "ak:strand:announce");
-    assert_eq!(restored[0].sender, "did:web:alice.example");
+    assert_eq!(
+        restored[0].strand_id,
+        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
+    );
+    assert_eq!(restored[0].sender, "ak:did_core:web:alice.example");
     assert_eq!(restored[0].body, "secret discussion body");
     assert!(matches!(
         restored[0].crypto_state,
@@ -2446,7 +2656,7 @@ fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
     let mut event = json!({
         "event_id": "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu",
         "kind": "ak.message.create",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "realm_id": realm,
         "strand_id": strand,
         "encrypted_content": true,
@@ -2473,8 +2683,10 @@ fn poll_projection_merge_preserves_optimistic_message_render_id() {
     let mut optimistic =
         crate::messaging::polls::PollCard::from_draft("poll-local".to_owned(), &draft);
     optimistic.poll_id = wire_poll_id.to_owned();
-    let mut projected =
-        crate::messaging::polls::PollCard::from_draft("ak:event:accepted".to_owned(), &draft);
+    let mut projected = crate::messaging::polls::PollCard::from_draft(
+        "ak:event:ApfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30".to_owned(),
+        &draft,
+    );
     projected.poll_id = wire_poll_id.to_owned();
     projected.vote("did:web:bob.example", 1);
     let mut cards = vec![optimistic];
@@ -2490,12 +2702,12 @@ fn poll_projection_merge_preserves_optimistic_message_render_id() {
 fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-pending-sidecar-refresh-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ak:realm:local";
-    let strand = "ak:strand:announce";
-    let message_id = "ak:message:restored";
+    let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
+    let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+    let message_id = "ak:message:A2YcbgQPjPWiFZOW87QxvndGtWcImO9Xf2-TcOjH1pXs";
     let mut messages = vec![ChatMessage {
         realm_id: realm.to_owned(),
-        id: "ak:event:restored".to_owned(),
+        id: "ak:event:AJhsY0DZJGk1qN28pQapwgLRRgx7kyis3JdX2xGL1Cj8".to_owned(),
         protocol_message_id: Some(message_id.to_owned()),
         sender: "did:web:alice.example".to_owned(),
         executed_by: None,
@@ -2552,9 +2764,9 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
 fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-expiry-stub-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ak:realm:local";
-    let strand = "ak:strand:announce";
-    let message_id = "ak:message:expiring";
+    let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
+    let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+    let message_id = "ak:message:AEFbRnxYfrSVBFC6Txw2FSmG8HmUsjvVsFfn_p3bGXk8";
     store.save_private_plaintext(
         realm,
         strand,
@@ -2562,9 +2774,9 @@ fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
         "secret discussion body",
     );
     let mut event = json!({
-        "event_id": "ak:event:expired",
+        "event_id": "ak:event:AFQAR2XErrXGAnlXE6bKXYyKeXf07nWETTDROpEmLSeo",
         "kind": "ak.message.create",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "realm_id": realm,
         "strand_id": strand,
         "message_id": message_id,
@@ -2588,9 +2800,9 @@ fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
 fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
     let temp = std::env::temp_dir().join(format!("inkson-late-recovery-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ak:realm:local";
-    let strand = "ak:strand:announce";
-    let message_id = "ak:message:late";
+    let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
+    let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+    let message_id = "ak:message:A2bMpjWQ3C_PCkkoYC30GDh4ogDBgC5-GGJ1v0zt9VKa";
     store.save_private_plaintext(
         realm,
         strand,
@@ -2598,9 +2810,9 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
         "late plaintext",
     );
     let mut rejected = json!({
-        "event_id": "ak:event:late",
+        "event_id": "ak:event:A4BWEYesKK6NG4kEzOZXc7FlBfXuJdaVxsjAp4V6hygg",
         "kind": "ak.message.create",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "realm_id": realm,
         "strand_id": strand,
         "message_id": message_id,
@@ -2634,9 +2846,9 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
 fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
     let temp = std::env::temp_dir().join(format!("inkson-late-recovery-ok-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
-    let realm = "ak:realm:local";
-    let strand = "ak:strand:announce";
-    let message_id = "ak:message:late-ok";
+    let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
+    let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
+    let message_id = "ak:message:AS_yTKQy1F_tu5CuneCbCvtUhx-TRFeH5RVSYYeWMGeA";
     store.save_private_plaintext(
         realm,
         strand,
@@ -2644,9 +2856,9 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
         "late plaintext",
     );
     let mut accepted = json!({
-        "event_id": "ak:event:late-ok",
+        "event_id": "ak:event:AxgU4syRvuaha7eYDoK-By_Sl3Ngv-6Q0_WiiElGwB24",
         "kind": "ak.message.create",
-        "actor_id": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "realm_id": realm,
         "strand_id": strand,
         "message_id": message_id,
@@ -2839,7 +3051,7 @@ fn participant_roster_ignores_noncanonical_identity_fields() {
     let participants = space_participants(
         Some(&projection),
         &store,
-        "ak:realm:demo",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "did:web:alice.example",
     );
     assert_eq!(participants.len(), 1);
@@ -2851,7 +3063,7 @@ fn participant_roster_rejects_naked_handle_field() {
     let projection = json!({
         "members": [
             {
-                "actor_id": "did:web:example.com:users:bob",
+                "actor_id": "ak:did_core:web:example.com:users:bob",
                 "handle": "bob:example.com"
             }
         ]
@@ -2862,12 +3074,12 @@ fn participant_roster_rejects_naked_handle_field() {
     let participants = space_participants(
         Some(&projection),
         &store,
-        "ak:realm:demo",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "did:web:alice.example",
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.did == "did:web:example.com:users:bob")
+        .find(|participant| participant.did == "ak:did_core:web:example.com:users:bob")
         .unwrap();
 
     assert!(mention_label_for_participant(bob).is_none());
@@ -2878,12 +3090,12 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
     let projection = json!({
         "members": [
             {
-                "actor_id": "did:web:bob.example",
-                "subject_id": "did:web:bob.example",
+                "actor_id": "ak:did_core:web:bob.example",
+                "subject_id": "ak:did_core:web:bob.example",
                 "handle_claims": [{
                     "schema": "ak.schema.handle_claim.v1",
                     "handle": "bob:local.host",
-                    "subject": "did:web:bob.example",
+                    "subject": "ak:did_core:web:bob.example",
                     "binding_state": "verified"
                 }]
             }
@@ -2895,12 +3107,12 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
     let participants = space_participants(
         Some(&projection),
         &store,
-        "ak:realm:demo",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "did:web:alice.example",
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.did == "did:web:bob.example")
+        .find(|participant| participant.did == "ak:did_core:web:bob.example")
         .unwrap();
 
     assert_eq!(
@@ -2943,57 +3155,10 @@ fn mention_label_for_participant_requires_handle() {
 }
 
 #[test]
-fn mention_inline_parts_styles_only_full_handles() {
-    let mention = MentionNode::mention(
-        arkret_sdk::Mention::new(
-            arkret_sdk::Did::new("did:web:local.host:users:alice".to_owned()).unwrap(),
-        )
-        .with_display_name_at_time("alice:local.host")
-        .with_handle_at_time(arkret_sdk::Handle::parse("alice:local.host").unwrap())
-        .with_mention_text_original("@alice:local.host"),
-    );
-
-    let parts = mention_inline_parts(
-        "@alice Hello @alice:local.host.",
-        &[mention],
-        "https://auth.local.host",
-    );
-    assert!(
-        parts
-            .iter()
-            .any(|part| part.mention_label.as_deref() == Some("alice:local.host") && part.is_local)
-    );
-    assert!(
-        parts
-            .iter()
-            .any(|part| part.text == "@alice" && part.mention_label.is_none())
-    );
-}
-
-#[test]
-fn mention_inline_parts_marks_external_handles_remote() {
-    let mention = MentionNode::mention(
-        arkret_sdk::Mention::new(
-            arkret_sdk::Did::new("did:web:example.com:users:bob".to_owned()).unwrap(),
-        )
-        .with_display_name_at_time("bob:example.com")
-        .with_handle_at_time(arkret_sdk::Handle::parse("bob:example.com").unwrap())
-        .with_mention_text_original("@bob:example.com"),
-    );
-
-    let parts = mention_inline_parts("@bob:example.com", &[mention], "https://local.host");
-    let mention_part = parts
-        .iter()
-        .find(|part| part.mention_label.as_deref() == Some("bob:example.com"))
-        .unwrap();
-    assert!(!mention_part.is_local);
-}
-
-#[test]
 fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
     let messages = vec![ChatMessage {
-        realm_id: "ak:realm:demo".to_owned(),
-        id: "ak:event:1".to_owned(),
+        realm_id: "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned(),
+        id: "ak:event:A42FkwFdQPw7aC_yPcdlVU5ZjKLAnFCbmrXTVRJTNhRc".to_owned(),
         protocol_message_id: Some(
             "ak:message:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5".to_owned(),
         ),
@@ -3002,7 +3167,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         body: "@alice:example.com/summary".to_owned(),
         timestamp: "10:00".to_owned(),
         created_at: None,
-        strand_id: "ak:strand:demo".to_owned(),
+        strand_id: "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q".to_owned(),
         reply_to: None,
         reactions: Vec::new(),
         redacted: false,
@@ -3013,11 +3178,13 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         error: None,
         mentions: vec![MentionNode::mention(
             arkret_sdk::Mention::new(
-                arkret_sdk::Did::new("did:web:agents.example:summary".to_owned()).unwrap(),
+                crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
+                    .unwrap(),
             )
             .with_display_name_at_time("Summary Assistant")
             .with_agent_selector_metadata(
-                arkret_sdk::Did::new("did:web:example.com:users:alice".to_owned()).unwrap(),
+                crate::mls_api_helpers::principal_core_id("did:web:example.com:users:alice")
+                    .unwrap(),
                 arkret_sdk::Handle::parse("alice:example.com").unwrap(),
                 "summary",
             )
@@ -3033,9 +3200,12 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
 
     let metadata = agent_metadata_from_mentions(&messages);
     let summary = metadata
-        .get("did:web:agents.example:summary")
+        .get("ak:did_core:web:agents.example:summary")
         .expect("agent metadata");
-    assert_eq!(summary.controller_id, "did:web:example.com:users:alice");
+    assert_eq!(
+        summary.controller_id,
+        "ak:did_core:web:example.com:users:alice"
+    );
     assert_eq!(summary.controller_handle, "alice:example.com");
     assert_eq!(summary.agent_slug, "summary");
     assert_eq!(summary.display_name, "Summary Assistant");
@@ -3088,18 +3258,18 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
 fn owned_agent_ids_only_select_current_controllers_agents() {
     let controller = "did:web:example.com:users:alice";
     let own_agent = arkret_sdk::Mention::new(
-        arkret_sdk::Did::new("did:web:agents.example:summary".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary").unwrap(),
     )
     .with_agent_selector_metadata(
-        arkret_sdk::Did::new(controller.to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id(controller).unwrap(),
         arkret_sdk::Handle::parse("alice:example.com").unwrap(),
         "summary",
     );
     let other_agent = arkret_sdk::Mention::new(
-        arkret_sdk::Did::new("did:web:agents.example:review".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:agents.example:review").unwrap(),
     )
     .with_agent_selector_metadata(
-        arkret_sdk::Did::new("did:web:example.com:users:bob".to_owned()).unwrap(),
+        crate::mls_api_helpers::principal_core_id("did:web:example.com:users:bob").unwrap(),
         arkret_sdk::Handle::parse("bob:example.com").unwrap(),
         "review",
     );
@@ -3113,7 +3283,7 @@ fn owned_agent_ids_only_select_current_controllers_agents() {
         controller,
     );
 
-    assert_eq!(ids, vec!["did:web:agents.example:summary"]);
+    assert_eq!(ids, vec!["ak:did_core:web:agents.example:summary"]);
 }
 
 #[test]
@@ -3138,7 +3308,7 @@ fn composer_owned_agent_ids_keep_verified_picker_agent_before_handle_loads() {
         controller,
     );
 
-    assert_eq!(ids, vec!["did:web:agents.example:summary"]);
+    assert_eq!(ids, vec!["ak:did_core:web:agents.example:summary"]);
     assert!(
         owned_agent_ids_from_composer(true, "ask for an update", &[], &picker, controller)
             .is_empty()
@@ -3483,14 +3653,20 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
         &participant.did,
     );
     let mention = mentions[0].as_mention().expect("structured self mention");
-    assert_eq!(mention.subject_id.as_str(), participant.did);
+    assert_eq!(
+        mention.subject_id.as_str(),
+        "ak:did_core:web:example.com:users:alice"
+    );
     assert_eq!(mention.mention_text_original.as_deref(), Some("@me"));
 
     let typed_mentions = composer_mention_nodes(true, "ping @me", &[], &participant.did);
     let typed_mention = typed_mentions[0]
         .as_mention()
         .expect("typed structured self mention");
-    assert_eq!(typed_mention.subject_id.as_str(), participant.did);
+    assert_eq!(
+        typed_mention.subject_id.as_str(),
+        "ak:did_core:web:example.com:users:alice"
+    );
     assert_eq!(typed_mention.mention_text_original.as_deref(), Some("@me"));
 
     assert!(composer_mention_nodes(true, "ask @me/summary", &[], &participant.did).is_empty());
@@ -3499,14 +3675,15 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
 #[test]
 fn resolved_owned_agent_chip_suppresses_duplicate_directory_lookup() {
     let controller = "did:web:example.com:users:alice";
-    let mention =
-        arkret_sdk::Mention::new(arkret_sdk::Did::new("did:web:agents.example:summary").unwrap())
-            .with_agent_selector_metadata(
-                arkret_sdk::Did::new(controller).unwrap(),
-                arkret_sdk::Handle::parse("alice:example.com").unwrap(),
-                "summary",
-            )
-            .with_mention_text_original("@me/summary");
+    let mention = arkret_sdk::Mention::new(
+        crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary").unwrap(),
+    )
+    .with_agent_selector_metadata(
+        crate::mls_api_helpers::principal_core_id(controller).unwrap(),
+        arkret_sdk::Handle::parse("alice:example.com").unwrap(),
+        "summary",
+    )
+    .with_mention_text_original("@me/summary");
     let mentions = vec![MentionNode::mention(mention)];
     let owned = parse_agent_selector_mention_tokens("ask @me/summary")
         .into_iter()
@@ -3827,8 +4004,8 @@ fn mention_candidate_uses_cached_member_handle() {
     let temp = std::env::temp_dir().join(format!("inkson-chat-mention-handle-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     store.save_member_handle_lookup(
-        "did:web:bob.example",
-        Some("ak:realm:demo".to_owned()),
+        "ak:did_core:web:bob.example",
+        Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned()),
         None,
         Some("bob:local.host".to_owned()),
         1,
@@ -3836,21 +4013,21 @@ fn mention_candidate_uses_cached_member_handle() {
         None,
     );
     let projection = json!({"members": [{
-        "actor_id": "did:web:bob.example"
+        "actor_id": "ak:did_core:web:bob.example"
     }]});
     let participants = space_participants(
         Some(&projection),
         &store,
-        "ak:realm:demo",
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "did:web:alice.example",
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.did == "did:web:bob.example")
+        .find(|participant| participant.did == "ak:did_core:web:bob.example")
         .expect("bob participant");
     let candidate = mention_candidate_for_participant(bob, &participants, "did:web:alice.example")
         .expect("member mention candidate");
-    assert_eq!(candidate.did, "did:web:bob.example");
+    assert_eq!(candidate.did, "ak:did_core:web:bob.example");
     assert_eq!(candidate.display_name, "bob:local.host");
     assert_eq!(candidate.insert_label(), "bob:local.host");
     assert_eq!(candidate.subtitle, "");
@@ -3858,8 +4035,8 @@ fn mention_candidate_uses_cached_member_handle() {
 
 #[test]
 fn late_join_discussion_sender_resolves_cached_member_handle() {
-    let sender = "did:webvh:zQmHistoricalAuthor";
-    let realm = "ak:realm:late-join";
+    let sender = "ak:did_core:web:history.example:alice";
+    let realm = "ak:realm:AhbOTVxMlBQEJeDfw_EHOeGGCT2uJ17cMT4QctC7CaFI";
     let temp = std::env::temp_dir().join(format!("inkson-chat-late-join-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
     store.save_member_handle_lookup(
@@ -3875,17 +4052,13 @@ fn late_join_discussion_sender_resolves_cached_member_handle() {
         "actor_id": sender,
         "membership": "join"
     }]});
-    let participants = space_participants(
-        Some(&projection),
-        &store,
-        realm,
-        "did:webvh:zQmLateJoiningReader",
-    );
+    let participants =
+        space_participants(Some(&projection), &store, realm, "did:web:reader.example");
 
     assert_eq!(
         sender_display_label(
             sender,
-            "did:webvh:zQmLateJoiningReader",
+            "did:web:reader.example",
             "reader:local.host",
             &participants,
         ),
@@ -3905,15 +4078,15 @@ fn unresolved_historical_sender_uses_the_shared_protocol_id_fallback() {
 #[test]
 fn channel_from_strand_event_requires_real_discussion_track() {
     let event = json!({
-        "event_id": "ak:event:strand",
+        "event_id": "ak:event:ACN6-zee0KV01VOfolkRd2zFaZq0QslDtjPt55WGqTpk",
         "kind": "ak.strand.create",
-        "realm_id": "ak:realm:demo",
-        "strand_id": "ak:strand:ops",
+        "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        "strand_id": "ak:strand:Ac19GaGmchhLqPeXsofsVdQCPnHo5URGMEFiQj6tRLz0",
         "title": "Ops discussion",
         "category": "support",
         "summary": "Operations support",
         "strand": {
-            "id": "ak:strand:ops",
+            "id": "ak:strand:Ac19GaGmchhLqPeXsofsVdQCPnHo5URGMEFiQj6tRLz0",
             "title": "Ops discussion",
             "tracks": {
                 "discussion": {"profile": "discussion"}
@@ -3921,9 +4094,16 @@ fn channel_from_strand_event_requires_real_discussion_track() {
         }
     });
 
-    let channel = channel_from_strand_event("ak:realm:demo", &event).unwrap();
+    let channel = channel_from_strand_event(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &event,
+    )
+    .unwrap();
 
-    assert_eq!(channel.strand_id, "ak:strand:ops");
+    assert_eq!(
+        channel.strand_id,
+        "ak:strand:Ac19GaGmchhLqPeXsofsVdQCPnHo5URGMEFiQj6tRLz0"
+    );
     assert_eq!(channel.name, "Ops discussion");
     assert_eq!(channel.category, "support");
     assert_eq!(channel.kind, "discussion");
@@ -3943,8 +4123,12 @@ fn sidecar_strand_title_reads_canonical_metadata_object() {
         },
         "tracks": { "discussion": { "enabled": true } }
     });
-    let projected = channel_from_strand_projection("ak:realm:demo", &projection, false)
-        .expect("discussion projection");
+    let projected = channel_from_strand_projection(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &projection,
+        false,
+    )
+    .expect("discussion projection");
     assert_eq!(projected.name, "AI sidecar");
     assert_ne!(projected.name, strand_id);
 
@@ -3958,18 +4142,22 @@ fn sidecar_strand_title_reads_canonical_metadata_object() {
             }
         }
     });
-    let projected = channel_from_strand_event("ak:realm:demo", &event).expect("discussion event");
+    let projected = channel_from_strand_event(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &event,
+    )
+    .expect("discussion event");
     assert_eq!(projected.name, "AI sidecar");
 }
 
 #[test]
 fn channel_from_strand_event_never_infers_private_sidecar_identity() {
     let event = json!({
-        "event_id": "ak:event:sidecar-strand",
+        "event_id": "ak:event:AWKTKW6JVP47hz_MHIT7bR8pFouEmtlyLzIyaqjy3Bjw",
         "kind": "ak.strand.create",
-        "realm_id": "ak:realm:demo",
+        "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "object": {
-            "id": "ak:strand:sidecar",
+            "id": "ak:strand:AkUVEiKlUkt3ZQkgRtsNooAKfHAnagj6Vjh_Xb-Nj5Bo",
             "metadata": {
                 "title": "AI sidecar",
                 "fields": { "client_private_hint": true }
@@ -3980,22 +4168,29 @@ fn channel_from_strand_event_never_infers_private_sidecar_identity() {
         }
     });
 
-    let channel = channel_from_strand_event("ak:realm:demo", &event).unwrap();
+    let channel = channel_from_strand_event(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &event,
+    )
+    .unwrap();
 
-    assert_eq!(channel.strand_id, "ak:strand:sidecar");
+    assert_eq!(
+        channel.strand_id,
+        "ak:strand:AkUVEiKlUkt3ZQkgRtsNooAKfHAnagj6Vjh_Xb-Nj5Bo"
+    );
     assert!(!channel.is_private_sidecar);
 }
 
 #[test]
 fn channel_from_strand_event_ignores_non_discussion_strands() {
     let event = json!({
-        "event_id": "ak:event:strand",
+        "event_id": "ak:event:ACN6-zee0KV01VOfolkRd2zFaZq0QslDtjPt55WGqTpk",
         "kind": "ak.strand.create",
-        "realm_id": "ak:realm:demo",
-        "strand_id": "ak:strand:doc",
+        "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        "strand_id": "ak:strand:AwoWa5E6h1_MkJ9iJso4SrkR-9rZJi2ynkhMyYA06pwg",
         "title": "Doc strand",
         "strand": {
-            "id": "ak:strand:doc",
+            "id": "ak:strand:AwoWa5E6h1_MkJ9iJso4SrkR-9rZJi2ynkhMyYA06pwg",
             "title": "Doc strand",
             "tracks": {
                 "document": {"profile": "document"}
@@ -4003,7 +4198,13 @@ fn channel_from_strand_event_ignores_non_discussion_strands() {
         }
     });
 
-    assert!(channel_from_strand_event("ak:realm:demo", &event).is_none());
+    assert!(
+        channel_from_strand_event(
+            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+            &event
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -4063,7 +4264,7 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
     let events = vec![
         json!({
             "kind": "ak.presence",
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "device_id": "ak:device:bob",
             "sent_at": sent_at,
             "expires_at": expires_at,
@@ -4074,12 +4275,12 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
             }
         }),
         json!({
-            "actor_id": "did:web:carol.example",
+            "actor_id": "ak:did_core:web:carol.example",
             // Matrix-legacy `unavailable` fails closed to offline.
             "status": "unavailable"
         }),
         json!({
-            "actor_id": "did:web:mallory.example",
+            "actor_id": "ak:did_core:web:mallory.example",
             "state": "online"
         }),
     ];
@@ -4115,12 +4316,12 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
 fn presence_projection_refresh_key_changes_without_a_cursor_advance() {
     let online = vec![json!({
         "kind": "ak.presence",
-        "actor_id": "did:web:bob.example",
+        "actor_id": "ak:did_core:web:bob.example",
         "state": "online",
     })];
     let offline = vec![json!({
         "kind": "ak.presence",
-        "actor_id": "did:web:bob.example",
+        "actor_id": "ak:did_core:web:bob.example",
         "state": "offline",
     })];
 
@@ -4145,7 +4346,7 @@ fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
     let events = vec![
         json!({
             "kind": "ak.presence",
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "device_id": "ak:device:bob-a",
             "sent_at": now - chrono::Duration::seconds(20),
             "expires_at": now + chrono::Duration::seconds(40),
@@ -4157,7 +4358,7 @@ fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
         }),
         json!({
             "kind": "ak.presence",
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "device_id": "ak:device:bob-b",
             "sent_at": now - chrono::Duration::seconds(10),
             "expires_at": now + chrono::Duration::seconds(50),
@@ -4169,7 +4370,7 @@ fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
         }),
         json!({
             "kind": "ak.presence",
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "device_id": "ak:device:bob-expired",
             "sent_at": now - chrono::Duration::seconds(70),
             "expires_at": now - chrono::Duration::seconds(10),
@@ -4207,35 +4408,45 @@ fn typing_actor_snapshot_filters_expired_and_self_entries() {
     let bodies = vec![
         json!({
             "kind": "ak.typing",
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
-            "strand_id": "ak:strand:demo",
+            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
             "typing": true
         }),
         json!({
             "kind": "ak.typing",
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expired),
-            "strand_id": "ak:strand:demo",
+            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
             "typing": true
         }),
         json!({
             "kind": "ak.typing",
-            "actor_id": "did:web:self.example",
+            "actor_id": "ak:did_core:web:self.example",
             "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
-            "strand_id": "ak:strand:demo",
+            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
             "typing": true
         }),
     ];
 
-    let snapshot =
-        typing_actor_snapshot_from_signals(&bodies, "ak:strand:demo", "did:web:self.example");
+    let snapshot = typing_actor_snapshot_from_signals(
+        &bodies,
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "did:web:self.example",
+    );
 
-    assert_eq!(snapshot.actors, vec!["did:web:alice.example".to_owned()]);
+    assert_eq!(
+        snapshot.actors,
+        vec!["ak:did_core:web:alice.example".to_owned()]
+    );
     assert_eq!(snapshot.next_expires_at_ms, Some(future.timestamp_millis()));
     assert_eq!(
-        typing_actors_from_signals(&bodies, "ak:strand:demo", "did:web:self.example"),
-        vec!["did:web:alice.example".to_owned()]
+        typing_actors_from_signals(
+            &bodies,
+            "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+            "did:web:self.example"
+        ),
+        vec!["ak:did_core:web:alice.example".to_owned()]
     );
 }
 
@@ -4248,31 +4459,37 @@ fn typing_actor_snapshot_reads_decrypted_signal_bodies() {
     let bodies = vec![
         json!({
             "kind": "ak.typing",
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-            "strand_id": "ak:strand:demo",
+            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
             "typing": true
         }),
         json!({
             "kind": "ak.typing",
-            "actor_id": "did:web:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-            "strand_id": "ak:strand:demo",
+            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
             "typing": false
         }),
         json!({
             "kind": "ak.presence",
-            "actor_id": "did:web:carol.example",
+            "actor_id": "ak:did_core:web:carol.example",
             "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-            "strand_id": "ak:strand:demo",
+            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
             "typing": true
         }),
     ];
 
-    let snapshot =
-        typing_actor_snapshot_from_signals(&bodies, "ak:strand:demo", "did:web:self.example");
+    let snapshot = typing_actor_snapshot_from_signals(
+        &bodies,
+        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
+        "did:web:self.example",
+    );
 
-    assert_eq!(snapshot.actors, vec!["did:web:alice.example".to_owned()]);
+    assert_eq!(
+        snapshot.actors,
+        vec!["ak:did_core:web:alice.example".to_owned()]
+    );
     assert_eq!(
         snapshot.next_expires_at_ms,
         Some(expires_at.timestamp_millis())
@@ -4339,7 +4556,7 @@ fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
     assert!(
         decrypt_chat_encrypted_content(
             &store,
-            "ak:realm:none",
+            "ak:realm:AacL7ZYuTtiI1Wvq5aTmbQo8CihIcuFhJ4WKAZZMxlxY",
             "did:web:alice.example",
             "ak:device:01964137-0000-7000-8000-000000000001",
             None,
@@ -4356,11 +4573,15 @@ fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
         "content": {
             "type": "ak.message.create",
             "body": "[encrypted]",
-            "strand_id": "ak:strand:1",
+            "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA",
             "encrypted_content": {"ciphertext": "blob"},
         }
     });
-    let msg = chat_message_from_event("ak:realm:demo", &event).expect("message");
+    let msg = chat_message_from_event(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &event,
+    )
+    .expect("message");
     assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
 }
 
@@ -4397,8 +4618,8 @@ fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
         "event_id": "evt:bodyless",
         "content": {
             "type": "ak.message.create",
-            "strand_id": "ak:strand:1",
-            "message_id": "ak:message:1",
+            "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA",
+            "message_id": "ak:message:Abz8ZrG1_9zdkxN9VA-u0IBsaEOpJkC71uo1V6fZ72VY",
             "encrypted_content": {
                 "scheme": "mls_rfc9420",
                 "version": "1.0",
@@ -4411,10 +4632,17 @@ fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
         }
     });
 
-    let msg = chat_message_from_event("ak:realm:demo", &event).expect("message");
+    let msg = chat_message_from_event(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &event,
+    )
+    .expect("message");
 
     assert_eq!(msg.body, "");
-    assert_eq!(msg.strand_id, "ak:strand:1");
+    assert_eq!(
+        msg.strand_id,
+        "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA"
+    );
     assert_eq!(msg.crypto_state, MessageCryptoState::Decrypting);
 }
 
@@ -4429,8 +4657,8 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
         "event_id": "evt:key-missing",
         "content": {
             "type": "ak.message.create",
-            "strand_id": "ak:strand:1",
-            "message_id": "ak:message:1",
+            "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA",
+            "message_id": "ak:message:Abz8ZrG1_9zdkxN9VA-u0IBsaEOpJkC71uo1V6fZ72VY",
             "encrypted_content": {
                 "scheme": "mls_rfc9420",
                 "version": "1.0",
@@ -4444,7 +4672,7 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
     });
 
     let msg = chat_message_from_event_with_sidecar(
-        "ak:realm:none",
+        "ak:realm:AacL7ZYuTtiI1Wvq5aTmbQo8CihIcuFhJ4WKAZZMxlxY",
         &event,
         Some(&store),
         Some((
@@ -4610,15 +4838,17 @@ mod merge_duplicate_create_message_alignment_tests {
 
     fn msg(id: &str, body: &str, created_at: Option<chrono::DateTime<chrono::Utc>>) -> ChatMessage {
         ChatMessage {
-            realm_id: "ak:realm:r1".to_owned(),
+            realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
-            protocol_message_id: Some("ak:message:m1".to_owned()),
+            protocol_message_id: Some(
+                "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c".to_owned(),
+            ),
             sender: "did:web:bob.example".to_owned(),
             executed_by: None,
             body: body.to_owned(),
             timestamp: "10:00".to_owned(),
             created_at,
-            strand_id: "ak:strand:topic".to_owned(),
+            strand_id: "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE".to_owned(),
             reply_to: None,
             reactions: Vec::new(),
             redacted: false,
@@ -4637,10 +4867,26 @@ mod merge_duplicate_create_message_alignment_tests {
     // wins (and thus carries local metadata forward) iff its id is `>=`.
     #[test]
     fn newer_or_same_lifecycle_version_uses_ge_id_tiebreak_on_equal_timestamp() {
-        let existing = msg("ak:event:b", "existing", at("2026-07-07T06:19:20.000Z"));
-        let same_id = msg("ak:event:b", "incoming", at("2026-07-07T06:19:20.000Z"));
-        let higher_id = msg("ak:event:c", "incoming", at("2026-07-07T06:19:20.000Z"));
-        let lower_id = msg("ak:event:a", "incoming", at("2026-07-07T06:19:20.000Z"));
+        let existing = msg(
+            "ak:event:AWSsryl67JAGALOqh0ZH5T-813hPA-GnZxpV3_U9Xp8c",
+            "existing",
+            at("2026-07-07T06:19:20.000Z"),
+        );
+        let same_id = msg(
+            "ak:event:AWSsryl67JAGALOqh0ZH5T-813hPA-GnZxpV3_U9Xp8c",
+            "incoming",
+            at("2026-07-07T06:19:20.000Z"),
+        );
+        let higher_id = msg(
+            "ak:event:AZccWZlaAUrqgOzXQ7OucnyL0J8C4O-JnwPOLdtlGX9k",
+            "incoming",
+            at("2026-07-07T06:19:20.000Z"),
+        );
+        let lower_id = msg(
+            "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4",
+            "incoming",
+            at("2026-07-07T06:19:20.000Z"),
+        );
         assert!(same_id.is_newer_or_same_lifecycle_version_than(&existing));
         assert!(higher_id.is_newer_or_same_lifecycle_version_than(&existing));
         assert!(!lower_id.is_newer_or_same_lifecycle_version_than(&existing));
@@ -4648,20 +4894,48 @@ mod merge_duplicate_create_message_alignment_tests {
 
     #[test]
     fn newer_or_same_lifecycle_version_prefers_strictly_newer_timestamp() {
-        let existing = msg("ak:event:b", "existing", at("2026-07-07T06:19:20.000Z"));
+        let existing = msg(
+            "ak:event:AWSsryl67JAGALOqh0ZH5T-813hPA-GnZxpV3_U9Xp8c",
+            "existing",
+            at("2026-07-07T06:19:20.000Z"),
+        );
         // A strictly newer timestamp wins regardless of the id tie-break.
-        let newer = msg("ak:event:a", "incoming", at("2026-07-07T06:19:30.000Z"));
-        let older = msg("ak:event:c", "incoming", at("2026-07-07T06:19:10.000Z"));
+        let newer = msg(
+            "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4",
+            "incoming",
+            at("2026-07-07T06:19:30.000Z"),
+        );
+        let older = msg(
+            "ak:event:ATwS2vge4nnhtaqL3ss6x3XcMjGpGXRvnIbosXzWy_PY",
+            "incoming",
+            at("2026-07-07T06:19:10.000Z"),
+        );
         assert!(newer.is_newer_or_same_lifecycle_version_than(&existing));
         assert!(!older.is_newer_or_same_lifecycle_version_than(&existing));
     }
 
     #[test]
     fn newer_or_same_lifecycle_version_missing_timestamps() {
-        let existing_none = msg("ak:event:a", "existing", None);
-        let existing_some = msg("ak:event:a", "existing", at("2026-07-07T06:19:20.000Z"));
-        let incoming_none = msg("ak:event:a", "incoming", None);
-        let incoming_some = msg("ak:event:a", "incoming", at("2026-07-07T06:19:20.000Z"));
+        let existing_none = msg(
+            "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4",
+            "existing",
+            None,
+        );
+        let existing_some = msg(
+            "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4",
+            "existing",
+            at("2026-07-07T06:19:20.000Z"),
+        );
+        let incoming_none = msg(
+            "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4",
+            "incoming",
+            None,
+        );
+        let incoming_some = msg(
+            "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4",
+            "incoming",
+            at("2026-07-07T06:19:20.000Z"),
+        );
         // incoming timestamped, existing not → incoming newer.
         assert!(incoming_some.is_newer_or_same_lifecycle_version_than(&existing_none));
         // existing timestamped, incoming not → NOT newer.
@@ -4676,21 +4950,24 @@ mod merge_duplicate_create_message_alignment_tests {
     #[test]
     fn merge_newer_incoming_preserves_local_edit_metadata_and_appends_old_body() {
         let mut existing = msg(
-            "ak:event:rev-1",
+            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
             "edited body",
             at("2026-07-07T06:19:22.000Z"),
         );
         existing.edited = true;
         existing.revisions = vec!["draft".to_owned()];
         let incoming = msg(
-            "ak:event:base",
+            "ak:event:AR7M-BmzB0WZaDxMCMGGTR6MG8p04uMLRtEf7jJsmZlk",
             "newer body",
             at("2026-07-07T06:19:30.000Z"),
         );
 
         merge_duplicate_create_message(&mut existing, incoming);
 
-        assert_eq!(existing.id, "ak:event:base");
+        assert_eq!(
+            existing.id,
+            "ak:event:AR7M-BmzB0WZaDxMCMGGTR6MG8p04uMLRtEf7jJsmZlk"
+        );
         assert_eq!(existing.body, "newer body");
         assert!(existing.edited, "edited flag carried forward");
         assert_eq!(
@@ -4704,13 +4981,13 @@ mod merge_duplicate_create_message_alignment_tests {
     #[test]
     fn merge_older_incoming_keeps_existing_and_folds_body_into_revisions() {
         let mut existing = msg(
-            "ak:event:rev-1",
+            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
             "current body",
             at("2026-07-07T06:19:30.000Z"),
         );
         existing.edited = true;
         let mut incoming = msg(
-            "ak:event:base",
+            "ak:event:AR7M-BmzB0WZaDxMCMGGTR6MG8p04uMLRtEf7jJsmZlk",
             "original body",
             at("2026-07-07T06:19:20.000Z"),
         );
@@ -4718,7 +4995,10 @@ mod merge_duplicate_create_message_alignment_tests {
 
         merge_duplicate_create_message(&mut existing, incoming);
 
-        assert_eq!(existing.id, "ak:event:rev-1");
+        assert_eq!(
+            existing.id,
+            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck"
+        );
         assert_eq!(existing.body, "current body");
         assert_eq!(existing.revisions, vec!["original body".to_owned()]);
         assert_eq!(
@@ -4731,9 +5011,17 @@ mod merge_duplicate_create_message_alignment_tests {
     // sort by key then by member.
     #[test]
     fn merge_unions_and_sorts_reaction_members() {
-        let mut existing = msg("ak:event:base", "body", at("2026-07-07T06:19:20.000Z"));
+        let mut existing = msg(
+            "ak:event:AR7M-BmzB0WZaDxMCMGGTR6MG8p04uMLRtEf7jJsmZlk",
+            "body",
+            at("2026-07-07T06:19:20.000Z"),
+        );
         existing.reactions = vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])];
-        let mut incoming = msg("ak:event:base2", "body", at("2026-07-07T06:19:30.000Z"));
+        let mut incoming = msg(
+            "ak:event:AIS3CfzQ4_aXiTARf8qv5G4C8b5BRZ7VN-tyB7K8oZmA",
+            "body",
+            at("2026-07-07T06:19:30.000Z"),
+        );
         incoming.reactions = vec![
             (
                 "\u{2764}".to_owned(),
@@ -4774,19 +5062,24 @@ mod merge_duplicate_create_message_alignment_tests {
     #[test]
     fn reactions_from_summary_trim_whitespace_in_key_and_actor() {
         let mut events = vec![json!({
-            "event_id": "ak:event:msg-r",
+            "event_id": "ak:event:AzlDwYnXxsrAJPnV18jXnpRSyNg1pwLq9kdhlLSr3PlI",
             "kind": "ak.message.create",
-            "actor_id": "did:web:bob.example",
-            "realm_id": "ak:realm:r1",
+            "actor_id": "ak:did_core:web:bob.example",
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-07-07T06:19:20.000Z",
-            "strand_id": "ak:strand:topic",
-            "message_id": "ak:message:mr",
+            "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+            "message_id": "ak:message:AiMtOq_gs6Il6jSfTW_-c3OYzV-X5k9afNn8RSyisj38",
             "body": "hi",
             "reaction_summary": { " +1 ": { "members": [" did:web:carol.example "] } },
             "proofs": []
         })];
         sign_chat_fixtures(&mut events);
-        let messages = chat_messages_from_events_with_sidecar("ak:realm:r1", &events, None, None);
+        let messages = chat_messages_from_events_with_sidecar(
+            "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            &events,
+            None,
+            None,
+        );
         assert_eq!(messages.len(), 1);
         assert_eq!(
             messages[0].reactions,
@@ -4799,8 +5092,16 @@ mod merge_duplicate_create_message_alignment_tests {
     // stable. (The former events twin dropped the timestamp here.)
     #[test]
     fn merge_redaction_tombstone_without_timestamp_keeps_existing_created_at() {
-        let mut existing = msg("ak:event:base", "secret", at("2026-07-07T06:19:20.000Z"));
-        let mut tombstone = msg("ak:event:base", "", None);
+        let mut existing = msg(
+            "ak:event:AR7M-BmzB0WZaDxMCMGGTR6MG8p04uMLRtEf7jJsmZlk",
+            "secret",
+            at("2026-07-07T06:19:20.000Z"),
+        );
+        let mut tombstone = msg(
+            "ak:event:AR7M-BmzB0WZaDxMCMGGTR6MG8p04uMLRtEf7jJsmZlk",
+            "",
+            None,
+        );
         tombstone.redacted = true;
 
         merge_duplicate_create_message(&mut existing, tombstone);

@@ -65,7 +65,7 @@ pub fn build_passphrase_kdf_backup_body(
 ) -> anyhow::Result<KeyBackup> {
     let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
         .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?;
-    let actor_id = arkret_sdk::Did::new(actor_id.to_owned())
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|error| anyhow::anyhow!("actor_id: {error}"))?;
     let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
     let envelope = arkret_crypto::backup::build_key_backup_envelope(
@@ -267,7 +267,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         .iter()
         .map(public_content_item)
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let actor_id = arkret_sdk::Did::new(actor_id.to_owned())?;
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
     let created_at = crate::clock::now_utc_canonical();
     let mut body = KeyBackup {

@@ -342,7 +342,7 @@ pub(crate) fn test_event_notification(
             ))
             .expect("valid test notification id"),
             schema: arkret_sdk::NotificationSchema::V1,
-            actor_id: arkret_sdk::Did::new("did:web:alice.example".to_owned())
+            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
                 .expect("valid test actor"),
             source: arkret_sdk::NotificationSource::Event(arkret_sdk::NotificationEventSource {
                 source_event_id: arkret_sdk::EventId::new(source_event_id)
@@ -411,7 +411,7 @@ pub(crate) fn test_invite(
         id: arkret_sdk::InviteId::from_event_id(&invite_event_id),
         schema: "ak.schema.invite.v1".to_owned(),
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).expect("valid test Realm id"),
-        inviter: arkret_sdk::Did::new("did:web:alice.example".to_owned())
+        inviter: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
             .expect("valid test inviter"),
         invitee: None,
         invite_delivery_target: None,

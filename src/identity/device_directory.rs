@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
-use arkret_sdk::{Did, DidDocument};
+use arkret_sdk::{DidDocument, DidFullId};
 
 use crate::transport::TransportClient;
 
@@ -17,12 +17,12 @@ pub type DidAnchorFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output 
 /// Retained for DID-resolution callers. Device authorization no longer reads
 /// business authority from the DID document.
 pub trait DidAnchor: Send + Sync {
-    fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument>;
+    fn resolve_did_document(&self, actor: &DidFullId) -> Option<DidDocument>;
 
     fn ensure_actor_document<'a>(
         &'a self,
         http: &'a reqwest::Client,
-        actor: &'a Did,
+        actor: &'a DidFullId,
     ) -> DidAnchorFuture<'a> {
         let _ = (http, actor);
         Box::pin(async { true })
@@ -141,7 +141,7 @@ fn accepted_device_key(
     actor: &str,
     device: &str,
 ) -> Option<(PublicKeyMaterial, arkret_sdk::EventId)> {
-    let actor = arkret_sdk::Did::new(actor.to_owned()).ok()?;
+    let actor = crate::mls_api_helpers::principal_core_id(actor).ok()?;
     let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
     let record = outcome.device_keys.get(&actor)?.get(&device)?;
     let generation = outcome.device_generations.get(&actor)?;
@@ -258,10 +258,15 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
 ) -> Result<(), String> {
     let proof: arkret_sdk::Proof = serde_json::from_value(proof_value.clone())
         .map_err(|error| format!("decode Event proof: {error}"))?;
-    if verification_method_controller(&proof.verification_method) != signer_id {
+    let controller = verification_method_controller(&proof.verification_method);
+    let controller_matches_signer = arkret_sdk::DidFullId::new(controller.to_owned())
+        .ok()
+        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+        .is_some_and(|core_id| core_id.as_str() == signer_id);
+    if !controller_matches_signer {
         return Err("Event proof verification-method controller differs from signer".to_owned());
     }
-    let actor_id = arkret_sdk::ActorId::new(binding_actor_id.to_owned())
+    let actor_id = arkret_sdk::DidCoreId::new(binding_actor_id.to_owned())
         .map_err(|error| format!("invalid Event binding actor core_id: {error}"))?;
     let canonical_bytes = crate::canonical::canonical_json_bytes(envelope_without_proof)
         .map_err(|error| format!("canonicalize Event proof envelope: {error}"))?;
@@ -287,9 +292,13 @@ pub fn verify_signal_envelope_proof_at(
     public_key: &PublicKeyMaterial,
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
+    let controller = verification_method_controller(&envelope.proof.verification_method);
+    let controller_matches_sender = arkret_sdk::DidFullId::new(controller.to_owned())
+        .ok()
+        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+        .is_some_and(|core_id| core_id == envelope.sender_actor_id);
     if envelope.validate_structural().is_err()
-        || verification_method_controller(&envelope.proof.verification_method)
-            != envelope.sender_actor_id.as_str()
+        || !controller_matches_sender
         || envelope.expires_at <= now
     {
         return false;

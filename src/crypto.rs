@@ -8,7 +8,7 @@ pub struct ClientEncryptedMessage {
 
 mod native {
     use arkret_sdk::{
-        ArkretMlsGroup, ArkretMlsIdentity, DeviceId, Did, EncryptedMessage, MessageCrypto,
+        ArkretMlsGroup, ArkretMlsIdentity, DeviceId, DidFullId, EncryptedMessage, MessageCrypto,
         MessageCryptoDecrypt, MlsAddMemberResult, MlsCommitEnvelope, MlsKeyPackageRecord,
         MlsProposalEnvelope, MlsRemoveMemberResult, MlsWelcomeEnvelope,
     };
@@ -25,7 +25,7 @@ mod native {
         pub fn new(principal_id: &str, device_id: &str) -> anyhow::Result<Self> {
             Ok(Self {
                 identity: Some(ArkretMlsIdentity::new_basic(
-                    Did::new(principal_id.to_owned())?,
+                    crate::mls_api_helpers::principal_core_id(principal_id)?,
                     DeviceId::new(device_id.to_owned())?,
                 )?),
                 group: None,
@@ -88,7 +88,7 @@ mod native {
                 .group
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
-            let target = Did::new(target_principal.to_owned())?;
+            let target = crate::mls_api_helpers::principal_core_id(target_principal)?;
             Ok(group.remove_member_by_principal(&target)?)
         }
 
@@ -240,12 +240,17 @@ mod tests {
         .unwrap();
         let bob_keys = bob.key_package_record().unwrap();
 
-        alice.create_group(b"ak:realm:local-e2ee").unwrap();
+        alice
+            .create_group(b"ak:realm:AY7zSStZiWZEEvyNmjF4sJ_Ffhl9AMZLVqGlDSSUYWJk")
+            .unwrap();
         let welcome = alice.add_member(&bob_keys).unwrap().welcome;
         bob.join_from_welcome(&welcome).unwrap();
 
         let encrypted = alice
-            .encrypt_message("ak:message:local-1", br#"{"body":"hello secure client"}"#)
+            .encrypt_message(
+                "ak:message:AHbH2yLChpf91PjGaWTBKXEDczbsLgmfYK-BPnehnlGI",
+                br#"{"body":"hello secure client"}"#,
+            )
             .unwrap();
         let ciphertext = encrypted.payload.ciphertext.clone();
         let digest = encrypted.payload.payload_digest.clone();
@@ -295,7 +300,9 @@ mod tests {
         let bob_keys = bob.key_package_record().unwrap();
         let carol_keys = carol.key_package_record().unwrap();
 
-        alice.create_group(b"ak:realm:local-e2ee-remove").unwrap();
+        alice
+            .create_group(b"ak:realm:AnaJobx32KtgCcxL3mva1i5cTyaaCSBGwaDxBuu03bQw")
+            .unwrap();
         let bob_add = alice.add_member(&bob_keys).unwrap();
         bob.join_from_welcome(&bob_add.welcome).unwrap();
 
@@ -304,7 +311,10 @@ mod tests {
         carol.join_from_welcome(&carol_add.welcome).unwrap();
 
         let before_remove = alice
-            .encrypt_message("ak:message:pre-remove", br#"{"body":"before remove"}"#)
+            .encrypt_message(
+                "ak:message:AC7M1rO9enjsseBuNU8naQLq0zrj7s5JyIIRlzayM75w",
+                br#"{"body":"before remove"}"#,
+            )
             .unwrap();
         let before_epoch = before_remove.payload.epoch;
         let bob_before = bob.decrypt_or_preserve(before_remove.clone()).unwrap();
@@ -342,7 +352,10 @@ mod tests {
         carol.apply_commit(&remove.commit).unwrap();
 
         let after_remove = alice
-            .encrypt_message("ak:message:post-remove", br#"{"body":"after remove"}"#)
+            .encrypt_message(
+                "ak:message:AKX3odKOOQGk72T7owg54RerSa-CVUp9FeFMi9euGpo4",
+                br#"{"body":"after remove"}"#,
+            )
             .unwrap();
         assert!(
             after_remove.payload.epoch > before_epoch,
@@ -374,12 +387,15 @@ mod tests {
             "did:web:alice.example",
             "ak:device:01904100-0000-7000-8000-000000000001",
             "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
-            "ak:message:local-2",
+            "ak:message:Agxpniukwlj24Zh1paeusKKRyXg7AskKjN5rp4COOGno",
             "encrypted hello",
         )
         .unwrap();
 
-        assert_eq!(encrypted.message_id, "ak:message:local-2");
+        assert_eq!(
+            encrypted.message_id,
+            "ak:message:Agxpniukwlj24Zh1paeusKKRyXg7AskKjN5rp4COOGno"
+        );
         assert_eq!(encrypted.payload.scheme.as_str(), "mls_rfc9420");
         assert_eq!(
             encrypted.payload.content_type,

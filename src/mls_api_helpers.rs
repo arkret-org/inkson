@@ -2,6 +2,11 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+pub(crate) fn principal_core_id(principal_full_id: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
+    let full_id = arkret_sdk::DidFullId::new(principal_full_id.trim().to_owned())?;
+    arkret_sdk::project_full_id_to_core_id(&full_id).map_err(anyhow::Error::msg)
+}
 pub(crate) fn sign_keypackage_upload_batch_with_signer(
     signer: &crate::event_signer::InksonEventSigner,
     unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
@@ -54,7 +59,7 @@ pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {
 pub(crate) fn keypackage_claim_record_to_mls_record(
     claim: &arkret_sdk::KeyPackageClaimRecord,
 ) -> anyhow::Result<arkret_sdk::MlsKeyPackageRecord> {
-    let signer_full_id = arkret_sdk::FullId::new(
+    let signer_full_id = arkret_sdk::DidFullId::new(
         claim
             .device_signature
             .kid
@@ -67,13 +72,45 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
     if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != claim.principal_id {
         anyhow::bail!("KeyPackage claim signer does not project to principal_id");
     }
+    if claim.device_id.is_some()
+        && (claim.device_authorize_event_id.is_none()
+            || claim.target_agent_signer_evidence.is_some())
+    {
+        anyhow::bail!("device KeyPackage claim has mixed or missing authorization evidence");
+    }
+    if claim.agent_id.is_some()
+        && (claim.device_authorize_event_id.is_some()
+            || claim.target_device_signing_key_evidence.is_some())
+    {
+        anyhow::bail!("Native Agent KeyPackage claim has mixed authorization evidence");
+    }
+    let endpoint = match (
+        &claim.device_id,
+        &claim.agent_id,
+        &claim.agent_verification_method,
+        &claim.agent_key_authorize_event_id,
+    ) {
+        (Some(device_id), None, None, None) => arkret_sdk::MlsEndpointIdentity::human_device(
+            claim.principal_id.clone(),
+            device_id.clone(),
+        ),
+        (None, Some(agent_id), Some(method), Some(authorization_ref)) => {
+            if agent_id != &claim.principal_id
+                || method.as_str() != claim.device_signature.kid.as_str()
+            {
+                anyhow::bail!("Native Agent KeyPackage claim endpoint binding mismatch");
+            }
+            arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+                agent_id.clone(),
+                method.clone(),
+                authorization_ref.clone(),
+            )?
+        }
+        _ => anyhow::bail!("KeyPackage claim has an incomplete or mixed endpoint identity"),
+    };
     Ok(arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: claim.keypackage_ref.as_str().to_owned(),
-        principal_id: signer_full_id,
-        device_id: claim
-            .device_id
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("device KeyPackage claim omits device_id"))?,
+        endpoint,
         key_package: claim.key_package.clone(),
         keypackage_ref: claim.keypackage_digest.clone(),
         cipher_suites: Vec::new(),
@@ -113,15 +150,16 @@ pub(crate) fn build_mls_keypackage_claim_request(
         .transpose()?
         .into_iter()
         .collect::<Vec<_>>();
-    let requester = arkret_sdk::Did::new(requester.trim().to_owned())?;
-    let authority_service_id = arkret_sdk::Did::new(authority_service_id.trim().to_owned())?;
+    let requester_full_id = arkret_sdk::DidFullId::new(requester.trim().to_owned())?;
+    let requester = arkret_sdk::project_full_id_to_core_id(&requester_full_id)?;
+    let authority_service_id = arkret_sdk::DidCoreId::new(authority_service_id.trim().to_owned())?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("KeyPackage self-claim requires an active device signer"))?;
-    let verification_method = signer.verification_method_for_principal(&requester)?;
+    let verification_method = signer.verification_method_for_principal(&requester_full_id)?;
     let created_at = crate::clock::now_utc();
     let expires_at = created_at + chrono::Duration::minutes(5);
     let mut body = arkret_sdk::KeyPackagesClaimRequestBody {
-        target_principal_id: arkret_sdk::Did::new(target_principal_id.trim().to_owned())?,
+        target_principal_id: principal_core_id(target_principal_id)?,
         intended_realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
             intended_realm_id,
         ))?,
@@ -153,4 +191,82 @@ pub(crate) fn build_mls_keypackage_claim_request(
     let binding = body.proof_binding_bytes()?;
     body.holder_acceptance_proof.jws = signer.sign_detached_jws_bytes(&binding)?;
     Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn claim_for(
+        record: &arkret_sdk::MlsKeyPackageRecord,
+        kid: &str,
+    ) -> arkret_sdk::KeyPackageClaimRecord {
+        let (principal_id, device_id) = match &record.endpoint {
+            arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                principal_id,
+                device_id,
+            } => (principal_id.clone(), device_id.clone()),
+            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
+                panic!("test fixture requires a human-device record")
+            }
+        };
+        arkret_sdk::KeyPackageClaimRecord {
+            claim_id: "claim".to_owned(),
+            keypackage_ref: record.keypackage_ref.as_str().to_owned(),
+            keypackage_digest: record.keypackage_ref.clone(),
+            principal_id,
+            device_id: Some(device_id),
+            agent_id: None,
+            agent_verification_method: None,
+            key_package: record.key_package.clone(),
+            capabilities: record.capabilities.clone(),
+            capabilities_digest: record.keypackage_ref.clone(),
+            device_authorize_event_id: Some(
+                arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc")
+                    .unwrap(),
+            ),
+            agent_key_authorize_event_id: None,
+            target_device_signing_key_evidence: None,
+            target_agent_signer_evidence: None,
+            expires_at: crate::clock::now_utc() + chrono::Duration::minutes(5),
+            device_signature: arkret_sdk::KeyOperationSignature {
+                kid: arkret_sdk::NonEmptyString::new(kid).unwrap(),
+                signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
+                sig: arkret_sdk::Base64UrlString::new("YQ").unwrap(),
+            },
+            revocation_status: None,
+            last_resort: None,
+        }
+    }
+
+    #[test]
+    fn native_agent_claim_is_preserved_as_a_native_agent_endpoint() {
+        let principal = principal_core_id("did:web:agent.example").unwrap();
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
+                .unwrap();
+        let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal.clone(), device).unwrap();
+        let record = identity.key_package_record().unwrap();
+        let method = arkret_sdk::DidUrl::new("did:web:agent.example#runtime-key").unwrap();
+        let mut claim = claim_for(&record, method.as_str());
+        claim.device_id = None;
+        claim.device_authorize_event_id = None;
+        claim.agent_id = Some(principal.clone());
+        claim.agent_verification_method = Some(method.clone());
+        let authorization_ref =
+            arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc")
+                .unwrap();
+        claim.agent_key_authorize_event_id = Some(authorization_ref.clone());
+        claim.target_agent_signer_evidence = None;
+
+        let converted = keypackage_claim_record_to_mls_record(&claim).unwrap();
+        assert_eq!(
+            converted.endpoint,
+            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime {
+                agent_id: principal,
+                verification_method: method,
+                agent_key_authorize_event_id: authorization_ref,
+            }
+        );
+    }
 }

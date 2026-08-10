@@ -485,7 +485,7 @@ mod tests {
             &BTreeMap::new(),
         );
         assert_eq!(roster.len(), 2);
-        assert_eq!(roster[0].actor_id, "did:web:alice.example");
+        assert_eq!(roster[0].actor_id, "ak:did_core:web:alice.example");
     }
 
     #[test]
@@ -507,7 +507,7 @@ mod tests {
             payload: json!({
                 "kind": "ak.realm.media_service",
                 "body": {
-                    "service_id": "did:web:media.example",
+                    "service_id": "ak:did_core:web:media.example",
                     "foci": [
                         {"focus_id": "fra-1", "type": "livekit"},
                         {"focus_id": "us-east-1", "type": "livekit"}
@@ -538,7 +538,7 @@ mod tests {
                     "roster_delta": {
                         "op": "join",
                         "participant": {
-                            "actor_id": "did:web:alice.example",
+                            "actor_id": "ak:did_core:web:alice.example",
                             "participant_identity": "ak:rtc_participant:alice"
                         }
                     }
@@ -569,7 +569,7 @@ mod tests {
                     "roster_delta": {
                         "op": "join",
                         "participant": {
-                            "actor_id": "did:web:alice.example",
+                            "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
                             "participant_identity": "ak:rtc_participant:alice"
                         }
@@ -603,7 +603,7 @@ mod tests {
                     "roster_delta": {
                         "op": "join",
                         "participant": {
-                            "actor_id": "did:web:alice.example",
+                            "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
                             "participant_identity": "ak:rtc_participant:alice"
                         }
@@ -691,7 +691,7 @@ mod tests {
                     "roster_delta": {
                         "op": "join",
                         "participant": {
-                            "actor_id": "did:web:alice.example",
+                            "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:019a7360-0000-7000-8000-000000000008",
                             "participant_identity": "ak:rtc_participant:alice"
                         }
@@ -731,7 +731,7 @@ mod tests {
                     "roster_delta": {
                         "op": "join",
                         "participant": {
-                            "actor_id": "did:web:alice.example",
+                            "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:019a7360-0000-7000-8000-000000000008",
                             "participant_identity": "ak:rtc_participant:alice"
                         }

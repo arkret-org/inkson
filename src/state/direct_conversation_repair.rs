@@ -167,8 +167,8 @@ mod tests {
         arkret_sdk::Hash::new(format!("sha256:{}", byte.to_string().repeat(64))).unwrap()
     }
 
-    fn principal() -> arkret_sdk::CoreId {
-        arkret_sdk::CoreId::new("ak:did_core:key:z6MkRepairRequester").unwrap()
+    fn principal() -> arkret_sdk::DidCoreId {
+        arkret_sdk::DidCoreId::new("ak:did_core:key:z6MkRepairRequester").unwrap()
     }
 
     fn content() -> arkret_sdk::MemberRepairRequestPayload {
@@ -191,8 +191,10 @@ mod tests {
 
     fn ready() -> garth::DirectConversationRepairPlanner {
         let route = garth::DirectConversationRepairRoute {
-            source_service_id: arkret_sdk::CoreId::new("ak:did_core:web:source.example").unwrap(),
-            target_service_id: arkret_sdk::CoreId::new("ak:did_core:web:target.example").unwrap(),
+            source_service_id: arkret_sdk::DidCoreId::new("ak:did_core:web:source.example")
+                .unwrap(),
+            target_service_id: arkret_sdk::DidCoreId::new("ak:did_core:web:target.example")
+                .unwrap(),
             coordinates: arkret_sdk::DirectConversationCoordinates {
                 pair_key: hash('a'),
                 realm_id: arkret_sdk::RealmId::new(REALM).unwrap(),

@@ -350,6 +350,25 @@ fn trimmed_string(value: Option<&Value>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn principal_core_key(value: &str) -> Option<String> {
+    let value = value.trim();
+    arkret_sdk::DidCoreId::new(value.to_owned())
+        .ok()
+        .map(|id| id.as_str().to_owned())
+        .or_else(|| {
+            arkret_sdk::DidFullId::new(value.to_owned())
+                .ok()
+                .and_then(|id| arkret_sdk::project_full_id_to_core_id(&id).ok())
+                .map(|id| id.as_str().to_owned())
+        })
+}
+
+fn same_principal_core(left: &str, right: &str) -> bool {
+    principal_core_key(left)
+        .zip(principal_core_key(right))
+        .is_some_and(|(left, right)| left == right)
+}
+
 fn push_unique(out: &mut Vec<String>, value: impl Into<String>) {
     let value = value.into();
     let value = value.trim();
@@ -589,8 +608,8 @@ fn group_members_with_owned_agents(
 
     let mut groups = groups.into_values().collect::<Vec<_>>();
     groups.sort_by(|left, right| {
-        let left_is_self = left.controller.actor_id.trim() == fallback_controller_id.trim();
-        let right_is_self = right.controller.actor_id.trim() == fallback_controller_id.trim();
+        let left_is_self = same_principal_core(&left.controller.actor_id, fallback_controller_id);
+        let right_is_self = same_principal_core(&right.controller.actor_id, fallback_controller_id);
         right_is_self
             .cmp(&left_is_self)
             .then_with(|| {
@@ -639,10 +658,10 @@ fn upsert_pending_invite_profile(
     label: Option<&str>,
     invite_id: Option<&str>,
 ) {
-    let actor_id = actor_id.trim();
-    if actor_id.is_empty() {
+    let Some(actor_id) = principal_core_key(actor_id) else {
         return;
-    }
+    };
+    let actor_id = actor_id.as_str();
     let apply_label = |profile: &mut MemberProfile| {
         let Some(label) = label.map(str::trim).filter(|value| !value.is_empty()) else {
             return;
@@ -674,7 +693,7 @@ fn upsert_pending_invite_profile(
                 .map(ToOwned::to_owned);
         }
         if existing.invite_is_direct.is_none() {
-            existing.invite_is_direct = Some(arkret_sdk::Did::new(actor_id.to_owned()).is_ok());
+            existing.invite_is_direct = Some(true);
         }
         apply_label(existing);
         return;
@@ -685,7 +704,7 @@ fn upsert_pending_invite_profile(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
-    profile.invite_is_direct = Some(arkret_sdk::Did::new(actor_id.to_owned()).is_ok());
+    profile.invite_is_direct = Some(true);
     apply_label(&mut profile);
     rows.push(profile);
     rows.sort_by(|left, right| left.actor_id.cmp(&right.actor_id));
@@ -708,7 +727,8 @@ fn local_pending_invite_profile_from_raw_operation(
         return None;
     }
     let direct_invitee = trimmed_string(payload.get("invitee"))
-        .filter(|invitee| arkret_sdk::Did::new(invitee.clone()).is_ok());
+        .and_then(|invitee| arkret_sdk::DidCoreId::new(invitee).ok())
+        .map(|invitee| invitee.as_str().to_owned());
     let invite_id = trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")));
     let actor_id = direct_invitee
         .clone()
@@ -795,6 +815,8 @@ fn raw_member_actor_id(payload: &Value) -> Option<String> {
         .or_else(|| raw_operation_path_string(payload, &["payload", "invitee"]))
         .or_else(|| trimmed_string(payload.get("member").or_else(|| payload.get("invitee"))))
         .or_else(|| trimmed_string(payload.get("actor_id")))
+        .and_then(|actor_id| arkret_sdk::DidCoreId::new(actor_id).ok())
+        .map(|actor_id| actor_id.as_str().to_owned())
 }
 
 fn raw_member_membership(payload: &Value) -> Option<String> {
@@ -923,7 +945,9 @@ fn member_group_in_section(
         MemberRosterSection::Members => !group.controller.is_governance_principal(),
         MemberRosterSection::Owners => group.controller.is_owner,
         MemberRosterSection::Admins => group.controller.is_admin && !group.controller.is_owner,
-        MemberRosterSection::MyAgents => group.controller.actor_id.trim() == account_did.trim(),
+        MemberRosterSection::MyAgents => {
+            same_principal_core(&group.controller.actor_id, account_did)
+        }
         MemberRosterSection::PendingInvites => false,
     }
 }
@@ -1254,7 +1278,7 @@ fn PendingInviteRow(
     let direct_invitee = profile
         .invite_is_direct
         .is_some_and(|direct| direct)
-        .then(|| arkret_sdk::Did::new(member.clone()).ok())
+        .then(|| arkret_sdk::DidCoreId::new(member.clone()).ok())
         .flatten()
         .map(|invitee| invitee.to_string());
     let is_direct_invite = direct_invitee.is_some();
@@ -1922,6 +1946,7 @@ fn history_share_source_authorization_ref_from_events(events: &[Value]) -> Optio
 /// Returning `None` silently downgrades every recovery recipient to `Unverified`,
 /// so the fallback is a correctness requirement, not a convenience.
 fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) -> Option<String> {
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id).ok()?;
     let literal_grant = events.iter().rev().find_map(|event| {
         let kind = event
             .get("kind")
@@ -1934,7 +1959,7 @@ fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) 
         let grant = payload.get("grant").unwrap_or(payload);
         let subject = grant.get("subject").and_then(Value::as_str)?;
         let actions = grant.get("actions").and_then(Value::as_array)?;
-        if subject.trim() != actor_id.trim()
+        if subject.trim() != actor_id.as_str()
             || !actions.iter().any(|action| {
                 action
                     .as_str()
@@ -1953,7 +1978,7 @@ fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) 
     });
     literal_grant.or_else(|| {
         realm_authority_root_controller(events)
-            .filter(|controller| controller == actor_id.trim())
+            .filter(|controller| controller == actor_id.as_str())
             .map(|_| arkret_wire::REALM_AUTHORITY_ROOT_CELL.to_owned())
     })
 }
@@ -2004,7 +2029,8 @@ pub(crate) async fn share_history_to_requester(
     if request_realm_id != realm_id.trim() {
         return Ok(false);
     }
-    if request.target_principal_id.as_str().trim() != actor_id.trim()
+    let actor_core_id = crate::mls_api_helpers::principal_core_id(&actor_id)?;
+    if request.target_principal_id != actor_core_id
         || realm_key_source_ref_str(&request.target_source_ref).trim() != device_id.trim()
     {
         return Ok(false);
@@ -2226,9 +2252,22 @@ pub(crate) async fn seal_history_to_recovery_recipients(
     let mut did_documents: BTreeMap<String, Value> = BTreeMap::new();
     let did_http = reqwest::Client::new();
     for recipient in &policy.recovery_recipients {
+        let Some((controller, _)) = recipient.verification_method.as_str().split_once('#') else {
+            continue;
+        };
+        let Ok(principal_full_id) = arkret_sdk::DidFullId::new(controller.to_owned()) else {
+            continue;
+        };
+        if arkret_sdk::project_full_id_to_core_id(&principal_full_id)
+            .ok()
+            .as_ref()
+            != Some(&recipient.principal_id)
+        {
+            continue;
+        }
         if let Some(document) = crate::identity::did_resolver::fetch_raw_did_document_json(
             &did_http,
-            &recipient.principal_id,
+            &principal_full_id,
         )
         .await
         {
@@ -2352,7 +2391,7 @@ pub(crate) fn plan_history_key_request(
     if !has_gap {
         return None;
     }
-    let self_actor = self_actor_id.trim();
+    let self_actor = principal_core_key(self_actor_id)?;
     let provider = provider_candidates.iter().find(|(principal, device)| {
         let principal = principal.trim();
         let device = device.trim();
@@ -2380,7 +2419,9 @@ fn provider_candidates_from_inbox(
     self_actor_id: &str,
 ) -> Vec<(String, String)> {
     let realm_id = realm_id.trim();
-    let self_actor = self_actor_id.trim();
+    let Some(self_actor) = principal_core_key(self_actor_id) else {
+        return Vec::new();
+    };
     let mut seen = BTreeSet::<(String, String)>::new();
     let mut out = Vec::new();
     for message in inbox {
@@ -2427,6 +2468,10 @@ fn provider_candidates_from_inbox(
         let (Some(principal), Some(device)) = (principal, device) else {
             continue;
         };
+        let Ok(principal) = arkret_sdk::DidCoreId::new(principal.to_owned()) else {
+            continue;
+        };
+        let principal = principal.as_str();
         if principal == self_actor {
             continue;
         }
@@ -2750,10 +2795,9 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
     store: &LocalStateStore,
     actor_id: &str,
 ) -> Vec<(String, String)> {
-    let actor_id = actor_id.trim();
-    if actor_id.is_empty() {
+    let Some(actor_id) = principal_core_key(actor_id) else {
         return Vec::new();
-    }
+    };
     let state = store.load();
     let mut realm_ids = BTreeSet::<String>::new();
     for realm_id in state.realm_tree_projections.keys() {
@@ -2855,7 +2899,9 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             .into_iter()
             .filter(|did| {
                 let did = did.trim();
-                !did.is_empty() && did != actor_id.trim() && !group_member_dids.contains(did)
+                !did.is_empty()
+                    && !same_principal_core(did, &actor_id)
+                    && !group_member_dids.contains(did)
             })
             .collect()
     };
@@ -3527,7 +3573,7 @@ pub fn RealmMembersPanel(
         .filter(|member| member.is_governance_principal())
         .count();
     let self_is_known_governance = active_members.iter().any(|member| {
-        member.actor_id.trim() == account_did.trim() && member.is_governance_principal()
+        same_principal_core(&member.actor_id, &account_did) && member.is_governance_principal()
     });
     let self_leave_disabled_reason = if self_is_known_governance && governance_member_count <= 1 {
         Some("Transfer or add Realm admin authority before leaving.".to_owned())
@@ -4793,41 +4839,41 @@ mod tests {
     #[test]
     fn my_agents_section_only_matches_the_current_account() {
         let own_group = MemberGroup {
-            controller: member("did:web:alice.example"),
+            controller: member("ak:did_core:web:alice.example"),
             agents: Vec::new(),
         };
         let other_group = MemberGroup {
-            controller: member("did:web:bob.example"),
+            controller: member("ak:did_core:web:bob.example"),
             agents: Vec::new(),
         };
 
         assert!(member_group_in_section(
             &own_group,
             MemberRosterSection::MyAgents,
-            "did:web:alice.example"
+            "ak:did_core:web:alice.example"
         ));
         assert!(!member_group_in_section(
             &other_group,
             MemberRosterSection::MyAgents,
-            "did:web:alice.example"
+            "ak:did_core:web:alice.example"
         ));
     }
 
     #[test]
     fn my_agents_list_only_shows_joined_agents_and_picker_only_shows_available_active_agents() {
         let joined = agent(
-            "did:web:agent-joined.example",
-            "did:web:alice.example",
+            "ak:did_core:web:agent-joined.example",
+            "ak:did_core:web:alice.example",
             "Joined",
         );
         let available = agent(
-            "did:web:agent-available.example",
-            "did:web:alice.example",
+            "ak:did_core:web:agent-available.example",
+            "ak:did_core:web:alice.example",
             "Available",
         );
         let mut paused = agent(
-            "did:web:agent-paused.example",
-            "did:web:alice.example",
+            "ak:did_core:web:agent-paused.example",
+            "ak:did_core:web:alice.example",
             "Paused",
         );
         paused.status = "paused".to_owned();
@@ -4918,17 +4964,18 @@ mod tests {
     #[test]
     fn realm_key_share_ref_prefers_an_explicit_grant_over_the_authority_root() {
         let actor = "did:web:alice.example";
+        let actor_core = "ak:did_core:web:alice.example";
         let events = vec![
             json!({
                 "kind": "ak.realm.create",
-                "payload": {"object": {"created_by": actor}}
+                "payload": {"object": {"created_by": actor_core}}
             }),
             json!({
                 "kind": "ak.capability.grant",
                 "payload": {
                     "grant_id": "ak:grant:AZ3oaG9qvE1XNJZo42Z6DiIeXMpE1ZULLGSV6lyWjR3N",
                     "grant": {
-                        "subject": actor,
+                        "subject": actor_core,
                         "actions": ["ak.realm_key.share"]
                     }
                 }
@@ -4946,7 +4993,7 @@ mod tests {
         let actor = "did:web:alice.example";
         let events = vec![json!({
             "kind": "ak.realm.create",
-            "payload": {"object": {"created_by": actor}}
+            "payload": {"object": {"created_by": "ak:did_core:web:alice.example"}}
         })];
 
         // Without this branch the owner silently downgrades every recovery
@@ -4979,26 +5026,31 @@ mod tests {
 
     #[test]
     fn splits_pending_invites_out_of_active_members() {
-        let mut alice = member("did:web:alice.example");
+        let mut alice = member("ak:did_core:web:alice.example");
         alice.membership = Some("join".to_owned());
-        let mut bob = member("did:web:bob.example");
+        let mut bob = member("ak:did_core:web:bob.example");
         bob.membership = Some("invite".to_owned());
 
         let (active, pending) = split_member_profiles(vec![alice, bob]);
 
         assert_eq!(active.len(), 1);
-        assert_eq!(active[0].actor_id, "did:web:alice.example");
+        assert_eq!(active[0].actor_id, "ak:did_core:web:alice.example");
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].actor_id, "did:web:bob.example");
+        assert_eq!(pending[0].actor_id, "ak:did_core:web:bob.example");
     }
 
     #[test]
     fn optimistic_pending_invite_does_not_downgrade_joined_member() {
-        let mut alice = member("did:web:alice.example");
+        let mut alice = member("ak:did_core:web:alice.example");
         alice.membership = Some("join".to_owned());
         let mut rows = vec![alice];
 
-        upsert_pending_invite_profile(&mut rows, "did:web:alice.example", Some("Alice"), None);
+        upsert_pending_invite_profile(
+            &mut rows,
+            "ak:did_core:web:alice.example",
+            Some("Alice"),
+            None,
+        );
         let (active, pending) = split_member_profiles(rows);
 
         assert_eq!(active.len(), 1);
@@ -5012,7 +5064,7 @@ mod tests {
 
         upsert_pending_invite_profile(
             &mut rows,
-            "did:web:bob.example",
+            "ak:did_core:web:bob.example",
             Some("bob:example.com"),
             None,
         );
@@ -5065,77 +5117,80 @@ mod tests {
     #[test]
     fn groups_current_account_with_owned_agent_members() {
         let members = vec![
-            member("did:web:alice.example"),
-            member("did:web:bob.example"),
-            member("did:web:agent.example"),
+            member("ak:did_core:web:alice.example"),
+            member("ak:did_core:web:bob.example"),
+            member("ak:did_core:web:agent.example"),
         ];
         let groups = group_members_with_owned_agents(
             &members,
             &[agent(
-                "did:web:agent.example",
-                "did:web:alice.example",
+                "ak:did_core:web:agent.example",
+                "ak:did_core:web:alice.example",
                 "Summary",
             )],
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
         );
 
         let alice = groups
             .iter()
-            .find(|group| group.controller.actor_id == "did:web:alice.example")
+            .find(|group| group.controller.actor_id == "ak:did_core:web:alice.example")
             .expect("alice group exists");
         assert_eq!(alice.agents.len(), 1);
-        assert_eq!(alice.agents[0].agent_id, "did:web:agent.example");
-        assert_eq!(groups[0].controller.actor_id, "did:web:alice.example");
+        assert_eq!(alice.agents[0].agent_id, "ak:did_core:web:agent.example");
+        assert_eq!(
+            groups[0].controller.actor_id,
+            "ak:did_core:web:alice.example"
+        );
         assert!(
             groups
                 .iter()
-                .all(|group| group.controller.actor_id != "did:web:agent.example")
+                .all(|group| group.controller.actor_id != "ak:did_core:web:agent.example")
         );
     }
 
     #[test]
     fn groups_agent_members_under_reported_controller() {
         let members = vec![
-            member("did:web:alice.example"),
-            member("did:web:bob.example"),
-            member("did:web:bob-agent.example"),
+            member("ak:did_core:web:alice.example"),
+            member("ak:did_core:web:bob.example"),
+            member("ak:did_core:web:bob-agent.example"),
         ];
         let groups = group_members_with_owned_agents(
             &members,
             &[agent(
-                "did:web:bob-agent.example",
-                "did:web:bob.example",
+                "ak:did_core:web:bob-agent.example",
+                "ak:did_core:web:bob.example",
                 "Bob Summary",
             )],
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
         );
 
         let bob = groups
             .iter()
-            .find(|group| group.controller.actor_id == "did:web:bob.example")
+            .find(|group| group.controller.actor_id == "ak:did_core:web:bob.example")
             .expect("bob group exists");
         assert_eq!(bob.agents.len(), 1);
-        assert_eq!(bob.agents[0].agent_id, "did:web:bob-agent.example");
+        assert_eq!(bob.agents[0].agent_id, "ak:did_core:web:bob-agent.example");
         assert!(
             groups
                 .iter()
-                .all(|group| group.controller.actor_id != "did:web:bob-agent.example")
+                .all(|group| group.controller.actor_id != "ak:did_core:web:bob-agent.example")
         );
     }
 
     #[test]
     fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("projected-profiles");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "members": [{
-                    "actor_id": "did:web:alice.example",
+                    "actor_id": "ak:did_core:web:alice.example",
                     "display_name": "Alice",
-                    "subject_id": "did:web:acme.example:users:alice",
+                    "subject_id": "ak:did_core:web:acme.example:users:alice",
                     "handle_claims": [{
-                        "subject": "did:web:acme.example:users:alice",
+                        "subject": "ak:did_core:web:acme.example:users:alice",
                         "binding_state": "verified",
                         "handle": "alice:acme.example"
                     }],
@@ -5150,7 +5205,7 @@ mod tests {
         let profiles = projected_member_profiles_for_realm(&store, realm_id);
         let alice = profiles
             .iter()
-            .find(|profile| profile.actor_id == "did:web:alice.example")
+            .find(|profile| profile.actor_id == "ak:did_core:web:alice.example")
             .expect("alice profile exists");
         assert_eq!(alice.display_name, None);
         assert_eq!(alice.handles, vec!["alice:acme.example"]);
@@ -5160,19 +5215,19 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_classify_authority_root_controller_as_owner() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("authority-root-owner");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "members": [{
-                    "actor_id": "did:web:alice.example",
+                    "actor_id": "ak:did_core:web:alice.example",
                     "membership": "join"
                 }],
                 "state": {"events": [{
                     "kind": "ak.realm.create",
                     "payload": {"object": {
-                        "created_by": "did:web:alice.example"
+                        "created_by": "ak:did_core:web:alice.example"
                     }}
                 }]}
             }),
@@ -5181,7 +5236,7 @@ mod tests {
         let profiles = projected_member_profiles_for_realm(&store, realm_id);
         let alice = profiles
             .iter()
-            .find(|profile| profile.actor_id == "did:web:alice.example")
+            .find(|profile| profile.actor_id == "ak:did_core:web:alice.example")
             .expect("authority-root controller is present");
         assert!(alice.is_owner);
         assert_eq!(alice.membership.as_deref(), Some("join"));
@@ -5190,18 +5245,18 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_preserve_pending_invite_membership() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("pending-membership");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "members": [
                     {
-                        "actor_id": "did:web:alice.example",
+                        "actor_id": "ak:did_core:web:alice.example",
                         "membership": "join"
                     },
                     {
-                        "actor_id": "did:web:bob.example",
+                        "actor_id": "ak:did_core:web:bob.example",
                         "membership": "invite"
                     }
                 ]
@@ -5212,23 +5267,23 @@ mod tests {
         let (active, pending) = split_member_profiles(profiles);
 
         assert_eq!(active.len(), 1);
-        assert_eq!(active[0].actor_id, "did:web:alice.example");
+        assert_eq!(active[0].actor_id, "ak:did_core:web:alice.example");
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].actor_id, "did:web:bob.example");
+        assert_eq!(pending[0].actor_id, "ak:did_core:web:bob.example");
         assert_eq!(pending[0].membership.as_deref(), Some("invite"));
     }
 
     #[test]
     fn joined_member_signature_lists_only_joined_members_sorted() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("joined-signature");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "members": [
-                    { "actor_id": "did:web:carol.example", "membership": "join" },
-                    { "actor_id": "did:web:alice.example", "membership": "join" },
-                    { "actor_id": "did:web:bob.example", "membership": "invite" }
+                    { "actor_id": "ak:did_core:web:carol.example", "membership": "join" },
+                    { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
+                    { "actor_id": "ak:did_core:web:bob.example", "membership": "invite" }
                 ]
             }),
         );
@@ -5238,22 +5293,22 @@ mod tests {
         // signature is stable regardless of projection ordering.
         assert_eq!(
             joined_member_signature_for_realm(&store, realm_id),
-            "did:web:alice.example,did:web:carol.example"
+            "ak:did_core:web:alice.example,ak:did_core:web:carol.example"
         );
     }
 
     #[test]
     fn joined_member_signature_reads_raw_member_state_join() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("raw-member-state-join");
         store.append_raw_operation(
-            "ak:event:member-join".to_owned(),
+            "ak:event:Abfy0xl2jA1EqH9YZREVJu5uCrWp1osFkVmBnxuB1U88".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.member.state",
                 "write_state": "synced",
                 "body": {
-                    "actor_id": "did:web:bob.example",
+                    "actor_id": "ak:did_core:web:bob.example",
                     "membership": "join"
                 }
             }),
@@ -5261,24 +5316,24 @@ mod tests {
 
         assert_eq!(
             joined_member_signature_for_realm(&store, realm_id),
-            "did:web:bob.example"
+            "ak:did_core:web:bob.example"
         );
     }
 
     #[test]
     fn projected_duplicate_member_keeps_first_roster_entry() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("pending-then-joined-membership");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "members": [
                     {
-                        "actor_id": "did:web:bob.example",
+                        "actor_id": "ak:did_core:web:bob.example",
                         "membership": "invite"
                     },
                     {
-                        "actor_id": "did:web:bob.example",
+                        "actor_id": "ak:did_core:web:bob.example",
                         "membership": "join"
                     }
                 ]
@@ -5290,20 +5345,20 @@ mod tests {
 
         assert!(active.is_empty());
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].actor_id, "did:web:bob.example");
+        assert_eq!(pending[0].actor_id, "ak:did_core:web:bob.example");
         assert_eq!(pending[0].membership.as_deref(), Some("invite"));
     }
 
     #[test]
     fn projected_member_profiles_restore_pending_invites_from_raw_operations() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("raw-pending-invite");
         store.append_raw_operation(
-            "ak:event:invite-local".to_owned(),
+            "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.create",
-                "invitee": "did:web:bob.example",
+                "invitee": "ak:did_core:web:bob.example",
                 "invitee_label": "bob:example.com",
                 "state": "pending"
             }),
@@ -5314,18 +5369,18 @@ mod tests {
 
         assert!(active.is_empty());
         assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].actor_id, "did:web:bob.example");
+        assert_eq!(pending[0].actor_id, "ak:did_core:web:bob.example");
         assert_eq!(pending[0].handles, vec!["bob:example.com"]);
         assert_eq!(pending[0].invite_is_direct, Some(true));
     }
 
     #[test]
     fn token_invite_profile_is_classified_for_high_risk_revoke() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let invite_id = "ak:invite:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl";
         let mut store = temp_store("raw-token-invite");
         store.append_raw_operation(
-            "ak:event:invite-token".to_owned(),
+            "ak:event:AtAfWM99SbDRZ4kl3R0Z7xQ5sqkAav5jX_TdZt-o3Zg8".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.create",
@@ -5344,22 +5399,22 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_promote_invite_accept_to_join_from_raw_operations() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let invite_id = "ak:invite:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH";
         let mut store = temp_store("raw-invite-accept-join");
         store.append_raw_operation(
-            "ak:event:invite-local".to_owned(),
+            "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.create",
                 "invite_id": invite_id,
-                "invitee": "did:web:bob.example",
+                "invitee": "ak:did_core:web:bob.example",
                 "invitee_label": "bob:example.com",
                 "state": "pending"
             }),
         );
         store.append_raw_operation(
-            "ak:event:invite-accept".to_owned(),
+            "ak:event:ACfHq_7preT7wHLHc3wh1uUqb9gWVTeJlk4olFvqggpM".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.accept",
@@ -5374,14 +5429,14 @@ mod tests {
         let (active, pending) = split_member_profiles(profiles);
 
         assert_eq!(active.len(), 1);
-        assert_eq!(active[0].actor_id, "did:web:bob.example");
+        assert_eq!(active[0].actor_id, "ak:did_core:web:bob.example");
         assert_eq!(active[0].membership.as_deref(), Some("join"));
         assert!(pending.is_empty());
     }
 
     #[test]
     fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let invite_id = "ak:invite:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH";
         let mut store = temp_store("queued-invite-accept-no-admission");
         store.save_realm_tree_projection(
@@ -5389,19 +5444,19 @@ mod tests {
             serde_json::json!({
                 "encrypted": true,
                 "members": [
-                    { "actor_id": "did:web:alice.example", "membership": "join" },
-                    { "actor_id": "did:web:bob.example", "membership": "invite" }
+                    { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
+                    { "actor_id": "ak:did_core:web:bob.example", "membership": "invite" }
                 ]
             }),
         );
         store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
         store.append_raw_operation(
-            "ak:event:invite-local".to_owned(),
+            "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.create",
                 "invite_id": invite_id,
-                "invitee": "did:web:bob.example",
+                "invitee": "ak:did_core:web:bob.example",
                 "invitee_label": "bob:example.com",
                 "state": "pending"
             }),
@@ -5424,10 +5479,10 @@ mod tests {
         assert!(
             active
                 .iter()
-                .all(|profile| profile.actor_id != "did:web:bob.example")
+                .all(|profile| profile.actor_id != "ak:did_core:web:bob.example")
         );
         assert!(pending.iter().any(|profile| {
-            profile.actor_id == "did:web:bob.example"
+            profile.actor_id == "ak:did_core:web:bob.example"
                 && profile.membership.as_deref() == Some("invite")
         }));
         assert!(
@@ -5437,22 +5492,22 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_drop_locally_cancelled_pending_invites() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let invite_id = "ak:invite:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH";
         let mut store = temp_store("raw-cancelled-pending-invite");
         store.append_raw_operation(
-            "ak:event:invite-local".to_owned(),
+            "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.create",
                 "invite_id": invite_id,
-                "invitee": "did:web:bob.example",
+                "invitee": "ak:did_core:web:bob.example",
                 "invitee_label": "bob:example.com",
                 "state": "pending"
             }),
         );
         store.append_raw_operation(
-            "ak:event:invite-cancel".to_owned(),
+            "ak:event:Au5pQ7O1BpiTtNqKCf8A3gJJBHV1wPamoxVLkyKlfFIc".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.cancel",
@@ -5470,23 +5525,23 @@ mod tests {
 
     #[test]
     fn raw_pending_invite_does_not_override_join_projection() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("raw-pending-joined");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
                 "members": [{
-                    "actor_id": "did:web:bob.example",
+                    "actor_id": "ak:did_core:web:bob.example",
                     "membership": "join"
                 }]
             }),
         );
         store.append_raw_operation(
-            "ak:event:invite-local".to_owned(),
+            "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.create",
-                "invitee": "did:web:bob.example",
+                "invitee": "ak:did_core:web:bob.example",
                 "state": "pending"
             }),
         );
@@ -5495,199 +5550,14 @@ mod tests {
         let (active, pending) = split_member_profiles(profiles);
 
         assert_eq!(active.len(), 1);
-        assert_eq!(active[0].actor_id, "did:web:bob.example");
+        assert_eq!(active[0].actor_id, "ak:did_core:web:bob.example");
         assert_eq!(active[0].membership.as_deref(), Some("join"));
         assert!(pending.is_empty());
     }
 
     #[test]
-    fn accepted_join_overrides_conflicting_complete_roster_hint() {
-        let realm_id = "ak:realm:test";
-        let mut store = temp_store("admission-candidate-raw-join");
-        store.save_realm_tree_projection(
-            realm_id.to_owned(),
-            serde_json::json!({
-                "encrypted": true,
-                "members_limited": false,
-                "members": [
-                    { "actor_id": "did:web:alice.example", "membership": "join" },
-                    { "actor_id": "did:web:bob.example", "membership": "invite" }
-                ]
-            }),
-        );
-        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
-        assert!(
-            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty()
-        );
-
-        store.append_raw_operation(
-            "ak:event:member-join".to_owned(),
-            Some(realm_id.to_owned()),
-            serde_json::json!({
-                "kind": "ak.member.state",
-                "write_state": "synced",
-                "body": {
-                    "actor_id": "did:web:bob.example",
-                    "membership": "join"
-                }
-            }),
-        );
-
-        let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].1, "did:web:alice.example,did:web:bob.example");
-    }
-
-    #[test]
-    fn limited_roster_does_not_erase_accepted_join_candidate() {
-        let realm_id = "ak:realm:test";
-        let mut store = temp_store("admission-candidate-limited-roster");
-        store.save_realm_tree_projection(
-            realm_id.to_owned(),
-            serde_json::json!({
-                "encrypted": true,
-                "members_limited": true,
-                "members": [
-                    { "actor_id": "did:web:alice.example", "membership": "join" }
-                ]
-            }),
-        );
-        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
-        store.append_raw_operation(
-            "ak:event:member-join".to_owned(),
-            Some(realm_id.to_owned()),
-            serde_json::json!({
-                "kind": "ak.member.state",
-                "write_state": "synced",
-                "body": {
-                    "actor_id": "did:web:bob.example",
-                    "membership": "join"
-                }
-            }),
-        );
-
-        let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].1, "did:web:alice.example,did:web:bob.example");
-    }
-
-    #[test]
-    fn admission_candidates_follow_latest_accepted_state_over_roster_hint() {
-        let realm_id = "ak:realm:test";
-        let mut store = temp_store("admission-candidate-latest-membership");
-        store.save_realm_tree_projection(
-            realm_id.to_owned(),
-            serde_json::json!({
-                "encrypted": true,
-                "members": [
-                    { "actor_id": "did:web:alice.example", "membership": "join" },
-                    { "actor_id": "did:web:bob.example", "membership": "invite" }
-                ]
-            }),
-        );
-        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
-        store.append_raw_operation(
-            "ak:event:member-join-1".to_owned(),
-            Some(realm_id.to_owned()),
-            serde_json::json!({
-                "kind": "ak.member.state",
-                "write_state": "synced",
-                "created_at": "2026-06-29T00:00:00.000Z",
-                "body": {
-                    "actor_id": "did:web:bob.example",
-                    "membership": "join"
-                }
-            }),
-        );
-        store.append_raw_operation(
-            "ak:event:member-leave".to_owned(),
-            Some(realm_id.to_owned()),
-            serde_json::json!({
-                "kind": "ak.member.state",
-                "write_state": "synced",
-                "created_at": "2026-06-29T00:01:00.000Z",
-                "body": {
-                    "actor_id": "did:web:bob.example",
-                    "membership": "leave"
-                }
-            }),
-        );
-
-        assert!(
-            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty()
-        );
-
-        store.save_realm_tree_projection(
-            realm_id.to_owned(),
-            serde_json::json!({
-                "encrypted": true,
-                "members_limited": false,
-                "members": [
-                    { "actor_id": "did:web:alice.example", "membership": "join" },
-                    { "actor_id": "did:web:bob.example", "membership": "join" }
-                ]
-            }),
-        );
-
-        assert!(
-            mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty(),
-            "accepted leave must win over a conflicting roster hint"
-        );
-
-        store.append_raw_operation(
-            "ak:event:member-rejoin".to_owned(),
-            Some(realm_id.to_owned()),
-            serde_json::json!({
-                "kind": "ak.member.state",
-                "write_state": "synced",
-                "created_at": "2026-06-29T00:02:00.000Z",
-                "body": {
-                    "actor_id": "did:web:bob.example",
-                    "membership": "join"
-                }
-            }),
-        );
-        let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].1, "did:web:alice.example,did:web:bob.example");
-    }
-
-    #[test]
-    fn admission_candidate_realms_include_roster_hint_join_without_raw_event() {
-        let realm_id = "ak:realm:test";
-        let mut store = temp_store("admission-candidate-roster-only-join");
-        store.save_realm_tree_projection(
-            realm_id.to_owned(),
-            serde_json::json!({
-                "encrypted": true,
-                "members_limited": false,
-                "members": [
-                    { "actor_id": "did:web:alice.example", "membership": "join" },
-                    { "actor_id": "did:web:bob.example", "membership": "join" }
-                ]
-            }),
-        );
-        store.save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id));
-
-        let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].0, realm_id);
-        assert_eq!(candidates[0].1, "did:web:alice.example,did:web:bob.example");
-
-        let membership = projected_realm_membership_hint(&store, realm_id);
-        assert_eq!(membership.completeness, MembershipCompleteness::Complete);
-        assert_eq!(
-            membership.joined,
-            BTreeSet::from([
-                "did:web:alice.example".to_owned(),
-                "did:web:bob.example".to_owned()
-            ])
-        );
-    }
-
-    #[test]
     fn admission_candidates_exclude_direct_conversation_realms() {
-        let realm_id = "ak:realm:direct";
+        let realm_id = "ak:realm:AxhTAQvdpZvmHyaq94KgVyWQaE4DCbbasg3cKThF5FUE";
         let mut store = temp_store("admission-candidate-direct-conversation");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -5695,8 +5565,8 @@ mod tests {
                 "encrypted": true,
                 "members_limited": false,
                 "members": [
-                    { "actor_id": "did:web:alice.example", "membership": "join" },
-                    { "actor_id": "did:web:agent.example", "membership": "join" }
+                    { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
+                    { "actor_id": "ak:did_core:web:agent.example", "membership": "join" }
                 ],
                 "state_at_window_start": {
                     "realm_metadata": {
@@ -5719,7 +5589,7 @@ mod tests {
 
     #[test]
     fn projected_membership_uses_positive_limited_roster_without_claiming_completeness() {
-        let realm_id = "ak:realm:test";
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let mut store = temp_store("accepted-membership-limited-roster");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -5727,7 +5597,7 @@ mod tests {
                 "encrypted": true,
                 "members_limited": true,
                 "members": [
-                    { "actor_id": "did:web:bob.example", "membership": "join" }
+                    { "actor_id": "ak:did_core:web:bob.example", "membership": "join" }
                 ]
             }),
         );
@@ -5736,7 +5606,7 @@ mod tests {
         assert_eq!(membership.completeness, MembershipCompleteness::Limited);
         assert_eq!(
             membership.joined,
-            BTreeSet::from(["did:web:bob.example".to_owned()])
+            BTreeSet::from(["ak:did_core:web:bob.example".to_owned()])
         );
     }
 
@@ -5768,8 +5638,8 @@ mod tests {
 
     // ── Receiver-initiated history pull (ak.realm_key.request) ──────────
 
-    const PROVIDER_DID: &str = "did:web:provider.example";
-    const SELF_DID: &str = "did:web:self.example";
+    const PROVIDER_DID: &str = "ak:did_core:web:bob.example";
+    const SELF_DID: &str = "ak:did_core:web:alice.example";
     const SELF_DEVICE: &str = "ak:device:01904100-0000-7000-8000-0000000000bb";
     const PROVIDER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-0000000000aa";
     const TEST_REALM: &str = "ak:realm:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
@@ -5859,7 +5729,7 @@ mod tests {
                 "kind": "ak.mls.welcome",
                 "sender": "did:web:other.example",
                 "sender_device_id": "ak:device:other",
-                "realm_id": "ak:realm:zzz",
+                "realm_id": "ak:realm:APeDH2w3a7NpOb30X03VXdgzbcnT3eMzRVNvXScT5rG4",
             }),
         ];
         let candidates = provider_candidates_from_inbox(&inbox, TEST_REALM, SELF_DID);
@@ -5908,7 +5778,7 @@ mod tests {
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
             "unsigned": {
-                "source_event_id": "ak:event:welcome",
+                "source_event_id": "ak:event:AepQFRXl2eSinSnm-0nVn5vcGxTITGIGhxhsGbRyLhMw",
                 "mls_welcome_id": "ak:mls_welcome:welcome",
                 "key_package_id": "ak:mls_keypackage:key"
             }
@@ -5989,7 +5859,7 @@ mod tests {
                 to_epoch: 0,
                 history_visibility: None,
             },
-            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::DidCoreId::new(SELF_DID).unwrap(),
             recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
@@ -5999,7 +5869,7 @@ mod tests {
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
-            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::DidCoreId::new(PROVIDER_DID).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -6039,7 +5909,7 @@ mod tests {
                 to_epoch: 0,
                 history_visibility: None,
             },
-            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::DidCoreId::new(SELF_DID).unwrap(),
             recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
@@ -6049,7 +5919,7 @@ mod tests {
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
-            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::DidCoreId::new(PROVIDER_DID).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -6084,7 +5954,7 @@ mod tests {
                 to_epoch: 2,
                 history_visibility: None,
             },
-            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::DidCoreId::new(SELF_DID).unwrap(),
             recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
@@ -6094,7 +5964,7 @@ mod tests {
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
-            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::DidCoreId::new(PROVIDER_DID).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -6127,7 +5997,7 @@ mod tests {
                 to_epoch: 3,
                 history_visibility: None,
             },
-            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::DidCoreId::new(SELF_DID).unwrap(),
             recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
@@ -6137,7 +6007,7 @@ mod tests {
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
-            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::DidCoreId::new(PROVIDER_DID).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
@@ -6151,9 +6021,11 @@ mod tests {
         let key = realm_key_request_answer_dedup_key(&parsed);
 
         assert!(key.contains(&format!(
-            "scope:{TEST_REALM}|target:did:web:provider.example|"
+            "scope:{TEST_REALM}|target:ak:did_core:web:bob.example|"
         )));
-        assert!(key.contains(&format!("|recipient:did:web:self.example|{SELF_DEVICE}|")));
+        assert!(key.contains(&format!(
+            "|recipient:ak:did_core:web:alice.example|{SELF_DEVICE}|"
+        )));
         assert!(key.contains("|range:1..3|"));
     }
 
@@ -6170,7 +6042,7 @@ mod tests {
                 to_epoch: 0,
                 history_visibility: None,
             },
-            recipient_principal_id: arkret_sdk::Did::new(SELF_DID.to_owned()).unwrap(),
+            recipient_principal_id: arkret_sdk::DidCoreId::new(SELF_DID).unwrap(),
             recipient_device_id: arkret_sdk::DeviceId::new(SELF_DEVICE).unwrap(),
             recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
                 "Ikuf_h0tiOTpwnUEEZZeY4p_OIaixaYHYcT6GnmJOmE",
@@ -6180,7 +6052,7 @@ mod tests {
             target_source_ref: arkret_sdk::RealmKeySourceRef::Device(
                 arkret_sdk::DeviceId::new(PROVIDER_DEVICE).unwrap(),
             ),
-            target_principal_id: arkret_sdk::Did::new(PROVIDER_DID.to_owned()).unwrap(),
+            target_principal_id: arkret_sdk::DidCoreId::new(PROVIDER_DID).unwrap(),
             created_at: chrono::DateTime::parse_from_rfc3339("2026-06-30T01:31:33.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),

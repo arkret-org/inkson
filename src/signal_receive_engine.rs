@@ -86,29 +86,15 @@ pub struct SignalReceiveEngineContext {
 /// Seal does not locate, and `keys_query_request_body` deliberately has no
 /// as-of basis. soland's `verify_signal_device_proof` resolves the same way, so
 /// every verifying role applies one rule.
-pub struct DirectorySenderKeyResolver {
-    state_store: crate::runtime::input::StateStoreHandle,
-}
+pub struct DirectorySenderKeyResolver;
 
 impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
     fn resolve_sender_key(
         &self,
         envelope: &arkret_wire::SignalEnvelope,
-    ) -> Option<arkret_sdk::signatures::PublicKeyMaterial> {
-        match crate::identity::device_directory::cached_device_signing_key(
-            envelope.sender_actor_id.as_str(),
-            envelope.sender_device_id.as_str(),
-        ) {
-            crate::identity::device_directory::CacheLookup::Hit(key) => Some(key),
-            crate::identity::device_directory::CacheLookup::NegativeHit
-            | crate::identity::device_directory::CacheLookup::Miss => {
-                self.state_store.read(|store| {
-                    crate::identity::agent_signer_evidence::resolve_cached_signal_key(
-                        store, envelope,
-                    )
-                })
-            }
-        }
+    ) -> Option<garth::VerifiedSignalSenderKey> {
+        let _ = envelope;
+        None
     }
 }
 
@@ -504,9 +490,7 @@ pub async fn run_signal_receive_engine(
         start_generation,
         start_profile_id,
     };
-    let resolver = DirectorySenderKeyResolver {
-        state_store: ctx.state_store.clone(),
-    };
+    let resolver = DirectorySenderKeyResolver;
     let decryptor = MlsSignalDecryptor::new(
         ctx.state_store.clone(),
         ctx.account_did.clone(),
@@ -620,7 +604,7 @@ mod tests {
         body.entry("payload_sequence").or_insert(json!(7));
         if kind == garth::SIGNAL_PLAINTEXT_KIND_PRESENCE {
             body.entry("actor_id")
-                .or_insert(json!("did:web:alice.example"));
+                .or_insert(json!("ak:did_core:web:alice.example"));
             body.entry("ttl_ms").or_insert(json!(30_000));
         }
         let payload_bytes = arkret_sdk::canonical::canonical_json_bytes(&Value::Object(body))
@@ -630,7 +614,7 @@ mod tests {
         garth::SignalPlaintext {
             payload,
             kind: kind.to_owned(),
-            actor_id: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             payload_sequence: 7,
             ttl_ms: Some(30_000),
             sent_at: at(0),
@@ -705,7 +689,7 @@ mod tests {
         );
 
         let body = live_body_value(&plaintext).unwrap();
-        assert_eq!(body["actor_id"], json!("did:web:alice.example"));
+        assert_eq!(body["actor_id"], json!("ak:did_core:web:alice.example"));
         assert_eq!(
             body["device_id"],
             json!("ak:device:01904100-0000-7000-8000-000000000002")

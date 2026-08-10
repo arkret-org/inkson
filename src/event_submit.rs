@@ -1486,7 +1486,7 @@ impl EventSubmitter {
         let seal_ref = self.current_seal_for(scope_ref.realm_id().as_str()).await?;
         let header = crate::signal::SignalHeader::new(
             scope_ref,
-            arkret_sdk::Did::new(actor_id)
+            crate::mls_api_helpers::principal_core_id(actor_id)
                 .map_err(|error| anyhow::anyhow!("invalid signal actor_id: {error}"))?,
             arkret_sdk::DeviceId::new(device_id)
                 .map_err(|error| anyhow::anyhow!("invalid signal device_id: {error}"))?,
@@ -1594,7 +1594,7 @@ impl EventSubmitter {
     >(
         &self,
         realm_id: &str,
-        controller_id: &arkret_sdk::Did,
+        controller_id: &arkret_sdk::DidFullId,
         state_store: S,
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
         let (view, receipts) = self.events_frontier_realm_state(realm_id).await?;
@@ -1632,7 +1632,7 @@ impl EventSubmitter {
         realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::RealmActorFrontierView> {
         let selector = arkret_sdk::EventsFrontierSelector::RealmActor {
-            actor_id: arkret_sdk::ActorId::new(actor_id.to_owned())?,
+            actor_id: crate::mls_api_helpers::principal_core_id(actor_id)?,
             realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
         };
         let state = self
@@ -2654,7 +2654,7 @@ impl EventSubmitter {
             })
             .transpose()?;
         let mut batch_frontiers = BTreeMap::<
-            (arkret_sdk::RealmId, arkret_sdk::ActorId),
+            (arkret_sdk::RealmId, arkret_sdk::DidCoreId),
             (u64, arkret_sdk::EventId),
         >::new();
         let mut rewritten_event_ids = BTreeMap::<arkret_sdk::EventId, arkret_sdk::EventId>::new();
@@ -2851,10 +2851,7 @@ fn validate_capability_grant_payload(event: &arkret_sdk::Event) -> anyhow::Resul
             .map_err(|error| anyhow::anyhow!("encode capability grant payload: {error}"))?,
     )
     .map_err(|error| anyhow::anyhow!("decode capability grant payload: {error}"))?;
-    if arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(
-        &payload.grant.issuer,
-    )?) != event.actor_id
-    {
+    if payload.grant.issuer != event.actor_id {
         anyhow::bail!("capability grant issuer must equal the Event actor");
     }
     Ok(())
@@ -3183,13 +3180,13 @@ fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_s
     let actor_id = event.executed_by.as_ref().unwrap_or(&event.actor_id);
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active signer is required for AuthContext"))?;
-    let did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::ActorId::from(arkret_sdk::project_full_id_to_core_id(&did)?) != *actor_id {
+    let did = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&did)?) != *actor_id {
         anyhow::bail!("active signer full_id does not project to AuthContext actor");
     }
     let key_id = data_event_key_id_for(event);
     Ok(arkret_sdk::AuthContext {
-        did,
+        actor_id: actor_id.clone(),
         key_id,
         key_epoch: 0,
         credential_epoch: None,
@@ -3264,7 +3261,7 @@ mod tests {
             None,
         );
         managed.executed_by =
-            Some(arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap());
+            Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap());
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
@@ -3315,7 +3312,7 @@ mod tests {
                 "kind": "realm",
                 "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
             },
-            "actor_id": "did:web:alice.example",
+            "actor_id": "ak:did_core:web:alice.example",
             "actor_seq": 7,
             "created_at": "2026-08-07T00:00:00.000Z",
             "hlc": "01986f440000-0001-a13f9c2e",
@@ -3643,6 +3640,7 @@ mod tests {
     }
 
     fn sdk_event_without_proof(actor_id: &str) -> arkret_sdk::Event {
+        let actor_id = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
         serde_json::from_value(json!({
             "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "kind": "ak.presence",
@@ -3668,6 +3666,7 @@ mod tests {
         kind: &str,
         actor_id: &str,
     ) -> arkret_sdk::Event {
+        let actor_id = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
         serde_json::from_value(json!({
             "event_id": event_id,
             "kind": kind,
@@ -3692,6 +3691,7 @@ mod tests {
         created_by: &str,
         registry_digest: Option<&str>,
     ) -> arkret_sdk::Event {
+        let created_by = crate::mls_api_helpers::principal_core_id(created_by).unwrap();
         let mut event: arkret_sdk::Event = serde_json::from_value(json!({
             "event_id": event_id,
             "kind": "ak.realm.create",
@@ -3718,6 +3718,7 @@ mod tests {
     /// still carry `realm_id` on the wire.
     const AUTHORITY_REALM: &str = "ak:realm:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
     const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
+    const AUTHORITY_CONTROLLER_CORE: &str = "ak:did_core:web:alice.example";
     const AUTHORITY_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -3732,7 +3733,7 @@ mod tests {
         assert_eq!(
             realm_create_authority_from_events(&events, &realm_id),
             Some(RealmCreateAuthority::Root {
-                controller_id: AUTHORITY_CONTROLLER.to_owned()
+                controller_id: AUTHORITY_CONTROLLER_CORE.to_owned()
             })
         );
     }
@@ -3796,7 +3797,7 @@ mod tests {
     #[test]
     fn realm_authority_root_claim_stamps_only_the_matching_controller() {
         let root = RealmCreateAuthority::Root {
-            controller_id: AUTHORITY_CONTROLLER.to_owned(),
+            controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
         };
         let event = |actor: &str| {
             sdk_event_with_kind(
@@ -3833,7 +3834,7 @@ mod tests {
     #[test]
     fn realm_authority_root_claim_defers_to_producer_chosen_authorization() {
         let root = RealmCreateAuthority::Root {
-            controller_id: AUTHORITY_CONTROLLER.to_owned(),
+            controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
         };
         let mut with_grant = sdk_event_with_kind(
             "ak:event:ARqNvcWYATpece6_sbb4Q7uWv69NgLVVEdYxo8OrmqyW",
@@ -3856,7 +3857,7 @@ mod tests {
             AUTHORITY_CONTROLLER,
         );
         executed_by_service.executed_by =
-            Some(arkret_sdk::ActorId::new("ak:did_core:web:service.example").unwrap());
+            Some(arkret_sdk::DidCoreId::new("ak:did_core:web:service.example").unwrap());
         assert_eq!(
             realm_authority_root_claim(&executed_by_service, Some(&root)),
             None
@@ -3883,7 +3884,7 @@ mod tests {
             .insert(
                 realm.to_owned(),
                 RealmCreateAuthority::Root {
-                    controller_id: AUTHORITY_CONTROLLER.to_owned(),
+                    controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
                 },
             );
         let mut event = sdk_event_with_kind(
@@ -3918,7 +3919,7 @@ mod tests {
             .insert(
                 realm.to_owned(),
                 RealmCreateAuthority::Root {
-                    controller_id: AUTHORITY_CONTROLLER.to_owned(),
+                    controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
                 },
             );
         // Outage-era intent: owner-authored kind, but no claim was resolvable
@@ -3982,7 +3983,7 @@ mod tests {
             .insert(
                 realm.to_owned(),
                 RealmCreateAuthority::Root {
-                    controller_id: AUTHORITY_CONTROLLER.to_owned(),
+                    controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
                 },
             );
         let event = crate::operation::ak_ops::kanban_card_strand_create(
@@ -4008,7 +4009,7 @@ mod tests {
         intent.authorization_ref = realm_authority_root_claim(
             &intent,
             Some(&RealmCreateAuthority::Root {
-                controller_id: AUTHORITY_CONTROLLER.to_owned(),
+                controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
             }),
         );
         assert!(intent.authorization_ref.is_some(), "claim must stamp");
@@ -4042,7 +4043,7 @@ mod tests {
             .unwrap(),
         );
         authored.auth_context = Some(arkret_sdk::AuthContext {
-            did: arkret_sdk::Did::new("did:web:alice.example").unwrap(),
+            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             key_id: "device".to_owned(),
             key_epoch: 0,
             credential_epoch: None,
@@ -4385,7 +4386,7 @@ mod tests {
         );
         welcome.payload = serde_json::from_value(json!({
             "commit_ref": commit.event_id,
-            "recipient_principal_id": "did:web:bob.example"
+            "recipient_principal_id": "ak:did_core:web:bob.example"
         }))
         .unwrap();
         let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
@@ -4510,7 +4511,7 @@ mod tests {
                 .unwrap();
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
-            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             8,
             vec![frontier_event_id.clone()],
             arkret_sdk::canonical::DigestSuite::Sha256,
@@ -4584,7 +4585,7 @@ mod tests {
         let mut event = sdk_event_without_proof("did:web:alice.example");
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
-            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             0,
             vec![],
             arkret_sdk::canonical::DigestSuite::Sha256,
@@ -4677,7 +4678,7 @@ mod tests {
 
         assert!(
             format!("{error:#}")
-                .contains("refresh actor frontier for did:web:alice.example before submit")
+                .contains("refresh actor frontier for ak:did_core:web:alice.example before submit")
         );
     }
 
@@ -4686,7 +4687,7 @@ mod tests {
         let mut event = sdk_event_without_proof("did:web:alice.example");
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
-            arkret_sdk::ActorId::new("ak:did_core:web:bob.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
             8,
             vec![
                 arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
@@ -4708,7 +4709,7 @@ mod tests {
         let current_frontier = arkret_sdk::RealmActorFrontierView::new(
             arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap(),
-            arkret_sdk::ActorId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             0,
             vec![],
             arkret_sdk::canonical::DigestSuite::Sha256,
