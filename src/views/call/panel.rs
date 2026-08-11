@@ -297,6 +297,7 @@ pub fn CallPanel(
                         DesiredMedia::audio_only()
                     },
                     media_service_ids: media_dids,
+                    verified_media_routes: Vec::new(),
                     governance_evidence,
                 };
                 match join_and_build_transport(
@@ -717,6 +718,7 @@ pub fn CallPanel(
                                                 epoch_id: 0,
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
                                                 media_service_ids: media_dids,
+                                                verified_media_routes: Vec::new(),
                                                 governance_evidence,
                                             };
                                             match join_and_build_transport(

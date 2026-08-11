@@ -26,8 +26,8 @@ pub use arkret_crypto::sframe::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use arkret_crypto::sframe::{FrameKeyContext, MlsExporterSource, derive_frame_key};
 use arkret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, DidCoreId, DidDocument, DidFullId,
-    MediaIceConfigRequestBody, MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
+    CallMediaTokenExchangeRequestBody, DeviceId, DidCoreId, MediaIceConfigRequestBody,
+    MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
     PlaintextVisibleServicesPayload, RealmId, resolve_verification_method_key_from_document,
 };
 use arkret_signatures::media::{
@@ -35,6 +35,7 @@ use arkret_signatures::media::{
     verify_ice_config_outcome,
 };
 use ed25519_dalek::VerifyingKey;
+use garth::RouteResolution;
 use serde_json::Value;
 
 use crate::transport::TransportClient;
@@ -245,10 +246,14 @@ pub struct MediaJoinRequest {
     pub focus_id: String,
     pub epoch_id: u64,
     pub desired_media: DesiredMedia,
-    /// Media-service DIDs anchored by the realm's current
+    /// Stable media-service identities anchored by the realm's current
     /// `ak.realm.media_service.service_id`. Token + ICE issuers MUST
     /// resolve to one of these; an empty set fails closed.
     pub media_service_ids: Vec<String>,
+    /// Evaluator-produced route material for every accepted stable service
+    /// identity. A bare full DID, DID document, URL or generic principal
+    /// resolution is intentionally not accepted at this boundary.
+    pub verified_media_routes: Vec<RouteResolution>,
     /// Local evidence that the selected `ak.realm.media_service` event is
     /// covered by the current MLS governance binding. Token/ICE issuer anchors
     /// are not trusted until this verifies.
@@ -273,26 +278,60 @@ impl MediaJoinRequest {
         })
     }
 
-    fn anchor_dids(&self) -> Result<Vec<DidFullId>, RtcClientError> {
-        let dids = self
+    fn media_service_core_ids(&self) -> Result<Vec<DidCoreId>, RtcClientError> {
+        let ids = self
             .media_service_ids
             .iter()
-            .map(|did| DidFullId::new(did.clone()))
+            .map(|service_id| DidCoreId::new(service_id.clone()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        if dids.is_empty() {
+        if ids.is_empty() {
             // Fail closed: with no anchored media service we cannot trust
             // any issuer kid.
             return Err(RtcClientError::TokenIssuerUnauthorised);
         }
-        Ok(dids)
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        if unique.len() != ids.len() {
+            return Err(RtcClientError::TokenIssuerUnauthorised);
+        }
+        Ok(ids)
     }
 
-    async fn anchors(&self, api: &TransportClient) -> Result<MediaServiceAnchors, RtcClientError> {
-        let dids = self.anchor_dids()?;
-        let mut anchors = MediaServiceAnchors::new(dids);
-        for service_id in &self.media_service_ids {
-            register_media_service_keys(api, &mut anchors, service_id).await?;
+    fn anchors(&self) -> Result<MediaServiceAnchors, RtcClientError> {
+        let service_ids = self.media_service_core_ids()?;
+        if self.verified_media_routes.len() != service_ids.len() {
+            return Err(RtcClientError::TokenIssuerUnauthorised);
+        }
+
+        let mut route_pairs = Vec::with_capacity(service_ids.len());
+        for service_id in &service_ids {
+            let route = self
+                .verified_media_routes
+                .iter()
+                .find(|route| &route.route().service_id == service_id)
+                .ok_or(RtcClientError::TokenIssuerUnauthorised)?;
+            let cached = route.route();
+            let authenticated = route.authenticated_resolution();
+            let record = &authenticated.service_resolution_record.record;
+            if cached.service_kind != "media_service"
+                || record.service_kind != "media_service"
+                || record.service_id != *service_id
+                || record.full_id != cached.full_id
+                || record.method_history_head != cached.method_history_head
+                || record.version_id != cached.version_id
+                || authenticated.normalized_did_document.id != cached.full_id
+            {
+                return Err(RtcClientError::TokenIssuerUnauthorised);
+            }
+            route_pairs.push((service_id.clone(), cached.full_id.clone()));
+        }
+
+        let mut anchors = MediaServiceAnchors::new(route_pairs)
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
+        for route in &self.verified_media_routes {
+            register_media_service_keys(&mut anchors, route)?;
         }
         Ok(anchors)
     }
@@ -351,7 +390,7 @@ impl MediaGovernanceEvidence {
             .plaintext_visible_services_payload
             .as_ref()
             .ok_or(RtcClientError::MediaPlaintextServiceNotAuthorised)?;
-        let service_id = arkret_sdk::DidCoreId::new(service_id.to_owned())
+        let service_id = DidCoreId::new(service_id.to_owned())
             .map_err(|_| RtcClientError::MediaPlaintextServiceNotAuthorised)?;
         let authorized = plaintext_payload.services.iter().any(|service| {
             service.service_id == service_id
@@ -395,26 +434,12 @@ fn policy_media_service_decrypts(payload: Option<&Value>) -> bool {
         .unwrap_or(false)
 }
 
-async fn register_media_service_keys(
-    api: &TransportClient,
+fn register_media_service_keys(
     anchors: &mut MediaServiceAnchors,
-    service_id: &str,
+    route: &RouteResolution,
 ) -> Result<(), RtcClientError> {
-    let outcome = async {
-        crate::transport::account::identity_resolve(&api.sdk_http_client()?, service_id).await
-    }
-    .await
-    .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-    if outcome.did_document.get("id").and_then(Value::as_str) != Some(service_id) {
-        return Err(RtcClientError::TokenIssuerUnauthorised);
-    }
-
-    let document: DidDocument = serde_json::to_value(outcome.did_document)
-        .and_then(serde_json::from_value)
-        .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-    if document.id.as_str() != service_id {
-        return Err(RtcClientError::TokenIssuerUnauthorised);
-    }
+    let document = &route.authenticated_resolution().normalized_did_document;
+    let service_id = route.route().full_id.as_str();
 
     let mut registered = 0usize;
     for method in document.verification_methods.keys() {
@@ -430,7 +455,9 @@ async fn register_media_service_keys(
         let verifying_key = VerifyingKey::from_bytes(&key_bytes)
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
         let kid = normalize_verification_method_kid(service_id, &resolved.verification_method);
-        anchors.insert_key(kid, verifying_key);
+        anchors
+            .insert_key(kid, verifying_key)
+            .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
         registered += 1;
     }
 
@@ -591,7 +618,7 @@ pub async fn join_call_media(
 ) -> Result<JoinedMediaSession, RtcClientError> {
     let ids = request.typed_ids()?;
     request.verify_governance_evidence()?;
-    let anchors = request.anchors(api).await?;
+    let anchors = request.anchors()?;
 
     // CALL-1 — token exchange + anchored verification.
     let mut token_request: CallMediaTokenExchangeRequestBody = call_media_token_exchange(
@@ -874,10 +901,11 @@ mod tests {
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
             media_service_ids: Vec::new(),
+            verified_media_routes: Vec::new(),
             governance_evidence: None,
         };
         assert_eq!(
-            request.anchor_dids().unwrap_err(),
+            request.media_service_core_ids().unwrap_err(),
             RtcClientError::TokenIssuerUnauthorised
         );
     }
@@ -940,6 +968,7 @@ mod tests {
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
             media_service_ids: vec!["ak:did_core:web:media.example".to_owned()],
+            verified_media_routes: Vec::new(),
             governance_evidence,
         }
     }

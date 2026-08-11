@@ -589,7 +589,6 @@ pub fn build_managed_agent_pcr_create_event(
     let created_at = event_timestamp();
     let payload = arkret_bootstrap::build_managed_agent_pcr_create_payload(
         arkret_bootstrap::ManagedAgentPcrCreatePayloadInput {
-            agent_full_id: arkret_sdk::DidFullId::new(agent_id.to_owned())?,
             agent_id: crate::mls_api_helpers::principal_core_id(agent_id)?,
             controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
