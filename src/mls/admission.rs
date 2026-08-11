@@ -366,7 +366,6 @@ pub(crate) fn build_realm_key_share_event(
     realm_id: &str,
     actor_id: &str,
     sender_device_id: &str,
-    requester_device_authorize_event_id: &arkret_sdk::EventId,
     recipient_principal_id: &str,
     recipient_device_id: &str,
     from_epoch: u64,
@@ -906,8 +905,6 @@ mod tests {
             realm,
             "did:web:alice.example",
             "ak:device:01904100-0000-7000-8000-0000000000a1",
-            &arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc")
-                .unwrap(),
             "did:web:bob.example",
             "ak:device:01904100-0000-7000-8000-0000000000b1",
             0,
@@ -936,6 +933,12 @@ mod tests {
             json!({ "kind": "realm", "realm_id": realm })
         );
         assert_eq!(event.payload["key_scope"]["policy_digest"], policy_digest);
+        assert!(
+            event
+                .payload
+                .get("requester_device_authorize_event_id")
+                .is_none()
+        );
         assert_eq!(
             event.authorization_ref.as_deref(),
             Some("ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU")

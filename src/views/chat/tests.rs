@@ -3415,7 +3415,8 @@ fn composer_enter_behavior_matches_chat_conventions_and_protects_ime_input() {
 #[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry, ParticipationBits, ParticipationScope,
+        AgentParticipationEntry, ParticipationBits, ParticipationNextReplaceInput,
+        ParticipationScope,
     };
 
     let realm = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
@@ -3426,6 +3427,9 @@ fn participation_visibility_uses_most_specific_effective_scope() {
         },
         selection: ParticipationBits::ALL,
         version: 1,
+        next_replace_input: ParticipationNextReplaceInput {
+            expected_version: 1,
+        },
     };
     let circle_entry = AgentParticipationEntry {
         scope: ParticipationScope::Circle {
@@ -3434,6 +3438,9 @@ fn participation_visibility_uses_most_specific_effective_scope() {
         },
         selection: ParticipationBits::NONE,
         version: 1,
+        next_replace_input: ParticipationNextReplaceInput {
+            expected_version: 1,
+        },
     };
 
     assert!(participation_allows_public_reply(
@@ -3453,7 +3460,8 @@ fn participation_visibility_uses_most_specific_effective_scope() {
 #[test]
 fn participation_visibility_can_target_an_authoritative_discussion_strand() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry, ParticipationBits, ParticipationScope,
+        AgentParticipationEntry, ParticipationBits, ParticipationNextReplaceInput,
+        ParticipationScope,
     };
 
     let realm = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
@@ -3465,6 +3473,9 @@ fn participation_visibility_can_target_an_authoritative_discussion_strand() {
         },
         selection: ParticipationBits::ALL,
         version: 1,
+        next_replace_input: ParticipationNextReplaceInput {
+            expected_version: 1,
+        },
     };
 
     assert!(participation_allows_public_reply(
@@ -3478,7 +3489,8 @@ fn participation_visibility_can_target_an_authoritative_discussion_strand() {
 #[test]
 fn mention_only_participation_does_not_expose_agent_in_roster() {
     use arkret_models_collaboration::governance::agent_participation::{
-        AgentParticipationEntry, ParticipationBits, ParticipationScope,
+        AgentParticipationEntry, ParticipationBits, ParticipationNextReplaceInput,
+        ParticipationScope,
     };
 
     let realm = "ak:realm:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog";
@@ -3495,6 +3507,9 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
         },
         selection: mention_only,
         version: 1,
+        next_replace_input: ParticipationNextReplaceInput {
+            expected_version: 1,
+        },
     };
 
     assert!(!participation_allows_public_reply(

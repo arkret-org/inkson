@@ -818,21 +818,34 @@ async fn verify_active_series_range_completeness(
             });
             continue;
         }
-        let canonical_payload = payload.proof_payload_bytes()?;
         let payload_verified = payload.proofs.iter().all(|proof| {
-            let mut context = arkret_sdk::signatures::ProofVerificationContext::new(
-                issuer_actor.clone(),
-                proof.event_digest.clone(),
-            );
-            context.replay_window = chrono::Duration::MAX;
-            arkret_sdk::verify_canonical_proof_with_did_resolver(
-                &canonical_payload,
-                proof,
-                &issuer_actor,
-                &context,
+            let Ok(binding) = payload.proof_binding_bytes(proof) else {
+                return false;
+            };
+            let Ok(resolved) = arkret_sdk::resolve_verification_method_key(
                 &resolver,
+                proof.verification_method.as_str(),
+            ) else {
+                return false;
+            };
+            let Ok(absolute_method) = resolved.absolutize(&resolved.did) else {
+                return false;
+            };
+            if absolute_method != proof.verification_method {
+                return false;
+            }
+            let Ok(controller) = arkret_sdk::project_full_id_to_core_id(&resolved.did) else {
+                return false;
+            };
+            if controller != issuer_actor {
+                return false;
+            }
+            arkret_sdk::signatures::verify_ed25519_detached_jws_payload_proof(
+                proof,
+                &binding,
+                &resolved.public_key,
             )
-            .is_ok_and(|verification| verification.valid)
+            .is_ok()
         });
         if !payload_verified {
             first_error.get_or_insert_with(|| {

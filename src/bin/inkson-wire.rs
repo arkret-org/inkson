@@ -54,8 +54,8 @@ fn main() -> Result<()> {
 
 fn range_completeness(input: Value) -> Result<Value> {
     use arkret_sdk::{
-        Event, EventId, EventRequirements, Hash, PayloadProofPurpose, PayloadSigner, Proof,
-        ScopeRef,
+        Event, EventId, EventRequirements, Hash, PayloadProof, PayloadProofPurpose, PayloadSigner,
+        Proof, ScopeRef,
     };
     use arkret_signatures::{Ed25519PayloadSigner, SignEventOptions, sign_event_with_digest_suite};
 
@@ -145,17 +145,17 @@ fn range_completeness(input: Value) -> Result<Value> {
         proofs: Vec::new(),
     };
     let canonical_payload = payload.proof_payload_bytes()?;
-    let mut payload_proof = Proof {
+    let mut payload_proof = PayloadProof {
         kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
         verification_method: verification_method.clone(),
-        event_digest: Hash::new(arkret_sdk::canonical::sha256_digest(&canonical_payload))?,
+        payload_digest: Hash::new(arkret_sdk::canonical::sha256_digest(&canonical_payload))?,
         created_at: observed_at,
         domain: None,
         audience: None,
         proof_purpose: Some(PayloadProofPurpose::IssuerAttestation),
         jws: String::new(),
     };
-    let binding = payload_proof.canonical_binding_bytes(&issuer)?;
+    let binding = payload.proof_binding_bytes(&payload_proof)?;
     let signature = signer.sign_payload(&binding)?;
     payload_proof.jws = signature.jws;
     payload.proofs.push(payload_proof);

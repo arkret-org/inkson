@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+use arkret_models_collaboration::governance::agent_participation::ParticipationNextReplaceInput;
 use arkret_models_collaboration::governance::agent_participation::{
     AgentParticipationEntry, ParticipationBits, ParticipationScope,
 };
@@ -2150,18 +2152,10 @@ pub(crate) async fn share_history_to_requester(
         .fold((u64::MAX, 0_u64), |(lo, hi), (epoch, _)| {
             (lo.min(*epoch), hi.max(*epoch))
         });
-    let requester_device_authorize_event_id =
-        crate::mls::admission::current_requester_device_authorize_event_id(
-            &api.sdk_http_client()?,
-            &device_id,
-        )
-        .await
-        .map_err(anyhow::Error::msg)?;
     let share = crate::mls::admission::build_realm_key_share_event(
         &realm_id,
         &actor_id,
         &device_id,
-        &requester_device_authorize_event_id,
         request.recipient_principal_id.as_str(),
         request.recipient_device_id.as_str(),
         min_epoch,
@@ -5626,6 +5620,9 @@ mod tests {
                 act_on_behalf: false,
             },
             version: 1,
+            next_replace_input: ParticipationNextReplaceInput {
+                expected_version: 1,
+            },
         }];
 
         let (policy, selection) = mention_state_from_entries(
@@ -6080,6 +6077,9 @@ mod tests {
                 act_on_behalf: false,
             },
             version: 1,
+            next_replace_input: ParticipationNextReplaceInput {
+                expected_version: 1,
+            },
         };
 
         let (policy, selection) = mention_state_from_entries(&[entry], realm);
