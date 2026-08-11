@@ -374,9 +374,9 @@ pub fn load_device_key_with_secure_store(
 }
 
 /// Read the persisted DPoP key, or recover its record from the active
-/// account-scoped signing seed when a prior boot/login wrote the seed but the
-/// derived DPoP record was not durably re-homed yet. This never generates a new
-/// key: if neither the record nor signing seed exists, the current session
+/// grant-binding seed when a prior boot/login wrote the seed but the derived
+/// DPoP record was not durably re-homed yet. This never generates a new key: if
+/// neither the record nor grant-binding seed exists, the current session
 /// grant cannot be sender-constrained and the caller should let auth recovery
 /// fail closed.
 #[cfg(not(test))]

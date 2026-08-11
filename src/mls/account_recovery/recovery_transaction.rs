@@ -181,7 +181,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         None,
         created_at,
         None,
-        DeviceAuthorizationBindingKind::RootAnchored,
+        DeviceAuthorizationBindingKind::PcrRecovery,
         Some(verified_session.recovery_session_id.clone()),
     )?;
     let authorize_signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(

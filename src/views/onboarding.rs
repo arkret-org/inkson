@@ -31,67 +31,183 @@ enum OnboardingSurface {
     /// The authenticated account is already bound, but this device is not.
     /// The Recovery Key proves root control and authorizes this device.
     RootRecovery,
-    /// Finish a durable identity draft that is still completable from here.
+    /// Finish a post-binding durable identity draft after the account handoff
+    /// has already been consumed. While a live handoff exists, every
+    /// non-terminal server phase uses `IdentityCreation`; that single surface
+    /// can validate and reuse secure local key material instead of asking for
+    /// it again through a second resume state machine.
     ResumeSetup,
     /// A durable identity draft that nothing on this device can finish. It is
     /// shown as a dead end with an explicit way out, never as a Recovery Key
     /// prompt: asking for 24 words that cannot be used is indistinguishable
     /// from a bug, and it locks a *new* account out of its own setup.
     StaleCheckpoint,
+    /// Coauth returned a state that contradicts its own lease payload. The UI
+    /// must not guess a recovery path from local fields in this condition.
+    ServerStateConflict,
     /// No onboarding work is pending on this device.
     AccountSummary,
 }
 
-/// Select the onboarding surface from the durable stages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ServerReconciliationStatus {
+    Loading,
+    Ready,
+    Failed(String),
+}
+
+/// Where the Recovery Key used by this mounted creation surface came from.
 ///
-/// The account handoff is the freshest statement of intent on this device: it
-/// is written by the Account Authority callback that just authenticated
-/// someone. A persisted identity draft that does not belong to that handoff is
-/// therefore *not* the current user's unfinished work, and must never take the
-/// surface away from them — that is how a newly registered account was shown
-/// "Enter your Recovery Key" for a stranger's draft DID it could not have saved
-/// words for.
+/// This is deliberately a mount-scoped fact, not a projection of the latest
+/// server phase. During a first creation the server can advance from `active`
+/// to `reserved` while the generated key is still safely held in this
+/// component. Reinterpreting that transition as an interrupted setup would
+/// replace the first-run confirmation UI with an "existing key" recovery UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecoveryKeySource {
+    GeneratedThisMount,
+    RecoveredFromSecureStore,
+    ExistingReservation,
+}
+
+impl RecoveryKeySource {
+    fn for_initial_handoff(
+        handoff: Option<&crate::state::PendingAccountHandoff>,
+        retained_key_available: bool,
+    ) -> Self {
+        if retained_key_available {
+            Self::RecoveredFromSecureStore
+        } else if handoff.is_some_and(must_enter_reserved_recovery_key) {
+            Self::ExistingReservation
+        } else {
+            Self::GeneratedThisMount
+        }
+    }
+
+    const fn requires_existing_key(self) -> bool {
+        matches!(self, Self::ExistingReservation)
+    }
+
+    const fn was_recovered_from_secure_store(self) -> bool {
+        matches!(self, Self::RecoveredFromSecureStore)
+    }
+}
+
+fn initial_identity_choice(
+    handoff: Option<&crate::state::PendingAccountHandoff>,
+    retained_key_available: bool,
+) -> IdentityChoice {
+    if retained_key_available || handoff.is_some_and(must_enter_reserved_recovery_key) {
+        IdentityChoice::Create
+    } else {
+        IdentityChoice::Choose
+    }
+}
+
+fn load_valid_retained_recovery_key(
+    handoff: &crate::state::PendingAccountHandoff,
+    checkpoint: Option<&crate::state::PendingPrincipalRegistration>,
+) -> Option<String> {
+    let retained =
+        match crate::identity::account_auth::load_pending_identity_creation_recovery_key(handoff) {
+            Ok(Some(retained)) => retained,
+            Ok(None) => return None,
+            Err(error) => {
+                tracing::warn!(error = %error, "could not load retained onboarding Recovery Key");
+                return None;
+            }
+        };
+    let server_accepts = match handoff.identity_creation_state {
+        Some(arkret_sdk::IdentityCreationLeaseState::Active) => {
+            arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+                retained.as_str(),
+                "",
+                0,
+            )
+            .is_ok()
+        }
+        Some(
+            arkret_sdk::IdentityCreationLeaseState::Reserved
+            | arkret_sdk::IdentityCreationLeaseState::DidPublished
+            | arkret_sdk::IdentityCreationLeaseState::PcrAccepted
+            | arkret_sdk::IdentityCreationLeaseState::AccountBound,
+        ) => crate::identity::principal_registration::validate_reserved_identity_recovery_key(
+            handoff,
+            retained.as_str(),
+        )
+        .is_ok(),
+        Some(arkret_sdk::IdentityCreationLeaseState::Completed) | None => false,
+    };
+    let checkpoint_accepts = checkpoint.is_none_or(|checkpoint| {
+        !crate::identity::principal_registration::checkpoint_belongs_to_handoff(checkpoint, handoff)
+            || crate::identity::principal_registration::validate_checkpoint_recovery_key(
+                checkpoint,
+                retained.as_str(),
+            )
+            .is_ok()
+    });
+    if server_accepts && checkpoint_accepts {
+        return Some(retained.to_string());
+    }
+    tracing::warn!(
+        handoff_request_id = %handoff.request_id,
+        "discarding retained onboarding Recovery Key that does not match authoritative state"
+    );
+    if let Err(error) =
+        crate::identity::account_auth::clear_pending_identity_creation_recovery_key(handoff)
+    {
+        tracing::warn!(error = %error, "could not discard invalid retained onboarding Recovery Key");
+    }
+    None
+}
+
+/// Select the onboarding surface from the Coauth-authored lease state.
 ///
-/// Without a handoff, a draft is only completable when its account binding has
-/// already been registered AND this device holds a live session for that exact
-/// DID, which is what the remaining setup calls authenticate with. A
-/// `CustodyConfirmed` draft always needs the handoff (its lease and handoff
-/// credential are what bind the account), so it can never be resumed alone.
-///
-/// The session is read from the same two signals the resume panel's submit
-/// authenticates with, NOT from the persisted session grant. Routing on a
-/// different input than submitting is what put a live, resumable setup on the
-/// dead-end surface: the durable grant snapshot races its own hydration (the
-/// test-fixture injection documents that race), while `token` / `account_did`
-/// are always settled before `secure_store_ready` unlatches this decision.
+/// Local checkpoints may satisfy a server-required artifact, but they never
+/// select or advance the protocol phase. A contradictory server snapshot is a
+/// closed failure rather than an invitation to infer state from local data.
 fn onboarding_surface(
     handoff: Option<&crate::state::PendingAccountHandoff>,
     checkpoint: Option<&crate::state::PendingPrincipalRegistration>,
     session_token_present: bool,
     active_account_did: &str,
 ) -> OnboardingSurface {
-    let Some(checkpoint) = checkpoint else {
-        return match handoff {
-            Some(handoff) if handoff.bound_principal_id.is_some() => {
-                OnboardingSurface::RootRecovery
-            }
-            Some(_) => OnboardingSurface::IdentityCreation,
-            None => OnboardingSurface::AccountSummary,
-        };
-    };
-
     if let Some(handoff) = handoff {
         if handoff.bound_principal_id.is_some() {
-            return OnboardingSurface::RootRecovery;
+            return if handoff.lease_id.is_some()
+                || handoff.identity_creation_state.is_some()
+                || handoff.reserved_identity.is_some()
+            {
+                OnboardingSurface::ServerStateConflict
+            } else {
+                OnboardingSurface::RootRecovery
+            };
         }
-        return if crate::identity::principal_registration::checkpoint_belongs_to_handoff(
-            checkpoint, handoff,
-        ) {
-            OnboardingSurface::ResumeSetup
-        } else {
-            OnboardingSurface::IdentityCreation
+        let Some(server_state) = handoff.identity_creation_state else {
+            return if handoff.lease_id.is_some() {
+                OnboardingSurface::ServerStateConflict
+            } else {
+                OnboardingSurface::IdentityCreation
+            };
+        };
+        if server_state.has_reserved_identity() != handoff.reserved_identity.is_some() {
+            return OnboardingSurface::ServerStateConflict;
+        }
+        return match server_state {
+            arkret_sdk::IdentityCreationLeaseState::Active
+            | arkret_sdk::IdentityCreationLeaseState::Reserved
+            | arkret_sdk::IdentityCreationLeaseState::DidPublished
+            | arkret_sdk::IdentityCreationLeaseState::PcrAccepted
+            | arkret_sdk::IdentityCreationLeaseState::AccountBound => {
+                OnboardingSurface::IdentityCreation
+            }
+            arkret_sdk::IdentityCreationLeaseState::Completed => OnboardingSurface::AccountSummary,
         };
     }
+
+    let Some(checkpoint) = checkpoint else {
+        return OnboardingSurface::AccountSummary;
+    };
 
     let binding_registered =
         checkpoint.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
@@ -101,6 +217,24 @@ fn onboarding_surface(
     } else {
         OnboardingSurface::StaleCheckpoint
     }
+}
+
+/// A remembered DID is only an account summary when its authenticated session
+/// is present too. The DID is persisted independently, so treating it as proof
+/// of a completed account binding makes a signed-out, interrupted setup look
+/// successfully finished.
+fn account_summary_complete(session_token_present: bool, account_did: &str) -> bool {
+    session_token_present && !account_did.trim().is_empty()
+}
+
+/// A server reservation always outranks a local draft when selecting the key
+/// entry mode. A full-page authentication callback loses the in-memory key;
+/// generating a replacement phrase at that point can never control the
+/// already-reserved identity, even when an older local checkpoint still exists.
+fn must_enter_reserved_recovery_key(handoff: &crate::state::PendingAccountHandoff) -> bool {
+    handoff
+        .identity_creation_state
+        .is_some_and(arkret_sdk::IdentityCreationLeaseState::has_reserved_identity)
 }
 
 #[component]
@@ -120,10 +254,62 @@ pub fn OnboardingPanel(
             div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
                 div { class: "event onboarding-card",
                     h2 { "Restoring identity setup" }
-                    p { class: "muted", "Loading this account's saved setup…" }
+                    p { class: "muted", "Reading this account's current server state…" }
                 }
             }
         };
+    }
+    let mut server_reconciliation = use_signal(|| ServerReconciliationStatus::Loading);
+    use_effect(move || {
+        let should_refresh = state_store
+            .peek()
+            .pending_account_handoff()
+            .is_some_and(|handoff| {
+                handoff.retry_after_ms.is_none()
+                    && (handoff.lease_id.is_some() || handoff.bound_principal_id.is_some())
+            });
+        if !should_refresh {
+            server_reconciliation.set(ServerReconciliationStatus::Ready);
+            return;
+        }
+        spawn(async move {
+            match crate::identity::account_auth::refresh_pending_onboarding(state_store).await {
+                Ok(()) => server_reconciliation.set(ServerReconciliationStatus::Ready),
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "failed to reconcile onboarding from Account Authority snapshot"
+                    );
+                    server_reconciliation
+                        .set(ServerReconciliationStatus::Failed(error.to_string()));
+                }
+            }
+        });
+    });
+    match &*server_reconciliation.read() {
+        ServerReconciliationStatus::Loading => {
+            return rsx! {
+                div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
+                    div { class: "event onboarding-card",
+                        h2 { "Checking identity setup" }
+                        p { class: "muted", "Loading the current Account Authority state…" }
+                    }
+                }
+            };
+        }
+        ServerReconciliationStatus::Failed(error) => {
+            return rsx! {
+                div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
+                    div { class: "event onboarding-card onboarding-centered", "data-testid": "onboarding-reconciliation-failed",
+                        h2 { "Identity setup could not be refreshed" }
+                        p { class: "muted", "No local checkpoint was used to guess a next step." }
+                        p { class: "error", "{error}" }
+                        Link { class: "primary", to: Route::Login, "Authenticate again" }
+                    }
+                }
+            };
+        }
+        ServerReconciliationStatus::Ready => {}
     }
     // The durable stages are routing inputs ONLY at mount, and the decision is
     // latched for the lifetime of this mount.
@@ -170,6 +356,10 @@ pub fn OnboardingPanel(
         routed.set(None);
         reroute += 1;
     };
+    let on_server_state_changed = move |()| {
+        routed.set(None);
+        reroute += 1;
+    };
 
     match surface {
         OnboardingSurface::RootRecovery => rsx! {
@@ -194,6 +384,7 @@ pub fn OnboardingPanel(
                     needs_device_authorization,
                     device_authorization_check_complete,
                     on_discard,
+                    on_server_state_changed,
                 }
             }
         },
@@ -215,12 +406,24 @@ pub fn OnboardingPanel(
                 StalePrincipalSetup { on_discard }
             }
         },
+        OnboardingSurface::ServerStateConflict => rsx! {
+            div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
+                div { class: "event onboarding-card onboarding-centered", "data-testid": "onboarding-server-state-conflict",
+                    h2 { "Identity setup state could not be verified" }
+                    p { class: "muted",
+                        "The Account Authority returned an inconsistent setup checkpoint. Local data was not used to guess the next step."
+                    }
+                    Link { class: "primary", to: Route::Login, "Authenticate again" }
+                }
+            }
+        },
         OnboardingSurface::AccountSummary => {
             let did = account_did();
+            let complete = account_summary_complete(!token().trim().is_empty(), &did);
             rsx! {
                 div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
                     div { class: "event onboarding-card onboarding-finished", "data-testid": "account-strand",
-                        if did.trim().is_empty() {
+                        if !complete {
                             div { class: "onboarding-finish-mark", "aria-hidden": "true", "1" }
                             h2 { "Set up your identity" }
                             p { class: "muted", "Sign in first, then choose whether to create or link an identity." }
@@ -527,14 +730,36 @@ fn PendingAccountIdentityCreation(
     mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let mut state_store = crate::app::SessionContext::get().state_store;
+    let initial_handoff = state_store.peek().pending_account_handoff();
+    let initial_checkpoint = state_store.peek().pending_principal_registration();
+    let initial_recovery_key = initial_handoff
+        .as_ref()
+        .and_then(|handoff| load_valid_retained_recovery_key(handoff, initial_checkpoint.as_ref()));
+    let initial_key_source = RecoveryKeySource::for_initial_handoff(
+        initial_handoff.as_ref(),
+        initial_recovery_key.is_some(),
+    );
+    let initial_recovery_key_state = if initial_recovery_key.is_some() {
+        arkret_sdk::IdentityCreationRecoveryKeyState::RecoveredPendingConfirmation
+    } else {
+        arkret_sdk::IdentityCreationRecoveryKeyState::Unavailable
+    };
     let navigator = use_navigator();
-    let mut choice = use_signal(IdentityChoice::default);
-    let mut recovery_key = use_signal(String::new);
+    let initial_choice =
+        initial_identity_choice(initial_handoff.as_ref(), initial_recovery_key.is_some());
+    let mut choice = use_signal(move || initial_choice);
+    let mut recovery_key = use_signal(|| initial_recovery_key.unwrap_or_default());
+    let mut recovery_key_state = use_signal(|| initial_recovery_key_state);
     let mut confirmation = use_signal(String::new);
     let mut copied = use_signal(|| false);
     let mut busy = use_signal(|| false);
     let mut complete = use_signal(|| false);
     let mut status = use_signal(String::new);
+    // Never derive this from a later server phase in this mount. The server
+    // remains authoritative for protocol progress; this signal only records
+    // whether the in-memory key was generated here or must be supplied after
+    // an actual reload/restart.
+    let key_source = use_signal(|| initial_key_source);
 
     // Completion clears the durable handoff/checkpoint. Render the success
     // surface from component-local state before reading either checkpoint so
@@ -562,13 +787,18 @@ fn PendingAccountIdentityCreation(
     let Some(handoff) = handoff else {
         return rsx! {};
     };
-    let pending_abandonment = state_store
-        .read()
-        .pending_principal_registration()
-        .and_then(|checkpoint| checkpoint.identity_abandonment);
+    let pending_abandonment = handoff.identity_abandonment.clone().or_else(|| {
+        state_store
+            .read()
+            .pending_principal_registration()
+            .and_then(|checkpoint| checkpoint.identity_abandonment)
+    });
     let abandonment_challenge_expired = pending_abandonment
         .as_ref()
         .is_some_and(|pending| pending.challenge.expires_at <= chrono::Utc::now());
+    let abandonment_confirmation_ready = pending_abandonment.as_ref().is_some_and(|pending| {
+        crate::identity::identity_abandonment::has_fresh_confirmation_handoff(&handoff, pending)
+    });
 
     if let Some(retry_after_ms) = handoff.retry_after_ms {
         let retry_after_seconds = retry_after_ms.div_ceil(1_000).max(1);
@@ -589,7 +819,7 @@ fn PendingAccountIdentityCreation(
         return rsx! {
             div { class: "event onboarding-card onboarding-centered", "data-testid": "account-handoff-expired",
                 h2 { "Setup expired" }
-                p { class: "muted", "Sign in again to continue. Your saved setup will be reused." }
+                p { class: "muted", "Sign in again so Inkson can recalculate the flow from the current server state. A matching Recovery Key retained in this device's secure store will be re-confirmed; otherwise Inkson will ask for the original key or offer explicit abandonment." }
                 Link { class: "primary", to: Route::Login, "Sign in again" }
             }
         };
@@ -601,6 +831,8 @@ fn PendingAccountIdentityCreation(
         1
     };
     let hosting_name = hosting_label(&handoff.principal_server_url);
+    let resumes_reserved_identity = key_source.peek().requires_existing_key();
+    let reoffers_retained_key = key_source.peek().was_recovered_from_secure_store();
     let handoff_for_creation = handoff.clone();
     let handoff_for_abandonment = handoff.clone();
 
@@ -630,12 +862,8 @@ fn PendingAccountIdentityCreation(
                             "data-testid": "restart-identity-abandonment-challenge",
                             disabled: busy(),
                             onclick: move |_| {
-                                let Some(handoff) = state_store.read().pending_account_handoff() else {
+                                let Some(mut handoff) = state_store.read().pending_account_handoff() else {
                                     status.set("Authenticate the account again before renewing the abandonment challenge.".to_owned());
-                                    return;
-                                };
-                                let Some(mut checkpoint) = state_store.read().pending_principal_registration() else {
-                                    status.set("The provisional identity checkpoint is unavailable.".to_owned());
                                     return;
                                 };
                                 busy.set(true);
@@ -648,13 +876,12 @@ fn PendingAccountIdentityCreation(
                                         };
                                         let pending = crate::identity::identity_abandonment::issue_challenge(
                                             &handoff,
-                                            &checkpoint,
                                             &dpop,
                                         ).await?;
-                                        checkpoint.identity_abandonment = Some(pending);
+                                        handoff.identity_abandonment = Some(pending);
                                         let barrier = {
                                             let mut store = state_store.write();
-                                            store.set_pending_principal_registration(Some(checkpoint))?;
+                                            store.set_pending_account_handoff(Some(handoff.clone()))?;
                                             store.begin_durable_flush()?
                                         };
                                         barrier.wait().await?;
@@ -673,14 +900,10 @@ fn PendingAccountIdentityCreation(
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "confirm-identity-abandonment",
-                            disabled: busy(),
+                            disabled: busy() || !abandonment_confirmation_ready,
                             onclick: move |_| {
                                 let Some(handoff) = state_store.read().pending_account_handoff() else {
                                     status.set("Authenticate the account again before confirming abandonment.".to_owned());
-                                    return;
-                                };
-                                let Some(checkpoint) = state_store.read().pending_principal_registration() else {
-                                    status.set("The provisional identity checkpoint is unavailable.".to_owned());
                                     return;
                                 };
                                 let pending = pending_abandonment.clone();
@@ -695,7 +918,6 @@ fn PendingAccountIdentityCreation(
                                         };
                                         crate::identity::identity_abandonment::confirm(
                                             &handoff,
-                                            &checkpoint,
                                             &pending,
                                             &dpop,
                                         ).await?;
@@ -721,23 +943,36 @@ fn PendingAccountIdentityCreation(
             } else if choice() == IdentityChoice::Choose {
                 div { class: "onboarding-heading",
                     span { class: "eyebrow", "Step 1" }
-                    h2 { "Set up your identity" }
-                    p { class: "muted", "Inkson creates one identity for this account and authorizes this device as its first device." }
+                    if resumes_reserved_identity {
+                        h2 { "An identity reservation is unfinished" }
+                        p { class: "muted", "The server has an unfinished identity reservation. That does not mean Inkson knows you saved its Recovery Key. Enter the original key if you still have it, or explicitly abandon this reservation before creating another identity." }
+                    } else {
+                        h2 { "Set up your identity" }
+                        p { class: "muted", "Inkson creates one identity for this account and authorizes this device as its first device." }
+                    }
                 }
 
                 div { class: "identity-choice-grid", role: "group", "aria-label": "Identity setup",
                     section { class: "identity-choice-card is-recommended",
-                        h3 { "Create your identity" }
-                        p { "It will be anchored by a Recovery Key and hosted with {hosting_name}. No device approval step is needed." }
+                        if resumes_reserved_identity {
+                            h3 { "Verify the original Recovery Key" }
+                            p { "The reserved identity is hosted with {hosting_name}. Inkson does not infer key possession from the reservation; it will verify the original key locally before continuing." }
+                        } else {
+                            h3 { "Create your identity" }
+                            p { "It will be anchored by a Recovery Key and hosted with {hosting_name}. No device approval step is needed." }
+                        }
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "choose-new-identity",
                             onclick: move |_| {
                                 choice.set(IdentityChoice::Create);
-                                if recovery_key().is_empty() {
+                                if !resumes_reserved_identity && recovery_key().is_empty() {
                                     match crate::recovery_crypto::generate_recovery_key() {
                                         Ok(key) => {
                                             recovery_key.set(key);
+                                            recovery_key_state.set(
+                                                arkret_sdk::IdentityCreationRecoveryKeyState::GeneratedPendingConfirmation,
+                                            );
                                             confirmation.set(String::new());
                                             copied.set(false);
                                             status.set(String::new());
@@ -748,7 +983,7 @@ fn PendingAccountIdentityCreation(
                                     }
                                 }
                             },
-                            "Continue"
+                            if resumes_reserved_identity { "Enter existing key" } else { "Continue" }
                         }
                     }
                 }
@@ -758,55 +993,67 @@ fn PendingAccountIdentityCreation(
             } else {
                 div { class: "onboarding-heading",
                     span { class: "eyebrow", "Step 2" }
-                    h2 { "Save your Recovery Key" }
-                    p { class: "muted", "Write down these 24 words in order. They will not be shown again." }
-                }
-
-                RecoveryKeyWords { recovery_key: recovery_key() }
-
-                div { class: "onboarding-key-actions",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "onboarding-copy-recovery-key",
-                        onclick: {
-                            let key = recovery_key();
-                            move |_| {
-                                crate::components::mls_backup_prompt::copy_text_to_clipboard(&key);
-                                copied.set(true);
-                            }
-                        },
-                        if copied() { "Copied" } else { "Copy words" }
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "onboarding-download-recovery-key",
-                        onclick: {
-                            let key = recovery_key();
-                            let handoff_handle = handoff.account_handle.clone();
-                            move |_| {
-                                let handles = [handoff_handle.clone(), account_primary_handle()];
-                                let filename = crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
-                                    &handles,
-                                );
-                                crate::components::mls_backup_prompt::download_text_as_file(
-                                    &filename,
-                                    &key,
-                                );
-                            }
-                        },
-                        "Download .txt"
+                    if resumes_reserved_identity {
+                        h2 { "Enter your existing Recovery Key" }
+                        p { class: "muted", "Inkson cannot replace the key that controls this reserved identity. If it is lost, use the explicit abandonment action below." }
+                    } else if reoffers_retained_key {
+                        h2 { "Re-confirm your Recovery Key" }
+                        p { class: "muted", "This device securely retained the same 24 words from the unfinished setup. Re-confirm them before continuing; their presence here does not mean Inkson assumes you memorized or backed them up." }
+                    } else {
+                        h2 { "Save your Recovery Key" }
+                        p { class: "muted", "Write down these 24 words in order. They will not be shown again." }
                     }
                 }
 
-                div { class: "callout warn onboarding-recovery-warning",
-                    div { class: "body",
-                        strong { "Keep this offline." }
-                        " Anyone with these words can recover the identity. Inkson cannot replace them for you."
+                if !resumes_reserved_identity {
+                    RecoveryKeyWords { recovery_key: recovery_key() }
+
+                    div { class: "onboarding-key-actions",
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "onboarding-copy-recovery-key",
+                            onclick: {
+                                let key = recovery_key();
+                                move |_| {
+                                    crate::components::mls_backup_prompt::copy_text_to_clipboard(&key);
+                                    copied.set(true);
+                                }
+                            },
+                            if copied() { "Copied" } else { "Copy words" }
+                        }
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "onboarding-download-recovery-key",
+                            onclick: {
+                                let key = recovery_key();
+                                let handoff_handle = handoff.account_handle.clone();
+                                move |_| {
+                                    let handles = [handoff_handle.clone(), account_primary_handle()];
+                                    let filename = crate::components::mls_backup_prompt::recovery_key_filename_from_handles(
+                                        &handles,
+                                    );
+                                    crate::components::mls_backup_prompt::download_text_as_file(
+                                        &filename,
+                                        &key,
+                                    );
+                                }
+                            },
+                            "Download .txt"
+                        }
+                    }
+
+                    div { class: "callout warn onboarding-recovery-warning",
+                        div { class: "body",
+                            strong { "Keep this offline." }
+                            " Anyone with these words can recover the identity. Inkson cannot replace them for you."
+                        }
                     }
                 }
 
                 div { class: "workflow-form onboarding-confirmation",
-                    Label { html_for: "onboarding-recovery-key-confirm", "Re-enter the 24 words" }
+                    Label { html_for: "onboarding-recovery-key-confirm",
+                        if resumes_reserved_identity { "Existing 24 words" } else { "Re-enter the 24 words" }
+                    }
                     Textarea {
                         id: "onboarding-recovery-key-confirm",
                         "data-testid": "onboarding-recovery-key-confirm",
@@ -844,37 +1091,66 @@ fn PendingAccountIdentityCreation(
                         "data-testid": "onboarding-bind-identity",
                         disabled: busy() || confirmation().trim().is_empty(),
                         onclick: move |_| {
-                            match recovery_key_confirmation_diff(&recovery_key(), &confirmation()) {
-                                RecoveryKeyConfirmationDiff::Match => {}
-                                RecoveryKeyConfirmationDiff::WordCount { entered } => {
-                                    status.set(format!(
-                                        "Enter all 24 words. You entered {entered}."
-                                    ));
-                                    return;
-                                }
-                                RecoveryKeyConfirmationDiff::MismatchAt { index } => {
-                                    status.set(format!(
-                                        "Word {index} does not match. Check your saved copy."
-                                    ));
-                                    return;
+                            if !resumes_reserved_identity {
+                                match recovery_key_confirmation_diff(&recovery_key(), &confirmation()) {
+                                    RecoveryKeyConfirmationDiff::Match => {}
+                                    RecoveryKeyConfirmationDiff::WordCount { entered } => {
+                                        status.set(format!(
+                                            "Enter all 24 words. You entered {entered}."
+                                        ));
+                                        return;
+                                    }
+                                    RecoveryKeyConfirmationDiff::MismatchAt { index } => {
+                                        status.set(format!(
+                                            "Word {index} does not match. Check your saved copy."
+                                        ));
+                                        return;
+                                    }
                                 }
                             }
 
                             let handoff = handoff_for_creation.clone();
-                            let supplied_key = recovery_key();
+                            let supplied_key = if resumes_reserved_identity {
+                                confirmation()
+                            } else {
+                                recovery_key()
+                            };
                             let device = handoff.device_id.clone();
                             let base = handoff.principal_server_url.clone();
                             busy.set(true);
                             status.set("Finishing setup…".to_owned());
                             spawn(async move {
-                                let result = create_and_bind_identity(
-                                    &handoff,
-                                    &supplied_key,
-                                    &device,
-                                    &base,
-                                    config_store,
-                                    state_store,
-                                )
+                                let result = async {
+                                    if resumes_reserved_identity {
+                                        crate::identity::principal_registration::validate_reserved_identity_recovery_key(
+                                            &handoff,
+                                            &supplied_key,
+                                        )?;
+                                    }
+                                    crate::identity::account_auth::persist_pending_identity_creation_recovery_key(
+                                        &handoff,
+                                        &supplied_key,
+                                    )
+                                    .await?;
+                                    let confirmed_state = if resumes_reserved_identity {
+                                        arkret_sdk::IdentityCreationRecoveryKeyState::ExistingValidatedDurable
+                                    } else {
+                                        arkret_sdk::IdentityCreationRecoveryKeyState::GeneratedLocallyValidatedDurable
+                                    };
+                                    recovery_key_state.set(confirmed_state);
+                                    if !confirmed_state.can_control_identity() {
+                                        anyhow::bail!("Recovery Key is not ready for identity creation");
+                                    }
+                                    create_and_bind_identity(
+                                        &handoff,
+                                        &supplied_key,
+                                        &device,
+                                        &base,
+                                        config_store,
+                                        state_store,
+                                    )
+                                    .await
+                                }
                                 .await;
 
                                 match result {
@@ -885,6 +1161,9 @@ fn PendingAccountIdentityCreation(
                                         needs_device_authorization.set(false);
                                         device_authorization_check_complete.set(true);
                                         recovery_key.set(String::new());
+                                        recovery_key_state.set(
+                                            arkret_sdk::IdentityCreationRecoveryKeyState::Unavailable,
+                                        );
                                         confirmation.set(String::new());
                                         status.set(String::new());
                                         complete.set(true);
@@ -895,25 +1174,56 @@ fn PendingAccountIdentityCreation(
                                         }
                                     }
                                     Err(error) => {
-                                        status.set(format!("Setup could not finish: {error}"));
+                                        let command_error = error.to_string();
+                                        status.set(
+                                            "Setup result is uncertain. Refreshing the Account Authority state…"
+                                                .to_owned(),
+                                        );
+                                        match crate::identity::account_auth::refresh_pending_onboarding(
+                                            state_store,
+                                        )
+                                        .await
+                                        {
+                                            Ok(()) => {
+                                                let accepted = state_store
+                                                    .peek()
+                                                    .pending_account_handoff()
+                                                    .is_some_and(|handoff| {
+                                                        handoff.bound_principal_id.is_some()
+                                                            || handoff.identity_creation_state
+                                                                == Some(
+                                                                    arkret_sdk::IdentityCreationLeaseState::Completed,
+                                                                )
+                                                    });
+                                                if accepted {
+                                                    status.set(
+                                                        "The Account Authority accepted this identity setup. Authenticate again to restore its completed session."
+                                                            .to_owned(),
+                                                    );
+                                                } else {
+                                                    status.set(format!(
+                                                        "The previous request did not finish: {command_error}. The Account Authority state was refreshed; continue with the Recovery Key already held on this page."
+                                                    ));
+                                                }
+                                            }
+                                            Err(refresh_error) => status.set(format!(
+                                                "Setup could not finish: {command_error}. The current server state could not be refreshed: {refresh_error}"
+                                            )),
+                                        }
                                     }
                                 }
                                 busy.set(false);
                             });
                         },
-                        if busy() { "Finishing…" } else { "Save and continue" }
+                        if busy() { "Finishing…" } else if resumes_reserved_identity { "Continue setup" } else { "Save and continue" }
                     }
-                    if state_store.read().pending_principal_registration().is_some() {
+                    if handoff.reserved_identity.is_some() {
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "issue-identity-abandonment-challenge",
                             disabled: busy(),
                             onclick: move |_| {
-                                let Some(mut checkpoint) = state_store.read().pending_principal_registration() else {
-                                    status.set("No provisional identity is available to abandon.".to_owned());
-                                    return;
-                                };
-                                let handoff = handoff_for_abandonment.clone();
+                                let mut handoff = handoff_for_abandonment.clone();
                                 busy.set(true);
                                 status.set("Issuing explicit abandonment challenge…".to_owned());
                                 spawn(async move {
@@ -924,13 +1234,12 @@ fn PendingAccountIdentityCreation(
                                         };
                                         let pending = crate::identity::identity_abandonment::issue_challenge(
                                             &handoff,
-                                            &checkpoint,
                                             &dpop,
                                         ).await?;
-                                        checkpoint.identity_abandonment = Some(pending);
+                                        handoff.identity_abandonment = Some(pending);
                                         let barrier = {
                                             let mut store = state_store.write();
-                                            store.set_pending_principal_registration(Some(checkpoint))?;
+                                            store.set_pending_account_handoff(Some(handoff.clone()))?;
                                             store.begin_durable_flush()?
                                         };
                                         barrier.wait().await?;
@@ -958,13 +1267,13 @@ fn PendingAccountIdentityCreation(
 /// finishes an identity the account is already committed to.
 fn discard_consequence(binding_registered: bool) -> &'static str {
     if binding_registered {
-        "This identity is already registered to your account, and this device holds the only copy of its unfinished setup. Discarding it cannot be undone."
+        "This identity is already registered to your account. Sign in to resume it or use the authenticated abandonment flow; deleting only this browser's checkpoint would not abandon the server reservation."
     } else {
         "Nothing has been registered yet. Discarding starts over: sign in again, and this device creates a new identity with a new Recovery Key."
     }
 }
 
-/// The way out of a saved setup this device cannot finish.
+/// The way out of an unfinished server reservation this device cannot finish.
 ///
 /// Onboarding is otherwise a one-way surface: without this, a draft that the
 /// server no longer honours (or whose 24 words are gone) leaves clearing the
@@ -990,13 +1299,13 @@ fn DiscardSavedSetup(disabled: bool, on_discard: EventHandler<()>) -> Element {
                             // re-routes and this control is unmounted.
                             Ok(()) => on_discard.call(()),
                             Err(error) => {
-                                status.set(format!("Could not discard the saved setup: {error}"));
+                                status.set(format!("Could not discard the unfinished setup: {error}"));
                                 busy.set(false);
                             }
                         }
                     });
                 },
-                if busy() { "Discarding…" } else { "Discard saved setup" }
+                if busy() { "Discarding…" } else { "Discard unfinished setup" }
             }
             if !status().is_empty() {
                 div {
@@ -1035,7 +1344,7 @@ fn StalePrincipalSetup(on_discard: EventHandler<()>) -> Element {
             SetupProgress { current: 2 }
             div { class: "onboarding-heading",
                 span { class: "eyebrow", "Continue setup" }
-                h2 { "This saved setup can't be finished here" }
+                h2 { "This unfinished setup can't be finished here" }
                 p { class: "muted",
                     "An unfinished identity setup for {did_label} is stored on this device, but this browser no longer holds the account session it needs to continue."
                 }
@@ -1050,7 +1359,9 @@ fn StalePrincipalSetup(on_discard: EventHandler<()>) -> Element {
             }
 
             div { class: "onboarding-footer-actions",
-                DiscardSavedSetup { disabled: false, on_discard }
+                if !binding_registered {
+                    DiscardSavedSetup { disabled: false, on_discard }
+                }
                 Link { class: "primary", to: Route::Login, "Sign in" }
             }
         }
@@ -1092,7 +1403,8 @@ async fn create_and_bind_identity(
         Some(checkpoint)
             if crate::identity::principal_registration::checkpoint_belongs_to_handoff(
                 checkpoint, handoff,
-            ) =>
+            ) && checkpoint.device_id == device
+                && checkpoint.handoff_request_id == handoff.request_id =>
         {
             let checkpoint = checkpoint_for_handoff(checkpoint, handoff, recovery_key)?;
             let changed = stored_checkpoint.as_ref() != Some(&checkpoint);
@@ -1256,8 +1568,8 @@ async fn create_and_bind_identity(
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         crate::secure_key_store::adopt_device_seed_scope_on_login(secure_store.as_ref(), &actor)?;
         let mut accepted = checkpoint;
-        accepted.binding_receipt = Some(serde_json::to_value(completion.binding_receipt)?);
-        accepted.pcr_genesis_receipt = Some(serde_json::to_value(completion.pcr_genesis_receipt)?);
+        accepted.binding_receipt = Some(completion.binding_receipt.clone());
+        accepted.pcr_genesis_receipt = Some(completion.pcr_genesis_receipt.clone());
         if accepted.stage == crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared {
             accepted
                 .advance_registration_stage(
@@ -1297,7 +1609,7 @@ async fn create_and_bind_identity(
                 grant.principal_id == checkpoint.did && grant.device_id == checkpoint.device_id
             })
             .ok_or_else(|| {
-                anyhow::anyhow!("the saved setup session is unavailable; sign in again")
+                anyhow::anyhow!("the unfinished setup session is unavailable; sign in again")
             })?;
         (
             checkpoint.clone(),
@@ -1348,6 +1660,7 @@ async fn clear_pending_principal_setup(
     };
     barrier.wait().await?;
     if let Some(handoff) = pending_handoff.as_ref() {
+        crate::identity::account_auth::clear_pending_identity_creation_recovery_key(handoff)?;
         crate::identity::account_auth::clear_account_handoff_grant(handoff)?;
     }
     if let Some(checkpoint) = pending_registration.as_ref() {
@@ -1383,7 +1696,7 @@ fn checkpoint_for_handoff(
     if !crate::identity::principal_registration::checkpoint_belongs_to_handoff(checkpoint, handoff)
     {
         anyhow::bail!(
-            "the server's reserved identity does not match the saved setup; the original local checkpoint is required"
+            "the server's reserved identity does not match the local checkpoint; the original checkpoint is required"
         );
     }
     if checkpoint.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
@@ -1399,17 +1712,13 @@ fn checkpoint_for_handoff(
     // `account_handle` is not consulted: the spec defines it as an unsigned UX
     // hint, while this typed reservation is the continuity evidence.
     if let Some(reserved_identity) = handoff.reserved_identity.as_ref() {
-        let reserved_identity: arkret_sdk::ReservedIdentityCreation =
-            serde_json::from_value(reserved_identity.clone()).map_err(|error| {
-                anyhow::anyhow!("the server's identity reservation is invalid: {error}")
-            })?;
         let did_operation = checkpoint.did_operation.clone();
         let expected_reservation =
             arkret_sdk::ReservedIdentityCreation::from_operation(did_operation)
                 .map_err(|error| anyhow::anyhow!("the saved DID operation is invalid: {error}"))?;
-        if expected_reservation != reserved_identity {
+        if expected_reservation != *reserved_identity {
             anyhow::bail!(
-                "the server's reserved identity does not match the saved setup; the original local checkpoint is required"
+                "the server's reserved identity does not match the local checkpoint; the original checkpoint is required"
             );
         }
     }
@@ -1579,6 +1888,7 @@ fn PendingPrincipalSetup(
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
     on_discard: EventHandler<()>,
+    on_server_state_changed: EventHandler<()>,
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
@@ -1612,6 +1922,15 @@ fn PendingPrincipalSetup(
     let did_label = short_protocol_id(&registration.did);
     let binding_registered =
         registration.stage != crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
+    let requires_reauthentication = matches!(
+        registration.stage,
+        crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
+            | crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared
+            | crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared
+    ) && state_store
+        .read()
+        .pending_account_handoff()
+        .is_none_or(|handoff| handoff.expires_at <= chrono::Utc::now());
 
     rsx! {
         div { class: "event onboarding-card", "data-testid": "pending-principal-setup",
@@ -1619,7 +1938,7 @@ fn PendingPrincipalSetup(
             div { class: "onboarding-heading",
                 span { class: "eyebrow", "Continue setup" }
                 h2 { "Enter your Recovery Key" }
-                p { class: "muted", "Use the same 24 words you saved for {did_label}." }
+                p { class: "muted", "Use the same 24 words originally shown for {did_label}. Inkson does not infer that you saved them from the server reservation." }
                 p { class: "muted",
                     "Setting up a different account, or no longer have these words? Discard this setup and start again. "
                     "{discard_consequence(binding_registered)}"
@@ -1647,12 +1966,28 @@ fn PendingPrincipalSetup(
                     "{status}"
                 }
             }
+            if requires_reauthentication {
+                div {
+                    class: "form-hint-warn",
+                    role: "status",
+                "Your account handoff expired. Sign in again; Inkson will recalculate from the server reservation and locally verifiable material."
+                }
+            }
             div { class: "onboarding-footer-actions",
                 DiscardSavedSetup { disabled: busy(), on_discard }
+                if requires_reauthentication {
+                    Link {
+                        class: "primary",
+                        to: Route::Login,
+                        "Sign in again"
+                    }
+                }
                 Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "setup-submit",
-                        disabled: busy() || recovery_key().trim().is_empty(),
+                        disabled: busy()
+                            || requires_reauthentication
+                            || recovery_key().trim().is_empty(),
                         onclick: move |_| {
                             let registration = registration.clone();
                             let supplied_key = recovery_key();
@@ -1660,24 +1995,28 @@ fn PendingPrincipalSetup(
                             let session = token();
                             let actor = account_did();
                             let device = device_id();
-                            let resumes_before_binding = registration.stage
-                                == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed;
-                            if !resumes_before_binding
+                            let resumes_registration = matches!(
+                                registration.stage,
+                                crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
+                                    | crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared
+                                    | crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared
+                            );
+                            if !resumes_registration
                                 && (actor != registration.did || device != registration.device_id)
                             {
-                                status.set("This saved setup belongs to a different account or device.".to_owned());
+                                status.set("This local checkpoint belongs to a different account or device.".to_owned());
                                 return;
                             }
                             busy.set(true);
                             status.set("Finishing setup…".to_owned());
                             spawn(async move {
-                                let result = if resumes_before_binding {
+                                let result = if resumes_registration {
                                     let handoff = state_store.read().pending_account_handoff();
                                     match handoff {
                                         Some(handoff) => create_and_bind_identity(
                                             &handoff,
                                             &supplied_key,
-                                            &registration.device_id,
+                                            &device,
                                             &base,
                                             config_store,
                                             state_store,
@@ -1722,7 +2061,21 @@ fn PendingPrincipalSetup(
                                         }
                                     }
                                     Err(error) => {
-                                        status.set(format!("Setup could not finish: {error}"));
+                                        let command_error = error.to_string();
+                                        status.set(
+                                            "Setup result is uncertain. Refreshing the Account Authority state…"
+                                                .to_owned(),
+                                        );
+                                        match crate::identity::account_auth::refresh_pending_onboarding(
+                                            state_store,
+                                        )
+                                        .await
+                                        {
+                                            Ok(()) => on_server_state_changed.call(()),
+                                            Err(refresh_error) => status.set(format!(
+                                                "Setup could not finish: {command_error}. The current server state could not be refreshed: {refresh_error}"
+                                            )),
+                                        }
                                     }
                                 }
                                 busy.set(false);
@@ -1827,7 +2180,7 @@ mod tests {
     }
 
     #[test]
-    fn an_interrupted_creation_resumes_on_its_own_handoff() {
+    fn an_interrupted_creation_stays_in_the_server_handoff_flow() {
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000010",
@@ -1842,7 +2195,7 @@ mod tests {
 
         assert_eq!(
             onboarding_surface(Some(&handoff), Some(&checkpoint), false, ""),
-            OnboardingSurface::ResumeSetup
+            OnboardingSurface::IdentityCreation
         );
     }
 
@@ -1921,8 +2274,21 @@ mod tests {
         // The two warnings are trivially easy to swap, and swapping them tells
         // a user that throwing away the only copy of a registered identity's
         // setup costs nothing.
-        assert!(discard_consequence(true).contains("cannot be undone"));
+        assert!(discard_consequence(true).contains("authenticated abandonment"));
         assert!(discard_consequence(false).contains("Nothing has been registered"));
+    }
+
+    #[test]
+    fn a_stale_did_without_a_session_is_not_a_completed_account_summary() {
+        assert!(!account_summary_complete(
+            false,
+            "did:webvh:z6mkfixture:principal.example"
+        ));
+        assert!(!account_summary_complete(true, ""));
+        assert!(account_summary_complete(
+            true,
+            "did:webvh:z6mkfixture:principal.example"
+        ));
     }
 
     #[test]
@@ -1940,6 +2306,136 @@ mod tests {
         assert_eq!(
             onboarding_surface(None, None, true, "did:webvh:z6mkfixture:principal.example"),
             OnboardingSurface::AccountSummary
+        );
+    }
+
+    #[test]
+    fn contradictory_bound_and_reserved_server_state_fails_closed() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let mut handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
+        );
+        handoff.bound_principal_id = Some(checkpoint.did.clone());
+        handoff.reserved_identity = Some(
+            arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation.clone())
+                .unwrap(),
+        );
+        handoff.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
+
+        assert_eq!(
+            onboarding_surface(Some(&handoff), None, false, ""),
+            OnboardingSurface::ServerStateConflict
+        );
+        assert_eq!(
+            onboarding_surface(Some(&handoff), Some(&checkpoint), false, ""),
+            OnboardingSurface::ServerStateConflict
+        );
+        assert!(must_enter_reserved_recovery_key(&handoff));
+    }
+
+    #[test]
+    fn a_server_reservation_never_generates_a_replacement_recovery_key() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
+        );
+        let mut renewed = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000011",
+            Some("lease-2"),
+            Some(2),
+        );
+        renewed.reserved_identity = Some(
+            arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation.clone())
+                .unwrap(),
+        );
+        renewed.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
+
+        // The checkpoint matches the exact server reservation, so the single
+        // handoff flow continues it instead of yielding to the legacy local
+        // resume surface.
+        assert_eq!(
+            onboarding_surface(Some(&renewed), Some(&checkpoint), false, ""),
+            OnboardingSurface::IdentityCreation
+        );
+        assert!(must_enter_reserved_recovery_key(&renewed));
+    }
+
+    #[test]
+    fn every_unfinished_server_phase_uses_one_handoff_flow() {
+        let mut handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
+        );
+        let reserved_identity =
+            arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation).unwrap();
+        for state in [
+            arkret_sdk::IdentityCreationLeaseState::Active,
+            arkret_sdk::IdentityCreationLeaseState::Reserved,
+            arkret_sdk::IdentityCreationLeaseState::DidPublished,
+            arkret_sdk::IdentityCreationLeaseState::PcrAccepted,
+            arkret_sdk::IdentityCreationLeaseState::AccountBound,
+        ] {
+            handoff.identity_creation_state = Some(state);
+            handoff.reserved_identity = state
+                .has_reserved_identity()
+                .then(|| reserved_identity.clone());
+            assert_eq!(
+                onboarding_surface(Some(&handoff), None, false, ""),
+                OnboardingSurface::IdentityCreation,
+                "server phase {state:?} must stay in the authoritative handoff flow"
+            );
+        }
+    }
+
+    #[test]
+    fn retained_or_reserved_key_material_skips_identity_choice() {
+        let mut handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        assert_eq!(
+            initial_identity_choice(Some(&handoff), false),
+            IdentityChoice::Choose
+        );
+        assert_eq!(
+            initial_identity_choice(Some(&handoff), true),
+            IdentityChoice::Create
+        );
+        handoff.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
+        );
+        handoff.reserved_identity = Some(
+            arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation).unwrap(),
+        );
+        assert_eq!(
+            initial_identity_choice(Some(&handoff), false),
+            IdentityChoice::Create
         );
     }
 
@@ -1967,7 +2463,9 @@ mod tests {
             Some("lease-2"),
             Some(2),
         );
-        new_handoff.reserved_identity = Some(serde_json::to_value(reserved_identity).unwrap());
+        new_handoff.reserved_identity = Some(reserved_identity);
+        new_handoff.identity_creation_state =
+            Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
 
         let resumed = checkpoint_for_handoff(&checkpoint, &new_handoff, &recovery_key).unwrap();
 
@@ -2006,15 +2504,17 @@ mod tests {
             Some("lease-2"),
             Some(2),
         );
-        new_handoff.reserved_identity = Some(
-            serde_json::to_value(
-                arkret_sdk::ReservedIdentityCreation::from_operation(other_operation).unwrap(),
-            )
-            .unwrap(),
-        );
+        new_handoff.reserved_identity =
+            Some(arkret_sdk::ReservedIdentityCreation::from_operation(other_operation).unwrap());
+        new_handoff.identity_creation_state =
+            Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
 
         let error = checkpoint_for_handoff(&checkpoint, &new_handoff, &recovery_key).unwrap_err();
-        assert!(error.to_string().contains("does not match the saved setup"));
+        assert!(
+            error
+                .to_string()
+                .contains("does not match the local checkpoint")
+        );
     }
 
     /// A handle can be registered again — delete the account, or reset the
@@ -2074,12 +2574,10 @@ mod tests {
         );
         new_account_handoff.account_handle = "bob:auth.example".to_owned();
         let operation = checkpoint.did_operation.clone();
-        new_account_handoff.reserved_identity = Some(
-            serde_json::to_value(
-                arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap(),
-            )
-            .unwrap(),
-        );
+        new_account_handoff.reserved_identity =
+            Some(arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap());
+        new_account_handoff.identity_creation_state =
+            Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
 
         let resumed =
             checkpoint_for_handoff(&checkpoint, &new_account_handoff, &recovery_key).unwrap();
@@ -2087,6 +2585,57 @@ mod tests {
         assert_eq!(resumed.did, checkpoint.did);
         assert_eq!(resumed.did_operation, checkpoint.did_operation);
         assert_eq!(resumed.account_handle, checkpoint.account_handle);
+    }
+
+    #[test]
+    fn an_in_flight_server_reservation_does_not_turn_first_run_into_recovery() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let mut handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let key_source = RecoveryKeySource::for_initial_handoff(Some(&handoff), false);
+        assert_eq!(key_source, RecoveryKeySource::GeneratedThisMount);
+
+        // The first register attempt can durably reserve the DID before its
+        // response fails. Reconciliation advances the authoritative server
+        // state, but the mounted page still owns the generated key and must not
+        // reinterpret it as an interrupted/recovery flow.
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared,
+        );
+        handoff.reserved_identity = Some(
+            arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation).unwrap(),
+        );
+        handoff.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
+        assert!(!key_source.requires_existing_key());
+
+        // A reload with no validated key in secure storage must ask for the
+        // original key. A reload that retained it returns to confirmation and
+        // never claims that the server proved the user saved the words.
+        assert_eq!(
+            RecoveryKeySource::for_initial_handoff(Some(&handoff), false),
+            RecoveryKeySource::ExistingReservation
+        );
+        assert_eq!(
+            RecoveryKeySource::for_initial_handoff(Some(&handoff), true),
+            RecoveryKeySource::RecoveredFromSecureStore
+        );
+        assert!(
+            !RecoveryKeySource::RecoveredFromSecureStore.requires_existing_key(),
+            "a securely retained key must return to confirmation, not existing-key recovery"
+        );
+        assert!(
+            RecoveryKeySource::RecoveredFromSecureStore.was_recovered_from_secure_store(),
+            "the UI must disclose that it is re-offering device-retained material"
+        );
+        assert!(
+            !RecoveryKeySource::GeneratedThisMount.was_recovered_from_secure_store(),
+            "a freshly generated key must keep first-run copy"
+        );
     }
 
     fn test_handoff(
@@ -2108,7 +2657,9 @@ mod tests {
             lease_id: lease_id.map(ToOwned::to_owned),
             lease_fence,
             lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+            identity_creation_state: Some(arkret_sdk::IdentityCreationLeaseState::Active),
             reserved_identity: None,
+            identity_abandonment: None,
             retry_after_ms: None,
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             // `ak:trust_domain:<scope>` — the hyphenated spelling stopped

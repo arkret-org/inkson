@@ -47,6 +47,43 @@ enum OidcCallbackOutcome {
     },
 }
 
+#[derive(Debug, thiserror::Error)]
+enum PendingHandoffResumeError {
+    #[error(
+        "This unfinished identity setup no longer has its holder key on this device. Wait for its displayed lease deadline before starting over."
+    )]
+    MissingHolderKey,
+    #[error("Could not recover the holder key for this unfinished identity setup: {0}")]
+    HolderKeyRecovery(#[source] crate::identity::account_auth::grant_dpop::AuthDpopError),
+    #[error(
+        "This unfinished identity setup belongs to a different holder key. Wait for its displayed lease deadline before starting over."
+    )]
+    HolderKeyMismatch,
+}
+
+fn recover_pending_handoff_for_sign_in(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    device_id: &str,
+) -> Result<bool, PendingHandoffResumeError> {
+    let pending_holder = store
+        .pending_account_handoff()
+        .filter(|handoff| handoff.device_id == device_id)
+        .map(|handoff| handoff.holder_jkt);
+    if let Some(expected_holder) = pending_holder {
+        let recovered = crate::identity::account_auth::grant_dpop::load_or_recover_device_key_with_secure_store(
+            store,
+            secure_store,
+        )
+        .map_err(PendingHandoffResumeError::HolderKeyRecovery)?
+        .ok_or(PendingHandoffResumeError::MissingHolderKey)?;
+        if recovered.jkt() != expected_holder {
+            return Err(PendingHandoffResumeError::HolderKeyMismatch);
+        }
+    }
+    Ok(store.can_resume_pending_login(device_id))
+}
+
 // Process-global OIDC-callback completion guard. `callback_started` below is a
 // per-component signal, so a Dioxus double-mount (the 0.7.9 reactivity quirk
 // that occasionally renders the panel twice) gives each instance its own `false`
@@ -270,8 +307,20 @@ pub fn LoginPanel(
             }
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let resume_account_handoff = {
-                let store = reset_state_store.read();
-                store.can_resume_pending_login(&device)
+                let mut store = reset_state_store.write();
+                match recover_pending_handoff_for_sign_in(
+                    &mut store,
+                    secure_store.as_ref(),
+                    &device,
+                ) {
+                    Ok(resume) => resume,
+                    Err(error) => {
+                        tracing::warn!(%error, "recover pending handoff holder before sign-in failed");
+                        is_busy.set(false);
+                        auth_status.set(error.to_string());
+                        return;
+                    }
+                }
             };
             if resume_account_handoff {
                 // An unfinished identity-creation lease is fenced to this DPoP
@@ -880,12 +929,9 @@ async fn finish_oidc_callback(
             lease_id: Some(lease.identity_creation_lease_id.clone()),
             lease_fence: Some(lease.fence),
             lease_expires_at: Some(lease.expires_at),
-            reserved_identity: lease
-                .reserved_identity
-                .as_ref()
-                .map(serde_json::to_value)
-                .transpose()
-                .map_err(|error| format!("Persist reserved identity checkpoint failed: {error}"))?,
+            identity_creation_state: Some(lease.state),
+            reserved_identity: lease.reserved_identity.clone(),
+            identity_abandonment: None,
             retry_after_ms: None,
             device_id: device,
             trust_domain: scaffold.principal_trust_domain.clone(),
@@ -924,7 +970,9 @@ async fn finish_oidc_callback(
             lease_id: None,
             lease_fence: None,
             lease_expires_at: Some(busy_expires_at),
+            identity_creation_state: None,
             reserved_identity: None,
+            identity_abandonment: None,
             retry_after_ms: Some(retry_after_ms),
             device_id: device,
             trust_domain: scaffold.principal_trust_domain.clone(),
@@ -961,7 +1009,9 @@ async fn finish_oidc_callback(
         lease_id: None,
         lease_fence: None,
         lease_expires_at: None,
+        identity_creation_state: None,
         reserved_identity: None,
+        identity_abandonment: None,
         retry_after_ms: None,
         device_id: device,
         trust_domain: scaffold.principal_trust_domain.clone(),
@@ -1004,18 +1054,7 @@ fn persist_pending_account_handoff(
     store: &mut LocalStateStore,
     pending_handoff: crate::state::PendingAccountHandoff,
 ) -> anyhow::Result<()> {
-    if store
-        .pending_principal_registration()
-        .is_some_and(|checkpoint| {
-            !crate::identity::principal_registration::checkpoint_belongs_to_handoff(
-                &checkpoint,
-                &pending_handoff,
-            )
-        })
-    {
-        store.set_pending_principal_registration(None)?;
-    }
-    store.set_pending_account_handoff(Some(pending_handoff))
+    crate::identity::account_auth::persist_reconciled_handoff(store, pending_handoff)
 }
 
 #[cfg(test)]
@@ -1093,7 +1132,9 @@ mod tests {
             lease_id: Some("lease-1".to_owned()),
             lease_fence: Some(1),
             lease_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(15)),
+            identity_creation_state: Some(arkret_sdk::IdentityCreationLeaseState::Active),
             reserved_identity: None,
+            identity_abandonment: None,
             retry_after_ms: None,
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
@@ -1127,6 +1168,35 @@ mod tests {
 
         assert!(store.pending_principal_registration().is_some());
         assert_eq!(store.pending_account_handoff(), Some(new_handoff));
+    }
+
+    #[test]
+    fn sign_in_recovers_pending_handoff_holder_from_secure_grant_binding_seed() {
+        let mut store = crate::state::isolated_store_for_tests("recover-pending-handoff-holder");
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        let seed = [29_u8; 32];
+        let expected = dpop_record_for_seed(seed);
+        let mut handoff = pending_handoff_for_test(
+            "ak:request:019f0000-0000-7000-8000-000000000011",
+            "alice:auth.example",
+        );
+        handoff.holder_jkt = expected.jkt.clone();
+        let device_id = handoff.device_id.clone();
+        store
+            .set_pending_account_handoff(Some(handoff))
+            .expect("pending handoff");
+        crate::secure_key_store::store_grant_binding_seed(&secure_store, &seed)
+            .expect("grant-binding seed");
+
+        assert!(!store.can_resume_pending_login(&device_id));
+        assert!(
+            recover_pending_handoff_for_sign_in(&mut store, &secure_store, &device_id)
+                .expect("recover pending holder")
+        );
+        assert_eq!(
+            store.dpop_device_key().expect("public holder record").jkt,
+            expected.jkt
+        );
     }
 
     #[test]

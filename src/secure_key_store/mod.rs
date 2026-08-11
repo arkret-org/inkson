@@ -193,6 +193,9 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with(
             crate::identity::account_auth::PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY_PREFIX,
         )
+        || key.starts_with(
+            crate::identity::account_auth::PENDING_IDENTITY_CREATION_RECOVERY_KEY_PREFIX,
+        )
         || key.starts_with("inkson.mls_snapshot.account_secret.")
         || key.starts_with("inkson_mls_account_secret")
         || key.starts_with("inkson.mls_key_package.identity_state.")

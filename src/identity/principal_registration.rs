@@ -142,12 +142,10 @@ pub fn recover_registration_checkpoint_from_reservation(
     handoff: &PendingAccountHandoff,
     recovery_key: &str,
 ) -> anyhow::Result<PendingPrincipalRegistration> {
-    let reserved: arkret_sdk::ReservedIdentityCreation = serde_json::from_value(
-        handoff
-            .reserved_identity
-            .clone()
-            .context("renewed identity-creation lease omits the reserved DID operation")?,
-    )?;
+    let reserved = handoff
+        .reserved_identity
+        .clone()
+        .context("renewed identity-creation lease omits the reserved DID operation")?;
     let lease_id = handoff
         .lease_id
         .clone()
@@ -175,38 +173,9 @@ pub fn recover_registration_checkpoint_from_reservation(
     if validated.root_public_key_multibase != key_material.root_public_key_multikey {
         anyhow::bail!("Recovery Key does not control the reserved identity root");
     }
-    let operation = serde_json::Value::Object(
-        reserved
-            .did_operation
-            .operation
-            .clone()
-            .into_iter()
-            .collect(),
-    );
-    let version_id = operation
-        .get("versionId")
-        .and_then(serde_json::Value::as_str)
-        .context("reserved DID inception omits versionId")?
-        .to_owned();
-    let created_at = operation
-        .get("versionTime")
-        .and_then(serde_json::Value::as_str)
-        .context("reserved DID inception omits versionTime")?;
-    let created_at = chrono::DateTime::parse_from_rfc3339(created_at)
-        .context("reserved DID inception versionTime is invalid")?
-        .with_timezone(&Utc);
-    let next_root_key_hash = operation
-        .pointer("/parameters/nextKeyHashes/0")
-        .and_then(serde_json::Value::as_str)
-        .context("reserved DID inception omits nextKeyHashes[0]")?;
-    if next_root_key_hash != key_material.next_root_key_hash {
+    if validated.next_root_key_hash != key_material.next_root_key_hash {
         anyhow::bail!("Recovery Key does not match the reserved root pre-rotation chain");
     }
-    let root_verification_method = operation
-        .pointer("/proof/0/verificationMethod")
-        .and_then(serde_json::Value::as_str)
-        .context("reserved DID inception omits its root verification method")?
-        .to_owned();
     let genesis_hlc = crate::signing_stamp::issue_realm_genesis_hlc_with_secret(
         reserved.full_id.as_str(),
         handoff.device_id.trim(),
@@ -224,32 +193,67 @@ pub fn recover_registration_checkpoint_from_reservation(
         device_id: handoff.device_id.trim().to_owned(),
         trust_domain: handoff.trust_domain.clone(),
         did: reserved.full_id.to_string(),
-        version_id,
+        version_id: validated.did_version_id,
         identity_abandonment: None,
         root_public_key_multibase: key_material.root_public_key_multikey.clone(),
-        root_verification_method,
+        root_verification_method: validated.root_verification_method.to_string(),
         next_root_public_key_multibase: key_material.next_root_public_key_multikey.clone(),
-        next_root_key_hash: key_material.next_root_key_hash.clone(),
+        next_root_key_hash: validated.next_root_key_hash,
         recovery_proof_public_key_multibase: key_material
             .recovery_proof_public_key_multikey
             .clone(),
         backup_hpke_public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
         did_entry0_canonical_base64url: arkret_sdk::base64url_encode(
-            &arkret_sdk::canonical::canonical_json_bytes(&operation)?,
+            &arkret_sdk::canonical::canonical_json_bytes(&reserved.did_operation.operation)?,
         ),
         did_operation: reserved.did_operation,
         pcr_genesis_unit: None,
         initial_session: None,
         pcr_genesis_receipt: None,
         pcr_bootstrap_seal: None,
-        genesis_created_at: arkret_sdk::canonical::format_timestamp_canonical(created_at),
+        genesis_created_at: arkret_sdk::canonical::format_timestamp_canonical(
+            validated.did_version_time,
+        ),
         genesis_hlc,
         genesis_salt: arkret_sdk::GenesisSalt::generate()?.into_string(),
         binding_receipt: None,
         principal_service_binding: None,
         stage: PendingPrincipalRegistrationStage::CustodyConfirmed,
     })
+}
+
+/// Prove that a supplied Recovery Key controls the exact DID operation kept in
+/// the Account Authority reservation. This performs no mutation and is safe to
+/// use while reconstructing the UI after a reload.
+pub fn validate_reserved_identity_recovery_key(
+    handoff: &PendingAccountHandoff,
+    recovery_key: &str,
+) -> anyhow::Result<()> {
+    let reserved = handoff
+        .reserved_identity
+        .as_ref()
+        .context("account handoff omits its reserved DID operation")?;
+    let validated = arkret_sdk::signatures::webvh::validate_principal_inception_operation(
+        &reserved.did_operation,
+    )
+    .map_err(|error| anyhow!("reserved DID inception operation is invalid: {error}"))?;
+    if validated.principal_id != reserved.principal_id
+        || validated.operation_digest != reserved.operation_digest
+    {
+        anyhow::bail!("reserved DID operation digest or principal does not match its checkpoint");
+    }
+    let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+        recovery_key,
+        "",
+        0,
+    )?;
+    if validated.root_public_key_multibase != key_material.root_public_key_multikey
+        || validated.next_root_key_hash != key_material.next_root_key_hash
+    {
+        anyhow::bail!("Recovery Key does not control the reserved identity root");
+    }
+    Ok(())
 }
 
 pub fn validate_checkpoint_recovery_key(
@@ -294,13 +298,8 @@ pub fn checkpoint_belongs_to_handoff(
     let Some(reserved_identity) = handoff.reserved_identity.as_ref() else {
         return false;
     };
-    let Ok(reserved_identity) =
-        serde_json::from_value::<arkret_sdk::ReservedIdentityCreation>(reserved_identity.clone())
-    else {
-        return false;
-    };
     arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation.clone())
-        .is_ok_and(|expected| expected == reserved_identity)
+        .is_ok_and(|expected| expected == *reserved_identity)
 }
 
 /// Finish all local key generation and signatures before the first identity
@@ -351,11 +350,20 @@ pub fn prepare_genesis_draft(
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.genesis_created_at)
         .context("persisted genesis creation time is invalid")?
         .with_timezone(&Utc);
+    let validated_inception =
+        arkret_sdk::signatures::webvh::validate_principal_inception_operation(
+            &checkpoint.did_operation,
+        )
+        .map_err(|error| anyhow!("persisted DID inception operation is invalid: {error}"))?;
+    if validated_inception.did_version_id != checkpoint.version_id {
+        anyhow::bail!("persisted DID inception version does not match its checkpoint");
+    }
     let unit = crate::identity::principal_genesis::build_genesis_unit(
         principal_id,
         arkret_sdk::GenesisSalt::new(checkpoint.genesis_salt.clone())?,
         arkret_sdk::TypedTrustDomainId::new(checkpoint.trust_domain.clone())?,
         checkpoint.version_id.clone(),
+        validated_inception.log_head_digest.to_string(),
         created_at,
         arkret_sdk::Hlc::new(checkpoint.genesis_hlc.clone())?,
         &key_material.root_seed,
@@ -483,15 +491,13 @@ pub async fn complete_account_handoff_binding(
     let lease = arkret_sdk::IdentityCreationLease {
         identity_creation_lease_id: checkpoint.lease_id.clone(),
         fence: checkpoint.lease_fence,
+        state: handoff
+            .identity_creation_state
+            .context("account handoff omits the server identity-creation state")?,
         expires_at: handoff
             .lease_expires_at
             .ok_or_else(|| anyhow!("identity-creation lease expiry is unavailable"))?,
-        reserved_identity: handoff
-            .reserved_identity
-            .clone()
-            .map(serde_json::from_value)
-            .transpose()
-            .context("persisted identity reservation is invalid")?,
+        reserved_identity: handoff.reserved_identity.clone(),
     };
     let challenge_request = garth::identity_binding_challenge_request(
         arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
@@ -568,8 +574,8 @@ pub async fn complete_account_handoff_binding(
     // the signed proof or substituting a later response.
     {
         let mut durable = checkpoint.clone();
-        durable.binding_receipt = Some(serde_json::to_value(&binding_receipt)?);
-        durable.pcr_genesis_receipt = Some(serde_json::to_value(&pcr_genesis_receipt)?);
+        durable.binding_receipt = Some(binding_receipt.clone());
+        durable.pcr_genesis_receipt = Some(pcr_genesis_receipt.clone());
         let barrier = {
             let mut store = state_store.write();
             store.set_pending_principal_registration(Some(durable))?;
@@ -710,7 +716,9 @@ mod tests {
             lease_id: Some("lease-1".to_owned()),
             lease_fence: Some(fence),
             lease_expires_at: Some(Utc::now() + chrono::Duration::minutes(15)),
+            identity_creation_state: Some(arkret_sdk::IdentityCreationLeaseState::Active),
             reserved_identity: None,
+            identity_abandonment: None,
             retry_after_ms: None,
             device_id: device_id.to_owned(),
             trust_domain: "ak:trust_domain:principal.example".to_owned(),
@@ -729,12 +737,8 @@ mod tests {
         .unwrap();
         let operation = first.did_operation.clone();
         let mut renewed = handoff("ak:device:019f0000-0000-7000-8000-000000000002", 2);
-        renewed.reserved_identity = Some(
-            serde_json::to_value(
-                arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap(),
-            )
-            .unwrap(),
-        );
+        renewed.reserved_identity =
+            Some(arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap());
 
         let recovered = recover_registration_checkpoint_from_reservation(&renewed, &key).unwrap();
 
@@ -756,12 +760,8 @@ mod tests {
         .unwrap();
         let operation = first.did_operation;
         let mut renewed = handoff("ak:device:019f0000-0000-7000-8000-000000000002", 2);
-        renewed.reserved_identity = Some(
-            serde_json::to_value(
-                arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap(),
-            )
-            .unwrap(),
-        );
+        renewed.reserved_identity =
+            Some(arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap());
         let wrong = crate::recovery_crypto::generate_recovery_key().unwrap();
 
         assert!(recover_registration_checkpoint_from_reservation(&renewed, &wrong).is_err());

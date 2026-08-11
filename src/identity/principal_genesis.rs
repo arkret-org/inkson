@@ -44,7 +44,7 @@ pub fn build_founding_authorize_payload(
         None,
         created_at,
         None,
-        arkret_sdk::DeviceAuthorizationBindingKind::RootAnchored,
+        arkret_sdk::DeviceAuthorizationBindingKind::RegistrationAnchor,
         None,
     )?;
     let signature = signer
@@ -64,6 +64,7 @@ pub fn build_genesis_unit(
     genesis_salt: arkret_sdk::GenesisSalt,
     trust_domain: arkret_sdk::TypedTrustDomainId,
     did_inception_version_id: String,
+    did_inception_log_head: String,
     created_at: DateTime<Utc>,
     create_hlc: arkret_sdk::Hlc,
     root_seed: &[u8; 32],
@@ -112,9 +113,14 @@ pub fn build_genesis_unit(
             genesis_salt,
             trust_domain,
             did_inception_ref: arkret_sdk::EventRef::new(
-                did_inception_version_id,
+                did_inception_version_id.clone(),
                 arkret_bootstrap::DID_INCEPTION_REF_ROLE,
             ),
+            initial_resolution: arkret_sdk::ResolutionCommitment {
+                full_id: principal_id.clone(),
+                method_history_head: did_inception_log_head,
+                version_id: did_inception_version_id,
+            },
             founding_device_descriptor: descriptor,
             capability_action_registry_digest: registry_digest,
             created_at,

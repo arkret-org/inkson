@@ -614,7 +614,7 @@ pub struct MlsGovernanceProofAcquisition {
 /// Public-only checkpoint for a client-authored principal registration.
 /// Recovery words and every derived private seed are deliberately absent; a
 /// resumed bootstrap must ask the user to re-enter the cold recovery secret.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingAccountHandoff {
     pub principal_server_url: String,
     pub gate_account_base: String,
@@ -637,10 +637,21 @@ pub struct PendingAccountHandoff {
     pub lease_fence: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_expires_at: Option<DateTime<Utc>>,
+    /// Coauth-authored durable saga state. This is the only identity-creation
+    /// phase authority; local checkpoint presence must never replace it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_creation_state: Option<arkret_sdk::IdentityCreationLeaseState>,
     /// Server-persisted identity reservation, when challenge issuance already
     /// bound this account setup to one exact DID inception operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reserved_identity: Option<Value>,
+    pub reserved_identity: Option<arkret_sdk::ReservedIdentityCreation>,
+    /// Durable explicit-abandonment challenge for a reserved identity whose
+    /// registration control may no longer be available on this device.  It
+    /// belongs to the account handoff rather than the registration checkpoint:
+    /// the protocol deliberately authorizes abandonment with account handoff
+    /// grants when no principal or recovery secret exists yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_abandonment: Option<PendingIdentityAbandonment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<u64>,
     pub device_id: String,
@@ -670,8 +681,8 @@ pub struct PendingPrincipalRegistration {
     pub trust_domain: String,
     pub did: String,
     pub version_id: String,
-    /// Durable explicit-abandonment challenge. Its grant digest proves the
-    /// confirmation step reauthenticated with a different account handoff.
+    /// Durable explicit-abandonment challenge projected by the Account
+    /// Authority together with its authoritative reauthentication decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_abandonment: Option<PendingIdentityAbandonment>,
     pub root_public_key_multibase: String,
@@ -695,7 +706,7 @@ pub struct PendingPrincipalRegistration {
     pub initial_session: Option<arkret_sdk::InitialSessionGrantRequest>,
     /// Verified terminal PCR genesis receipt returned with the Standard grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pcr_genesis_receipt: Option<Value>,
+    pub pcr_genesis_receipt: Option<arkret_sdk::EventBatchReceipt>,
     /// Exact device-signed bootstrap Seal, durably frozen before its first
     /// submission so recovery resumes the same bytes after response loss.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -706,7 +717,7 @@ pub struct PendingPrincipalRegistration {
     /// is derived from that authored Event, never from the principal DID.
     pub genesis_salt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_receipt: Option<Value>,
+    pub binding_receipt: Option<arkret_sdk::AccountBindingReceipt>,
     /// Principal-authored, service-accepted post-registration binding.  Kept
     /// with the setup checkpoint until the entire recovery gate is durable so
     /// response-loss replay never authors a second binding generation.
@@ -718,7 +729,9 @@ pub struct PendingPrincipalRegistration {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingIdentityAbandonment {
     pub challenge: arkret_sdk::IdentityAbandonmentChallengeOutcome,
-    pub challenge_handoff_grant_digest: arkret_sdk::Hash,
+    /// Account Authority freshness decision for the current handoff. This is
+    /// never inferred by comparing locally persisted bearer credentials.
+    pub requires_fresh_authentication: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -733,6 +746,11 @@ pub struct RecoveryMaterialEvidence {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingPrincipalRegistrationStage {
+    /// The generated or supplied Recovery Key matched this public checkpoint
+    /// during an earlier interaction. This does not assert that the user
+    /// memorized/exported it, or that the current process still holds it.
+    /// Current secret availability is tracked separately by
+    /// `IdentityCreationRecoveryKeyState` and the platform SecureKeyStore.
     CustodyConfirmed,
     GenesisDraftPrepared,
     RegisterRequestPrepared,

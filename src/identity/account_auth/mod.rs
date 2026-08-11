@@ -6,6 +6,7 @@ mod authorize;
 mod callback;
 pub mod grant_dpop;
 mod handoff;
+mod onboarding;
 mod proof;
 mod util;
 
@@ -17,6 +18,7 @@ pub use authority::*;
 pub use authorize::*;
 pub use callback::*;
 pub use handoff::*;
+pub use onboarding::*;
 pub use proof::*;
 pub(crate) use util::*;
 

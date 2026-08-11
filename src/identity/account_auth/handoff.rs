@@ -1,6 +1,7 @@
 //! Secure storage for the short-lived account-handoff credential.
 
 use sha2::{Digest as _, Sha256};
+use zeroize::Zeroizing;
 
 use crate::secure_key_store::default_secure_key_store;
 
@@ -10,6 +11,67 @@ pub(crate) const PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY: &str =
     "inkson.prepared_identity_creation_request.v1";
 pub(crate) const PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY_PREFIX: &str =
     "inkson.prepared_identity_creation_request.v2.";
+pub(crate) const PENDING_IDENTITY_CREATION_RECOVERY_KEY_PREFIX: &str =
+    "inkson.pending_identity_creation_recovery_key.v1.";
+
+fn pending_identity_creation_recovery_key(
+    handoff: &crate::state::PendingAccountHandoff,
+) -> anyhow::Result<String> {
+    let account_subject = handoff
+        .account_subject
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("account handoff omits account subject"))?;
+    let mut digest = Sha256::new();
+    digest.update(b"inkson.pending-identity-creation-recovery-key-scope-v1\0");
+    digest.update(account_subject.as_str().as_bytes());
+    digest.update(b"\0");
+    digest.update(handoff.audience.as_bytes());
+    digest.update(b"\0");
+    digest.update(handoff.device_id.as_bytes());
+    Ok(format!(
+        "{PENDING_IDENTITY_CREATION_RECOVERY_KEY_PREFIX}{}",
+        arkret_sdk::base64url_encode(digest.finalize())
+    ))
+}
+
+/// Durably retain the user-confirmed key before the first remote mutation.
+///
+/// The phrase lives only in the platform SecureKeyStore. Public onboarding
+/// checkpoints retain fingerprints and public keys, never the phrase itself.
+pub async fn persist_pending_identity_creation_recovery_key(
+    handoff: &crate::state::PendingAccountHandoff,
+    recovery_key: &str,
+) -> anyhow::Result<()> {
+    let recovery_key = recovery_key.trim();
+    arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+        recovery_key,
+        "",
+        0,
+    )?;
+    default_secure_key_store("inkson")
+        .store_secret_durable(
+            &pending_identity_creation_recovery_key(handoff)?,
+            recovery_key,
+        )
+        .await?;
+    Ok(())
+}
+
+pub fn load_pending_identity_creation_recovery_key(
+    handoff: &crate::state::PendingAccountHandoff,
+) -> anyhow::Result<Option<Zeroizing<String>>> {
+    Ok(default_secure_key_store("inkson")
+        .get_secret(&pending_identity_creation_recovery_key(handoff)?)?
+        .map(Zeroizing::new))
+}
+
+pub fn clear_pending_identity_creation_recovery_key(
+    handoff: &crate::state::PendingAccountHandoff,
+) -> anyhow::Result<()> {
+    default_secure_key_store("inkson")
+        .delete_secret(&pending_identity_creation_recovery_key(handoff)?)?;
+    Ok(())
+}
 
 fn prepared_identity_creation_request_secret_key(
     account_subject: &arkret_sdk::Hash,
@@ -179,10 +241,15 @@ pub fn clear_prepared_identity_creation_request(
 pub fn clear_prepared_identity_creation_request_for_checkpoint(
     checkpoint: &crate::state::PendingPrincipalRegistration,
 ) -> anyhow::Result<()> {
-    let account_subject = checkpoint
-        .account_subject
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("registration checkpoint omits account subject"))?;
+    let Some(account_subject) = checkpoint.account_subject.as_ref() else {
+        // A legacy unscoped request cannot be authenticated against the
+        // current server flow. It is never reusable and must not survive local
+        // reconciliation merely because it lacks the coordinates needed for a
+        // v2 key.
+        default_secure_key_store("inkson")
+            .delete_secret(PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY)?;
+        return Ok(());
+    };
     clear_prepared_identity_creation_request(account_subject, &checkpoint.did, &checkpoint.lease_id)
 }
 
@@ -243,7 +310,9 @@ mod tests {
             lease_id: None,
             lease_fence: None,
             lease_expires_at: None,
+            identity_creation_state: None,
             reserved_identity: None,
+            identity_abandonment: None,
             retry_after_ms: None,
             device_id: "ak:device:01900000-0000-7000-8000-000000000000".to_owned(),
             trust_domain: "arkret:trust-domain:principal.example".to_owned(),
@@ -269,6 +338,40 @@ mod tests {
         assert_ne!(
             baseline,
             account_handoff_grant_secret_key(&handoff(&account_a, "req-a", "jkt-b")).unwrap()
+        );
+    }
+
+    #[test]
+    fn pending_recovery_key_survives_reauthentication_but_isolates_identity_context() {
+        let account_a = "a".repeat(64);
+        let account_b = "b".repeat(64);
+        let baseline_handoff = handoff(&account_a, "req-a", "jkt-a");
+        let baseline = pending_identity_creation_recovery_key(&baseline_handoff).unwrap();
+
+        let reauthenticated = handoff(&account_a, "req-b", "jkt-b");
+        assert_eq!(
+            baseline,
+            pending_identity_creation_recovery_key(&reauthenticated).unwrap(),
+            "request and holder rotation must not hide a retained key for the same flow"
+        );
+
+        assert_ne!(
+            baseline,
+            pending_identity_creation_recovery_key(&handoff(&account_b, "req-b", "jkt-b")).unwrap()
+        );
+
+        let mut other_audience = reauthenticated.clone();
+        other_audience.audience = "did:web:other-principal.example".to_owned();
+        assert_ne!(
+            baseline,
+            pending_identity_creation_recovery_key(&other_audience).unwrap()
+        );
+
+        let mut other_device = reauthenticated;
+        other_device.device_id = "ak:device:01900000-0000-7000-8000-000000000001".to_owned();
+        assert_ne!(
+            baseline,
+            pending_identity_creation_recovery_key(&other_device).unwrap()
         );
     }
 }
