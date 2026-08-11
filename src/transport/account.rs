@@ -19,6 +19,8 @@
 //! because it resolves contact addressing via the struct-cached
 //! `describe_cached` (see `contact_request_addressing`).
 
+use std::collections::BTreeMap;
+
 use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
@@ -49,14 +51,15 @@ pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Resul
     Ok(current_account_from_viewer(viewer))
 }
 
-/// A4b — update the authenticated principal's public profile
-/// (display_name / bio / avatar_blob_ref). Mirrors the
-/// `ak.self.account.command.update_profile` wire shape: each field is
-/// `Option<String>`; `None` leaves the field untouched server-side,
-/// `Some("")` explicitly clears it. The server normalises empty
-/// strings to `None` on write.
+/// Author and sign the authenticated principal's profile Event, then hand its
+/// exact publication wrapper to `ak.self.account.command.update_profile`.
+/// Existing profiles use the accepted create-derived id and PCR returned by
+/// account viewer. First creation additionally requires the durable accepted
+/// PCR bootstrap evidence retained by the local account state.
 pub async fn update_profile(
-    http: &arkret_sdk::http_client::Client,
+    submitter: &EventSubmitter,
+    authority_evidence: &crate::state::RecoveryMaterialEvidence,
+    first_profile_display_name: &str,
     display_name: Option<&str>,
     bio: Option<&str>,
     avatar_blob_ref: Option<&str>,
@@ -89,15 +92,128 @@ pub async fn update_profile(
             patch.insert("avatar_blob_ref", avatar_blob_ref)?;
         }
     }
-    if patch.is_empty() {
-        anyhow::bail!("profile update patch is empty");
-    }
     patch
         .validate()
         .map_err(|err| anyhow::anyhow!("invalid profile patch: {err}"))?;
-    let body =
-        arkret_models_collaboration::account_lifecycle::AccountUpdateProfileRequestBody { patch };
-    http.account_update_profile(&body)
+
+    let viewer = account_viewer(submitter.http()).await?;
+    let principal_id = viewer.principal_id.clone();
+    let evidence_principal_id = arkret_sdk::DidCoreId::from(
+        arkret_sdk::project_full_id_to_core_id(&authority_evidence.principal_id)?,
+    );
+    authority_evidence
+        .pcr_genesis_unit
+        .validate_ordered_envelopes()?;
+    if evidence_principal_id != principal_id
+        || authority_evidence.pcr_genesis_unit.create().actor_id != principal_id
+        || authority_evidence.pcr_genesis_unit.create().realm_id
+            != authority_evidence.principal_control_realm_id
+        || authority_evidence
+            .pcr_genesis_unit
+            .founding_authorize()
+            .realm_id
+            != authority_evidence.principal_control_realm_id
+        || authority_evidence.bootstrap_seal.realm_id
+            != authority_evidence.principal_control_realm_id
+    {
+        anyhow::bail!(
+            "durable profile-authoring evidence does not bind the authenticated principal's exact PCR"
+        );
+    }
+
+    let (event, accepted_basis) = if let Some(profile) = viewer.profile {
+        let profile = profile.into_inner();
+        if patch.is_empty() {
+            anyhow::bail!("profile update patch is empty");
+        }
+        if profile.principal_id != principal_id {
+            anyhow::bail!("accepted account profile belongs to a different principal");
+        }
+        let profile_id = profile.id.ok_or_else(|| {
+            anyhow::anyhow!("accepted account profile omits its create-derived id")
+        })?;
+        let principal_control_realm_id = profile
+            .realm_id
+            .ok_or_else(|| anyhow::anyhow!("accepted account profile omits its exact PCR realm"))?;
+        if principal_control_realm_id != authority_evidence.principal_control_realm_id {
+            anyhow::bail!(
+                "accepted account profile and durable authoring evidence select different PCR authority instances"
+            );
+        }
+        let basis = arkret_models_collaboration::account_lifecycle::AccountProfileAcceptedBasis {
+            profile_id: profile_id.clone(),
+            principal_id: principal_id.clone(),
+            principal_control_realm_id: principal_control_realm_id.clone(),
+        };
+        (
+            crate::operation::ak_ops::account_profile_update(
+                &principal_control_realm_id,
+                &principal_id,
+                profile_id,
+                patch,
+            )?,
+            Some(basis),
+        )
+    } else {
+        let display_name = display_name
+            .map(str::trim)
+            .unwrap_or_else(|| first_profile_display_name.trim());
+        if display_name.is_empty() {
+            anyhow::bail!(
+                "first profile publication requires a caller-provided accepted display name"
+            );
+        }
+        let mut profile_fields = BTreeMap::new();
+        if let Some(bio) = bio.map(str::trim).filter(|value| !value.is_empty()) {
+            profile_fields.insert("bio".to_owned(), Value::String(bio.to_owned()));
+        }
+        let avatar_blob_ref = avatar_blob_ref
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| arkret_sdk::BlobRef::new(value.to_owned()))
+            .transpose()?;
+        let principal_control_realm_id = authority_evidence.principal_control_realm_id.clone();
+        let profile = arkret_models_identity::ActorProfile {
+            id: None,
+            schema: arkret_models_identity::ActorProfile::SCHEMA.to_owned(),
+            realm_id: Some(principal_control_realm_id.clone()),
+            principal_id: principal_id.clone(),
+            actor_kind: arkret_sdk::ActorKind::User,
+            display_name: display_name.to_owned(),
+            handle: None,
+            agent_slug: None,
+            avatar_blob_ref,
+            status: None,
+            accountable_principal_ids: Vec::new(),
+            resolution: None,
+            profile_fields,
+            created_at: crate::clock::now_utc(),
+            updated_by: None,
+            updated_at: None,
+        };
+        (
+            crate::operation::ak_ops::account_profile_create(
+                &principal_control_realm_id,
+                &principal_id,
+                profile,
+            )?,
+            None,
+        )
+    };
+    let (signed, _) = submitter.prepare_sdk_event_for_submit(&event).await?;
+    let profile_event =
+        crate::authorization_lease::standard_initial_submission(submitter.http(), &signed).await?;
+    let body = arkret_models_collaboration::account_lifecycle::AccountUpdateProfileRequestBody {
+        profile_event,
+    };
+    body.validate_authoring_context(
+        &principal_id,
+        &authority_evidence.principal_control_realm_id,
+        accepted_basis.as_ref(),
+    )?;
+    submitter
+        .http()
+        .account_update_profile(&body)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -1426,6 +1542,7 @@ mod tests {
                 "profile": {
                     "id": "ak:actor_profile:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
                     "schema": "ak.schema.actor_profile.v1",
+                    "realm_id": "ak:realm:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
                     "principal_id": "ak:did_core:web:alice.example",
                     "actor_kind": "user",
                     "display_name": "Alice",

@@ -1015,6 +1015,7 @@ pub fn SettingsPanel(
                                                             onclick: {
                                                                 let base = base_url();
                                                                 let api_token = token();
+                                                                let first_profile_display_name = account_primary_handle.clone();
                                                                 move |_| {
                                                                     if avatar_uploading() {
                                                                         return;
@@ -1030,6 +1031,7 @@ pub fn SettingsPanel(
                                                                     };
                                                                     let base = base.clone();
                                                                     let api_token = api_token.clone();
+                                                                    let first_profile_display_name = first_profile_display_name.clone();
                                                                     avatar_uploading.set(true);
                                                                     avatar_upload_status.set(crate::i18n::tr("settings.avatar.uploading"));
                                                                     spawn(async move {
@@ -1069,17 +1071,36 @@ pub fn SettingsPanel(
                                                                         match clients.blob().upload_bytes(bytes, "image/jpeg").await {
                                                                             Ok(resp) => {
                                                                                 let blob_ref = resp.blob_ref.to_string();
+                                                                                let authority_evidence = state_store
+                                                                                    .read()
+                                                                                    .recovery_material_evidence();
                                                                                 // Publish publicly first; only then refresh the
                                                                                 // local mirror so a failed profile update does not
                                                                                 // display an avatar that never became active.
                                                                                 match async {
-                                                                                    crate::transport::account::update_profile(
-                                                                                        &api.sdk_http_client()?,
-                                                                                        None,
-                                                                                        None,
-                                                                                        Some(&blob_ref),
+                                                                                    let authority_evidence = authority_evidence.ok_or_else(|| {
+                                                                                        anyhow::anyhow!(
+                                                                                            "profile update requires durable accepted PCR authority evidence"
+                                                                                        )
+                                                                                    })?;
+                                                                                    let profile_blob_ref = blob_ref.clone();
+                                                                                    crate::transport::auth::with_event_submitter(
+                                                                                        &base,
+                                                                                        api_token.clone(),
+                                                                                        move |submitter| async move {
+                                                                                            crate::transport::account::update_profile(
+                                                                                                &submitter,
+                                                                                                &authority_evidence,
+                                                                                                &first_profile_display_name,
+                                                                                                None,
+                                                                                                None,
+                                                                                                Some(&profile_blob_ref),
+                                                                                            )
+                                                                                            .await
+                                                                                        },
                                                                                     )
                                                                                     .await
+                                                                                    .map_err(|error| anyhow::anyhow!(error.display()))
                                                                                 }
                                                                                 .await
                                                                                 {
@@ -1164,9 +1185,11 @@ pub fn SettingsPanel(
                                                 onclick: {
                                                     let base = base_url();
                                                     let api_token = token();
+                                                    let first_profile_display_name = account_primary_handle.clone();
                                                     move |_| {
                                                         let base = base.clone();
                                                         let api_token = api_token.clone();
+                                                        let first_profile_display_name = first_profile_display_name.clone();
                                                         if avatar_uploading() {
                                                             return;
                                                         }
@@ -1193,19 +1216,35 @@ pub fn SettingsPanel(
                                                         );
                                                         // Tombstone the public profile entry.
                                                         spawn(async move {
-                                                            if let Ok(api) =
-                                                                crate::transport::auth::authed_api(&base, api_token)
-                                                                && let Err(err) = async {
-                                                                    crate::transport::account::update_profile(
-                                                                        &api.sdk_http_client()?,
-                                                                        None,
-                                                                        None,
-                                                                        Some(""),
+                                                            let authority_evidence = state_store
+                                                                .read()
+                                                                .recovery_material_evidence();
+                                                            let result = async {
+                                                                let authority_evidence = authority_evidence.ok_or_else(|| {
+                                                                    anyhow::anyhow!(
+                                                                        "profile update requires durable accepted PCR authority evidence"
                                                                     )
-                                                                    .await
-                                                                }
+                                                                })?;
+                                                                crate::transport::auth::with_event_submitter(
+                                                                    &base,
+                                                                    api_token,
+                                                                    move |submitter| async move {
+                                                                        crate::transport::account::update_profile(
+                                                                            &submitter,
+                                                                            &authority_evidence,
+                                                                            &first_profile_display_name,
+                                                                            None,
+                                                                            None,
+                                                                            Some(""),
+                                                                        )
+                                                                        .await
+                                                                    },
+                                                                )
                                                                 .await
-                                                            {
+                                                                .map_err(|error| anyhow::anyhow!(error.display()))
+                                                            }
+                                                            .await;
+                                                            if let Err(err) = result {
                                                                 tracing::warn!("avatar profile clear failed: {err}");
                                                             }
                                                         });
