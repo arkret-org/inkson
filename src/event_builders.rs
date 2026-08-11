@@ -648,7 +648,7 @@ pub fn build_direct_conversation_founding_events(
         arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
-        arkret_sdk::TypedTrustDomainId::new(input.source_service_binding.trust_domain.clone())?,
+        input.source_service_binding.trust_domain.clone(),
         arkret_sdk::NotaryProfile::SingleDid,
         arkret_sdk::NotaryValue::single_did(founder_actor.clone()),
         arkret_sdk::current_capability_action_registry_digest()?,
