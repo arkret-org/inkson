@@ -1127,9 +1127,10 @@ async fn create_and_bind_identity(
         let signer = crate::event_signer::active_signer()
             .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
         let signer = crate::event_signer::bind_active_signer_device_id(device)?.unwrap_or(signer);
-        let device_public_key = signer
+        let device_public_key_multibase = signer
             .public_key_multibase()
             .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
+        let device_public_key = format!("did:key:{device_public_key_multibase}");
         let hpke_key = {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
@@ -1447,12 +1448,10 @@ async fn finish_principal_setup(
     let bootstrap_seal: arkret_sdk::Seal = match registration.pcr_bootstrap_seal.clone() {
         Some(seal) => seal,
         None => {
-            let unit: arkret_wire::PcrGenesisUnit = serde_json::from_value(
-                registration
-                    .pcr_genesis_unit
-                    .clone()
-                    .context("identity registration checkpoint omits its PCR genesis unit")?,
-            )?;
+            let unit = registration
+                .pcr_genesis_unit
+                .clone()
+                .context("identity registration checkpoint omits its PCR genesis unit")?;
             let signer = crate::event_signer::active_signer()
                 .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
             if signer.device_id() != Some(device) {
@@ -1501,12 +1500,10 @@ async fn finish_principal_setup(
             crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
         )
         .map_err(anyhow::Error::msg)?;
-    let pcr_genesis_unit: arkret_wire::PcrGenesisUnit = serde_json::from_value(
-        registration
-            .pcr_genesis_unit
-            .clone()
-            .context("recovery-material evidence omits PCR genesis unit")?,
-    )?;
+    let pcr_genesis_unit = registration
+        .pcr_genesis_unit
+        .clone()
+        .context("recovery-material evidence omits PCR genesis unit")?;
     let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
         principal_id: arkret_sdk::DidFullId::new(actor.to_owned())?,
         device_id: arkret_sdk::DeviceId::new(device.to_owned())?,

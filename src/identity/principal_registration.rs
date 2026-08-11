@@ -78,7 +78,7 @@ pub fn prepare_registration_checkpoint(
         did_entry0_canonical_base64url: arkret_sdk::base64url_encode(
             &arkret_sdk::canonical::canonical_json_bytes(&draft.log_entry)?,
         ),
-        did_operation: serde_json::to_value(draft.submit_body)?,
+        did_operation: draft.submit_body,
         pcr_genesis_unit: None,
         initial_session: None,
         pcr_genesis_receipt: None,
@@ -196,7 +196,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         did_entry0_canonical_base64url: arkret_sdk::base64url_encode(
             &arkret_sdk::canonical::canonical_json_bytes(&operation)?,
         ),
-        did_operation: serde_json::to_value(reserved.did_operation)?,
+        did_operation: reserved.did_operation,
         pcr_genesis_unit: None,
         initial_session: None,
         pcr_genesis_receipt: None,
@@ -257,12 +257,7 @@ pub fn checkpoint_belongs_to_handoff(
     else {
         return false;
     };
-    let Ok(did_operation) = serde_json::from_value::<arkret_sdk::DidOperationSubmitRequestBody>(
-        checkpoint.did_operation.clone(),
-    ) else {
-        return false;
-    };
-    arkret_sdk::ReservedIdentityCreation::from_operation(did_operation)
+    arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation.clone())
         .is_ok_and(|expected| expected == reserved_identity)
 }
 
@@ -281,18 +276,14 @@ pub fn prepare_genesis_draft(
 ) -> anyhow::Result<PendingPrincipalRegistration> {
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
     if checkpoint.stage != PendingPrincipalRegistrationStage::CustodyConfirmed {
-        let unit: arkret_wire::PcrGenesisUnit = serde_json::from_value(
-            checkpoint
-                .pcr_genesis_unit
-                .clone()
-                .context("checkpoint omits PCR genesis unit")?,
-        )?;
-        let initial: arkret_sdk::InitialSessionGrantRequest = serde_json::from_value(
-            checkpoint
-                .initial_session
-                .clone()
-                .context("checkpoint omits initial session request")?,
-        )?;
+        let unit = checkpoint
+            .pcr_genesis_unit
+            .clone()
+            .context("checkpoint omits PCR genesis unit")?;
+        let initial = checkpoint
+            .initial_session
+            .clone()
+            .context("checkpoint omits initial session request")?;
         unit.validate_ordered_envelopes()?;
         initial.validate()?;
         let create_payload = unit
@@ -340,8 +331,8 @@ pub fn prepare_genesis_draft(
     };
     initial.validate()?;
     let mut prepared = checkpoint.clone();
-    prepared.pcr_genesis_unit = Some(serde_json::to_value(unit)?);
-    prepared.initial_session = Some(serde_json::to_value(initial)?);
+    prepared.pcr_genesis_unit = Some(unit);
+    prepared.initial_session = Some(initial);
     prepared
         .advance_registration_stage(PendingPrincipalRegistrationStage::GenesisDraftPrepared)
         .map_err(anyhow::Error::msg)?;
@@ -438,21 +429,15 @@ pub async fn complete_account_handoff_binding(
     let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant()?
         .ok_or_else(|| anyhow!("account handoff credential is unavailable; authenticate again"))?;
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
-    let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
-        serde_json::from_value(checkpoint.did_operation.clone())
-            .context("persisted DID operation is invalid")?;
-    let unit: arkret_wire::PcrGenesisUnit = serde_json::from_value(
-        checkpoint
-            .pcr_genesis_unit
-            .clone()
-            .context("checkpoint omits PCR genesis unit")?,
-    )?;
-    let initial: arkret_sdk::InitialSessionGrantRequest = serde_json::from_value(
-        checkpoint
-            .initial_session
-            .clone()
-            .context("checkpoint omits initial session request")?,
-    )?;
+    let did_operation = checkpoint.did_operation.clone();
+    let unit = checkpoint
+        .pcr_genesis_unit
+        .clone()
+        .context("checkpoint omits PCR genesis unit")?;
+    let initial = checkpoint
+        .initial_session
+        .clone()
+        .context("checkpoint omits initial session request")?;
     let lease = arkret_sdk::IdentityCreationLease {
         identity_creation_lease_id: checkpoint.lease_id.clone(),
         fence: checkpoint.lease_fence,
@@ -623,8 +608,7 @@ async fn verify_registration_terminal_evidence(
         anyhow::bail!("principal did.jsonl entry 0 differs from the frozen inception bytes");
     }
 
-    let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
-        serde_json::from_value(checkpoint.did_operation.clone())?;
+    let did_operation = checkpoint.did_operation.clone();
     let frozen_entry =
         serde_json::Value::Object(did_operation.operation.clone().into_iter().collect());
     if entry0 != &frozen_entry {
@@ -685,8 +669,7 @@ mod tests {
             &key,
         )
         .unwrap();
-        let operation: arkret_sdk::DidOperationSubmitRequestBody =
-            serde_json::from_value(first.did_operation.clone()).unwrap();
+        let operation = first.did_operation.clone();
         let mut renewed = handoff("ak:device:019f0000-0000-7000-8000-000000000002", 2);
         renewed.reserved_identity = Some(
             serde_json::to_value(
@@ -713,8 +696,7 @@ mod tests {
             &key,
         )
         .unwrap();
-        let operation: arkret_sdk::DidOperationSubmitRequestBody =
-            serde_json::from_value(first.did_operation).unwrap();
+        let operation = first.did_operation;
         let mut renewed = handoff("ak:device:019f0000-0000-7000-8000-000000000002", 2);
         renewed.reserved_identity = Some(
             serde_json::to_value(

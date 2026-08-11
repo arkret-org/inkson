@@ -29,12 +29,10 @@ pub fn realm_from_create(
 pub fn realm_from_registration(
     registration: &crate::state::PendingPrincipalRegistration,
 ) -> anyhow::Result<arkret_sdk::RealmId> {
-    let unit: arkret_wire::PcrGenesisUnit = serde_json::from_value(
-        registration
-            .pcr_genesis_unit
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("registration checkpoint omits PCR genesis unit"))?,
-    )?;
+    let unit = registration
+        .pcr_genesis_unit
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("registration checkpoint omits PCR genesis unit"))?;
     realm_from_create(
         unit.create(),
         &arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(

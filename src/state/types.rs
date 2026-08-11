@@ -681,18 +681,18 @@ pub struct PendingPrincipalRegistration {
     pub recovery_proof_public_key_multibase: String,
     pub backup_hpke_public_key_multibase: String,
     pub recovery_key_fingerprint: String,
-    /// Typed `DidOperationSubmitRequestBody` serialized as public wire JSON.
-    pub did_operation: Value,
+    /// Frozen method-native DID inception operation.
+    pub did_operation: arkret_sdk::DidOperationSubmitRequestBody,
     /// Canonical bytes of the method-native did:webvh inception entry. The
     /// registration terminal re-reads did.jsonl and compares entry 0 against
     /// this frozen value before adopting the identity.
     pub did_entry0_canonical_base64url: String,
     /// Complete client-authored, root/device-signed PCR genesis unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pcr_genesis_unit: Option<Value>,
+    pub pcr_genesis_unit: Option<arkret_wire::PcrGenesisUnit>,
     /// First Standard grant request, bound to the durable DPoP key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub initial_session: Option<Value>,
+    pub initial_session: Option<arkret_sdk::InitialSessionGrantRequest>,
     /// Verified terminal PCR genesis receipt returned with the Standard grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcr_genesis_receipt: Option<Value>,

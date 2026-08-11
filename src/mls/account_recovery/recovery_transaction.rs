@@ -7,7 +7,7 @@
 
 use arkret_models_collaboration::events_payloads::device_identity::{
     DeviceAuthorizationBindingKind, DeviceOrPrincipalRef, DeviceReanchorPayload,
-    UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
+    UnsignedDeviceAuthorizePayload, typed_device_authorize_payload_digest,
 };
 use arkret_wire::{
     CanonicalPublicMaterial, Event, EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody,
@@ -155,9 +155,10 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let created_at = crate::clock::now_utc_millis();
     let device_signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
-    let device_public_key = device_signer
+    let device_public_key_multibase = device_signer
         .public_key_multibase()
         .ok_or_else(|| anyhow::anyhow!("replacement device signer has no Ed25519 public key"))?;
+    let device_public_key = format!("did:key:{device_public_key_multibase}");
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
         secure_store.as_ref(),
@@ -188,13 +189,12 @@ pub(crate) async fn prepare_root_anchored_recovery(
     ))
     .map_err(anyhow::Error::msg)?;
     let authorize_payload = authorize_payload.attach_signature(authorize_signature)?;
-    let authorize_payload_wire = serde_json::to_value(&authorize_payload)?;
     let digest_suite = arkret_sdk::canonical::DigestSuite::Sha256;
     let reanchor_payload = exact_device_reanchor_payload(
         &verified_session,
         current_root_generation,
         did_webvh_version_sequence(&rotation.version_id)?,
-        device_authorize_payload_digest(&authorize_payload_wire, digest_suite)?,
+        typed_device_authorize_payload_digest(&authorize_payload, digest_suite)?,
     )?;
 
     let reanchor_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
