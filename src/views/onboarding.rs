@@ -1369,9 +1369,7 @@ fn checkpoint_for_handoff(
             serde_json::from_value(reserved_identity.clone()).map_err(|error| {
                 anyhow::anyhow!("the server's identity reservation is invalid: {error}")
             })?;
-        let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
-            serde_json::from_value(checkpoint.did_operation.clone())
-                .map_err(|error| anyhow::anyhow!("the saved DID operation is invalid: {error}"))?;
+        let did_operation = checkpoint.did_operation.clone();
         let expected_reservation =
             arkret_sdk::ReservedIdentityCreation::from_operation(did_operation)
                 .map_err(|error| anyhow::anyhow!("the saved DID operation is invalid: {error}"))?;
