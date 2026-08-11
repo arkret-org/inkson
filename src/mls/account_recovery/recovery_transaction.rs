@@ -10,8 +10,8 @@ use arkret_models_collaboration::events_payloads::device_identity::{
     UnsignedDeviceAuthorizePayload, typed_device_authorize_payload_digest,
 };
 use arkret_wire::{
-    CanonicalPublicMaterial, Event, EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody,
-    Hash, NonEmptyString, PreparedDidPublication, PreparedEventUnit, ReceiptId, RecoveryBinding,
+    CanonicalPublicMaterial, EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash,
+    NonEmptyString, PreparedDidPublication, PreparedEventUnit, ReceiptId, RecoveryBinding,
     RecoveryIdentityModel, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
     RootAnchoredRecoveryBinding, RootAnchoredRecoveryPlan, SecurityTransaction,
     SecurityTransactionBinding, SecurityTransactionCreateRequest, SecurityTransactionState,
