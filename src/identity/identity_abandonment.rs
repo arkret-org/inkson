@@ -40,7 +40,7 @@ pub async fn issue_challenge(
     {
         anyhow::bail!("identity abandonment challenge is already pending");
     }
-    let grant = crate::identity::account_auth::load_account_handoff_grant()?
+    let grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
     let digest = grant_digest(&grant)?;
     let request = arkret_sdk::IdentityAbandonmentChallengeRequestBody {
@@ -77,7 +77,7 @@ pub async fn confirm(
     pending: &PendingIdentityAbandonment,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
 ) -> anyhow::Result<arkret_sdk::IdentityAbandonmentOutcome> {
-    let grant = crate::identity::account_auth::load_account_handoff_grant()?
+    let grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow::anyhow!("fresh account handoff credential is unavailable"))?;
     if grant_digest(&grant)? == pending.challenge_handoff_grant_digest {
         anyhow::bail!("identity abandonment confirmation requires a fresh account handoff");

@@ -3775,7 +3775,7 @@ fn AppBootstrap() -> Element {
                                                 // "remove this device") is reserved for a separate
                                                 // explicit action; logout only terminates the
                                                 // browser session.
-                                                let _ = crate::identity::account_auth::clear_persisted_oidc_scaffold();
+                                                let _ = crate::identity::account_auth::clear_all_persisted_oidc_scaffolds();
                                                 // Wipe the in-memory UI signals too so the
                                                 // sidebar can't paint a frame of stale
                                                 // Realm tree updates between this click and the

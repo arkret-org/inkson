@@ -896,6 +896,49 @@ pub fn bind_active_signer_device_id(
     Ok(Some(rebound))
 }
 
+/// Rebind the active device key to the authenticated principal identity.
+///
+/// During first registration the key is created under its local `did:key`
+/// identity before the principal DID exists. Once the principal is known,
+/// Event and Seal proofs must name `<principal>#<device_id>` while continuing
+/// to use that same key material.
+pub fn bind_active_signer_principal_device_id(
+    principal_id: &DidFullId,
+    device_id: &str,
+) -> Result<Option<Arc<InksonEventSigner>>, anyhow::Error> {
+    let Some(active) = active_signer() else {
+        return Ok(None);
+    };
+    let Some(device_id) = normalize_signer_device_id(Some(device_id)) else {
+        return Err(anyhow::anyhow!(
+            "device_id is required for principal-bound event proofs"
+        ));
+    };
+    arkret_sdk::DeviceId::new(device_id.clone())
+        .map_err(|err| anyhow::anyhow!("invalid device_id for event signer: {err}"))?;
+    let signer_did = principal_id.to_string();
+    let verification_method = format!("{principal_id}#{device_id}");
+    DidUrl::new(verification_method.clone())
+        .map_err(|err| anyhow::anyhow!("invalid principal verification method: {err}"))?;
+    if active.signer_did == signer_did
+        && active.verification_method == verification_method
+        && active.device_id.as_deref() == Some(device_id.as_str())
+    {
+        return Ok(Some(active));
+    }
+    let rebound = Arc::new(InksonEventSigner {
+        inner: active.inner.clone(),
+        signer_did,
+        verification_method,
+        device_id: Some(device_id),
+        mode_tag: active.mode_tag,
+        raw_signing_key: active.raw_signing_key.clone(),
+        last_signed_at: Mutex::new(active.last_signed_at_snapshot()),
+    });
+    let _ = replace_active_signer(Some(rebound.clone()));
+    Ok(Some(rebound))
+}
+
 fn normalize_signer_device_id(device_id: Option<impl AsRef<str>>) -> Option<String> {
     device_id
         .as_ref()
@@ -1229,6 +1272,38 @@ mod tests {
         assert_eq!(
             adapter.verification_method_id().as_str(),
             format!("{controller}#{TEST_DEVICE_ID}")
+        );
+    }
+
+    #[test]
+    fn active_local_device_signer_can_be_rebound_to_authenticated_principal() {
+        let _g = reset();
+        let local = Arc::new(build_ed25519_device_signer(
+            [20u8; 32],
+            "did:key:zlocal-device-key",
+            TEST_DEVICE_ID,
+        ));
+        let public_key = local.public_key_multibase();
+        install_active_signer(local);
+        let principal = DidFullId::new("did:web:principal.example").unwrap();
+
+        let rebound = bind_active_signer_principal_device_id(&principal, TEST_DEVICE_ID)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(rebound.signer_did(), principal.as_str());
+        assert_eq!(
+            rebound.verification_method(),
+            format!("{principal}#{TEST_DEVICE_ID}")
+        );
+        assert_eq!(rebound.public_key_multibase(), public_key);
+        let mut event = message_event(principal.as_str(), "principal-bound");
+        rebound
+            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .unwrap();
+        assert_eq!(
+            event.proofs[0].verification_method.as_str(),
+            rebound.verification_method()
         );
     }
 

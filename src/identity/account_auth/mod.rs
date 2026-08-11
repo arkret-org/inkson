@@ -83,5 +83,5 @@ pub struct PersistedOidcScaffold {
     pub principal_trust_domain: String,
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) const OIDC_SCAFFOLD_STORAGE_KEY: &str = "inkson.oidc_scaffold.v1";
+pub(crate) const OIDC_SCAFFOLD_STORAGE_KEY_PREFIX: &str = "inkson.oidc_scaffold.v2.";

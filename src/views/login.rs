@@ -620,6 +620,10 @@ pub(crate) fn persist_completed_login_dpop_key(
         Some(device_id),
     )
     .map_err(|error| format!("activate account device signer: {error}"))?;
+    let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())
+        .map_err(|error| format!("bind account device signer principal: {error}"))?;
+    crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device_id)
+        .map_err(|error| format!("bind account device signer principal: {error}"))?;
     Ok(())
 }
 
@@ -643,7 +647,10 @@ fn compute_session_status(
 }
 
 fn discard_failed_oidc_callback(error: String) -> String {
-    if let Err(clear_error) = clear_persisted_oidc_scaffold() {
+    if let Ok(callback_url) = capture_current_browser_callback_url()
+        && let Ok(Some(state)) = extract_state_from_callback(&callback_url)
+        && let Err(clear_error) = clear_persisted_oidc_scaffold(&state)
+    {
         tracing::warn!(%clear_error, "clear failed OIDC scaffold failed");
     }
     // Principal-binding mismatch gets specific guidance: the raw wire reason
@@ -765,7 +772,10 @@ async fn finish_oidc_callback(
 ) -> Result<OidcCallbackOutcome, String> {
     let callback_url = capture_current_browser_callback_url()
         .map_err(|error| format!("Could not read callback URL: {error}"))?;
-    let scaffold = restore_oidc_scaffold()
+    let returned_state = extract_state_from_callback(&callback_url)
+        .map_err(|error| format!("Could not read callback state: {error}"))?
+        .ok_or_else(|| "Callback did not include state.".to_owned())?;
+    let scaffold = restore_oidc_scaffold(&returned_state)
         .map_err(|error| format!("Could not restore sign-in state: {error}"))?
         .ok_or_else(|| "Sign-in state was not found. Start again from Login.".to_owned())?;
 
@@ -779,9 +789,6 @@ async fn finish_oidc_callback(
         return Err(format!("Server sign-in failed: {error}. {description}"));
     }
 
-    let returned_state = extract_state_from_callback(&callback_url)
-        .map_err(|error| format!("Could not read callback state: {error}"))?
-        .ok_or_else(|| "Callback did not include state.".to_owned())?;
     if returned_state != scaffold.expected_state {
         return Err("Callback state did not match the saved sign-in state.".to_owned());
     }
@@ -861,11 +868,6 @@ async fn finish_oidc_callback(
     let disposition = garth::account_handoff_disposition(&handoff)
         .map_err(|error| format!("Account handoff outcome failed validation: {error}"))?;
     if let AccountHandoffDisposition::IdentityCreationActive(lease) = &disposition {
-        crate::identity::account_auth::persist_account_handoff_grant(
-            &handoff.account_handoff_grant,
-        )
-        .await
-        .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
         let pending_handoff = crate::state::PendingAccountHandoff {
             principal_server_url,
             gate_account_base,
@@ -889,12 +891,18 @@ async fn finish_oidc_callback(
             trust_domain: scaffold.principal_trust_domain.clone(),
             bound_principal_id: None,
         };
+        crate::identity::account_auth::persist_account_handoff_grant(
+            &pending_handoff,
+            &handoff.account_handoff_grant,
+        )
+        .await
+        .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
         {
             let mut store = state_store.write();
             persist_pending_account_handoff(&mut store, pending_handoff)
                 .map_err(|error| format!("Persist public handoff checkpoint failed: {error}"))?;
         }
-        let _ = clear_persisted_oidc_scaffold();
+        let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
         return Ok(OidcCallbackOutcome::Onboarding {
             preferred_locale: handoff.preferred_locale,
         });
@@ -904,11 +912,6 @@ async fn finish_oidc_callback(
         expires_at: busy_expires_at,
     } = disposition
     {
-        crate::identity::account_auth::persist_account_handoff_grant(
-            &handoff.account_handoff_grant,
-        )
-        .await
-        .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
         let pending_handoff = crate::state::PendingAccountHandoff {
             principal_server_url,
             gate_account_base,
@@ -927,12 +930,18 @@ async fn finish_oidc_callback(
             trust_domain: scaffold.principal_trust_domain.clone(),
             bound_principal_id: None,
         };
+        crate::identity::account_auth::persist_account_handoff_grant(
+            &pending_handoff,
+            &handoff.account_handoff_grant,
+        )
+        .await
+        .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
         {
             let mut store = state_store.write();
             persist_pending_account_handoff(&mut store, pending_handoff)
                 .map_err(|error| format!("Persist busy handoff checkpoint failed: {error}"))?;
         }
-        let _ = clear_persisted_oidc_scaffold();
+        let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
         return Ok(OidcCallbackOutcome::Onboarding {
             preferred_locale: handoff.preferred_locale,
         });
@@ -940,9 +949,6 @@ async fn finish_oidc_callback(
     let AccountHandoffDisposition::Bound { principal_id, .. } = disposition else {
         unreachable!("active and busy handoff outcomes returned above")
     };
-    crate::identity::account_auth::persist_account_handoff_grant(&handoff.account_handoff_grant)
-        .await
-        .map_err(|error| format!("Persist account recovery handoff credential failed: {error}"))?;
     let pending_handoff = crate::state::PendingAccountHandoff {
         principal_server_url,
         gate_account_base,
@@ -961,12 +967,18 @@ async fn finish_oidc_callback(
         trust_domain: scaffold.principal_trust_domain.clone(),
         bound_principal_id: Some(principal_id.to_string()),
     };
+    crate::identity::account_auth::persist_account_handoff_grant(
+        &pending_handoff,
+        &handoff.account_handoff_grant,
+    )
+    .await
+    .map_err(|error| format!("Persist account recovery handoff credential failed: {error}"))?;
     {
         let mut store = state_store.write();
         persist_pending_account_handoff(&mut store, pending_handoff)
             .map_err(|error| format!("Persist account recovery checkpoint failed: {error}"))?;
     }
-    let _ = clear_persisted_oidc_scaffold();
+    let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
     Ok(OidcCallbackOutcome::Onboarding {
         preferred_locale: handoff.preferred_locale,
     })

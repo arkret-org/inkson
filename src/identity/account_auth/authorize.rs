@@ -8,9 +8,10 @@ use super::util::{
     random_url_safe_token,
 };
 use super::{
-    ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OidcDiscoveryDocument, OidcScaffoldBundle,
-    PersistedOidcScaffold,
+    ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OIDC_SCAFFOLD_STORAGE_KEY_PREFIX,
+    OidcDiscoveryDocument, OidcScaffoldBundle, PersistedOidcScaffold,
 };
+use sha2::{Digest as _, Sha256};
 
 /// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
 /// `authorization_endpoint` URL) directly from standard OIDC discovery and the
@@ -170,6 +171,16 @@ pub fn build_persisted_oidc_scaffold(
     }
 }
 
+fn oidc_scaffold_storage_key(state: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"inkson.oidc-scaffold-state-v2\0");
+    digest.update(state.as_bytes());
+    format!(
+        "{OIDC_SCAFFOLD_STORAGE_KEY_PREFIX}{}",
+        arkret_sdk::base64url_encode(digest.finalize())
+    )
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn persist_oidc_scaffold(payload: &PersistedOidcScaffold) -> anyhow::Result<()> {
     let window =
@@ -179,7 +190,10 @@ pub fn persist_oidc_scaffold(payload: &PersistedOidcScaffold) -> anyhow::Result<
         .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
         .ok_or_else(|| anyhow::anyhow!("localStorage is not available"))?;
     storage
-        .set_item(OIDC_SCAFFOLD_STORAGE_KEY, &serde_json::to_string(payload)?)
+        .set_item(
+            &oidc_scaffold_storage_key(&payload.expected_state),
+            &serde_json::to_string(payload)?,
+        )
         .map_err(|error| anyhow::anyhow!("failed to persist OIDC scaffold: {error:?}"))?;
     Ok(())
 }
@@ -190,7 +204,7 @@ pub fn persist_oidc_scaffold(_payload: &PersistedOidcScaffold) -> anyhow::Result
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn restore_oidc_scaffold() -> anyhow::Result<Option<PersistedOidcScaffold>> {
+pub fn restore_oidc_scaffold(state: &str) -> anyhow::Result<Option<PersistedOidcScaffold>> {
     let window =
         web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
     let Some(storage) = window
@@ -200,7 +214,7 @@ pub fn restore_oidc_scaffold() -> anyhow::Result<Option<PersistedOidcScaffold>> 
         return Ok(None);
     };
     let Some(payload) = storage
-        .get_item(OIDC_SCAFFOLD_STORAGE_KEY)
+        .get_item(&oidc_scaffold_storage_key(state))
         .map_err(|error| anyhow::anyhow!("failed to load OIDC scaffold: {error:?}"))?
     else {
         return Ok(None);
@@ -209,12 +223,12 @@ pub fn restore_oidc_scaffold() -> anyhow::Result<Option<PersistedOidcScaffold>> 
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn restore_oidc_scaffold() -> anyhow::Result<Option<PersistedOidcScaffold>> {
+pub fn restore_oidc_scaffold(_state: &str) -> anyhow::Result<Option<PersistedOidcScaffold>> {
     Ok(None)
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
+pub fn clear_persisted_oidc_scaffold(state: &str) -> anyhow::Result<()> {
     let window =
         web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
     let Some(storage) = window
@@ -224,12 +238,60 @@ pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
         return Ok(());
     };
     storage
-        .remove_item(OIDC_SCAFFOLD_STORAGE_KEY)
+        .remove_item(&oidc_scaffold_storage_key(state))
         .map_err(|error| anyhow::anyhow!("failed to clear OIDC scaffold: {error:?}"))?;
     Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn clear_persisted_oidc_scaffold() -> anyhow::Result<()> {
+pub fn clear_persisted_oidc_scaffold(_state: &str) -> anyhow::Result<()> {
     Ok(())
+}
+
+/// Remove every pending redirect scaffold when ending the browser session.
+/// Individual callbacks always use [`clear_persisted_oidc_scaffold`] so one
+/// flow cannot delete another flow's PKCE/state record.
+#[cfg(target_arch = "wasm32")]
+pub fn clear_all_persisted_oidc_scaffolds() -> anyhow::Result<()> {
+    let window =
+        web_sys::window().ok_or_else(|| anyhow::anyhow!("browser window is not available"))?;
+    let Some(storage) = window
+        .local_storage()
+        .map_err(|error| anyhow::anyhow!("failed to access localStorage: {error:?}"))?
+    else {
+        return Ok(());
+    };
+    let mut keys = Vec::new();
+    for index in 0..storage.length().unwrap_or_default() {
+        if let Ok(Some(key)) = storage.key(index)
+            && (key == OIDC_SCAFFOLD_STORAGE_KEY
+                || key.starts_with(OIDC_SCAFFOLD_STORAGE_KEY_PREFIX))
+        {
+            keys.push(key);
+        }
+    }
+    for key in keys {
+        storage
+            .remove_item(&key)
+            .map_err(|error| anyhow::anyhow!("failed to clear OIDC scaffold: {error:?}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn clear_all_persisted_oidc_scaffolds() -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod storage_scope_tests {
+    use super::*;
+
+    #[test]
+    fn oidc_scaffold_keys_are_isolated_by_state() {
+        assert_ne!(
+            oidc_scaffold_storage_key("state-a"),
+            oidc_scaffold_storage_key("state-b")
+        );
+    }
 }

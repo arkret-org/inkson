@@ -17,6 +17,13 @@ fn algorithms() -> anyhow::Result<Vec<arkret_sdk::NonEmptyString>> {
         .collect()
 }
 
+fn did_key_verification_method(public_key_multibase: &str) -> anyhow::Result<arkret_sdk::DidUrl> {
+    arkret_sdk::DidUrl::new(format!(
+        "did:key:{public_key_multibase}#{public_key_multibase}"
+    ))
+    .map_err(anyhow::Error::msg)
+}
+
 pub fn build_founding_authorize_payload(
     principal_id: arkret_sdk::DidFullId,
     device_id: arkret_sdk::DeviceId,
@@ -116,7 +123,7 @@ pub fn build_genesis_unit(
         &crate::operation::cell_write_projector,
     )?;
     let root_did = arkret_sdk::DidFullId::new(format!("did:key:{root_public_key_multibase}"))?;
-    let root_method = arkret_sdk::DidUrl::new(root_did.to_string()).map_err(anyhow::Error::msg)?;
+    let root_method = did_key_verification_method(root_public_key_multibase)?;
     let root_signer = arkret_sdk::Ed25519PayloadSigner::from_did_key_seed(
         *root_seed,
         root_did,
@@ -163,4 +170,19 @@ pub fn build_genesis_unit(
         &crate::operation::cell_write_projector,
     )
     .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn did_key_verification_method_repeats_multibase_key_as_fragment() {
+        let key = "z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2";
+
+        assert_eq!(
+            did_key_verification_method(key).unwrap().as_str(),
+            format!("did:key:{key}#{key}")
+        );
+    }
 }

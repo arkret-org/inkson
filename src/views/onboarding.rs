@@ -328,7 +328,8 @@ async fn recover_bound_principal_device(
     if replacement_device_id != handoff.device_id {
         anyhow::bail!("replacement device does not match the authenticated account handoff");
     }
-    crate::event_signer::bind_active_signer_device_id(replacement_device_id)?;
+    let principal = arkret_sdk::DidFullId::new(principal_id.to_owned())?;
+    crate::event_signer::bind_active_signer_principal_device_id(&principal, replacement_device_id)?;
     let api = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?;
     if let Some(mut completed) =
         crate::mls::account_recovery::resume_pending_root_anchored_recovery(
@@ -395,7 +396,7 @@ async fn issue_recovery_completion_grant(
     if handoff.holder_jkt != holder.jkt() {
         anyhow::bail!("account handoff holder key changed during recovery");
     }
-    let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant()?
+    let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
     let authority =
         crate::identity::account_auth::AuthorityResolver::discover(&handoff.principal_server_url)
@@ -437,7 +438,8 @@ async fn issue_recovery_completion_grant(
                 device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
                 session_public_key: holder.canonical_session_public_jwk()?,
                 audience: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
-                requested_scope: vec!["ak.self.account.read.viewer".to_owned()],
+                requested_scope:
+                    crate::identity::principal_registration::standard_initial_session_scope(),
             };
             initial_session.validate()?;
             let request = workflow
@@ -489,7 +491,7 @@ async fn issue_recovery_completion_grant(
         drop(store);
         barrier.wait().await?;
     }
-    crate::identity::account_auth::clear_account_handoff_grant()?;
+    crate::identity::account_auth::clear_account_handoff_grant(handoff)?;
     Ok(true)
 }
 
@@ -656,7 +658,7 @@ fn PendingAccountIdentityCreation(
                                             store.begin_durable_flush()?
                                         };
                                         barrier.wait().await?;
-                                        crate::identity::account_auth::clear_account_handoff_grant()
+                                        crate::identity::account_auth::clear_account_handoff_grant(&handoff)
                                     }.await;
                                     match result {
                                         Ok(()) => status.set("Challenge renewed. Authenticate once more with a fresh account handoff to confirm.".to_owned()),
@@ -932,7 +934,7 @@ fn PendingAccountIdentityCreation(
                                             store.begin_durable_flush()?
                                         };
                                         barrier.wait().await?;
-                                        crate::identity::account_auth::clear_account_handoff_grant()
+                                        crate::identity::account_auth::clear_account_handoff_grant(&handoff)
                                     }.await;
                                     match result {
                                         Ok(()) => status.set("Challenge saved. Authenticate again with a fresh account handoff to confirm.".to_owned()),
@@ -1121,48 +1123,70 @@ async fn create_and_bind_identity(
         barrier.wait().await?;
     }
 
-    let checkpoint = if checkpoint.stage
-        == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
+    let checkpoint = if let Some(repaired) =
+        crate::identity::principal_registration::normalize_founding_session_scope(&checkpoint)?
     {
-        let signer = crate::event_signer::active_signer()
-            .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
-        let signer = crate::event_signer::bind_active_signer_device_id(device)?.unwrap_or(signer);
-        let device_public_key_multibase = signer
-            .public_key_multibase()
-            .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
-        let device_public_key = format!("did:key:{device_public_key_multibase}");
-        let hpke_key = {
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
-                secure_store.as_ref(),
-                &checkpoint.did,
-                device,
-            )?;
-            crate::identity::did_key::encode_x25519_multibase(&public_key)
-        };
-        let dpop = {
-            let mut store = state_store.write();
-            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-        };
-        let prepared = crate::identity::principal_registration::prepare_genesis_draft(
+        // The cached account-register request signs the old InitialSessionGrant.
+        // Drop it before durably publishing the repaired checkpoint so the next
+        // attempt obtains a fresh challenge and signs one coherent request.
+        crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
             &checkpoint,
-            recovery_key,
-            device_public_key,
-            hpke_key,
-            signer.as_ref(),
-            &dpop,
-            arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
         )?;
         let barrier = {
             let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(prepared.clone()))?;
+            store.set_pending_principal_registration(Some(repaired.clone()))?;
             store.begin_durable_flush()?
         };
         barrier.wait().await?;
-        prepared
+        repaired
     } else {
         checkpoint
     };
+
+    let checkpoint =
+        if checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
+            let signer = crate::event_signer::active_signer()
+                .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
+            let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
+            let signer =
+                crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device)?
+                    .unwrap_or(signer);
+            let device_public_key_multibase = signer
+                .public_key_multibase()
+                .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
+            let device_public_key = format!("did:key:{device_public_key_multibase}");
+            let hpke_key = {
+                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+                    secure_store.as_ref(),
+                    &checkpoint.did,
+                    device,
+                )?;
+                crate::identity::did_key::encode_x25519_multibase(&public_key)
+            };
+            let dpop = {
+                let mut store = state_store.write();
+                crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
+            };
+            let prepared = crate::identity::principal_registration::prepare_genesis_draft(
+                &checkpoint,
+                recovery_key,
+                device_public_key,
+                hpke_key,
+                signer.as_ref(),
+                &dpop,
+                arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+            )?;
+            let barrier = {
+                let mut store = state_store.write();
+                store.set_pending_principal_registration(Some(prepared.clone()))?;
+                store.begin_durable_flush()?
+            };
+            barrier.wait().await?;
+            prepared
+        } else {
+            checkpoint
+        };
 
     let (registration, actor, grant_jwt) = if matches!(
         checkpoint.stage,
@@ -1198,7 +1222,9 @@ async fn create_and_bind_identity(
                         drop(store);
                         barrier.wait().await?;
                     }
-                    crate::identity::account_auth::clear_prepared_identity_creation_request()?;
+                    crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
+                        &checkpoint,
+                    )?;
                     let recovered = recover_bound_principal_device(
                         &recovery_handoff,
                         &checkpoint.did,
@@ -1312,6 +1338,8 @@ async fn create_and_bind_identity(
 async fn clear_pending_principal_setup(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<()> {
+    let pending_registration = state_store.read().pending_principal_registration();
+    let pending_handoff = state_store.read().pending_account_handoff();
     let barrier = {
         let mut store = state_store.write();
         store.set_pending_principal_registration(None)?;
@@ -1319,8 +1347,14 @@ async fn clear_pending_principal_setup(
         store.begin_durable_flush()?
     };
     barrier.wait().await?;
-    crate::identity::account_auth::clear_account_handoff_grant()?;
-    crate::identity::account_auth::clear_prepared_identity_creation_request()?;
+    if let Some(handoff) = pending_handoff.as_ref() {
+        crate::identity::account_auth::clear_account_handoff_grant(handoff)?;
+    }
+    if let Some(checkpoint) = pending_registration.as_ref() {
+        crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
+            checkpoint,
+        )?;
+    }
     Ok(())
 }
 
@@ -1509,6 +1543,7 @@ async fn finish_principal_setup(
         pcr_genesis_unit,
         bootstrap_seal,
     };
+    let completed_registration = registration.clone();
     {
         let barrier = {
             let mut store = state_store.write();
@@ -1529,7 +1564,9 @@ async fn finish_principal_setup(
         .map_err(|error| anyhow::anyhow!("verify public recovery metadata: {error}"))?;
     let recovery_metadata_barrier = state_store.read().begin_durable_flush()?;
     recovery_metadata_barrier.wait().await?;
-    crate::identity::account_auth::clear_prepared_identity_creation_request()?;
+    crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
+        &completed_registration,
+    )?;
     Ok(())
 }
 

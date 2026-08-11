@@ -463,6 +463,25 @@ pub(super) fn inject_test_session_grant(
         );
         return None;
     }
+    let principal_id = match arkret_sdk::DidFullId::new(account_did.to_owned()) {
+        Ok(principal_id) => principal_id,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "test session injection: principal signer binding failed"
+            );
+            return None;
+        }
+    };
+    if let Err(error) =
+        crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device_id)
+    {
+        tracing::warn!(
+            ?error,
+            "test session injection: principal signer binding failed"
+        );
+        return None;
+    }
 
     let now = chrono::Utc::now();
     let grant = PersistedSessionGrant {

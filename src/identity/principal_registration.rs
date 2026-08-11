@@ -11,6 +11,48 @@ use crate::state::{
     PendingAccountHandoff, PendingPrincipalRegistration, PendingPrincipalRegistrationStage,
 };
 
+const INITIAL_ACCOUNT_READ_SCOPE: &str = "ak.self.account.read.describe";
+const INITIAL_EVENT_SCAN_SCOPE: &str = "ak.self.events.read.scan";
+
+pub(crate) fn standard_initial_session_scope() -> Vec<String> {
+    vec![
+        INITIAL_ACCOUNT_READ_SCOPE.to_owned(),
+        INITIAL_EVENT_SCAN_SCOPE.to_owned(),
+    ]
+}
+
+/// Repair drafts authored by older clients that requested an ordinary API
+/// permission for the founding session. The Account Authority deliberately
+/// caps identity-creation grants to the two operations fixed by the protocol
+/// fixture; the founding device is carried by `device_id`, not encoded as a
+/// scope token.
+/// Registration rejects an over-broad draft before publishing any identity
+/// state, so replacing this request and its cached challenge is safe to retry.
+pub fn normalize_founding_session_scope(
+    checkpoint: &PendingPrincipalRegistration,
+) -> anyhow::Result<Option<PendingPrincipalRegistration>> {
+    if !matches!(
+        checkpoint.stage,
+        PendingPrincipalRegistrationStage::GenesisDraftPrepared
+            | PendingPrincipalRegistrationStage::RegisterRequestPrepared
+    ) {
+        return Ok(None);
+    }
+    let mut initial = checkpoint
+        .initial_session
+        .clone()
+        .context("checkpoint omits initial session request")?;
+    let expected = standard_initial_session_scope();
+    if initial.requested_scope == expected {
+        return Ok(None);
+    }
+    initial.requested_scope = expected;
+    initial.validate()?;
+    let mut repaired = checkpoint.clone();
+    repaired.initial_session = Some(initial);
+    Ok(Some(repaired))
+}
+
 pub fn prepare_registration_checkpoint(
     handoff: &PendingAccountHandoff,
     device_id: &str,
@@ -327,7 +369,7 @@ pub fn prepare_genesis_draft(
         device_id: arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
         session_public_key: dpop.canonical_session_public_jwk()?,
         audience,
-        requested_scope: vec!["ak.self.account.read.viewer".to_owned()],
+        requested_scope: standard_initial_session_scope(),
     };
     initial.validate()?;
     let mut prepared = checkpoint.clone();
@@ -426,7 +468,7 @@ pub async fn complete_account_handoff_binding(
     if handoff.holder_jkt != dpop.jkt() {
         anyhow::bail!("account handoff holder key does not match the current DPoP key");
     }
-    let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant()?
+    let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow!("account handoff credential is unavailable; authenticate again"))?;
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
     let did_operation = checkpoint.did_operation.clone();
@@ -469,7 +511,12 @@ pub async fn complete_account_handoff_binding(
         .build()?;
 
     let register_request = if let Some(prepared) =
-        crate::identity::account_auth::load_prepared_identity_creation_request()?
+        crate::identity::account_auth::load_prepared_identity_creation_request(
+            expected_account_subject,
+            &checkpoint.did,
+            &checkpoint.lease_id,
+        )
+        .await?
     {
         prepared.validate()?;
         let registration = prepared
@@ -636,6 +683,17 @@ async fn verify_registration_terminal_evidence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn founding_session_scope_stays_within_account_authority_ceiling() {
+        assert_eq!(
+            standard_initial_session_scope(),
+            vec![
+                "ak.self.account.read.describe".to_owned(),
+                "ak.self.events.read.scan".to_owned(),
+            ]
+        );
+    }
 
     fn handoff(device_id: &str, fence: u64) -> PendingAccountHandoff {
         PendingAccountHandoff {

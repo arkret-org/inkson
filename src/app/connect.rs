@@ -392,8 +392,9 @@ async fn current_event_signer_matches_directory(
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
     };
-    let signer = crate::event_signer::bind_active_signer_device_id(device)
-        .map_err(|error| anyhow::anyhow!("bind event signer to device: {error}"))?
+    let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())?;
+    let signer = crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device)
+        .map_err(|error| anyhow::anyhow!("bind event signer to principal device: {error}"))?
         .unwrap_or(signer);
     let Some(public_key) = signer.public_key_multibase() else {
         return Ok(false);
