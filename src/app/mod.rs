@@ -1057,37 +1057,19 @@ fn AppBootstrap() -> Element {
                                 account_did,
                                 device_id,
                                 token,
-                                connection_status,
                                 config_store,
-                                account_primary_handle,
-                                personal_handles,
-                                personal_handles_status,
                                 locale,
                                 auto_capture_callback: true,
                                 on_login: move |_| {
                                     callback_bootstrap_pending.set(true);
                                     callback_session_boot_state.set(SessionBootState::Checking);
                                     if callback_redirect_to_dashboard {
-                                        // Only this account's own unfinished
-                                        // setup routes to onboarding. A draft
-                                        // left behind by another identity is
-                                        // not this user's work, and sending
-                                        // them to onboarding for it strands a
-                                        // perfectly good session on a surface
-                                        // they cannot complete.
-                                        let signed_in_did = account_did.peek().trim().to_owned();
-                                        let destination = if state_store
-                                            .read()
-                                            .pending_principal_registration()
-                                            .is_some_and(|checkpoint| {
-                                                signed_in_did.is_empty()
-                                                    || checkpoint.did == signed_in_did
-                                            }) {
-                                            Route::Onboarding
-                                        } else {
-                                            Route::Dashboard
-                                        };
-                                        let _ = callback_navigator.push(destination);
+                                        // Session-only login never promotes a
+                                        // local checkpoint into onboarding.
+                                        // OIDC account handoffs use the
+                                        // `on_onboarding` branch below and
+                                        // refresh the server snapshot first.
+                                        let _ = callback_navigator.push(Route::Dashboard);
                                     }
                                 },
                                 on_onboarding: move |_| {
@@ -1124,11 +1106,7 @@ fn AppBootstrap() -> Element {
                                 account_did,
                                 device_id,
                                 token,
-                                connection_status,
                                 config_store,
-                                account_primary_handle,
-                                personal_handles,
-                                personal_handles_status,
                                 locale,
                                 auto_capture_callback: false,
                                 on_login: move |_| {
@@ -3873,7 +3851,6 @@ fn AppBootstrap() -> Element {
                         account_did,
                         device_id,
                         token,
-                        connection_status,
                         config_store,
                         account_primary_handle,
                         personal_handles,

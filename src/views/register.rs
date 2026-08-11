@@ -61,11 +61,10 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                     onclick: move |_| {
                         let server = principal_server();
                         let ui_locale = i18n.read().0.code().to_owned();
-                        let device = if device_id().trim().is_empty() {
-                            crate::config::new_device_id()
-                        } else {
-                            device_id()
-                        };
+                        // This route is the explicit new-identity intent.  A
+                        // device identity belongs to one principal, so it must
+                        // never inherit the active/previous account's id.
+                        let device = crate::config::new_device_id();
                         device_id.set(device.clone());
                         busy.set(true);
                         status.set("Opening the Account Authority…".to_owned());
@@ -90,7 +89,7 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                                     &server,
                                     device.trim(),
                                     "",
-                                    "",
+                                    crate::identity::account_auth::OidcAccountIntent::CreateIdentity,
                                     &ui_locale,
                                 )
                                 .await

@@ -9,11 +9,12 @@ use crate::config::{
     same_server_url,
 };
 use crate::identity::account_auth::{
-    AuthorityResolver, build_oidc_authorize_scaffold, build_persisted_oidc_scaffold,
-    capture_current_browser_callback_url, clear_persisted_oidc_scaffold,
-    extract_authorization_code_from_callback, extract_error_description_from_callback,
-    extract_error_from_callback, extract_state_from_callback, fetch_oidc_discovery,
-    open_oidc_authorize_url, persist_oidc_scaffold, restore_oidc_scaffold,
+    AuthorityResolver, OidcAccountIntent, build_oidc_authorize_scaffold,
+    build_persisted_oidc_scaffold, capture_current_browser_callback_url,
+    clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
+    extract_error_description_from_callback, extract_error_from_callback,
+    extract_state_from_callback, fetch_oidc_discovery, open_oidc_authorize_url,
+    persist_oidc_scaffold, restore_oidc_scaffold,
 };
 use crate::state::{LocalStateStore, PersistedSessionGrant};
 use crate::transport::TransportClient;
@@ -23,28 +24,11 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
 
-#[derive(Clone, Debug)]
-struct CompletedLogin {
-    principal_server_url: String,
-    actor: String,
-    personal_handle: Option<String>,
-    device_id: String,
-    dpop_device_key: crate::state::DpopDeviceKeyRecord,
-    session_credential: String,
+struct OidcCallbackOutcome {
     /// Account-private preference returned by the authenticated, DPoP-bound
-    /// account handoff. This is the value the user selected in coauth during
-    /// the just-completed login/registration flow.
+    /// account handoff. Every callback continues through the server-authored
+    /// onboarding projection, including already-bound accounts.
     preferred_locale: Option<crate::i18n::Locale>,
-    /// Persisted principal session grant. This is the live credential for
-    /// `/_arkret/self/*`; refresh rotates this grant before its own expiry.
-    session_grant: Option<PersistedSessionGrant>,
-}
-
-enum OidcCallbackOutcome {
-    Login(Box<CompletedLogin>),
-    Onboarding {
-        preferred_locale: Option<crate::i18n::Locale>,
-    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -101,13 +85,7 @@ pub fn LoginPanel(
     account_did: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
-    /// Connection-lifecycle label owned by the app shell; the only write
-    /// here is the post-sign-in "Online" transition.
-    connection_status: Signal<String>,
     config_store: Signal<LocalConfigStore>,
-    account_primary_handle: Signal<String>,
-    personal_handles: Signal<Vec<String>>,
-    personal_handles_status: Signal<String>,
     mut locale: Signal<crate::i18n::Locale>,
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
@@ -129,7 +107,7 @@ pub fn LoginPanel(
     });
     let mut is_busy = use_signal(|| auto_capture_callback);
     let mut callback_started = use_signal(|| false);
-    let mut state_store_write = state_store;
+    let state_store_write = state_store;
     // Whether the styled Principal Server preset list is expanded. Inkson is a
     // neutral client: the field is a free-text URL input that the user can edit
     // to point at ANY server, with this custom-styled dropdown offering the
@@ -155,9 +133,9 @@ pub fn LoginPanel(
         let callback_device = device_id();
         let result = finish_oidc_callback(callback_device, state_store_write).await;
         match result {
-            Ok(OidcCallbackOutcome::Onboarding { preferred_locale }) => {
+            Ok(outcome) => {
                 apply_authenticated_account_locale(
-                    preferred_locale,
+                    outcome.preferred_locale,
                     state_store_write,
                     &mut locale,
                 );
@@ -165,114 +143,6 @@ pub fn LoginPanel(
                     "Account authenticated. Continue identity custody and binding.".to_owned(),
                 );
                 on_onboarding.call(());
-            }
-            Ok(OidcCallbackOutcome::Login(completed)) => {
-                let principal_server_url = normalize_server_url(&completed.principal_server_url);
-                let server_changed = {
-                    let previous = normalize_server_url(&base_url());
-                    !previous.trim().is_empty() && previous != principal_server_url
-                };
-                let actor_changed = {
-                    let previous = account_did();
-                    !previous.trim().is_empty() && previous != completed.actor
-                };
-                let mut completed_dpop_error = None::<String>;
-                {
-                    let mut store = state_store_write.write();
-                    // Adopt the signed-in actor as the active account. With
-                    // per-account isolation this loads that account's own
-                    // independent entry (its grant/cursor/projections/device
-                    // key) — a previous identity's revoked grant or foreign
-                    // cursor lives in a separate key and can never leak in.
-                    // When a pre-DID `pending_login` is in flight this closes
-                    // the root pending marker after the secure-store bootstrap
-                    // device tuple has already been adopted for the resolved DID.
-                    let switched = if store.pending_login().is_some() {
-                        store.adopt_pending_login(&completed.actor)
-                    } else {
-                        store.switch_active_account(&completed.actor)
-                    };
-                    // Same actor but a different principal server: the cached
-                    // projections/cursor are scoped to the old server and are
-                    // meaningless here, so reset them too. The fresh grant for
-                    // THIS server is persisted by `persist_completed_login_state`
-                    // immediately below, so clearing here does not strand it.
-                    if server_changed && !switched {
-                        store.clear_account_scoped();
-                        store.set_session_grant(None);
-                    }
-                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    if let Err(error) = persist_completed_login_dpop_key(
-                        &mut store,
-                        secure_store.as_ref(),
-                        &completed.actor,
-                        &completed.device_id,
-                        &completed.dpop_device_key,
-                    ) {
-                        tracing::warn!(%error, "persist completed-login DPoP key under account scope failed");
-                        completed_dpop_error =
-                            Some(format!("Could not persist the session DPoP key: {error}"));
-                    }
-                }
-                if let Some(error) = completed_dpop_error {
-                    auth_status.set(error);
-                    is_busy.set(false);
-                    return;
-                }
-                base_url.set(principal_server_url.clone());
-                account_did.set(completed.actor.clone());
-                let mut account_primary_handle = account_primary_handle;
-                if server_changed || actor_changed {
-                    account_primary_handle.set(String::new());
-                    personal_handles.set(Vec::new());
-                    personal_handles_status.set("Not published".to_owned());
-                }
-                if let Some(personal_handle) = completed.personal_handle.clone() {
-                    account_primary_handle.set(personal_handle.clone());
-                    let handles =
-                        crate::app::merge_personal_handles(&personal_handles(), [personal_handle]);
-                    personal_handles_status.set(crate::app::personal_handles_status_for(&handles));
-                    personal_handles.set(handles);
-                } else {
-                    account_primary_handle.set(String::new());
-                    if personal_handles().is_empty() {
-                        personal_handles_status.set("Not published".to_owned());
-                    }
-                }
-                device_id.set(completed.device_id.clone());
-                token.set(completed.session_credential.clone());
-                // Persist the resolved personal handle into THIS account's own
-                // per-account entry (and register the account in the known-DID
-                // selector index) so the re-login screen can label / list it by
-                // handle, independent of which account is active later. Prefer
-                // the freshly-resolved handle, fall back to the live signal.
-                {
-                    let resolved_handle = completed
-                        .personal_handle
-                        .clone()
-                        .unwrap_or_else(&*account_primary_handle);
-                    let mut store = state_store_write.write();
-                    if !resolved_handle.trim().is_empty() {
-                        store.set_primary_handle(&resolved_handle);
-                    }
-                    store.register_known_account(&completed.actor);
-                }
-                apply_authenticated_account_locale(
-                    completed.preferred_locale,
-                    state_store_write,
-                    &mut locale,
-                );
-                persist_config(
-                    config_store,
-                    principal_server_url,
-                    completed.actor.clone(),
-                    completed.device_id.clone(),
-                    completed.session_credential.clone(),
-                );
-                persist_completed_login_state(state_store_write, completed.session_grant);
-                connection_status.set("Online".to_owned());
-                auth_status.set("Signed in".to_owned());
-                on_login.call(());
             }
             Err(error) => auth_status.set(discard_failed_oidc_callback(error)),
         }
@@ -288,7 +158,17 @@ pub fn LoginPanel(
     let launch_sign_in = move || {
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
-        let (principal_binding, device) = interactive_sign_in_context(&account_did(), &device_id());
+        // The Account Authority authenticates the service account.  Inkson
+        // still owns the user's local intent and validates the returned typed
+        // handoff disposition before adopting any device/account state.
+        let (account_intent, device) =
+            match interactive_sign_in_context(&account_did(), &device_id()) {
+                Ok(context) => context,
+                Err(error) => {
+                    auth_status.set(error);
+                    return;
+                }
+            };
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
         is_busy.set(true);
@@ -363,14 +243,7 @@ pub fn LoginPanel(
             ) {
                 tracing::warn!(%error, "persist bootstrap device_id for sign-in failed");
             }
-            match start_oidc_strand(
-                &principal,
-                device.trim(),
-                "",
-                principal_binding.as_str(),
-                &ui_locale,
-            )
-            .await
+            match start_oidc_strand(&principal, device.trim(), "", account_intent, &ui_locale).await
             {
                 Ok(()) => {}
                 Err(error) => {
@@ -616,14 +489,6 @@ pub fn LoginPanel(
     }
 }
 
-fn persist_completed_login_state(
-    mut state_store: SyncSignal<LocalStateStore>,
-    session_grant: Option<PersistedSessionGrant>,
-) {
-    let mut store = state_store.write();
-    store.set_session_grant(session_grant);
-}
-
 fn restore_oidc_callback_device_seed_scope(device_id: &str) {
     crate::secure_key_store::set_active_device_seed_scope(None);
     crate::secure_key_store::set_pending_login_device_id(Some(device_id));
@@ -639,11 +504,26 @@ fn interactive_sign_in_device_id(persisted_actor: &str, persisted_device: &str) 
     }
 }
 
-fn interactive_sign_in_context(persisted_actor: &str, persisted_device: &str) -> (String, String) {
-    (
-        persisted_actor.trim().to_owned(),
+fn interactive_sign_in_context(
+    persisted_actor: &str,
+    persisted_device: &str,
+) -> Result<(OidcAccountIntent, String), String> {
+    let actor = persisted_actor.trim();
+    let account_intent = if actor.is_empty() {
+        OidcAccountIntent::RecoverAuthenticatedPrincipal
+    } else {
+        let expected_full_id = arkret_sdk::DidFullId::new(actor.to_owned())
+            .map_err(|error| format!("The saved account principal is invalid: {error}"))?;
+        let expected_principal_id = arkret_sdk::project_full_id_to_core_id(&expected_full_id)
+            .map_err(|error| format!("The saved account principal cannot be projected: {error}"))?;
+        OidcAccountIntent::ContinuePrincipal {
+            expected_principal_id,
+        }
+    };
+    Ok((
+        account_intent,
         interactive_sign_in_device_id(persisted_actor, persisted_device),
-    )
+    ))
 }
 
 pub(crate) fn persist_completed_login_dpop_key(
@@ -720,7 +600,7 @@ pub(crate) async fn start_oidc_strand(
     principal_server_url: &str,
     device_id: &str,
     login_hint: &str,
-    principal_actor_id: &str,
+    account_intent: OidcAccountIntent,
     ui_locale: &str,
 ) -> Result<(), String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
@@ -759,7 +639,7 @@ pub(crate) async fn start_oidc_strand(
         &bundle,
         &resolver.gate_account_base,
         principal_server_url,
-        principal_actor_id,
+        account_intent,
         device_id,
         &discovery.issuer,
         &resolver.principal_trust_domain,
@@ -916,6 +796,7 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("Account Authority handoff failed: {error}"))?;
     let disposition = garth::account_handoff_disposition(&handoff)
         .map_err(|error| format!("Account handoff outcome failed validation: {error}"))?;
+    validate_account_handoff_intent(&scaffold.account_intent, &disposition)?;
     if let AccountHandoffDisposition::IdentityCreationActive(lease) = &disposition {
         let pending_handoff = crate::state::PendingAccountHandoff {
             principal_server_url,
@@ -949,7 +830,7 @@ async fn finish_oidc_callback(
                 .map_err(|error| format!("Persist public handoff checkpoint failed: {error}"))?;
         }
         let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
-        return Ok(OidcCallbackOutcome::Onboarding {
+        return Ok(OidcCallbackOutcome {
             preferred_locale: handoff.preferred_locale,
         });
     }
@@ -990,7 +871,7 @@ async fn finish_oidc_callback(
                 .map_err(|error| format!("Persist busy handoff checkpoint failed: {error}"))?;
         }
         let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
-        return Ok(OidcCallbackOutcome::Onboarding {
+        return Ok(OidcCallbackOutcome {
             preferred_locale: handoff.preferred_locale,
         });
     }
@@ -1029,9 +910,41 @@ async fn finish_oidc_callback(
             .map_err(|error| format!("Persist account recovery checkpoint failed: {error}"))?;
     }
     let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
-    Ok(OidcCallbackOutcome::Onboarding {
+    Ok(OidcCallbackOutcome {
         preferred_locale: handoff.preferred_locale,
     })
+}
+
+fn validate_account_handoff_intent(
+    intent: &OidcAccountIntent,
+    disposition: &AccountHandoffDisposition,
+) -> Result<(), String> {
+    match (intent, disposition) {
+        (
+            OidcAccountIntent::ContinuePrincipal {
+                expected_principal_id,
+            },
+            AccountHandoffDisposition::Bound { principal_id, .. },
+        ) if principal_id == expected_principal_id => Ok(()),
+        (OidcAccountIntent::ContinuePrincipal { .. }, _) => Err(
+            "The Account Authority authenticated a different account than the existing local principal. No device identity or onboarding state was adopted. Use the intended account, or choose Create account to start a separate identity."
+                .to_owned(),
+        ),
+        (
+            OidcAccountIntent::RecoverAuthenticatedPrincipal,
+            AccountHandoffDisposition::Bound { .. },
+        ) => Ok(()),
+        (OidcAccountIntent::RecoverAuthenticatedPrincipal, _) => Err(
+            "The authenticated Account Authority account has no bound principal. No identity was created from the Sign in flow. Use Create account to start a separate identity."
+                .to_owned(),
+        ),
+        (OidcAccountIntent::CreateIdentity, AccountHandoffDisposition::IdentityCreationActive(_))
+        | (OidcAccountIntent::CreateIdentity, AccountHandoffDisposition::IdentityCreationBusy { .. }) => Ok(()),
+        (OidcAccountIntent::CreateIdentity, AccountHandoffDisposition::Bound { .. }) => Err(
+            "The selected Account Authority account is already bound to a principal. No new device identity was adopted. Return to Sign in for that account, or create a different service account."
+                .to_owned(),
+        ),
+    }
 }
 
 fn apply_authenticated_account_locale(
@@ -1292,16 +1205,99 @@ mod tests {
         let actor = "did:webvh:z6mkfixture:alice.example";
         let device = "ak:device:01964137-0000-7000-8000-000000000001";
 
-        let (binding, selected_device) =
-            interactive_sign_in_context(&format!("  {actor}  "), device);
+        let (intent, selected_device) =
+            interactive_sign_in_context(&format!("  {actor}  "), device).unwrap();
 
-        assert_eq!(binding, actor);
+        assert_eq!(
+            intent,
+            OidcAccountIntent::ContinuePrincipal {
+                expected_principal_id: arkret_sdk::project_full_id_to_core_id(
+                    &arkret_sdk::DidFullId::new(actor.to_owned()).unwrap()
+                )
+                .unwrap(),
+            }
+        );
         assert_eq!(selected_device, device);
 
-        let (unbound, _) = interactive_sign_in_context("   ", device);
+        let (unbound, fresh_device) = interactive_sign_in_context("   ", device).unwrap();
+        assert_eq!(unbound, OidcAccountIntent::RecoverAuthenticatedPrincipal);
+        assert_ne!(
+            fresh_device, device,
+            "unknown-account recovery needs a fresh device identity"
+        );
+    }
+
+    fn bound_disposition(principal: &str) -> AccountHandoffDisposition {
+        AccountHandoffDisposition::Bound {
+            principal_id: arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
+            full_id: arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap(),
+        }
+    }
+
+    fn busy_disposition() -> AccountHandoffDisposition {
+        AccountHandoffDisposition::IdentityCreationBusy {
+            retry_after_ms: 500,
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+        }
+    }
+
+    #[test]
+    fn account_handoff_intent_never_crosses_account_or_flow_boundaries() {
+        let alice = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+        let continue_alice = OidcAccountIntent::ContinuePrincipal {
+            expected_principal_id: alice,
+        };
+
         assert!(
-            unbound.is_empty(),
-            "first registration must not infer a principal DID"
+            validate_account_handoff_intent(
+                &continue_alice,
+                &bound_disposition("ak:did_core:web:alice.example")
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_account_handoff_intent(
+                &continue_alice,
+                &bound_disposition("ak:did_core:web:bob.example")
+            )
+            .is_err(),
+            "an existing-account login must reject a different principal"
+        );
+        assert!(
+            validate_account_handoff_intent(&continue_alice, &busy_disposition()).is_err(),
+            "an existing-account login must not turn into identity creation"
+        );
+
+        assert!(
+            validate_account_handoff_intent(
+                &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+                &bound_disposition("ak:did_core:web:alice.example")
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_account_handoff_intent(
+                &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+                &busy_disposition()
+            )
+            .is_err(),
+            "account recovery must not create a new identity"
+        );
+
+        assert!(
+            validate_account_handoff_intent(
+                &OidcAccountIntent::CreateIdentity,
+                &busy_disposition()
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_account_handoff_intent(
+                &OidcAccountIntent::CreateIdentity,
+                &bound_disposition("ak:did_core:web:alice.example")
+            )
+            .is_err(),
+            "new identity creation must not attach an existing principal"
         );
     }
 

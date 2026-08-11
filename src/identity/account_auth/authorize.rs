@@ -10,7 +10,7 @@ use super::util::{
 };
 use super::{
     ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OIDC_SCAFFOLD_STORAGE_KEY_PREFIX,
-    OidcDiscoveryDocument, OidcScaffoldBundle, PersistedOidcScaffold,
+    OidcAccountIntent, OidcDiscoveryDocument, OidcScaffoldBundle, PersistedOidcScaffold,
 };
 
 /// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
@@ -149,7 +149,7 @@ pub fn build_persisted_oidc_scaffold(
     bundle: &OidcScaffoldBundle,
     gate_account_base: &str,
     principal_server_url: &str,
-    principal_actor_id: &str,
+    account_intent: OidcAccountIntent,
     device_id: &str,
     issuer: &str,
     principal_trust_domain: &arkret_sdk::TypedTrustDomainId,
@@ -160,7 +160,7 @@ pub fn build_persisted_oidc_scaffold(
         code_verifier: bundle.code_verifier.clone(),
         client_id: bundle.client_id.clone(),
         principal_server_url: principal_server_url.to_owned(),
-        principal_actor_id: principal_actor_id.to_owned(),
+        account_intent,
         device_id: device_id.to_owned(),
         principal_audience: bundle.principal_audience.clone(),
         callback_uri: bundle.callback_uri.clone(),

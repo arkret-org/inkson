@@ -65,8 +65,7 @@ pub struct PersistedOidcScaffold {
     #[serde(default)]
     pub client_id: String,
     pub principal_server_url: String,
-    #[serde(default)]
-    pub principal_actor_id: String,
+    pub account_intent: OidcAccountIntent,
     #[serde(default)]
     pub device_id: String,
     pub principal_audience: String,
@@ -83,6 +82,24 @@ pub struct PersistedOidcScaffold {
     /// own challenge transcript trust domain.
     #[serde(default)]
     pub principal_trust_domain: String,
+}
+
+/// The account relationship that the user explicitly selected before leaving
+/// Inkson for the Account Authority.  This is deliberately closed and typed:
+/// an existing-account login must never be reinterpreted as permission to
+/// create a different principal, and an explicit creation flow must never
+/// silently attach an already-bound account.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OidcAccountIntent {
+    CreateIdentity,
+    /// Authenticate an already-bound service account whose principal is not
+    /// yet known on this device.  The returned bound principal becomes the
+    /// recovery target, but an unbound account is never auto-created here.
+    RecoverAuthenticatedPrincipal,
+    ContinuePrincipal {
+        expected_principal_id: arkret_sdk::DidCoreId,
+    },
 }
 
 pub(crate) const OIDC_SCAFFOLD_STORAGE_KEY: &str = "inkson.oidc_scaffold.v1";
