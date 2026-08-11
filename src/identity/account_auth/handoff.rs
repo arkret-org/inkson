@@ -1,7 +1,8 @@
 //! Secure storage for the short-lived account-handoff credential.
 
-use crate::secure_key_store::default_secure_key_store;
 use sha2::{Digest as _, Sha256};
+
+use crate::secure_key_store::default_secure_key_store;
 
 pub(crate) const ACCOUNT_HANDOFF_GRANT_SECRET_KEY: &str = "inkson.account_handoff_grant.v1";
 pub(crate) const ACCOUNT_HANDOFF_GRANT_SECRET_KEY_PREFIX: &str = "inkson.account_handoff_grant.v2.";

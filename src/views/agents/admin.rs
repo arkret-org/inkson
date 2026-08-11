@@ -1135,12 +1135,14 @@ fn spawn_provision_agent(
         {
             Ok(AgentProvisionOutcome::AwaitingControllerEvent {
                 agent_id,
+                full_id,
                 controller_realm_id,
                 allocation_handle,
                 controller_authorization_ref,
                 requested_scope_digest,
             }) => (
                 agent_id,
+                full_id,
                 controller_realm_id,
                 allocation_handle,
                 controller_authorization_ref,
@@ -1163,11 +1165,26 @@ fn spawn_provision_agent(
         };
         let (
             agent_id,
+            full_id,
             controller_realm_id,
             allocation_handle,
             controller_authorization_ref,
             expected_digest,
         ) = preparation;
+        let projected_agent_id = match arkret_sdk::project_full_id_to_core_id(&full_id) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: allocated full ID: {error}"));
+                return;
+            }
+        };
+        if projected_agent_id != agent_id {
+            last_op_status.set(
+                "Create failed: allocated full ID does not project to the allocated Agent ID"
+                    .to_owned(),
+            );
+            return;
+        }
         let observed_digest = match arkret_signatures::agent::agent_requested_scope_digest(
             &agent_id,
             &controller_id,
@@ -1257,6 +1274,7 @@ fn spawn_provision_agent(
             operation_id,
             idempotency_key,
             agent_id: agent_id.clone(),
+            full_id: full_id.clone(),
             principal_control_realm_id: principal_control_realm_id.clone(),
             allocation_handle: allocation_handle.clone(),
             slug: slug.clone(),
@@ -1275,11 +1293,13 @@ fn spawn_provision_agent(
             {
                 Ok(AgentProvisionOutcome::AwaitingPcrGenesis {
                     agent_id: returned_agent_id,
+                    full_id: returned_full_id,
                     principal_control_realm_id: returned_realm_id,
                     allocation_handle: returned_allocation,
                     controller_authorization_ref: returned_authorization,
                     requested_scope_digest: returned_digest,
                 }) if returned_agent_id == agent_id
+                    && returned_full_id == full_id
                     && returned_realm_id == principal_control_realm_id
                     && returned_allocation == allocation_handle
                     && returned_authorization == controller_authorization_ref

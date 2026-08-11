@@ -1,4 +1,5 @@
 use anyhow::Context;
+use sha2::{Digest as _, Sha256};
 use url::Url;
 
 #[cfg(target_arch = "wasm32")]
@@ -11,7 +12,6 @@ use super::{
     ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OIDC_SCAFFOLD_STORAGE_KEY_PREFIX,
     OidcDiscoveryDocument, OidcScaffoldBundle, PersistedOidcScaffold,
 };
-use sha2::{Digest as _, Sha256};
 
 /// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
 /// `authorization_endpoint` URL) directly from standard OIDC discovery and the
