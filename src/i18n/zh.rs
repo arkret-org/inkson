@@ -938,6 +938,32 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.tabs.notifications", "通知");
     dict.set("chat.button.create", "创建");
     dict.set("chat.button.reply", "回复");
+    dict.set("moderation.report.action", "举报");
+    dict.set("moderation.report.title", "举报消息");
+    dict.set(
+        "moderation.report.help",
+        "请选择最符合问题的原因。签名后的举报将提交到该领域的治理流程。",
+    );
+    dict.set("moderation.report.reason", "原因");
+    dict.set("moderation.report.reason.spam", "垃圾信息");
+    dict.set("moderation.report.reason.harassment", "骚扰");
+    dict.set("moderation.report.reason.hate_speech", "仇恨言论");
+    dict.set("moderation.report.reason.nsfw", "色情内容");
+    dict.set("moderation.report.reason.illegal", "违法内容");
+    dict.set("moderation.report.reason.misinformation", "虚假信息");
+    dict.set("moderation.report.reason.other", "其他");
+    dict.set(
+        "moderation.report.description",
+        "详细说明（选择其他时必填）",
+    );
+    dict.set(
+        "moderation.report.other_required",
+        "选择其他时请填写详细说明",
+    );
+    dict.set("moderation.report.submit", "提交举报");
+    dict.set("moderation.report.submitting", "正在提交…");
+    dict.set("moderation.report.submitted", "举报已提交");
+    dict.set("moderation.report.failed", "举报失败");
     dict.set("chat.button.react", "回应");
     dict.set("chat.button.redact", "撤回");
     dict.set("chat.you_badge", "ME");

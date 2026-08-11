@@ -857,6 +857,32 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.tabs.notifications", "Notifications");
     dict.set("chat.button.create", "Create");
     dict.set("chat.button.reply", "Reply");
+    dict.set("moderation.report.action", "Report");
+    dict.set("moderation.report.title", "Report message");
+    dict.set(
+        "moderation.report.help",
+        "Choose the reason that best describes the problem. The signed report is submitted to this Realm's moderation process.",
+    );
+    dict.set("moderation.report.reason", "Reason");
+    dict.set("moderation.report.reason.spam", "Spam");
+    dict.set("moderation.report.reason.harassment", "Harassment");
+    dict.set("moderation.report.reason.hate_speech", "Hate speech");
+    dict.set("moderation.report.reason.nsfw", "Sexual content");
+    dict.set("moderation.report.reason.illegal", "Illegal content");
+    dict.set("moderation.report.reason.misinformation", "Misinformation");
+    dict.set("moderation.report.reason.other", "Other");
+    dict.set(
+        "moderation.report.description",
+        "Details (required for Other)",
+    );
+    dict.set(
+        "moderation.report.other_required",
+        "Add details for an Other report",
+    );
+    dict.set("moderation.report.submit", "Submit report");
+    dict.set("moderation.report.submitting", "Submitting…");
+    dict.set("moderation.report.submitted", "Report submitted");
+    dict.set("moderation.report.failed", "Report failed");
     dict.set("chat.button.react", "React");
     dict.set("chat.button.redact", "Redact");
     dict.set("chat.you_badge", "ME");

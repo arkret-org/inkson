@@ -12,6 +12,64 @@ use serde_json::json;
 
 use super::{TypedOperationBuilder, did_id, trim_realm_id};
 
+/// Build the caller-authored `ak.self.moderation.report` DataEvent submitted by
+/// the self-service report endpoint. The durable report id is derived from this
+/// Event id; it is never guessed or carried in the payload.
+pub fn moderation_report(
+    realm_id: &str,
+    actor: &str,
+    effective_scope: arkret_sdk::ScopeRef,
+    target_ref: &str,
+    report_reason_code: &str,
+    description: Option<&str>,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
+    let report_reason_code = report_reason_code.trim();
+    if !matches!(
+        report_reason_code,
+        "spam" | "harassment" | "hate_speech" | "nsfw" | "illegal" | "misinformation" | "other"
+    ) {
+        anyhow::bail!("unsupported moderation report reason {report_reason_code:?}");
+    }
+    let description = description
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if report_reason_code == "other" && description.is_none() {
+        anyhow::bail!("moderation report reason other requires a description");
+    }
+    let payload = arkret_sdk::ModerationReportPayload {
+        realm_id: realm.clone(),
+        effective_scope: Some(effective_scope.clone()),
+        target_ref: target_ref.to_owned(),
+        report_reason_code: report_reason_code.to_owned(),
+        description,
+        reporter: did_id(actor)?,
+        provenance: Some(arkret_sdk::ModerationReportProvenance::SelfAuthored),
+        source_provider: None,
+        evidence_refs: None,
+        evidence_package: None,
+        franking_proof: None,
+    };
+    payload
+        .validate_self_endpoint(&did_id(actor)?)
+        .map_err(anyhow::Error::msg)?;
+    let builder = TypedOperationBuilder::new::<arkret_sdk::event_spec::SelfModerationReport>(
+        realm.as_str(),
+        actor,
+        payload,
+    );
+    let builder = match effective_scope {
+        arkret_sdk::ScopeRef::Realm { realm_id } if realm_id == realm => builder,
+        arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } if realm_id == realm => builder.circle_id(circle_id.to_string()),
+        _ => anyhow::bail!("moderation report scope must belong to its Realm"),
+    };
+    builder.build_sdk_event("inkson")
+}
+
 /// Derive the `request_canonical_digest` the `moderation_decision_payload`
 /// schema mandates (JCS SHA-256, `sha256:<64hex>`). inkson's reviewer
 /// workbench seals decisions directly — there is no upstream Policy Server

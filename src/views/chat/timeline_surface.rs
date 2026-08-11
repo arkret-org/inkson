@@ -111,6 +111,8 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         private_saved_targets,
         private_saved_account_data: _,
         message_context_menu,
+        moderation_report_draft,
+        moderation_report_pending,
         status_msg: _,
         editing_message,
         edit_draft,
@@ -270,6 +272,17 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 let target_ref = message_target_ref.clone();
                                 move || controller.save_message_private(context.clone(), target_ref.clone())
                             });
+                            let report_scope = arkret_sdk::RealmId::new(msg.realm_id.clone())
+                                .ok()
+                                .and_then(|realm_id| match scope_circle.as_ref() {
+                                    Some(circle) => arkret_sdk::CircleId::new(circle.circle_id.clone())
+                                        .ok()
+                                        .map(|circle_id| arkret_sdk::ScopeRef::Circle {
+                                            realm_id,
+                                            circle_id,
+                                        }),
+                                    None => Some(arkret_sdk::ScopeRef::Realm { realm_id }),
+                                });
                             let message_menu_is_open =
                                 message_context_menu().as_deref() == Some(msg.id.as_str());
                             let message_menu_id = format!("message-actions-{}", msg.id);
@@ -478,6 +491,31 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     {crate::i18n::tr("message.private_saved")}
                                                 } else {
                                                     {crate::i18n::tr("message.private_save")}
+                                                }
+                                            }
+                                            if !msg.redacted && !message_is_private_sidecar {
+                                                Button {
+                                                    variant: ButtonVariant::Destructive,
+                                                    r#type: "button",
+                                                    class: "message-context-menu-item danger",
+                                                    role: "menuitem",
+                                                    "data-testid": "message-context-report-button",
+                                                    disabled: report_scope.is_none(),
+                                                    onclick: {
+                                                        let realm_id = msg.realm_id.clone();
+                                                        let target_ref = message_target_ref.clone();
+                                                        let effective_scope = report_scope.clone();
+                                                        move |_| {
+                                                            if let Some(effective_scope) = effective_scope.clone() {
+                                                                controller.begin_moderation_report(
+                                                                    realm_id.clone(),
+                                                                    effective_scope,
+                                                                    target_ref.clone(),
+                                                                );
+                                                            }
+                                                        }
+                                                    },
+                                                    {crate::i18n::tr("moderation.report.action")}
                                                 }
                                             }
                                             if !msg.redacted && !message_is_read_only_shared {
@@ -1147,6 +1185,89 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 }
                             }
                         }
+                            }
+                        }
+                    }
+                    if let Some(report) = moderation_report_draft() {
+                        div {
+                            class: "discussion-modal-backdrop",
+                            "data-testid": "moderation-report-modal",
+                            div {
+                                class: "discussion-modal",
+                                role: "dialog",
+                                "aria-modal": "true",
+                                "aria-labelledby": "moderation-report-title",
+                                div { class: "discussion-modal-head",
+                                    h2 {
+                                        id: "moderation-report-title",
+                                        {crate::i18n::tr("moderation.report.title")}
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        r#type: "button",
+                                        disabled: moderation_report_pending(),
+                                        onclick: move |_| controller.cancel_moderation_report(),
+                                        {crate::i18n::tr("common.cancel")}
+                                    }
+                                }
+                                div { class: "discussion-modal-body workflow-form",
+                                    p { {crate::i18n::tr("moderation.report.help")} }
+                                    label { class: "form-row",
+                                        span { {crate::i18n::tr("moderation.report.reason")} }
+                                        select {
+                                            "data-testid": "moderation-report-reason",
+                                            value: "{report.reason}",
+                                            disabled: moderation_report_pending(),
+                                            onchange: move |event: FormEvent| {
+                                                controller.update_moderation_report_reason(event.value());
+                                            },
+                                            for reason in [
+                                                "spam",
+                                                "harassment",
+                                                "hate_speech",
+                                                "nsfw",
+                                                "illegal",
+                                                "misinformation",
+                                                "other",
+                                            ] {
+                                                option {
+                                                    value: "{reason}",
+                                                    {crate::i18n::tr(&format!("moderation.report.reason.{reason}"))}
+                                                }
+                                            }
+                                        }
+                                    }
+                                    label { class: "form-row",
+                                        span { {crate::i18n::tr("moderation.report.description")} }
+                                        Textarea {
+                                            "data-testid": "moderation-report-description",
+                                            value: "{report.description}",
+                                            disabled: moderation_report_pending(),
+                                            oninput: move |event: FormEvent| {
+                                                controller.update_moderation_report_description(event.value());
+                                            },
+                                        }
+                                    }
+                                }
+                                div { class: "discussion-modal-actions",
+                                    Button {
+                                        variant: ButtonVariant::Primary,
+                                        r#type: "button",
+                                        "data-testid": "moderation-report-submit",
+                                        disabled: moderation_report_pending()
+                                            || (report.reason == "other"
+                                                && report.description.trim().is_empty()),
+                                        onclick: {
+                                            let context = command_context.clone();
+                                            move |_| controller.submit_moderation_report(context.clone())
+                                        },
+                                        if moderation_report_pending() {
+                                            {crate::i18n::tr("moderation.report.submitting")}
+                                        } else {
+                                            {crate::i18n::tr("moderation.report.submit")}
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

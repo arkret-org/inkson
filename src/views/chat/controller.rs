@@ -14,6 +14,15 @@ pub(super) struct ChatCommandContext {
     pub frontier_state: Signal<String>,
 }
 
+#[derive(Clone, PartialEq)]
+pub(super) struct ModerationReportDraft {
+    pub realm_id: String,
+    pub effective_scope: arkret_sdk::ScopeRef,
+    pub target_ref: String,
+    pub reason: String,
+    pub description: String,
+}
+
 pub(super) enum ChatProjectionEvent {
     EnsureChannel(ChannelEntity),
     SharedPins(Vec<SharedMessagePin>),
@@ -145,6 +154,8 @@ pub(super) struct ChatController {
     pub private_saved_targets: Signal<std::collections::BTreeSet<String>>,
     pub private_saved_account_data: Signal<std::collections::BTreeMap<String, serde_json::Value>>,
     pub message_context_menu: Signal<Option<String>>,
+    pub moderation_report_draft: Signal<Option<ModerationReportDraft>>,
+    pub moderation_report_pending: Signal<bool>,
     pub new_channel_name: Signal<String>,
     pub new_channel_topic: Signal<String>,
     pub new_channel_create_card: Signal<bool>,
@@ -236,6 +247,91 @@ impl ChatController {
 
     pub fn close_message_menu(mut self) {
         self.message_context_menu.set(None);
+    }
+
+    pub fn begin_moderation_report(
+        mut self,
+        realm_id: String,
+        effective_scope: arkret_sdk::ScopeRef,
+        target_ref: String,
+    ) {
+        self.moderation_report_draft
+            .set(Some(ModerationReportDraft {
+                realm_id,
+                effective_scope,
+                target_ref,
+                reason: "spam".to_owned(),
+                description: String::new(),
+            }));
+        self.message_context_menu.set(None);
+    }
+
+    pub fn update_moderation_report_reason(mut self, reason: String) {
+        if let Some(draft) = self.moderation_report_draft.write().as_mut() {
+            draft.reason = reason;
+        }
+    }
+
+    pub fn update_moderation_report_description(mut self, description: String) {
+        if let Some(draft) = self.moderation_report_draft.write().as_mut() {
+            draft.description = description;
+        }
+    }
+
+    pub fn cancel_moderation_report(mut self) {
+        if !(self.moderation_report_pending)() {
+            self.moderation_report_draft.set(None);
+        }
+    }
+
+    pub fn submit_moderation_report(mut self, context: ChatCommandContext) {
+        let Some(draft) = (self.moderation_report_draft)() else {
+            return;
+        };
+        if (self.moderation_report_pending)() {
+            return;
+        }
+        if draft.reason == "other" && draft.description.trim().is_empty() {
+            self.status_msg
+                .set(crate::i18n::tr("moderation.report.other_required"));
+            return;
+        }
+        self.moderation_report_pending.set(true);
+        let base_url = context.base_url;
+        let session_credential = (context.token)();
+        let account_did = context.account_did;
+        spawn(async move {
+            let result = crate::transport::auth::with_event_submitter(
+                &base_url,
+                session_credential,
+                move |submitter| async move {
+                    crate::transport::moderation::report(
+                        &submitter,
+                        &draft.realm_id,
+                        &account_did,
+                        draft.effective_scope,
+                        &draft.target_ref,
+                        &draft.reason,
+                        Some(&draft.description),
+                    )
+                    .await
+                },
+            )
+            .await;
+            self.moderation_report_pending.set(false);
+            match result {
+                Ok(_) => {
+                    self.moderation_report_draft.set(None);
+                    self.status_msg
+                        .set(crate::i18n::tr("moderation.report.submitted"));
+                }
+                Err(error) => self.status_msg.set(format!(
+                    "{}: {}",
+                    crate::i18n::tr("moderation.report.failed"),
+                    error.display()
+                )),
+            }
+        });
     }
 
     pub fn show_blocked_message(mut self, message_id: String) {
@@ -939,6 +1035,8 @@ pub(super) fn use_chat_controller(
             std::collections::BTreeMap::<String, serde_json::Value>::new,
         ),
         message_context_menu: use_signal(|| None),
+        moderation_report_draft: use_signal(|| None),
+        moderation_report_pending: use_signal(|| false),
         new_channel_name: use_signal(String::new),
         new_channel_topic: use_signal(String::new),
         new_channel_create_card: use_signal(|| false),

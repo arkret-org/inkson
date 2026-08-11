@@ -493,7 +493,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     // SDK spec shape: status is `submitted`, and routed_to carries principal cores.
     let report: inkson::models::ModerationReportOutcome = serde_json::from_value(json!({
-        "report_id": "ak:report:1760000000000",
+        "report_id": "ak:report:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
         "status": "submitted",
         "routed_to": ["ak:did_core:web:server.local"]
     }))

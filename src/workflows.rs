@@ -107,8 +107,8 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             id: "moderation.report",
             name: "Moderation report",
             stage: WorkflowStage::Supported,
-            client_surface: "Report / Queue",
-            server_dependency: "POST /_arkret/self/moderation/report",
+            client_surface: "Chat message actions",
+            server_dependency: "Caller-signed POST /_arkret/self/moderation/report",
         },
         ClientWorkflow {
             id: "release.packaging",

@@ -1960,6 +1960,8 @@ pub fn ChatPanel(
         private_saved_targets: _,
         private_saved_account_data: _,
         message_context_menu: _,
+        moderation_report_draft: _,
+        moderation_report_pending: _,
         mut new_channel_name,
         mut new_channel_topic,
         mut new_channel_create_card,
