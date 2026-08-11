@@ -45,6 +45,31 @@ pub async fn add_circle_member(
         .map_err(anyhow::Error::from)
 }
 
+/// Remove an active Circle member with a caller-signed, CAS-guarded leave Event.
+pub async fn remove_circle_member(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    target_actor: &str,
+) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
+    let event = crate::operation::ak_ops::circle_member_state_with_expected(
+        realm_id,
+        actor,
+        circle_id,
+        target_actor,
+        arkret_sdk::CircleMembership::Leave,
+        arkret_wire::WirePresence::Value(arkret_sdk::CircleMembership::Join),
+    )?
+    .build_sdk_event("inkson")?;
+    let body = arkret_sdk::CircleMemberDeleteRequestBody {
+        member_event: arkret_wire::EventInitialSubmission::online(event),
+    };
+    http.circle_member_remove(circle_id, target_actor, &body)
+        .await
+        .map_err(anyhow::Error::from)
+}
+
 /// Archive a Circle by submitting the caller-signed `ak.circle.archive`.
 pub async fn archive_circle(
     http: &arkret_sdk::http_client::Client,

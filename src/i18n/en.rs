@@ -1568,18 +1568,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set("contacts.new.target_label", "Their DID or handle");
     dict.set(
-        "contacts.new.recipient_service_label",
-        "Their server (only when adding across servers)",
-    );
-    dict.set(
-        "contacts.new.recipient_service_placeholder",
-        "did:webvh:ps.bob.example (leave blank if same server)",
-    );
-    dict.set(
-        "contacts.new.recipient_service_hint",
-        "If they're on a different server (Principal Server), enter its service DID; leave blank if you're on the same server.",
-    );
-    dict.set(
         "contacts.new.scope_label",
         "Friend permissions (both on by default for a regular contact)",
     );
@@ -2001,10 +1989,7 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.field.realm_summary_placeholder",
         "What this Realm is for.",
     );
-    dict.set(
-        "setup.field.realm_alias",
-        "Realm alias (unavailable — no protocol carrier yet)",
-    );
+    dict.set("setup.field.realm_alias", "Realm alias");
     dict.set("setup.field.realm_alias_placeholder", "engineering");
 
     // Boundary step.

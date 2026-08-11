@@ -214,16 +214,26 @@ pub fn CirclesPanel(
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let circle_id = circle.circle_id.to_string();
+                                                let member_realm_id = circle.realm_id.to_string();
+                                                let account_did = account_did.clone();
                                                 let actor_id = member.to_string();
                                                 move |_| {
                                                     busy.set(true);
                                                     let base = base.clone();
                                                     let credential = token();
                                                     let circle_id = circle_id.clone();
+                                                    let member_realm_id = member_realm_id.clone();
+                                                    let account_did = account_did.clone();
                                                     let actor_id = actor_id.clone();
                                                     spawn(async move {
                                                         let outcome = with_authed_api(&base, credential, |api| async move {
-                                                            api.http().circle_member_remove(&circle_id, &actor_id).await.map_err(anyhow::Error::from)
+                                                            crate::transport::circle::remove_circle_member(
+                                                                api.http(),
+                                                                &member_realm_id,
+                                                                &account_did,
+                                                                &circle_id,
+                                                                &actor_id,
+                                                            ).await
                                                         }).await;
                                                         match outcome {
                                                             Ok(_) => { status.set("Member access removed".to_owned()); refresh += 1; }

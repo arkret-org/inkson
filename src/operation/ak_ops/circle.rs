@@ -35,13 +35,32 @@ pub fn circle_member_state(
     target_actor: &str,
     membership: arkret_sdk::CircleMembership,
 ) -> anyhow::Result<TypedOperationBuilder> {
+    circle_member_state_with_expected(
+        realm_id,
+        actor,
+        circle_id,
+        target_actor,
+        membership,
+        arkret_wire::WirePresence::Missing,
+    )
+}
+
+/// Build a Circle membership Move with an explicit tri-state CAS guard.
+pub fn circle_member_state_with_expected(
+    realm_id: &str,
+    actor: &str,
+    circle_id: &str,
+    target_actor: &str,
+    membership: arkret_sdk::CircleMembership,
+    expected_membership: arkret_wire::WirePresence<arkret_sdk::CircleMembership>,
+) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::CircleMemberStatePayload {
         circle_id: circle_id_value(circle_id)?,
         actor_id: did_id(target_actor)?,
         membership,
         reason: None,
         effective_at: None,
-        expected_membership: arkret_wire::WirePresence::Missing,
+        expected_membership,
     };
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::CircleMemberState,

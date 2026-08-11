@@ -67,7 +67,7 @@ impl crate::transport::TransportClient {
         target: &str,
         scope: &str,
     ) -> anyhow::Result<ContactOperationOutcome> {
-        self.request_contact_with_message(target, &[scope.to_owned()], None, None)
+        self.request_contact_with_message(target, &[scope.to_owned()], None)
             .await
     }
 
@@ -80,13 +80,7 @@ impl crate::transport::TransportClient {
         target: &str,
         scopes: &[String],
         message: Option<&str>,
-        recipient_service_id: Option<&str>,
     ) -> anyhow::Result<ContactOperationOutcome> {
-        if recipient_service_id.is_some_and(|value| !value.trim().is_empty()) {
-            anyhow::bail!(
-                "the Contact request protocol no longer accepts an unverified recipient service override"
-            );
-        }
         let mut granted_to_peer_scopes = scopes
             .iter()
             .map(|scope| contact_scope(scope))

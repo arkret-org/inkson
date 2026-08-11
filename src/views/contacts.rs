@@ -59,10 +59,6 @@ pub fn ContactNewPanel(
     // checked; users can opt out of either for finer control.
     let mut scope_direct_message = use_signal(|| true);
     let mut scope_invite = use_signal(|| true);
-    // Cross-PS addressing: service DID of the recipient's Principal Server. v1
-    // DIDs do not embed the home PS, so cross-server adds require it and
-    // same-server adds leave it empty.
-    let mut recipient_service = use_signal(String::new);
     let mut message = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut sending = use_signal(|| false);
@@ -87,15 +83,6 @@ pub fn ContactNewPanel(
                 placeholder: "alice:example.com or did:web:alice.example",
                 oninput: move |event: FormEvent| target.set(event.value()),
             }
-            Label { html_for: "contact-recipient-service-input", {tr("contacts.new.recipient_service_label")} }
-            Input {
-                id: "contact-recipient-service-input",
-                "data-testid": "contact-recipient-service-input",
-                value: "{recipient_service}",
-                placeholder: tr("contacts.new.recipient_service_placeholder"),
-                oninput: move |event: FormEvent| recipient_service.set(event.value()),
-            }
-            div { class: "muted", {tr("contacts.new.recipient_service_hint")} }
             Label { html_for: "contact-scope-checkboxes", {tr("contacts.new.scope_label")} }
             div { id: "contact-scope-checkboxes", class: "settings-list",
                 label {
@@ -158,7 +145,6 @@ pub fn ContactNewPanel(
                             if scope_invite() {
                                 scopes.push("invite".to_owned());
                             }
-                            let service_id = recipient_service().trim().to_owned();
                             let greeting = message().trim().to_owned();
                             sending.set(true);
                             status.set(tr("contacts.new.sending"));
@@ -168,17 +154,11 @@ pub fn ContactNewPanel(
                                 } else {
                                     Some(greeting.as_str())
                                 };
-                                let service_opt = if service_id.is_empty() {
-                                    None
-                                } else {
-                                    Some(service_id.as_str())
-                                };
                                 match with_authed_api(&base, api_token, |api| async move {
                                     api.request_contact_with_message(
                                         &target_did,
                                         &scopes,
                                         greeting_opt,
-                                        service_opt,
                                     )
                                     .await
                                 })

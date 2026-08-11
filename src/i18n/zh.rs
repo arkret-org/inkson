@@ -1459,18 +1459,6 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "输入对方的 DID 或 handle 发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。",
     );
     dict.set("contacts.new.target_label", "对方 DID 或 handle");
-    dict.set(
-        "contacts.new.recipient_service_label",
-        "对方所在服务器(跨服务器添加时填)",
-    );
-    dict.set(
-        "contacts.new.recipient_service_placeholder",
-        "did:webvh:ps.bob.example(同服务器留空)",
-    );
-    dict.set(
-        "contacts.new.recipient_service_hint",
-        "对方在另一台服务器(Principal Server)时填它的 service DID;同服务器留空即可。",
-    );
     dict.set("contacts.new.scope_label", "好友权限(普通好友默认两项都开)");
     dict.set("contacts.new.scope_empty", "至少需要选择一项权限。");
     dict.set("contacts.new.message_label", "附言(可选)");
@@ -1653,10 +1641,7 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.field.realm_summary_placeholder",
         "这个领域用来做什么。",
     );
-    dict.set(
-        "setup.field.realm_alias",
-        "领域别名（暂不可用——协议尚无对应载体）",
-    );
+    dict.set("setup.field.realm_alias", "领域别名");
     dict.set("setup.field.realm_alias_placeholder", "engineering");
 
     // 边界。

@@ -13,7 +13,8 @@ use serde_json::{Value, json};
 
 use crate::event_builders::{
     build_capability_relinquish_control_event, build_member_state_transition_event,
-    build_plaintext_visible_services_event, build_realm_archive_event,
+    build_plaintext_visible_services_event, build_realm_alias_event,
+    build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
     build_realm_authority_basis_update_control_event, build_realm_authority_reset_control_event,
     build_realm_bootstrap_events, build_realm_destroy_event,
     build_realm_history_sharing_policy_event, build_realm_owner_transfer_control_event,
@@ -284,6 +285,66 @@ pub async fn update_realm_metadata(
     // The bootstrap builder uses a null-head guard. A later replacement is
     // authorized against the current Realm Seal frontier instead.
     event.preconditions.clear();
+    let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
+    event.seal_basis = Some(seal_view.seal_basis());
+    event.seal_ref = None;
+    event.auth_context = None;
+    submitter.submit_sdk_event(&event).await
+}
+
+fn latest_realm_alias_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::Result<Option<Value>> {
+    let mut latest = None;
+    for row in rows {
+        let Some(event) = row.event() else {
+            continue;
+        };
+        if event.kind == arkret_sdk::EventKind::RealmAlias {
+            let payload = serde_json::to_value(&event.payload)?;
+            serde_json::from_value::<arkret_sdk::RealmAliasPayload>(payload.clone())?.validate()?;
+            latest = Some(payload);
+        }
+    }
+    Ok(latest)
+}
+
+/// Declare, rename, or tombstone the Realm alias with an exact CAS head.
+///
+/// The current value is folded from the accepted Realm Event log immediately
+/// before authoring. The builder places that complete value in `head_eq`, so a
+/// concurrent alias edit is rejected instead of overwriting a newer claim.
+pub async fn set_realm_alias(
+    submitter: &EventSubmitter,
+    realm_id: &str,
+    actor_id: &str,
+    alias: Option<&str>,
+) -> anyhow::Result<SubmitEventResult> {
+    let rows = submitter
+        .http()
+        .events_read_all_pages(realm_id)
+        .await?
+        .events;
+    let current = latest_realm_alias_payload(&rows)?;
+    let requested = alias.map(str::trim).filter(|alias| !alias.is_empty());
+    let mut event = match (requested, current) {
+        (Some(alias), Some(expected)) => {
+            let service_id = submitter.service_full_id().await?;
+            build_realm_alias_rename_event(realm_id, actor_id, &service_id, alias, expected)?
+        }
+        (Some(alias), None) => {
+            let service_id = submitter.service_full_id().await?;
+            build_realm_alias_event(realm_id, actor_id, &service_id, alias)?
+        }
+        (None, Some(expected)) => {
+            let payload =
+                serde_json::from_value::<arkret_sdk::RealmAliasPayload>(expected.clone())?
+                    .validate()?;
+            if payload.alias().is_none() {
+                anyhow::bail!("Realm alias is already absent");
+            }
+            build_realm_alias_tombstone_event(realm_id, actor_id, expected)?
+        }
+        (None, None) => anyhow::bail!("Realm alias is already absent"),
+    };
     let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
     event.seal_basis = Some(seal_view.seal_basis());
     event.seal_ref = None;
@@ -1148,4 +1209,53 @@ pub async fn appeal_close(
     let event = ak_ops::moderation_appeal_close(realm_id, actor_id, appeal_id, close_reason)?
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REALM_ID: &str = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
+    const ACTOR_ID: &str = "did:web:alice.example";
+    const SERVICE_ID: &str = "did:web:server.example";
+
+    #[test]
+    fn latest_alias_payload_folds_accepted_declaration_and_tombstone() {
+        let declaration =
+            build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_ID, "engineering").unwrap();
+        let declaration_value = serde_json::to_value(&declaration.payload).unwrap();
+        let tombstone =
+            build_realm_alias_tombstone_event(REALM_ID, ACTOR_ID, declaration_value).unwrap();
+        let rows = vec![
+            arkret_sdk::EventReadRow::Event(declaration),
+            arkret_sdk::EventReadRow::Event(tombstone),
+        ];
+        let latest = latest_realm_alias_payload(&rows)
+            .unwrap()
+            .expect("alias history has a current value");
+        let payload = serde_json::from_value::<arkret_sdk::RealmAliasPayload>(latest).unwrap();
+        assert!(payload.alias().is_none());
+    }
+
+    #[test]
+    fn latest_alias_payload_ignores_unrelated_events() {
+        let alias = build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_ID, "engineering").unwrap();
+        let unrelated = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+            REALM_ID,
+            ACTOR_ID,
+            arkret_sdk::RealmProfile::new("Engineering").unwrap(),
+        )
+        .unwrap();
+        let latest = latest_realm_alias_payload(&[
+            arkret_sdk::EventReadRow::Event(alias),
+            arkret_sdk::EventReadRow::Event(unrelated),
+        ])
+        .unwrap()
+        .expect("alias remains current");
+        let payload = serde_json::from_value::<arkret_sdk::RealmAliasPayload>(latest).unwrap();
+        assert_eq!(
+            payload.alias().map(arkret_sdk::RealmAlias::canonical),
+            Some("engineering:server.example")
+        );
+    }
 }

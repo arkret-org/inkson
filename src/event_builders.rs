@@ -1594,8 +1594,7 @@ pub fn build_signed_device_verification_proof(
 ///
 /// `transaction_id` is a bare UUIDv7 rather than `arkret_sdk::TransactionId`:
 /// the spec's `transaction_id` pattern is `^[A-Za-z0-9._~=-]{1,128}$`, which
-/// the SDK type's `ak:transaction:` prefix cannot match. Recorded in arkret-work
-/// `review/code/2026-07-31-sdk-key-verification-transaction-id-off-spec.md`.
+/// the SDK type's `ak:transaction:` prefix cannot match.
 pub fn build_sas_key_verification_content(
     transaction_id: &str,
     public_key_b64: &str,

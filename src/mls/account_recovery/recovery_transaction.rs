@@ -7,7 +7,7 @@
 
 use arkret_models_collaboration::events_payloads::device_identity::{
     DeviceAuthorizationBindingKind, DeviceOrPrincipalRef, DeviceReanchorPayload,
-    UnsignedDeviceAuthorizePayload, typed_device_authorize_payload_digest,
+    UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
 };
 use arkret_wire::{
     CanonicalPublicMaterial, EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash,
@@ -194,7 +194,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         &verified_session,
         current_root_generation,
         did_webvh_version_sequence(&rotation.version_id)?,
-        typed_device_authorize_payload_digest(&authorize_payload, digest_suite)?,
+        device_authorize_payload_digest(&serde_json::to_value(&authorize_payload)?, digest_suite)?,
     )?;
 
     let reanchor_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(

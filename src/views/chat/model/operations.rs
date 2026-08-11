@@ -328,30 +328,6 @@ pub(crate) fn message_id_or_new_local_id(value: &str) -> String {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn chat_message_create_operation(
-    realm_id: &str,
-    actor: &str,
-    strand_id: &str,
-    _channel_kind: &str,
-    local_message_id: &str,
-    body: &str,
-    mentions: &[MentionNode],
-    reply_to: Option<&str>,
-) -> anyhow::Result<arkret_sdk::Event> {
-    chat_message_create_operation_with_expiry(
-        realm_id,
-        actor,
-        strand_id,
-        _channel_kind,
-        local_message_id,
-        body,
-        mentions,
-        reply_to,
-        None,
-    )
-}
-
 fn public_update_policy_error(body: &str) -> Option<&'static str> {
     let lower = body.to_ascii_lowercase();
     if !lower.contains("public update") {
@@ -407,24 +383,6 @@ pub(crate) async fn chat_content_block_for_body_with_upload(
         .await
 }
 
-#[cfg(test)]
-pub(crate) fn chat_message_create_operation_with_expiry(
-    realm_id: &str,
-    actor: &str,
-    strand_id: &str,
-    _channel_kind: &str,
-    message_id: &str,
-    body: &str,
-    mentions: &[MentionNode],
-    reply_to: Option<&str>,
-    expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
-) -> anyhow::Result<arkret_sdk::Event> {
-    let content = chat_content_block_for_body(body)?;
-    chat_message_create_operation_with_content_and_expiry(
-        realm_id, actor, strand_id, message_id, body, content, mentions, reply_to, expiry,
-    )
-}
-
 pub(crate) fn chat_message_create_operation_with_content(
     realm_id: &str,
     actor: &str,
@@ -477,7 +435,7 @@ pub(crate) fn confirmed_sidecar_publish_message_operation(
     Ok(event)
 }
 
-fn chat_message_create_operation_with_content_and_expiry(
+pub(crate) fn chat_message_create_operation_with_content_and_expiry(
     realm_id: &str,
     actor: &str,
     strand_id: &str,

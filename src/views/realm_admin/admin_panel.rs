@@ -547,7 +547,7 @@ pub fn RealmAdminPanel(
                             id: "realm-alias-input",
                             "data-testid": "realm-alias-input",
                             value: "{metadata_alias}",
-                            placeholder: "engineering (blank keeps current)",
+                            placeholder: "engineering (Realm only)",
                             oninput: move |event: FormEvent| metadata_alias.set(event.value()),
                         }
                         label { "Avatar" }
@@ -585,6 +585,8 @@ pub fn RealmAdminPanel(
                                         let summary = metadata_summary().trim().to_owned();
                                         let avatar_blob_ref = metadata_avatar_blob_ref().trim().to_owned();
                                         let alias = metadata_alias().trim().to_owned();
+                                        let updates_alias =
+                                            subject_kind == RealmTreeNodeKind::Realm && !alias.is_empty();
                                         if title.is_empty() {
                                             status_msg.set(
                                                 "profile update failed: title is required by spec".to_owned(),
@@ -633,18 +635,33 @@ pub fn RealmAdminPanel(
                                                 &base,
                                                 api_token,
                                                 |sub| async move {
-                                                    match subject_kind {
+                                                    let profile_result = match subject_kind {
                                                         RealmTreeNodeKind::Realm => {
                                                             crate::transport::realm_write::update_realm_metadata(&sub, &home_realm_id, &actor_id, patch).await
                                                         }
                                                         RealmTreeNodeKind::Space => {
                                                             crate::transport::realm_write::update_space_metadata(&sub, &home_realm_id, &subject_id, &actor_id, patch).await
                                                         }
+                                                    }?;
+                                                    if subject_kind == RealmTreeNodeKind::Realm
+                                                        && !alias.is_empty()
+                                                    {
+                                                        crate::transport::realm_write::set_realm_alias(
+                                                            &sub,
+                                                            &home_realm_id,
+                                                            &actor_id,
+                                                            Some(&alias),
+                                                        )
+                                                        .await?;
                                                     }
+                                                    Ok::<_, anyhow::Error>(profile_result)
                                                 },
                                             )
                                             .await
                                             {
+                                                Ok(_) if updates_alias => status_msg.set(format!(
+                                                    "{metadata_event_kind} profile and Realm alias updated"
+                                                )),
                                                 Ok(_) => status_msg.set(format!(
                                                     "{metadata_event_kind} profile updated"
                                                 )),
@@ -656,6 +673,56 @@ pub fn RealmAdminPanel(
                                     }
                                 },
                                 {crate::i18n::tr("realm_admin.save_profile")}
+                            }
+                            if metadata_subject.kind == RealmTreeNodeKind::Realm {
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    "data-testid": "remove-realm-alias-button",
+                                    onclick: {
+                                        let base = base_url.clone();
+                                        let home_realm_id = metadata_subject.home_realm_id.clone();
+                                        let actor_account_did = account_did.clone();
+                                        move |_| {
+                                            let base = base.clone();
+                                            let home_realm_id = home_realm_id.clone();
+                                            let actor_id = actor_account_did.trim().to_owned();
+                                            let api_token = token();
+                                            if actor_id.is_empty() {
+                                                status_msg.set(
+                                                    "alias removal failed: account is not connected".to_owned(),
+                                                );
+                                                return;
+                                            }
+                                            spawn(async move {
+                                                match crate::transport::auth::with_event_submitter(
+                                                    &base,
+                                                    api_token,
+                                                    |sub| async move {
+                                                        crate::transport::realm_write::set_realm_alias(
+                                                            &sub,
+                                                            &home_realm_id,
+                                                            &actor_id,
+                                                            None,
+                                                        )
+                                                        .await
+                                                    },
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => {
+                                                        metadata_alias.set(String::new());
+                                                        status_msg.set("Realm alias removed".to_owned());
+                                                    }
+                                                    Err(error) => status_msg.set(format!(
+                                                        "alias removal failed: {}",
+                                                        error.display()
+                                                    )),
+                                                }
+                                            });
+                                        }
+                                    },
+                                    "Remove Alias"
+                                }
                             }
                         }
                     }

@@ -610,13 +610,33 @@ fn chat_visible_read_receipt_display_respects_local_preferences() {
     ));
 }
 
+fn production_chat_message_create_operation(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    local_message_id: &str,
+    body: &str,
+    mentions: &[MentionNode],
+    reply_to: Option<&str>,
+) -> anyhow::Result<arkret_sdk::Event> {
+    chat_message_create_operation_with_content(
+        realm_id,
+        actor,
+        strand_id,
+        local_message_id,
+        body,
+        arkret_sdk::ContentBlock::text(body),
+        mentions,
+        reply_to,
+    )
+}
+
 #[test]
 fn chat_message_create_operation_emits_schema_canonical_content() {
-    let op = chat_message_create_operation(
+    let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "local-message:test",
         "hello from chat",
         &[],
@@ -661,11 +681,10 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
 
 #[test]
 fn chat_message_create_operation_blocks_sensitive_public_update() {
-    let err = chat_message_create_operation(
+    let err = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "ak:message:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "Public update: root cause leaked token",
         &[],
@@ -678,11 +697,10 @@ fn chat_message_create_operation_blocks_sensitive_public_update() {
 
 #[test]
 fn chat_message_create_operation_keeps_public_update_notification_projection_out_of_content() {
-    let op = chat_message_create_operation(
+    let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "ak:message:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "SEV-1 public update: checkout latency is recovering",
         &[],
@@ -714,13 +732,13 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
     )
     .unwrap()
     .with_grace_ms(5_000);
-    let op = chat_message_create_operation_with_expiry(
+    let op = chat_message_create_operation_with_content_and_expiry(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "ak:message:AVWVGlDqGwJJ7DILnxJ4oq7JGdtoXGIQaK4PoiEf2yBZ",
         "short lived",
+        arkret_sdk::ContentBlock::text("short lived"),
         &[],
         None,
         Some(expiry),
@@ -743,11 +761,10 @@ fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level(
 #[test]
 fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     let mentions = parse_mention_nodes("ping @here and @carol:example.com");
-    let op = chat_message_create_operation(
+    let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "ak:message:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
         "ping @here and @carol:example.com",
         &mentions,
@@ -789,11 +806,10 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
                 .with_timezone(&chrono::Utc),
         ),
     )];
-    let op = chat_message_create_operation(
+    let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:bob.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "ak:message:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
         "ask @alice:example.com/summary",
         &mentions,
@@ -836,11 +852,10 @@ fn mention_sidecar_is_omitted_without_an_epoch_routing_key() {
     let mentions = vec![MentionNode::mention(arkret_sdk::Mention::new(
         crate::mls_api_helpers::principal_core_id("did:web:agent.example").unwrap(),
     ))];
-    let mut event = chat_message_create_operation(
+    let mut event = production_chat_message_create_operation(
         realm,
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "ak:message:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
         "hello agent",
         &mentions,
@@ -855,11 +870,10 @@ fn mention_sidecar_is_omitted_without_an_epoch_routing_key() {
 
 #[test]
 fn chat_message_create_operation_includes_reply_fields_only_when_present() {
-    let op = chat_message_create_operation(
+    let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "ak:message:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
         "reply body",
         &[],
@@ -883,11 +897,10 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
 
 #[test]
 fn chat_message_create_operation_rejects_event_id_reply_target() {
-    let err = chat_message_create_operation(
+    let err = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "discussion",
         "ak:message:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
         "reply body",
         &[],

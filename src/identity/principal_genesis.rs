@@ -75,7 +75,27 @@ pub fn build_genesis_unit(
         created_at,
         device_signer,
     )?;
-    let descriptor = arkret_sdk::FoundingDeviceDescriptor::from_authorize_payload(&payload)?;
+    let descriptor = arkret_sdk::FoundingDeviceDescriptor {
+        descriptor_version: 1,
+        device_id: payload.device_id.clone(),
+        device_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            payload.device_public_key.as_bytes(),
+        ))?,
+        device_public_key: payload.device_public_key.clone(),
+        device_key_algorithm: arkret_sdk::FoundingDeviceKeyAlgorithm::Ed25519,
+        device_key_purpose: arkret_sdk::FoundingDeviceKeyPurpose::EventSigningAndMlsIdentity,
+        hpke_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            payload.hpke_key.as_bytes(),
+        ))?,
+        hpke_key: payload.hpke_key.clone(),
+        hpke_key_algorithm: arkret_sdk::FoundingDeviceHpkeKeyAlgorithm::X25519,
+        algorithms: payload.algorithms.clone(),
+        founding_authorize_payload_digest: arkret_sdk::device_authorize_payload_digest(
+            &serde_json::to_value(&payload)?,
+            arkret_sdk::canonical::DigestSuite::Sha256,
+        )?,
+    };
+    descriptor.validate()?;
     let registry_digest = arkret_sdk::current_capability_action_registry_digest()
         .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(

@@ -664,14 +664,6 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
 /// the SDK `DeliveryBindingPolicyPayload` strong type; this gate pins the
 /// emitted body against the closed
 /// `event-payload.schema.json#/$defs/realm_delivery_binding_policy_payload`.
-///
-/// It deliberately does NOT run the envelope gate: `event-envelope.schema.json`
-/// routes this kind to the generic `state_payload` (`{value,state,reason}`,
-/// `additionalProperties:false`), which contradicts the dedicated flat def the
-/// same artifact set declares — and the flat form is what soland's
-/// `apply_delivery_binding_policy` / `enforce_delivery_binding_policy` read.
-/// Tracked by arkret-work `review/spec-open/
-/// 2026-07-30-realm-policy-payload-shape-gaps.md` gap 2.
 #[test]
 fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
     let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
@@ -697,7 +689,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
     )
     .expect("build_realm_bootstrap_events succeeds");
 
-    let policy = events
+    let mut policy = events
         .iter()
         .find(|event| event.kind == EventKind::RealmDeliveryBindingPolicy)
         .cloned()
@@ -707,6 +699,11 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
         serde_json::json!(["ak:did_core:web:server.example"]),
         "the recipient-service allow-list must stay a closed DID list, never the \
          [\"*\"] unrestricted sentinel"
+    );
+    stamp_wire_fields(&mut policy);
+    assert_envelope_matches_schema(
+        "build_realm_bootstrap_events[delivery_binding_policy]",
+        &policy,
     );
     assert_matches_payload_def(
         "build_realm_bootstrap_events[delivery_binding_policy]",

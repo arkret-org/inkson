@@ -1508,7 +1508,10 @@ mod tests {
                     "accept_third_party_mention": false,
                     "act_on_behalf": false
                 },
-                "version": 1
+                "version": 1,
+                "next_replace_input": {
+                    "expected_version": 1
+                }
             }]
         }))
         .expect("participation outcome");
