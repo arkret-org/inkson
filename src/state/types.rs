@@ -741,6 +741,11 @@ pub struct RecoveryMaterialEvidence {
     pub principal_control_realm_id: arkret_sdk::RealmId,
     pub pcr_genesis_unit: arkret_wire::PcrGenesisUnit,
     pub bootstrap_seal: arkret_sdk::Seal,
+    /// Exact accepted PCR authority instance used for controller-authorized
+    /// operations. Older persisted state predates this selector and must be
+    /// refreshed through identity recovery before it can provision an Agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_authority_instance: Option<arkret_sdk::PrincipalAuthorityInstance>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

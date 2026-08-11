@@ -1094,12 +1094,34 @@ fn spawn_provision_agent(
                 return;
             }
         };
+        let controller_authority_instance = match state_store
+            .read()
+            .recovery_material_evidence()
+            .and_then(|evidence| evidence.controller_authority_instance)
+        {
+            Some(value) if value.validate().is_ok() && value.principal_id == controller_id => value,
+            Some(_) => {
+                last_op_status.set(
+                    "Create failed: the saved controller authority instance does not match the signed-in identity. Refresh identity recovery material before provisioning an Agent."
+                        .to_owned(),
+                );
+                return;
+            }
+            None => {
+                last_op_status.set(
+                    "Create failed: this device has no accepted controller authority instance. Refresh identity recovery material before provisioning an Agent."
+                        .to_owned(),
+                );
+                return;
+            }
+        };
         let Some(requested_scope) = requested_scope_for_presets(&content_presets, &service_scopes)
         else {
             last_op_status.set("Select at least one runtime service surface.".to_owned());
             return;
         };
         let nonce = crate::operation::uuid_v7();
+        let agent_did_local_id = format!("agent-{nonce}");
         let operation_id = match arkret_sdk::ProtocolOperationId::new(format!(
             "ak:operation:agent.provision.{nonce}"
         )) {
@@ -1116,9 +1138,73 @@ fn spawn_provision_agent(
                 return;
             }
         };
+        let (agent_inception, agent_did_keys) =
+            match crate::managed_agent_identity::prepare_inception(
+                &base,
+                &agent_did_local_id,
+                &controller_id,
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    last_op_status.set(format!("Create failed: Agent DID inception: {error}"));
+                    return;
+                }
+            };
+        let full_id = match arkret_sdk::DidFullId::new(agent_inception.did.clone()) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: generated Agent DID: {error}"));
+                return;
+            }
+        };
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        if let Err(error) = crate::managed_agent_identity::store_keys_durable(
+            secure_store.as_ref(),
+            full_id.as_str(),
+            &agent_did_keys,
+        )
+        .await
+        {
+            last_op_status.set(format!(
+                "Create failed: persist Agent DID update keys before inception: {error}"
+            ));
+            return;
+        }
+        let inception_submit = agent_inception.submit_body.clone();
+        let inception_outcome =
+            match with_authed_sdk_client(&base, api_token.clone(), move |http| {
+                let inception_submit = inception_submit.clone();
+                async move {
+                    crate::transport::account::submit_did_operation(&http, &inception_submit).await
+                }
+            })
+            .await
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    last_op_status.set(format!(
+                        "Create failed: publish Agent DID inception: {}",
+                        error.display()
+                    ));
+                    return;
+                }
+            };
+        if inception_outcome.did != full_id {
+            last_op_status.set("Create failed: inception response DID mismatch".to_owned());
+            return;
+        }
+        if inception_outcome.status == arkret_sdk::DidOperationSubmitStatus::Pending {
+            last_op_status.set(
+                "Agent DID inception is pending acceptance; retry creation after it is accepted."
+                    .to_owned(),
+            );
+            return;
+        }
         let prepare = AgentProvisionRequestBody::Prepare {
             operation_id: operation_id.clone(),
             idempotency_key: idempotency_key.clone(),
+            full_id: full_id.clone(),
+            controller_authority_instance,
             slug: slug.clone(),
             requested_scope: requested_scope.clone(),
             pairing_ttl_ms: None,
@@ -1135,14 +1221,16 @@ fn spawn_provision_agent(
         {
             Ok(AgentProvisionOutcome::AwaitingControllerEvent {
                 agent_id,
-                full_id,
+                full_id: returned_full_id,
+                initial_resolution,
                 controller_realm_id,
                 allocation_handle,
                 controller_authorization_ref,
                 requested_scope_digest,
-            }) => (
+            }) if returned_full_id == full_id => (
                 agent_id,
-                full_id,
+                returned_full_id,
+                initial_resolution,
                 controller_realm_id,
                 allocation_handle,
                 controller_authorization_ref,
@@ -1158,6 +1246,17 @@ fn spawn_provision_agent(
                     .set("Create failed: prepare returned a completed allocation".to_owned());
                 return;
             }
+            Ok(AgentProvisionOutcome::AwaitingDidBinding { .. }) => {
+                last_op_status.set(
+                    "Create failed: prepare returned an allocation awaiting DID binding".to_owned(),
+                );
+                return;
+            }
+            Ok(AgentProvisionOutcome::AwaitingControllerEvent { .. }) => {
+                last_op_status
+                    .set("Create failed: prepare returned a different Agent DID".to_owned());
+                return;
+            }
             Err(error) => {
                 last_op_status.set(format!("Create failed: {}", error.display()));
                 return;
@@ -1166,11 +1265,32 @@ fn spawn_provision_agent(
         let (
             agent_id,
             full_id,
+            initial_resolution,
             controller_realm_id,
             allocation_handle,
             controller_authorization_ref,
             expected_digest,
         ) = preparation;
+        let prepared_inception_head =
+            match crate::canonical::canonical_sha256(&agent_inception.log_entry) {
+                Ok(value) => value,
+                Err(error) => {
+                    last_op_status.set(format!(
+                        "Create failed: digest Agent DID inception: {error}"
+                    ));
+                    return;
+                }
+            };
+        if initial_resolution.full_id != full_id
+            || initial_resolution.version_id != agent_inception.version_id
+            || initial_resolution.method_history_head != prepared_inception_head
+        {
+            last_op_status.set(
+                "Create failed: server did not pin the exact accepted Agent DID inception"
+                    .to_owned(),
+            );
+            return;
+        }
         let projected_agent_id = match arkret_sdk::project_full_id_to_core_id(&full_id) {
             Ok(value) => value,
             Err(error) => {
@@ -1205,12 +1325,14 @@ fn spawn_provision_agent(
         // of the PCR Realm id carried by that provision declaration.
         let frozen_genesis = match with_event_submitter(&base, api_token.clone(), {
             let agent_id = agent_id.clone();
+            let initial_resolution = initial_resolution.clone();
             let controller_id = controller_id.clone();
             let controller_authorization_ref = controller_authorization_ref.clone();
             move |submitter| async move {
                 let describe = submitter.events_describe().await?;
                 let draft = crate::event_builders::build_managed_agent_pcr_create_event(
                     agent_id.as_str(),
+                    initial_resolution,
                     controller_id.as_str(),
                     controller_authorization_ref.as_str(),
                     describe.trust_domain.as_str(),
@@ -1270,6 +1392,7 @@ fn spawn_provision_agent(
                     return;
                 }
             };
+        let provision_event_id = provision_event.event.event_id.clone();
         let commit = AgentProvisionRequestBody::Commit {
             operation_id,
             idempotency_key,
@@ -1294,12 +1417,14 @@ fn spawn_provision_agent(
                 Ok(AgentProvisionOutcome::AwaitingPcrGenesis {
                     agent_id: returned_agent_id,
                     full_id: returned_full_id,
+                    initial_resolution: returned_resolution,
                     principal_control_realm_id: returned_realm_id,
                     allocation_handle: returned_allocation,
                     controller_authorization_ref: returned_authorization,
                     requested_scope_digest: returned_digest,
                 }) if returned_agent_id == agent_id
                     && returned_full_id == full_id
+                    && returned_resolution == initial_resolution
                     && returned_realm_id == principal_control_realm_id
                     && returned_allocation == allocation_handle
                     && returned_authorization == controller_authorization_ref
@@ -1326,12 +1451,39 @@ fn spawn_provision_agent(
                         .set("Create failed: commit returned another preparation".to_owned());
                     return;
                 }
+                Ok(AgentProvisionOutcome::AwaitingDidBinding { .. }) => {
+                    last_op_status.set(
+                        "Create failed: commit requested DID binding before PCR acceptance"
+                            .to_owned(),
+                    );
+                    return;
+                }
                 Err(error) => {
                     last_op_status.set(format!("Create failed: {}", error.display()));
                     return;
                 }
             };
         let _ = awaiting;
+        let controller_realm_for_seal = controller_realm_id.clone();
+        let controller_id_for_seal = controller_full_id.clone();
+        if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
+            super::bootstrap::seal_self_principal_event_current(
+                &api,
+                &controller_id_for_seal,
+                &controller_realm_for_seal,
+                &provision_event_id,
+            )
+            .await
+            .map(|_| ())
+        })
+        .await
+        {
+            last_op_status.set(format!(
+                "Agent provision Event accepted, but Controller PCR Seal failed: {}",
+                error.display()
+            ));
+            return;
+        }
         let genesis_idempotency_key = frozen_genesis.event_id.to_string();
         let genesis_for_submit = frozen_genesis.clone();
         if let Err(error) =
@@ -1352,6 +1504,125 @@ fn spawn_provision_agent(
             ));
             return;
         }
+        let pcr_realm_for_seal = principal_control_realm_id.clone();
+        let state_store_for_seal = state_store;
+        if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
+            super::bootstrap::seal_managed_agent_pcr_current(
+                &api,
+                state_store_for_seal,
+                &pcr_realm_for_seal,
+            )
+            .await
+            .map(|_| ())
+        })
+        .await
+        {
+            last_op_status.set(format!(
+                "Agent PCR genesis accepted, but its Controller Seal failed: {}",
+                error.display()
+            ));
+            return;
+        }
+        let commit_for_pcr_check = commit.clone();
+        let binding_coordinates =
+            match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
+                http.agent_provision(&commit_for_pcr_check)
+                    .await
+                    .map_err(anyhow::Error::from)
+            })
+            .await
+            {
+                Ok(AgentProvisionOutcome::AwaitingDidBinding {
+                    agent_id: returned_agent_id,
+                    full_id: returned_full_id,
+                    initial_resolution: returned_resolution,
+                    principal_control_realm_id: returned_realm_id,
+                    allocation_handle: returned_allocation,
+                    controller_authorization_ref: returned_authorization,
+                    requested_scope_digest: returned_digest,
+                }) if returned_agent_id == agent_id
+                    && returned_full_id == full_id
+                    && returned_resolution == initial_resolution
+                    && returned_realm_id == principal_control_realm_id
+                    && returned_allocation == allocation_handle
+                    && returned_authorization == controller_authorization_ref
+                    && returned_digest == expected_digest =>
+                {
+                    (returned_realm_id, returned_digest)
+                }
+                Ok(AgentProvisionOutcome::AwaitingDidBinding { .. }) => {
+                    last_op_status.set(
+                        "Create failed: PCR acceptance returned mismatched DID-binding coordinates"
+                            .to_owned(),
+                    );
+                    return;
+                }
+                Ok(AgentProvisionOutcome::Complete { .. }) => {
+                    last_op_status.set(
+                    "Create failed: Agent became visible before its DID PCR binding was accepted"
+                        .to_owned(),
+                );
+                    return;
+                }
+                Ok(AgentProvisionOutcome::AwaitingPcrGenesis { .. }) => {
+                    last_op_status.set(
+                        "Create failed: PCR genesis was accepted but provisioning did not finalize"
+                            .to_owned(),
+                    );
+                    return;
+                }
+                Ok(AgentProvisionOutcome::AwaitingControllerEvent { .. }) => {
+                    last_op_status
+                        .set("Create failed: final commit returned another preparation".to_owned());
+                    return;
+                }
+                Err(error) => {
+                    last_op_status.set(format!("Create failed: {}", error.display()));
+                    return;
+                }
+            };
+        let binding_update = match crate::managed_agent_identity::prepare_binding_update(
+            &agent_inception,
+            &agent_did_keys,
+            &controller_id,
+            &binding_coordinates.0,
+            &binding_coordinates.1,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!(
+                    "Create failed: build Agent DID PCR binding: {error}"
+                ));
+                return;
+            }
+        };
+        let binding_submit = binding_update.submit_body.clone();
+        let binding_outcome =
+            match with_authed_sdk_client(&base, api_token.clone(), move |http| {
+                let binding_submit = binding_submit.clone();
+                async move {
+                    crate::transport::account::submit_did_operation(&http, &binding_submit).await
+                }
+            })
+            .await
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    last_op_status.set(format!(
+                        "Agent PCR accepted, but DID PCR binding publication failed: {}",
+                        error.display()
+                    ));
+                    return;
+                }
+            };
+        if binding_outcome.did != full_id
+            || binding_outcome.status == arkret_sdk::DidOperationSubmitStatus::Pending
+        {
+            last_op_status.set(
+                "Agent PCR accepted, but its DID binding is still pending acceptance.".to_owned(),
+            );
+            return;
+        }
         let outcome =
             match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
                 http.agent_provision(&commit)
@@ -1361,10 +1632,16 @@ fn spawn_provision_agent(
             .await
             {
                 Ok(AgentProvisionOutcome::Complete { outcome }) => outcome,
+                Ok(AgentProvisionOutcome::AwaitingDidBinding { .. }) => {
+                    last_op_status.set(
+                        "Create failed: DID binding was accepted but provisioning did not finalize"
+                            .to_owned(),
+                    );
+                    return;
+                }
                 Ok(AgentProvisionOutcome::AwaitingPcrGenesis { .. }) => {
                     last_op_status.set(
-                        "Create failed: PCR genesis was accepted but provisioning did not finalize"
-                            .to_owned(),
+                        "Create failed: final commit lost the accepted PCR genesis".to_owned(),
                     );
                     return;
                 }

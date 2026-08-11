@@ -582,6 +582,7 @@ pub fn build_realm_create_event(
 /// provisioning.
 pub fn build_managed_agent_pcr_create_event(
     agent_id: &str,
+    initial_resolution: arkret_sdk::ResolutionCommitment,
     controller_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
@@ -590,6 +591,7 @@ pub fn build_managed_agent_pcr_create_event(
     let payload = arkret_bootstrap::build_managed_agent_pcr_create_payload(
         arkret_bootstrap::ManagedAgentPcrCreatePayloadInput {
             agent_id: crate::mls_api_helpers::principal_core_id(agent_id)?,
+            initial_resolution,
             controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
             trust_domain: arkret_sdk::TypedTrustDomainId::new(trust_domain.to_owned())?,
@@ -616,12 +618,14 @@ pub fn build_managed_agent_pcr_create_event(
 
 pub fn build_managed_agent_pcr_bootstrap_events(
     agent_id: &str,
+    initial_resolution: arkret_sdk::ResolutionCommitment,
     controller_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     let create = build_managed_agent_pcr_create_event(
         agent_id,
+        initial_resolution,
         controller_id,
         controller_authorization_ref,
         trust_domain,
@@ -1655,10 +1659,19 @@ pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Resu
 mod notary_derivation_tests {
     use super::*;
 
+    fn agent_resolution() -> arkret_sdk::ResolutionCommitment {
+        arkret_sdk::ResolutionCommitment {
+            full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+            method_history_head: format!("sha256:{}", "8".repeat(64)),
+            version_id: "1-Qmfixture".to_owned(),
+        }
+    }
+
     #[test]
     fn managed_agent_pcr_prepare_freezes_an_exact_create_draft() {
         let event = build_managed_agent_pcr_create_event(
             "did:web:agent.example",
+            agent_resolution(),
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
@@ -1672,6 +1685,7 @@ mod notary_derivation_tests {
     fn managed_agent_pcr_bootstrap_contains_only_the_ref_free_create() {
         let events = build_managed_agent_pcr_bootstrap_events(
             "did:web:agent.example",
+            agent_resolution(),
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
@@ -1847,6 +1861,7 @@ mod notary_derivation_tests {
     fn managed_agent_pcr_create_candidate_is_event_derived_and_ref_free() {
         let event = build_managed_agent_pcr_create_event(
             "did:web:agent.example",
+            agent_resolution(),
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",

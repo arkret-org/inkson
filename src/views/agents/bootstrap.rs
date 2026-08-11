@@ -980,6 +980,62 @@ pub(crate) fn managed_agent_seal_head_receipt_unavailable(error: &anyhow::Error)
         .contains("events/frontier omitted the accepted managed Agent PCR Seal head")
 }
 
+/// Seal one newly accepted controller self-PCR Event with the active
+/// controller device.  The server may durably admit the Control Move, but it
+/// cannot manufacture the principal's notary signature; publication is not
+/// authoritative until this successor Seal is accepted.
+pub(crate) async fn seal_self_principal_event_current(
+    api: &crate::transport::TransportClient,
+    controller_id: &arkret_sdk::DidFullId,
+    realm_id: &arkret_sdk::RealmId,
+    expected_event_id: &arkret_sdk::EventId,
+) -> anyhow::Result<arkret_sdk::Seal> {
+    let submitter = api.event_submitter()?;
+    let http = api.sdk_http_client()?;
+    let predecessor = submitter
+        .events_frontier_realm_seal_view(realm_id.as_str())
+        .await?;
+    let controller_actor_id =
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
+    let mut accepted = submitter
+        .backfill(realm_id.as_str())
+        .await?
+        .complete_events("controller self-PCR successor Seal construction")?
+        .into_iter()
+        .filter(|event| event.actor_id == controller_actor_id)
+        .collect::<Vec<_>>();
+    accepted.sort_by(|left, right| {
+        left.actor_seq
+            .cmp(&right.actor_seq)
+            .then_with(|| left.event_id.cmp(&right.event_id))
+    });
+    if accepted.last().map(|event| &event.event_id) != Some(expected_event_id) {
+        anyhow::bail!("accepted controller self-PCR Event is not the actor frontier");
+    }
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
+    let device_id = signer
+        .device_id()
+        .ok_or_else(|| anyhow::anyhow!("active controller signer has no bound device id"))?;
+    let hlc = crate::signing_stamp::issue_protocol_hlc(
+        controller_id.as_str(),
+        device_id,
+        realm_id.as_str(),
+    )?;
+    let seal = signer
+        .sign_self_principal_linear_successor_seal(&accepted, &predecessor, hlc)
+        .map_err(|error| anyhow::anyhow!("sign controller self-PCR successor Seal: {error}"))?;
+    let expected_digests = seal.delta.clone();
+    let outcome = http.events_submit_seal(&seal).await?;
+    if outcome.seal_id != seal.id
+        || outcome.accepted_event_digests != expected_digests
+        || outcome.post_state_root != seal.state_root
+    {
+        anyhow::bail!("Principal Server returned a mismatched controller self-PCR Seal outcome");
+    }
+    Ok(seal)
+}
+
 /// Publish the controller-authored successor Seal required to turn durable
 /// managed Agent-PCR Events into accepted authorization state.
 pub(crate) async fn seal_managed_agent_pcr_current(

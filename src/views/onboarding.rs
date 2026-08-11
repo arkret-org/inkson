@@ -1806,12 +1806,27 @@ async fn finish_principal_setup(
         .pcr_genesis_unit
         .clone()
         .context("recovery-material evidence omits PCR genesis unit")?;
+    let pcr_genesis_receipt = registration
+        .pcr_genesis_receipt
+        .clone()
+        .context("recovery-material evidence omits PCR genesis receipt")?;
+    let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())?;
+    let principal_core_id = arkret_sdk::project_full_id_to_core_id(&principal_id)?;
+    let receipt_digest =
+        arkret_sdk::Hash::new(crate::canonical::canonical_sha256(&pcr_genesis_receipt)?)?;
+    let controller_authority_instance = arkret_sdk::PrincipalAuthorityInstance::new(
+        principal_core_id,
+        pcr_genesis_receipt.issuer.clone(),
+        bootstrap_seal.realm_id.clone(),
+        receipt_digest,
+    )?;
     let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
-        principal_id: arkret_sdk::DidFullId::new(actor.to_owned())?,
+        principal_id,
         device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
         principal_control_realm_id: bootstrap_seal.realm_id.clone(),
         pcr_genesis_unit,
         bootstrap_seal,
+        controller_authority_instance: Some(controller_authority_instance),
     };
     let completed_registration = registration.clone();
     {

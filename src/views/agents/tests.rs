@@ -9,6 +9,16 @@ mod personal_agent_tests {
         runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
     };
 
+    fn agent_initial_resolution(
+        full_id: &arkret_sdk::DidFullId,
+    ) -> arkret_sdk::ResolutionCommitment {
+        arkret_sdk::ResolutionCommitment {
+            full_id: full_id.clone(),
+            method_history_head: format!("sha256:{}", "8".repeat(64)),
+            version_id: "1-Qmfixture".to_owned(),
+        }
+    }
+
     #[test]
     fn pairing_renewal_is_available_before_an_open_request_expires() {
         assert!(super::super::admin::should_offer_pairing_renewal(
@@ -291,6 +301,9 @@ mod personal_agent_tests {
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
                 .unwrap(),
             full_id: arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+            initial_resolution: agent_initial_resolution(
+                &arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+            ),
             principal_control_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             )
@@ -340,6 +353,9 @@ mod personal_agent_tests {
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
                 .unwrap(),
             full_id: arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+            initial_resolution: agent_initial_resolution(
+                &arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+            ),
             principal_control_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             )

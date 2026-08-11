@@ -496,6 +496,10 @@ pub(crate) enum ProposalAuthorityRouteKind {
     PrincipalServerAdmission,
     /// A managed Agent's Control Realm, written by its delegated controller.
     ManagedAgentPcr,
+    /// A controller's own principal-control Realm.  Agent provisioning is a
+    /// self-PCR Control Move, so the controller device signs its proposal Ack
+    /// under the immutable notary declared by that Realm's accepted genesis.
+    SelfPrincipalPcr,
 }
 
 fn classify_proposal_authority_route(
@@ -508,6 +512,9 @@ fn classify_proposal_authority_route(
     // ever coming from two different answers.
     if is_managed_agent_pcr_control(event) {
         return Ok(ProposalAuthorityRouteKind::ManagedAgentPcr);
+    }
+    if event.kind == arkret_sdk::EventKind::AgentProvision {
+        return Ok(ProposalAuthorityRouteKind::SelfPrincipalPcr);
     }
     Ok(ProposalAuthorityRouteKind::PrincipalServerAdmission)
 }
@@ -562,7 +569,58 @@ async fn resolve_proposal_authority_route(
                 },
             ))
         }
+        ProposalAuthorityRouteKind::SelfPrincipalPcr => {
+            let accepted = http
+                .events_read_all_pages(event.realm_id.as_str())
+                .await
+                .map_err(anyhow::Error::from)?;
+            let accepted_events = crate::models::require_complete_event_rows(
+                &accepted.events,
+                "self principal PCR authority resolution",
+            )?;
+            let authority_set_ref =
+                self_principal_pcr_authority_set_ref_from_events(event, &accepted_events)?;
+            Ok(ProposalAuthorityRoute::LocalPrincipal(
+                LocalPrincipalAuthority {
+                    authority_set_ref,
+                    signer_actor_id: event.actor_id.clone(),
+                },
+            ))
+        }
     }
+}
+
+fn self_principal_pcr_authority_set_ref_from_events(
+    event: &arkret_sdk::Event,
+    accepted_events: &[arkret_sdk::Event],
+) -> anyhow::Result<arkret_sdk::Hash> {
+    let mut creates = accepted_events.iter().filter(|candidate| {
+        candidate.kind == arkret_sdk::EventKind::RealmCreate
+            && candidate.realm_id == event.realm_id
+            && candidate.actor_id == event.actor_id
+    });
+    let create = creates
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("self principal PCR create Event is unavailable"))?;
+    if creates.next().is_some() {
+        anyhow::bail!("self principal PCR has multiple matching create Events");
+    }
+    let payload: arkret_sdk::RealmCreatePayload = serde_json::from_value(
+        serde_json::to_value(&create.payload)
+            .map_err(|error| anyhow::anyhow!("encode self PCR genesis: {error}"))?,
+    )
+    .map_err(|error| anyhow::anyhow!("decode self PCR genesis: {error}"))?;
+    if payload.object.purpose != arkret_sdk::RealmPurpose::PrincipalControl {
+        anyhow::bail!("Agent provision Event is not in a principal-control Realm");
+    }
+    let arkret_sdk::NotaryValue::SingleDid { actor_id, .. } = &payload.object.notary else {
+        anyhow::bail!("self principal PCR genesis does not use a single-DID notary");
+    };
+    if actor_id != &event.actor_id {
+        anyhow::bail!("self principal PCR notary does not match the provision Event actor");
+    }
+    arkret_sdk::Hash::new(crate::canonical::canonical_sha256(&payload.object.notary)?)
+        .map_err(anyhow::Error::from)
 }
 
 fn managed_agent_pcr_authority_set_ref_from_events(
@@ -817,6 +875,14 @@ mod tests {
             "an ordinary Realm write must not degrade to a local self-signature"
         );
 
+        let mut provision = ordinary.clone();
+        provision.kind = arkret_sdk::EventKind::AgentProvision;
+        assert_eq!(
+            classify_proposal_authority_route(&provision).unwrap(),
+            ProposalAuthorityRouteKind::SelfPrincipalPcr,
+            "Agent provisioning is authorized by the controller's self-PCR notary"
+        );
+
         let mut managed = event();
         managed.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap();
         managed.executed_by =
@@ -854,6 +920,11 @@ mod tests {
     fn managed_agent_pcr_create_is_frozen_before_provision_commit() {
         let events = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
             "did:web:agent.example",
+            arkret_sdk::ResolutionCommitment {
+                full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+                method_history_head: format!("sha256:{}", "8".repeat(64)),
+                version_id: "1-Qmfixture".to_owned(),
+            },
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
