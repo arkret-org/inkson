@@ -1403,10 +1403,14 @@ fn notary_primary_projects_to_actor(
     actor_id: &arkret_sdk::DidCoreId,
 ) -> bool {
     match notary {
-        arkret_sdk::NotaryValue::SingleDid { did, .. }
-        | arkret_sdk::NotaryValue::Mixed { did, .. } => {
-            arkret_sdk::project_full_id_to_core_id(did).is_ok_and(|core_id| &core_id == actor_id)
+        arkret_sdk::NotaryValue::SingleDid {
+            actor_id: notary_actor,
+            ..
         }
+        | arkret_sdk::NotaryValue::Mixed {
+            actor_id: notary_actor,
+            ..
+        } => notary_actor == actor_id,
         arkret_sdk::NotaryValue::Threshold { members, .. }
         | arkret_sdk::NotaryValue::OpenSet { members } => members.contains(actor_id),
     }
@@ -1621,7 +1625,7 @@ mod tests {
         let error = event_device_proof_pair(
             &event,
             &proof(
-                "did:webvh:zfixture:mallory.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+                "did:webvh:zmallory:mallory.example#ak:device:01904100-0000-7000-8000-0000000000a1",
             ),
         )
         .expect_err("controller mismatch must fail");

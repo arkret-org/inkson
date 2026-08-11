@@ -332,7 +332,7 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
         arkret_sdk::Hash::new(event.event_digest()?).context("construct proposal Event digest")?;
     let authority_set_ref = arkret_sdk::Hash::new(
         arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::single_did(
-            arkret_sdk::DidFullId::new("did:web:server.local")?,
+            arkret_sdk::DidCoreId::new("ak:did_core:web:server.local".to_owned())?,
         ))
         .context("digest proposal authority set")?,
     )

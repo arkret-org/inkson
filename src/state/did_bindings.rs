@@ -39,7 +39,7 @@
 //! deterministic oldest-`verified_at` eviction, the same technique
 //! `raw_operations` (512) and `mls_governance_proofs` (16) already use.
 
-use arkret_sdk::identity::{AcceptedDidBinding, BindingInvalidation};
+use arkret_sdk::identity::AcceptedDidBinding;
 use arkret_sdk::{DidFullId, TypedTrustDomainId};
 
 use super::*;
@@ -140,52 +140,6 @@ impl LocalStateStore {
         best
     }
 
-    /// Apply one precise [`BindingInvalidation`] selector to the persisted set.
-    ///
-    /// Returns the number of removed entries. An **empty selector removes
-    /// nothing** — that guarantee comes from the SDK
-    /// (`BindingInvalidation::matches` returns `false` for an unconstrained
-    /// selector), so a mis-built selector degrades into a no-op instead of a
-    /// silent full wipe.
-    #[cfg(test)]
-    pub(crate) fn invalidate_accepted_did_bindings(
-        &mut self,
-        selector: &BindingInvalidation,
-    ) -> usize {
-        self.ensure_cached_loaded();
-        if selector.is_empty() {
-            return 0;
-        }
-        let before = self.cached.accepted_did_bindings.len();
-        self.cached
-            .accepted_did_bindings
-            .retain(|record| !selector.matches(record.binding()));
-        let removed = before - self.cached.accepted_did_bindings.len();
-        if removed > 0 {
-            let _ = self.flush();
-        }
-        removed
-    }
-
-    /// Apply a batch of selectors in one flush.
-    pub(crate) fn invalidate_accepted_did_bindings_batch(
-        &mut self,
-        selectors: &[BindingInvalidation],
-    ) -> usize {
-        self.ensure_cached_loaded();
-        let before = self.cached.accepted_did_bindings.len();
-        self.cached.accepted_did_bindings.retain(|record| {
-            !selectors
-                .iter()
-                .any(|selector| selector.matches(record.binding()))
-        });
-        let removed = before - self.cached.accepted_did_bindings.len();
-        if removed > 0 {
-            let _ = self.flush();
-        }
-        removed
-    }
-
     /// **Trust-domain switch.** Drop every binding that was *not* accepted
     /// against `trust_domain`.
     ///
@@ -197,10 +151,8 @@ impl LocalStateStore {
     /// active trust domain changes every foreign-domain binding is removed
     /// rather than left to expire.
     ///
-    /// Implemented as a positive retain (`keep == same domain`) rather than as a
-    /// [`BindingInvalidation`], because the selector API is deliberately
-    /// conjunctive-match — it can express "remove domain X" but not "remove
-    /// everything except X" without enumerating every other domain.
+    /// Implemented as a positive retain (`keep == same domain`) so the switch
+    /// cannot accidentally preserve an acceptance from another deployment.
     pub(crate) fn clear_accepted_did_bindings_outside_trust_domain(
         &mut self,
         trust_domain: &TypedTrustDomainId,
@@ -228,84 +180,6 @@ impl LocalStateStore {
             .map(|record| record.binding().did().clone())
             .collect()
     }
-}
-
-/// Build the invalidation selectors implied by one identity/control event.
-///
-/// `did-usage-and-verification.md` §4 lists the closed set of conditions that
-/// invalidate an accepted binding. This maps the wire event kinds inkson can
-/// observe in a sync response onto **precise** selectors — every returned
-/// selector constrains at least the DID, so no event ever produces a
-/// catch-all wipe.
-///
-/// Every kind below is a **registered** `event_kind_registry` entry. A kind that
-/// is not in that registry can never appear on the wire, so matching one would
-/// be dead code that also hides the registered kind it was standing in for.
-///
-/// | event class | wire kinds | selector |
-/// | --- | --- | --- |
-/// | deactivation | `ak.account.status` | DID |
-/// | device epoch / list | `ak.device.revoke`, `ak.device.authorize`, `ak.device.reanchor`, `ak.device.list_update` | DID + `device_signer` purpose |
-/// | agent signer epoch | `ak.agent.key.authorize`, `ak.agent.key.revoke` | DID + `agent_signer` purpose |
-/// | DID policy change | `ak.sovereign.did_policy` | DID |
-///
-/// Purpose narrowing matters: a device revoke must not evict the `Principal`
-/// acceptance that the member list renders from, and an agent signer epoch must
-/// not evict a device-signer acceptance.
-///
-/// Service endpoint / controller delegation changes have **no** wire event kind:
-/// they are `did:webvh` history changes and reach a client through document
-/// resolution, not through a Realm projection, so this table has no row for
-/// them.
-pub(crate) fn binding_invalidations_for_event(
-    kind: &str,
-    did: &DidFullId,
-    _verification_method: Option<&arkret_sdk::DidUrl>,
-) -> Vec<BindingInvalidation> {
-    use arkret_sdk::identity::DidBindingPurpose as Purpose;
-
-    let base = BindingInvalidation::for_did(did.clone());
-    match kind {
-        // --- deactivation -------------------------------------------------
-        // `deactivated` is terminal and cascades to every device, KeyPackage and
-        // session of the account (`account-lifecycle.md` §7.1), so no acceptance
-        // of this DID survives, for any purpose. The selector is taken for every
-        // status transition rather than only for `deactivated`: the payload is
-        // not in scope here and re-accepting is the cheap side.
-        "ak.account.status" => vec![base],
-        // --- device epoch / list ------------------------------------------
-        "ak.device.revoke"
-        | "ak.device.authorize"
-        | "ak.device.reanchor"
-        | "ak.device.list_update" => {
-            vec![base.with_purpose(Purpose::DeviceSigner)]
-        }
-        // --- agent signer epoch -------------------------------------------
-        "ak.agent.key.authorize" | "ak.agent.key.revoke" => {
-            vec![base.with_purpose(Purpose::AgentSigner)]
-        }
-        // --- DID policy change --------------------------------------------
-        // The policy digest is part of the store key, so a *local* policy
-        // revision already orphans old entries. A remotely announced policy
-        // change still has to drop this DID's acceptances explicitly.
-        "ak.sovereign.did_policy" => vec![base],
-        _ => Vec::new(),
-    }
-}
-
-/// Whether `kind` is one of the invalidating event classes above.
-pub(crate) fn is_binding_invalidating_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "ak.account.status"
-            | "ak.device.revoke"
-            | "ak.device.authorize"
-            | "ak.device.reanchor"
-            | "ak.device.list_update"
-            | "ak.agent.key.authorize"
-            | "ak.agent.key.revoke"
-            | "ak.sovereign.did_policy"
-    )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -356,118 +230,6 @@ mod tests {
 
     fn scope(base_url: &str) -> DidBindingScope {
         DidBindingScope::for_server(DeploymentProfile::PersonalNode, base_url).expect("scope")
-    }
-
-    /// **Upgrade drill: a `policy_digest` algorithm change orphans every stored
-    /// acceptance, and that must be a re-resolve, not a crash or a stuck badge.**
-    ///
-    /// `policy_digest` is a store-key dimension, so converging onto the SDK's
-    /// canonical encoding makes every pre-upgrade row unreachable exactly once.
-    /// Two deployment profiles digest differently, so accepting under one and
-    /// reading under the other is the same shape as the upgrade. What must hold:
-    ///
-    /// - loading the orphaned row does not panic and does not drop it (the pairing invariant is
-    ///   untouched — only the key moved);
-    /// - the ordinary lookup **misses**, which is what pushes the next authority caller to resolve
-    ///   again;
-    /// - the DID-level display badge keeps reporting a status instead of getting stuck on `None` /
-    ///   an error;
-    /// - the freshly accepted row lands under the new key and is served from then on.
-    #[test]
-    fn a_policy_digest_change_orphans_bindings_into_a_re_resolve_not_a_panic() {
-        let old =
-            DidBindingScope::for_server(DeploymentProfile::Organization, "https://alpha.example")
-                .expect("scope");
-        let new = scope("https://alpha.example");
-        assert_eq!(old.trust_domain(), new.trust_domain());
-
-        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("did");
-        let (mut store, path) = temp_store("policy-digest-upgrade");
-        store.store_accepted_did_bindings(vec![record(
-            &old,
-            did.as_str(),
-            DidBindingPurpose::Principal,
-        )]);
-
-        // --- restart under the new digest ---------------------------------
-        let rebooted = LocalStateStore::with_path(&path);
-        let records = rebooted.accepted_did_bindings();
-        assert_eq!(records.len(), 1, "an orphaned row is still a valid pairing");
-        let bindings = InksonDidBindingStore::hydrate(records);
-        let new_key = new.key(&did, DidBindingPurpose::Principal, None);
-        assert!(
-            bindings.ordinary_lookup(&new_key, Utc::now()).is_none(),
-            "the old-digest acceptance must be unreachable under the new policy"
-        );
-        assert_eq!(
-            rebooted.accepted_did_binding_status(&did, Utc::now()),
-            Some(arkret_sdk::identity::DidBindingStatus::Active),
-            "the display badge is DID-level and must not get stuck on an error state"
-        );
-
-        // --- the authority path re-accepts once ---------------------------
-        bindings.accept(record(&new, did.as_str(), DidBindingPurpose::Principal));
-        assert!(bindings.ordinary_lookup(&new_key, Utc::now()).is_some());
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn empty_selector_removes_nothing() {
-        let scope = scope("https://alpha.example");
-        let (mut store, _path) = temp_store("case");
-        store.store_accepted_did_bindings(vec![record(
-            &scope,
-            "did:web:alice.example",
-            DidBindingPurpose::Principal,
-        )]);
-        assert_eq!(
-            store.invalidate_accepted_did_bindings(&BindingInvalidation::default()),
-            0
-        );
-        assert_eq!(store.accepted_did_bindings().len(), 1);
-    }
-
-    #[test]
-    fn device_revoke_keeps_the_principal_acceptance() {
-        let scope = scope("https://alpha.example");
-        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("did");
-        let (mut store, _path) = temp_store("case");
-        store.store_accepted_did_bindings(vec![
-            record(&scope, did.as_str(), DidBindingPurpose::Principal),
-            record(&scope, did.as_str(), DidBindingPurpose::DeviceSigner),
-        ]);
-        let selectors = binding_invalidations_for_event("ak.device.revoke", &did, None);
-        assert_eq!(store.invalidate_accepted_did_bindings_batch(&selectors), 1);
-        let remaining = store.accepted_did_bindings();
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(
-            remaining[0].binding().purpose(),
-            DidBindingPurpose::Principal
-        );
-    }
-
-    #[test]
-    fn deactivation_removes_every_purpose_for_that_did_only() {
-        let scope = scope("https://alpha.example");
-        let alice = DidFullId::new("did:web:alice.example".to_owned()).expect("did");
-        let (mut store, _path) = temp_store("case");
-        store.store_accepted_did_bindings(vec![
-            record(&scope, alice.as_str(), DidBindingPurpose::Principal),
-            record(&scope, alice.as_str(), DidBindingPurpose::DeviceSigner),
-            record(&scope, "did:web:bob.example", DidBindingPurpose::Principal),
-        ]);
-        let selectors = binding_invalidations_for_event("ak.account.status", &alice, None);
-        assert_eq!(store.invalidate_accepted_did_bindings_batch(&selectors), 2);
-        let remaining = store.accepted_did_bindings();
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].binding().did().as_str(), "did:web:bob.example");
-    }
-
-    #[test]
-    fn unrelated_event_kinds_produce_no_selectors() {
-        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("did");
-        assert!(binding_invalidations_for_event("ak.message.create", &did, None).is_empty());
-        assert!(!is_binding_invalidating_kind("ak.message.create"));
     }
 
     #[test]

@@ -1170,7 +1170,7 @@ mod signal_query_tests {
                 "verification_method": "did:webvh:z6mkfixture:agent.example#agent-runtime",
                 "operation_id": "ak:operation:signal-evidence-test",
                 "request_digest": format!("sha256:{}", "1".repeat(64)),
-                "verifier_id": "did:webvh:z6mkfixture:receiver.example",
+                "verifier_id": "ak:did_core:webvh:z6mkfixture:receiver.example",
                 "audience": "ak:did_core:webvh:z6mkfixture:receiver.example",
                 "challenge": "0123456789abcdef"
             }))

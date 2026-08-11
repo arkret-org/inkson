@@ -13,12 +13,13 @@ fn seed_complete_rfc9420_projection(
     realm: &str,
     actor: &str,
 ) {
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     state.save_realm_tree_projection(
         realm,
         json!({
             "content_scheme": "mls_rfc9420",
             "members_limited": false,
-            "members": [{ "actor_id": actor, "membership": "join" }]
+            "members": [{ "actor_id": actor_id, "membership": "join" }]
         }),
     );
 }
@@ -86,7 +87,10 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         json!({
             "content_scheme": "mls_rfc9420",
             "members_limited": false,
-            "members": [{ "actor_id": actor, "membership": "join" }]
+            "members": [{
+                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "membership": "join"
+            }]
         }),
     );
     let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
@@ -216,7 +220,10 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
             "encrypted": true,
             "members_limited": false,
             "members": [
-                { "actor_id": actor, "membership": "join" },
+                {
+                    "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                    "membership": "join"
+                },
                 { "actor_id": "ak:did_core:web:bob.example", "membership": "join" }
             ]
         }),
@@ -260,7 +267,10 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
         json!({
             "encrypted": true,
             "members_limited": false,
-            "members": [{ "actor_id": actor, "membership": "join" }]
+            "members": [{
+                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "membership": "join"
+            }]
         }),
     );
 
@@ -859,7 +869,10 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
             "active_profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
             "content_scheme": "mls_rfc9420",
             "members_limited": false,
-            "members": [{ "actor_id": actor, "membership": "join" }]
+            "members": [{
+                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "membership": "join"
+            }]
         }),
     );
     assert!(state.realm_projection_is_minimal_metadata(realm));

@@ -151,7 +151,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
         "U",
     );
     card.synthesis = "second synthesis".to_owned();
-    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_by = "ak:did_core:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
     card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
     let received_at = |value: &str| {
@@ -201,14 +201,14 @@ fn card_synthesis_track_entries_preserve_append_history() {
     let entries = card_synthesis_track_entries(&card, &raw_operations, &LocalStateStore::default());
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].body, "second synthesis");
-    assert_eq!(entries[0].author_label, "did:web:acme.example:users:bob");
+    assert_eq!(entries[0].author_label, "ak:did_core:web:...sers:bob");
     assert_eq!(entries[0].timestamp_label, "2026-05-22 11:00");
     assert!(entries[0].edited);
     assert_eq!(entries[0].revisions.len(), 2);
     assert_eq!(entries[0].revisions[0].body, "first synthesis");
     assert_eq!(
         entries[0].revisions[0].author_label,
-        "did:web:acme.example:users:alice"
+        "ak:did_core:web:...rs:alice"
     );
     assert_eq!(entries[0].revisions[1].body, "second synthesis");
 }
@@ -223,9 +223,9 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
         "alice synthesis".to_owned(),
         "bob synthesis".to_owned(),
     ]);
-    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_by = "ak:did_core:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
-    card.updated_by = "did:web:acme.example:users:bob".to_owned();
+    card.updated_by = "ak:did_core:web:acme.example:users:bob".to_owned();
     card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
     let received_at = |value: &str| {
         chrono::DateTime::parse_from_rfc3339(value)
@@ -278,9 +278,9 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].body, "alice synthesis");
-    assert_eq!(entries[0].author_label, "did:web:acme.example:users:alice");
+    assert_eq!(entries[0].author_label, "ak:did_core:web:...rs:alice");
     assert_eq!(entries[1].body, "bob synthesis");
-    assert_eq!(entries[1].author_label, "did:web:acme.example:users:bob");
+    assert_eq!(entries[1].author_label, "ak:did_core:web:...sers:bob");
 }
 
 #[test]
@@ -298,9 +298,9 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
         "alice synthesis".to_owned(),
         "bob synthesis".to_owned(),
     ]);
-    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_by = "ak:did_core:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
-    card.updated_by = "did:web:acme.example:users:bob".to_owned();
+    card.updated_by = "ak:did_core:web:acme.example:users:bob".to_owned();
     card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
 
     // Canonical realm events as `account.subscribe` / `events/subscribe`
@@ -344,9 +344,9 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
 
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].body, "alice synthesis");
-    assert_eq!(entries[0].author_label, "did:web:acme.example:users:alice");
+    assert_eq!(entries[0].author_label, "ak:did_core:web:...rs:alice");
     assert_eq!(entries[1].body, "bob synthesis");
-    assert_eq!(entries[1].author_label, "did:web:acme.example:users:bob");
+    assert_eq!(entries[1].author_label, "ak:did_core:web:...sers:bob");
 
     // Sanity: with no local ops at all, the multi-author projection fallback
     // cannot attribute either entry — exactly the "Unknown author" symptom the
@@ -423,9 +423,9 @@ fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
         "U",
     );
     card.synthesis = "bob synthesis".to_owned();
-    card.created_by = "did:web:acme.example:users:bob".to_owned();
+    card.created_by = "ak:did_core:web:acme.example:users:bob".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
-    card.updated_by = "did:web:acme.example:users:bob".to_owned();
+    card.updated_by = "ak:did_core:web:acme.example:users:bob".to_owned();
     card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
 
     let entries = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
@@ -436,7 +436,7 @@ fn projection_synthesis_revision_uses_card_author_only_when_single_author() {
         entries[0].actor_id,
         "ak:did_core:web:acme.example:users:bob"
     );
-    assert_eq!(entries[0].author_label, "did:web:acme.example:users:bob");
+    assert_eq!(entries[0].author_label, "ak:did_core:web:...sers:bob");
     assert_eq!(entries[0].timestamp_label, "2026-05-22 11:00");
 }
 
@@ -467,8 +467,8 @@ fn projection_synthesis_revision_leaves_multi_author_card_unattributed() {
 
 #[test]
 fn card_synthesis_author_prefers_cached_member_primary_handle() {
-    let actor = "did:web:auth.local.host:users:01kth8q1w1f9c9pt3a0zfvf6gb";
-    let subject = "did:web:auth.local.host:principals:alice";
+    let actor = "ak:did_core:web:auth.local.host:users:01kth8q1w1f9c9pt3a0zfvf6gb";
+    let subject = "ak:did_core:web:auth.local.host:principals:alice";
     let digest = "sha256:abababababababababababababababababababababababababababababababab";
     let mut card = test_card(
         "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
@@ -515,7 +515,7 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
 
 #[test]
 fn late_join_synthesis_author_resolves_handle_from_roster_actor_did() {
-    let actor = "did:webvh:zQmHistoricalAuthor";
+    let actor = "ak:did_core:webvh:zQmHistoricalAuthor";
     let mut card = test_card(
         "ak:strand:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4",
         "U",
@@ -665,8 +665,8 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
     assert_eq!(
         dids,
         vec![
-            "did:web:alice.example".to_owned(),
-            "did:web:bob.example".to_owned(),
+            "ak:did_core:web:alice.example".to_owned(),
+            "ak:did_core:web:bob.example".to_owned(),
         ]
     );
     assert!(strand_participant_dids(&ops, "").is_empty());

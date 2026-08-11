@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn well_known_matches_pinned_did() {
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
+        bundle.add_anchor(seal("bob.example", "ak:did_core:web:bob.example"));
         let record = WellKnownArkretServer {
             service_id: crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
             base_url: "https://bob.example".to_owned(),
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn well_known_with_wrong_did_is_rejected() {
         let mut bundle = TrustBundle::new();
-        bundle.add_anchor(seal("bob.example", "did:web:bob.example"));
+        bundle.add_anchor(seal("bob.example", "ak:did_core:web:bob.example"));
         let record = WellKnownArkretServer {
             service_id: crate::mls_api_helpers::principal_core_id("did:web:eve.example").unwrap(),
             base_url: "https://eve.example".to_owned(),

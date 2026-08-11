@@ -15,7 +15,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 "identity_event_ids": ["ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ"],
                 "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab",
                 "handle_claims": [{
-                    "subject": "did:web:acme.example:principals:alice",
+                    "subject": "ak:did_core:web:acme.example:principals:alice",
                     "handle": "alice:acme.example",
                     "binding_state": "verified"
                 }],
@@ -41,14 +41,14 @@ fn realm_member_roster_reads_r32_wire_shape() {
     assert!(alice.member_display_state_digest.is_some());
     assert_eq!(
         alice.subject_id.as_deref(),
-        Some("did:web:acme.example:principals:alice")
+        Some("ak:did_core:web:acme.example:principals:alice")
     );
     assert_eq!(alice.handle_claims.len(), 1);
     assert!(!alice.handle_claims_limited);
 
     let webvh = rows
         .iter()
-        .find(|row| row.actor_id.starts_with("did:webvh:"))
+        .find(|row| row.actor_id.starts_with("ak:did_core:webvh:"))
         .unwrap();
     assert_eq!(webvh.membership.as_deref(), Some("invite"));
     assert!(webvh.identity_event_ids.is_empty());
@@ -254,7 +254,7 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
 #[test]
 fn member_display_label_uses_cached_directory_primary_handle() {
     let row = RealmMemberRow {
-        actor_id: "did:webvh:zQmPrincipal".to_owned(),
+        actor_id: "ak:did_core:webvh:zQmPrincipal".to_owned(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -294,7 +294,7 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
 #[test]
 fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidate() {
     let row = RealmMemberRow {
-        actor_id: "did:webvh:zQmPrincipal".to_owned(),
+        actor_id: "ak:did_core:webvh:zQmPrincipal".to_owned(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,

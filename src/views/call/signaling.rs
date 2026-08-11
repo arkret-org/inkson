@@ -302,6 +302,9 @@ fn moderator_mute_targets_this_device(
     actor: &str,
     device: &str,
 ) -> bool {
+    let Ok(actor) = crate::mls_api_helpers::principal_core_id(actor) else {
+        return false;
+    };
     matches!(
         &item.signal,
         arkret_sdk::CallSignalData::MuteState(data)
@@ -309,7 +312,7 @@ fn moderator_mute_targets_this_device(
                 && data
                     .target_actor_id
                     .as_ref()
-                    .is_some_and(|target| target.as_str() == actor)
+                    .is_some_and(|target| target == &actor)
                 && data
                     .target_device_id
                     .as_ref()

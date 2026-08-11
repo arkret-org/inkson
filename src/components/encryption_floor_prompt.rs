@@ -106,16 +106,6 @@ pub(crate) fn account_needs_recommended_encryption_prompt_for_projections(
         return false;
     }
 
-    if let Some(pcr) = projections.values().find(|projection| {
-        projection
-            .pointer("/purpose")
-            .or_else(|| projection.pointer("/summary/purpose"))
-            .and_then(Value::as_str)
-            == Some("principal_control")
-    }) {
-        return !projection_has_recommended_encryption_floor(pcr);
-    }
-
     let mut saw_recommended = false;
     let mut saw_low_floor_encrypted = false;
     for (id, body) in projections {
@@ -207,32 +197,6 @@ mod tests {
             "content_encryption_floor": "e2ee_required",
             "metadata_encryption_floor": "e2ee_required"
         })));
-    }
-
-    #[test]
-    fn pcr_projection_controls_prompt_when_present() {
-        let actor = "did:web:alice.example";
-        let pcr_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let mut projections = BTreeMap::new();
-        projections.insert(
-            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
-            json!({
-                "encryption_profile": "mls_rfc9420",
-                "content_encryption_floor": "e2ee_required",
-                "metadata_encryption_floor": "e2ee_required"
-            }),
-        );
-        projections.insert(
-            pcr_id.to_owned(),
-            json!({
-                "encryption_profile": "mls_rfc9420"
-            }),
-        );
-
-        assert!(account_needs_recommended_encryption_prompt_for_projections(
-            actor,
-            &projections
-        ));
     }
 
     #[test]

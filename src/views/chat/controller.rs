@@ -275,16 +275,15 @@ impl ChatController {
             self.message_context_menu.set(None);
             return;
         }
-        let namespace_key =
-            match load_chat_productivity_namespace_key(&context.account_did, &context.device_id) {
-                Ok(key) => key,
-                Err(error) => {
-                    self.status_msg
-                        .set(format!("Private save failed: {error:#}"));
-                    self.message_context_menu.set(None);
-                    return;
-                }
-            };
+        let namespace_key = match load_chat_productivity_namespace_key(&context.account_did) {
+            Ok(key) => key,
+            Err(error) => {
+                self.status_msg
+                    .set(format!("Private save failed: {error:#}"));
+                self.message_context_menu.set(None);
+                return;
+            }
+        };
         let actor = match arkret_sdk::DidFullId::new(context.account_did.clone()) {
             Ok(actor) => actor,
             Err(error) => {

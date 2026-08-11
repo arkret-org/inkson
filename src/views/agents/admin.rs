@@ -1080,7 +1080,14 @@ fn spawn_provision_agent(
             last_op_status.set(format!("Slug is invalid: {error}"));
             return;
         }
-        let controller_id = match crate::mls_api_helpers::principal_core_id(&controller_id) {
+        let controller_full_id = match arkret_sdk::DidFullId::new(controller_id.trim().to_owned()) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: signed-in controller DID: {error}"));
+                return;
+            }
+        };
+        let controller_id = match arkret_sdk::project_full_id_to_core_id(&controller_full_id) {
             Ok(value) => value,
             Err(error) => {
                 last_op_status.set(format!("Create failed: signed-in controller DID: {error}"));
@@ -1212,7 +1219,7 @@ fn spawn_provision_agent(
         };
         let principal_control_realm_id = frozen_genesis.realm_id.clone();
         let draft = match build_agent_provision_event_draft(
-            &controller_id,
+            &controller_full_id,
             &controller_realm_id,
             &agent_id,
             &principal_control_realm_id,

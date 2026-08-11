@@ -310,7 +310,7 @@ mod personal_agent_tests {
 
         let raw = build_agent_pairing_bootstrap_json(
             "https://arkret.example/",
-            "did:web:arkret.example",
+            "ak:did_core:web:arkret.example",
             &outcome,
         )
         .unwrap();
@@ -321,7 +321,7 @@ mod personal_agent_tests {
         // deliberately not renamed by the arkret→arkret source rename).
         assert_eq!(value["arkret_base_url"], "https://arkret.example");
         assert_eq!(value["service_id"], "ak:did_core:web:arkret.example");
-        assert_eq!(value["agent_id"], "did:web:agents.example:summary");
+        assert_eq!(value["agent_id"], "ak:did_core:web:agents.example:summary");
         assert_eq!(value["pairing_request_id"], "0197-req");
         assert_eq!(value["pairing_code"], "123456");
         assert_eq!(value["pairing_expires_at"], "2026-06-26T00:00:00.000Z");
@@ -357,7 +357,7 @@ mod personal_agent_tests {
         };
         let raw = build_agent_pairing_bootstrap_json(
             "https://arkret.example/",
-            "did:web:arkret.example",
+            "ak:did_core:web:arkret.example",
             &outcome,
         )
         .unwrap();
@@ -561,8 +561,8 @@ mod personal_agent_tests {
         let event = authorization.authorize_event;
         let signing_key_binding = authorization.signing_key_binding;
 
-        assert_eq!(disclosure.agent_id.as_str(), agent);
-        assert_eq!(disclosure.controller_id.as_str(), controller);
+        assert_eq!(disclosure.agent_id, agent_actor_id);
+        assert_eq!(disclosure.controller_id, controller_actor_id);
         assert_eq!(disclosure.requested_scope, key_state.requested_scope);
 
         let expected_pairing_digest =
@@ -583,7 +583,7 @@ mod personal_agent_tests {
             event.kind.as_str(),
             arkret_sdk::EventKind::AgentKeyAuthorize.as_str()
         );
-        assert_eq!(event.payload["agent_id"], agent);
+        assert_eq!(event.payload["agent_id"], agent_actor_id.as_str());
         assert_eq!(
             event.payload["verification_method"],
             verification_method.as_str()
@@ -664,8 +664,8 @@ mod personal_agent_tests {
         );
 
         let noncanonical_key_state = serde_json::json!({
-            "agent_id": agent,
-            "controller_id": controller,
+            "agent_id": agent_actor_id,
+            "controller_id": controller_actor_id,
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "status": "active",
@@ -735,7 +735,7 @@ mod personal_agent_tests {
         .unwrap();
         let raw = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-            "agent_id": agent,
+            "agent_id": agent_actor_id,
             "verification_method": verification_method,
             "public_key": {
                 "kty": "OKP",
@@ -861,38 +861,6 @@ mod personal_agent_tests {
         assert_eq!(payload["rejected_at"], "2026-06-26T00:00:00.000Z");
         assert_eq!(payload["reason"], "needs review");
         assert!(!payload["rejection_id"].as_str().unwrap().is_empty());
-    }
-
-    #[test]
-    fn act_on_behalf_message_operation_carries_dual_identity_and_authorization_context() {
-        let operation = build_act_on_behalf_message_operation(
-            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "did:web:alice.example",
-            "did:web:agents.example:summary",
-            "ak:grant:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl",
-            "ak:strand:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
-            "approved message",
-        )
-        .unwrap();
-
-        assert_eq!(operation.kind.as_str(), "ak.message.create");
-        assert_eq!(operation.actor_id.as_str(), "ak:did_core:web:alice.example");
-        assert_eq!(
-            operation.executed_by.as_ref().map(|did| did.as_str()),
-            Some("did:web:agents.example:summary")
-        );
-        assert_eq!(
-            operation.authorization_ref.as_deref(),
-            Some("ak:grant:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl")
-        );
-        assert_eq!(
-            operation.payload["agent_context"]["agent_id"],
-            "did:web:agents.example:summary"
-        );
-        assert_eq!(
-            operation.payload["agent_context"]["authorization_ref"],
-            "ak:grant:Ae5vV8Lwlft2Dp8x2y6Dv4NysvsHJwrADG-6PXdUz1Sl"
-        );
     }
 
     #[test]

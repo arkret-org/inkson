@@ -218,17 +218,15 @@ pub(crate) fn sdk_events_from_values(values: &[serde_json::Value]) -> Vec<arkret
             let actor_id = value
                 .get("actor_id")
                 .and_then(serde_json::Value::as_str)
-                .and_then(|value| arkret_sdk::DidFullId::new(value.to_owned()).ok())
+                .and_then(|value| arkret_sdk::DidCoreId::new(value.to_owned()).ok())
                 .unwrap_or_else(|| {
-                    arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example")
+                    arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture")
                         .expect("fixture actor id")
                 });
             let mut event = arkret_wire::test_support::raw_event(
                 kind.as_str(),
                 arkret_sdk::ScopeRef::Realm { realm_id },
-                arkret_sdk::DidCoreId::from(
-                    arkret_sdk::project_full_id_to_core_id(&actor_id).unwrap(),
-                ),
+                actor_id,
                 1,
                 arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").ok()?,
                 payload,

@@ -1427,6 +1427,15 @@ impl EventSubmitter {
         Ok(self.describe_cached().await?.service_id.to_string())
     }
 
+    pub(crate) async fn service_full_id(&self) -> anyhow::Result<String> {
+        Ok(self
+            .describe_cached()
+            .await?
+            .service_resolution
+            .full_id
+            .to_string())
+    }
+
     /// Mint a DataEvent `seal_ref` head from the membership-gated Realm Seal
     /// view. Only the CBA data-plane stamping path uses this.
     pub(crate) async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
@@ -4138,6 +4147,7 @@ mod tests {
                     .unwrap(),
                 &actor,
                 &notary_did,
+                BASE,
                 "root-claim live probe",
                 Some("authority-root claim end-to-end probe"),
                 "listed",
@@ -4611,6 +4621,7 @@ mod tests {
             arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
             "did:web:alice.example",
             "did:web:server.example",
+            "https://server.example",
             "Engineering",
             Some("Realm genesis must not query its own nonexistent frontier"),
             "listed",

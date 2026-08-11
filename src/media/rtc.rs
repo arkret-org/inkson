@@ -351,7 +351,7 @@ impl MediaGovernanceEvidence {
             .plaintext_visible_services_payload
             .as_ref()
             .ok_or(RtcClientError::MediaPlaintextServiceNotAuthorised)?;
-        let service_id = crate::mls_api_helpers::principal_core_id(service_id)
+        let service_id = arkret_sdk::DidCoreId::new(service_id.to_owned())
             .map_err(|_| RtcClientError::MediaPlaintextServiceNotAuthorised)?;
         let authorized = plaintext_payload.services.iter().any(|service| {
             service.service_id == service_id
@@ -939,7 +939,7 @@ mod tests {
             focus_id: "fra-1".to_owned(),
             epoch_id: 7,
             desired_media: DesiredMedia::audio_video(),
-            media_service_ids: vec!["did:web:media.example".to_owned()],
+            media_service_ids: vec!["ak:did_core:web:media.example".to_owned()],
             governance_evidence,
         }
     }
@@ -1038,7 +1038,7 @@ mod tests {
     fn seed_realm_snapshot(
         store: &crate::secure_key_store::MemorySecureKeyStore,
     ) -> crate::mls::persistence::MlsSnapshotEnvelope {
-        use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         let secret =
             crate::mls::runtime::load_or_create_account_mls_secret(store, EXPORTER_ACTOR).unwrap();
@@ -1178,7 +1178,7 @@ mod tests {
 
     #[test]
     fn receiver_recomputes_remote_sender_frame_key_cross_member() {
-        use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         // Build a REAL two-member MLS group: Alice creates, Bob joins via Welcome.
         let alice_identity = ArkretMlsIdentity::new_basic(

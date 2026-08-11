@@ -220,7 +220,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
                     },
                     "payload": {
                         "realm_id": realm,
-                        "actor": "did:web:alice.example",
+                        "actor": "ak:did_core:web:alice.example",
                         "access_kind": "e2ee_late_recovery",
                         "late_recovery_original_event_id": "ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN",
                         "observed_at": "2026-05-20T00:30:00.000Z"

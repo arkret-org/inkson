@@ -1331,7 +1331,7 @@ mod tests {
         };
 
         let rendered = actor_preview_value(preview);
-        assert_eq!(rendered["did"], "did:web:alice.example");
+        assert_eq!(rendered["did"], "ak:did_core:web:alice.example");
         assert!(rendered.get("actor_id").is_none());
     }
 

@@ -301,6 +301,7 @@ mod tests {
     }
 
     fn realm_projection(owner: &str, encryption_profile: &str) -> serde_json::Value {
+        let owner = crate::mls_api_helpers::principal_core_id(owner).unwrap();
         json!({
             "__kind": "realm",
             "owner": owner,
@@ -330,6 +331,7 @@ mod tests {
         // Post-P1 realm projections carry no owner/created_by mirror; the
         // creator fact lives in the projected `ak.realm.create` event.
         let mut store = temp_store("create-event-source");
+        let actor_id = crate::mls_api_helpers::principal_core_id(ACTOR).unwrap();
         store.save_realm_tree_projection(
             REALM,
             json!({
@@ -339,7 +341,7 @@ mod tests {
                 "state": {
                     "events": [{
                         "kind": "ak.realm.create",
-                        "payload": { "object": { "id": REALM, "created_by": ACTOR } }
+                        "payload": { "object": { "id": REALM, "created_by": actor_id } }
                     }]
                 }
             }),

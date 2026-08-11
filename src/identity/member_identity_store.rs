@@ -27,8 +27,8 @@
 use std::collections::BTreeMap;
 
 use arkret_sdk::{
-    DidFullId, EventId, IdentityPayloadCarrier, MemberIdentity, MemberIdentityProof,
-    MemberIdentitySegment, MemberIdentitySignatureAlgorithm, MemberIdentityUpdatePayload, RealmId,
+    EventId, IdentityPayloadCarrier, MemberIdentity, MemberIdentityProof, MemberIdentitySegment,
+    MemberIdentitySignatureAlgorithm, MemberIdentityUpdatePayload, RealmId,
     effective_identity_events,
 };
 use serde_json::Value;
@@ -137,7 +137,7 @@ impl MemberIdentityStore {
         };
         let stored = self.inner.get(&key)?;
         let sdk_realm_id = RealmId::new(realm_id).ok()?;
-        let sdk_actor_id = crate::mls_api_helpers::principal_core_id(actor_id).ok()?;
+        let sdk_actor_id = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()).ok()?;
 
         // Build the (EventId, &Payload) candidate list the SDK helper
         // expects. Drop entries whose event_id won't parse.
@@ -280,7 +280,13 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
         // key → fail-closed.
         None => return false,
     };
-    if controller != actor_id {
+    let Ok(controller_full_id) = arkret_sdk::DidFullId::new(controller.to_owned()) else {
+        return false;
+    };
+    let Ok(controller_core_id) = arkret_sdk::project_full_id_to_core_id(&controller_full_id) else {
+        return false;
+    };
+    if controller_core_id != identity.actor_id {
         return false;
     }
     let device_id = fragment.trim();
@@ -335,12 +341,18 @@ mod tests {
     /// Build a `ak.member.identity.update` payload whose `member_identity`
     /// proof is a real Ed25519 signature over the canonical payload bytes,
     /// signed by `signer`. `verification_method` selects `actor#device`.
-    fn signed_payload(actor_id: &str, device_id: &str, name: &str, signer: &SigningKey) -> Value {
+    fn signed_payload(
+        actor_full_id: &str,
+        device_id: &str,
+        name: &str,
+        signer: &SigningKey,
+    ) -> Value {
+        let actor_id = crate::mls_api_helpers::principal_core_id(actor_full_id).unwrap();
         let mut identity = MemberIdentity {
             schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
             realm_id: RealmId::new(TEST_REALM).unwrap(),
-            actor_id: crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
-            subject_id: crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
+            actor_id: actor_id.clone(),
+            subject_id: actor_id.clone(),
             display_profile: DisplayProfile {
                 display_name: name.to_owned(),
                 avatar_blob_ref: None,
@@ -350,8 +362,10 @@ mod tests {
                 .with_timezone(&chrono::Utc),
             expires_at: None,
             proof: MemberIdentityProof {
-                verification_method: arkret_sdk::DidUrl::new(format!("{actor_id}#{device_id}"))
-                    .unwrap(),
+                verification_method: arkret_sdk::DidUrl::new(format!(
+                    "{actor_full_id}#{device_id}"
+                ))
+                .unwrap(),
                 signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
                 payload_digest: arkret_sdk::Hash::new(
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -387,22 +401,35 @@ mod tests {
     #[test]
     fn ingests_inline_event_and_resolves_current_identity() {
         let mut store = MemberIdentityStore::new();
-        let actor = "did:web:alice.example";
+        let actor_full_id = "did:web:alice.example";
+        let actor_id = crate::mls_api_helpers::principal_core_id(actor_full_id).unwrap();
         let signer = SigningKey::from_bytes(&[7u8; 32]);
-        seed_directory(actor, TEST_DEVICE, &signer);
+        seed_directory(actor_id.as_str(), TEST_DEVICE, &signer);
+        let payload = signed_payload(actor_full_id, TEST_DEVICE, "Alice v1", &signer);
+        let parsed: MemberIdentityUpdatePayload = serde_json::from_value(payload.clone()).unwrap();
+        let IdentityPayloadCarrier::MemberIdentity { member_identity } = &parsed.identity_payload
+        else {
+            panic!("signed fixture must remain plaintext");
+        };
+        assert!(
+            verify_member_identity_proof(member_identity),
+            "signed fixture must pass the production verifier before ingest"
+        );
         let event = json!({
             "event_id": "ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ",
             "kind": "ak.member.identity.update",
-            "payload": signed_payload(actor, TEST_DEVICE, "Alice v1", &signer),
+            "payload": payload,
         });
-        store.ingest_inline(TEST_REALM, actor, &[event]);
+        store.ingest_inline(TEST_REALM, actor_id.as_str(), &[event]);
         // MID-5: a directory-resolved, correctly-signed proof verifies and the
         // effective identity is surfaced.
-        let identity = store.current_identity(TEST_REALM, actor).expect("resolved");
-        assert_eq!(identity.subject_id.as_str(), actor);
+        let identity = store
+            .current_identity(TEST_REALM, actor_id.as_str())
+            .expect("resolved");
+        assert_eq!(identity.subject_id, actor_id);
         assert_eq!(identity.display_profile.display_name, "Alice v1");
-        assert!(!store.is_decryption_pending(TEST_REALM, actor));
-        crate::identity::device_directory::invalidate_actor(actor);
+        assert!(!store.is_decryption_pending(TEST_REALM, identity.actor_id.as_str()));
+        crate::identity::device_directory::invalidate_actor(identity.actor_id.as_str());
     }
 
     #[test]
@@ -450,7 +477,7 @@ mod tests {
     #[test]
     fn encrypted_carrier_marks_decryption_pending() {
         let mut store = MemberIdentityStore::new();
-        let actor = "did:web:alice.example";
+        let actor = crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap();
         let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let event = json!({
             "event_id": "ak:event:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK",
@@ -468,12 +495,12 @@ mod tests {
                 }
             }
         });
-        store.ingest_inline(realm, actor, &[event]);
+        store.ingest_inline(realm, actor.as_str(), &[event]);
         // MID-4: encrypted carrier without a usable MLS group state →
         // decryption_pending. The UI fallback path renders a muted
         // placeholder rather than the raw DID.
-        assert!(store.current_identity(realm, actor).is_none());
-        assert!(store.is_decryption_pending(realm, actor));
+        assert!(store.current_identity(realm, actor.as_str()).is_none());
+        assert!(store.is_decryption_pending(realm, actor.as_str()));
     }
 
     #[test]

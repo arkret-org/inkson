@@ -7,7 +7,7 @@ use crate::event_builders::{
     build_signed_device_verification_proof, build_space_create_event,
     ensure_device_verification_proof_is_signed, recommended_history_sharing_policy_for_visibility,
 };
-use crate::operation::{EventKind, TypedOperationBuilder};
+use crate::operation::TypedOperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
 use crate::realm_helpers::validate_join_rule_v1;
 
@@ -37,6 +37,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
+        "https://server.example",
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -110,20 +111,20 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[1].payload["summary"], "Roadmap work");
     assert_eq!(create.payload["object"]["notary"]["kind"], "single_did");
     assert_eq!(
-        create.payload["object"]["notary"]["did"],
-        "did:web:server.example"
+        create.payload["object"]["notary"]["actor_id"],
+        "ak:did_core:web:server.example"
     );
     assert_eq!(
         create.payload["object"]["notary"]["recovery_members"][0],
-        "did:web:server.example:recovery:notary",
+        "ak:did_core:web:server.example:recovery:notary",
     );
     assert_eq!(
         create.payload["object"]["notary"]["controller_organization"],
-        "did:web:server.example",
+        "ak:did_core:web:server.example",
     );
     assert_eq!(
         create.payload["object"]["notary"]["recovery_controller_organizations"][0],
-        "did:web:server.example:recovery",
+        "ak:did_core:web:server.example:recovery",
     );
     // v1 has no producer `effects[]`: the genesis leaf set is what the
     // registered `ak.realm.create` contract projects.
@@ -201,7 +202,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[5].payload["value"], "listed");
     assert_eq!(
         events[6].payload["services"][0]["service_id"],
-        "did:web:server.example"
+        "ak:did_core:web:server.example"
     );
     assert_eq!(
         events[6].payload["services"][0]["data_classes"],
@@ -267,6 +268,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
+        "https://server.example",
         "Strict history",
         None,
         "listed",
@@ -296,6 +298,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
+        "https://server.example",
         "Strict history",
         None,
         "listed",
@@ -359,6 +362,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
+        "https://server.example",
         "Engineering",
         None,
         "listed",
@@ -411,6 +415,7 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
+        "https://server.example",
         "Engineering",
         None,
         "listed",
@@ -456,7 +461,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     assert_eq!(event.preconditions.len(), 1);
     assert_eq!(
         event.preconditions[0].cell.as_str(),
-        "ak:cell:ak.component.member.state.v1:did:web:bob.example"
+        "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example"
     );
     assert_eq!(event.preconditions[0].predicate.value, Some(json!("join")));
     // `ak.member.state` registers a `transition_to` projection: `to` comes from
@@ -466,7 +471,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     assert_eq!(writes.len(), 1);
     assert_eq!(
         writes[0].cell.as_str(),
-        "ak:cell:ak.component.member.state.v1:did:web:bob.example"
+        "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example"
     );
     assert_eq!(
         writes[0].op,
@@ -552,6 +557,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
+        "https://server.example",
         "Engineering",
         Some("Roadmap work"),
         "listed",

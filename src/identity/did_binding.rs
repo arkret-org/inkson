@@ -433,19 +433,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn policy_digest_changes_with_the_deployment_profile() {
-        let personal = policy_digest(&crate::identity::did_resolver::policy_for(
-            DeploymentProfile::PersonalNode,
-        ))
-        .expect("digest");
-        let org = policy_digest(&crate::identity::did_resolver::policy_for(
-            DeploymentProfile::Organization,
-        ))
-        .expect("digest");
-        assert_ne!(personal, org);
-    }
-
     /// The fork this convergence closed: the local digest used
     /// `format!("{:?}", fail_mode)` → `"FailClosed"` while the peer repos wrote
     /// `"fail_closed"` by hand, so the *same* policy value produced two

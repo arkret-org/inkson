@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn maps_sdk_grant_to_capability_row() {
-        let row = decode_capability_row(&sample_grant(json!("did:web:bob.example")));
+        let row = decode_capability_row(&sample_grant(json!("ak:did_core:web:bob.example")));
         assert_eq!(
             row.capability_id,
             "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X"

@@ -252,7 +252,14 @@ pub fn CallPanel(
             };
             active_call_id.set(call.clone());
             call_seq.set(0);
-            participants.set(build_roster(&actor, &peers, &known_actor_devices));
+            let roster = match build_roster(&actor, &peers, &known_actor_devices) {
+                Ok(roster) => roster,
+                Err(error) => {
+                    last_error.set(format!("invalid call participant identity: {error}"));
+                    return;
+                }
+            };
+            participants.set(roster);
             stage.set(CallStage::OutgoingRinging);
             status.set("placing call".to_owned());
             last_error.set(String::new());

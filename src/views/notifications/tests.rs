@@ -114,7 +114,7 @@ fn pending_invites_are_hydrated_as_notifications() {
 
 #[test]
 fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
-    let actor_id = "did:webvh:z6mkfixture:bob.example";
+    let actor_id = "ak:did_core:webvh:z6mkfixture:bob.example";
     let entry = |membership: &str| {
         serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
             "members": [{
@@ -136,7 +136,7 @@ fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
 
 #[test]
 fn hydrate_pending_invite_uses_typed_local_membership() {
-    let actor_id = "did:webvh:z6mkfixture:bob.example";
+    let actor_id = "ak:did_core:webvh:z6mkfixture:bob.example";
     let realm_id = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
     let projection = |membership: &str| {
         json!({

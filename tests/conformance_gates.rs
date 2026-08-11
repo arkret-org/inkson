@@ -606,6 +606,7 @@ fn build_member_state_event_matches_event_schema() {
         test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
+        "https://server.example",
         "Engineering",
         None,
         "listed",
@@ -677,6 +678,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
         test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
+        "https://server.example",
         "Engineering",
         None,
         "listed",
@@ -702,7 +704,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
         .expect("bootstrap chain emits ak.realm.delivery_binding_policy");
     assert_eq!(
         policy.payload["allowed_recipient_services"],
-        serde_json::json!([TEST_SERVICE_ID]),
+        serde_json::json!(["ak:did_core:web:server.example"]),
         "the recipient-service allow-list must stay a closed DID list, never the \
          [\"*\"] unrestricted sentinel"
     );
@@ -726,6 +728,7 @@ fn blank_alias_is_absence_and_emits_no_alias_event() {
             test_genesis_salt(),
             TEST_ACTOR_ID,
             TEST_SERVICE_ID,
+            "https://server.example",
             "Engineering",
             None,
             "listed",
@@ -767,6 +770,7 @@ fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
         test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
+        "https://server.example",
         "Engineering",
         None,
         "listed",
@@ -828,6 +832,7 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
         test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
+        "https://server.example",
         "Engineering",
         None,
         "listed",
@@ -952,11 +957,11 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
     // The send DTO is closed and carries no sender identity; the delivered
     // envelope is where `key_verification_content` actually applies, so build
     // the server-side view the recipient sees and validate that.
-    let target = &request["messages"]["did:web:bob.example"][target_device];
+    let target = &request["messages"]["ak:did_core:web:bob.example"][target_device];
     let delivered = serde_json::json!({
         "message_id": target["message_id"],
         "kind": target["kind"],
-        "sender_principal_id": TEST_ACTOR_ID,
+        "sender_principal_id": "ak:did_core:web:alice.example",
         "sender_device_id": from_device,
         "recipient_principal_id": "ak:did_core:web:bob.example",
         "recipient_device_id": target_device,

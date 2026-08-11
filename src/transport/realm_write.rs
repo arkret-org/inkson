@@ -74,7 +74,8 @@ pub async fn create_realm(
     }
 
     let join_rule = validate_join_rule_v1(join_rule)?;
-    let notary_did = submitter.service_id().await?;
+    let notary_did = submitter.service_full_id().await?;
+    let notary_service_origin = submitter.http().base_url().origin().ascii_serialization();
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
     if resolved_invitees
         .iter()
@@ -94,6 +95,7 @@ pub async fn create_realm(
         genesis_salt,
         actor_id,
         &notary_did,
+        &notary_service_origin,
         title,
         summary,
         discoverability,

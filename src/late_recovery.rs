@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn from_audit_policy_access_carries_late_recovery_original_event_id() {
-        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, DidFullId, EventId, RealmId};
+        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, EventId, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
             realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn from_audit_policy_access_rejects_wrong_access_kind() {
-        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, DidFullId, RealmId};
+        use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let payload = AuditPolicyAccessPayload {
             realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
@@ -689,7 +689,7 @@ mod tests {
             },
             "payload": {
                 "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                "actor": "did:web:alice.example",
+                "actor": "ak:did_core:web:alice.example",
                 "access_kind": "e2ee_late_recovery",
                 "late_recovery_original_event_id": "ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN",
                 "observed_at": arkret_sdk::canonical::format_timestamp_canonical(base)
@@ -716,7 +716,7 @@ mod tests {
             },
             "payload": {
                 "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-                "actor": "did:web:alice.example",
+                "actor": "ak:did_core:web:alice.example",
                 "access_kind": "e2ee_late_recovery",
                 "late_recovery_original_event_id": "ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN",
                 "observed_at": arkret_sdk::canonical::format_timestamp_canonical(base)

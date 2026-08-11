@@ -117,12 +117,6 @@ fn principal_core_subject(value: &str) -> Option<String> {
     arkret_sdk::DidCoreId::new(value.to_owned())
         .ok()
         .map(|id| id.as_str().to_owned())
-        .or_else(|| {
-            arkret_sdk::DidFullId::new(value.to_owned())
-                .ok()
-                .and_then(|id| arkret_sdk::project_full_id_to_core_id(&id).ok())
-                .map(|id| id.as_str().to_owned())
-        })
 }
 
 pub(crate) fn member_lookup_subject(

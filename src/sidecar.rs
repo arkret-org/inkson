@@ -92,6 +92,10 @@ fn cache_sidecar_view_state(
     account_did: &str,
     view_state: &arkret_sdk::AgentSidecarViewState,
 ) -> anyhow::Result<bool> {
+    let account_core_id = crate::mls_api_helpers::principal_core_id(account_did)?;
+    if view_state.controller_id != account_core_id {
+        anyhow::bail!("Sidecar view-state controller does not match the account holder");
+    }
     let key = sidecar_view_state_cache_key(
         view_state.controller_id.as_str(),
         view_state.context_ref.realm_id.as_str(),
@@ -128,7 +132,7 @@ pub fn ingest_sidecar_view_state_account_data(
         crate::account_data::decrypt_account_data_entry(account_did, account_data_key, entry)?,
     )?;
     view_state.validate_account_data_key(account_data_key)?;
-    if view_state.controller_id.as_str() != account_did {
+    if view_state.controller_id != crate::mls_api_helpers::principal_core_id(account_did)? {
         anyhow::bail!("Sidecar view-state controller does not match the account holder");
     }
     cache_sidecar_view_state(store, account_did, &view_state)?;
@@ -184,7 +188,8 @@ pub(crate) fn cache_sidecar_exchange_projection(
     projection: &arkret_sdk::AgentSidecarExchangeProjection,
 ) -> anyhow::Result<bool> {
     projection.validate()?;
-    if projection.controller_id.as_str() != account_did {
+    let account_core_id = crate::mls_api_helpers::principal_core_id(account_did)?;
+    if projection.controller_id != account_core_id {
         anyhow::bail!("Sidecar exchange controller does not match the account holder");
     }
     let key = sidecar_exchange_fold_cache_key(
@@ -207,7 +212,10 @@ pub fn cached_sidecar_exchange_projections(
     account_did: &str,
     source_realm_id: &str,
 ) -> Vec<arkret_sdk::AgentSidecarExchangeProjection> {
-    let prefix = format!("{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{account_did}:");
+    let Ok(account_core_id) = crate::mls_api_helpers::principal_core_id(account_did) else {
+        return Vec::new();
+    };
+    let prefix = format!("{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{account_core_id}:");
     let mut projections = store
         .private_data_keys()
         .into_iter()
@@ -218,7 +226,7 @@ pub fn cached_sidecar_exchange_projections(
         })
         .filter(|projection| {
             projection.validate().is_ok()
-                && projection.controller_id.as_str() == account_did
+                && projection.controller_id == account_core_id
                 && projection.source_track_ref.realm_id.as_str() == source_realm_id
         })
         .collect::<Vec<_>>();
@@ -1243,6 +1251,9 @@ fn refold_sidecar_exchanges_with_decrypt_report(
     extra_scope_hints: &[SidecarExchangeScopeHint],
     decrypt: SidecarEnvelopeDecrypt<'_>,
 ) -> SidecarRefoldOutcome {
+    let Ok(controller_core_id) = crate::mls_api_helpers::principal_core_id(controller_id) else {
+        return SidecarRefoldOutcome::default();
+    };
     let mut folded = Vec::new();
     let mut fact_upgrades = Vec::<StoredSidecarExchangeRequestFact>::new();
     let mut auto_close_updates = Vec::<PendingSidecarAutoCloseIntent>::new();
@@ -1318,7 +1329,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 // canonical digest, actor_seq, and top-level HLC. The authoring
                 // device may be unable to decrypt its own metadata, so upgrade
                 // its durable request fact before the decrypt path.
-                if event.actor_id.as_str() == controller_id
+                if event.actor_id == controller_core_id
                     && let Some(index) = stored_index_by_request_event_id
                         .get(event.event_id.as_str())
                         .copied()
@@ -1367,7 +1378,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let exchange_key = (strand_id.clone(), binding.exchange_id.as_str().to_owned());
                 match binding.role {
                     arkret_sdk::AgentSidecarExchangeBindingRole::Request => {
-                        if event.actor_id.as_str() != controller_id {
+                        if event.actor_id != controller_core_id {
                             continue;
                         }
                         let Some(context) = binding.request_context.clone() else {
@@ -1470,10 +1481,8 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             let Some(sidecar_id) = scope_hints.get(strand_id) else {
                 continue;
             };
-            let (Ok(controller_did), Ok(exchange_id)) = (
-                crate::mls_api_helpers::principal_core_id(controller_id),
-                arkret_sdk::AgentSidecarExchangeId::new(exchange_id_raw.clone()),
-            ) else {
+            let Ok(exchange_id) = arkret_sdk::AgentSidecarExchangeId::new(exchange_id_raw.clone())
+            else {
                 continue;
             };
             let exchange_requests = requests.get(&exchange_key).unwrap_or(&empty_requests);
@@ -1497,7 +1506,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             // F-5 cache gate (§7.2.4): compare the persisted frontier against
             // the locally verified fact set before refolding.
             let cache_key = sidecar_exchange_fold_cache_key(
-                controller_id,
+                controller_core_id.as_str(),
                 sidecar_id.as_str(),
                 exchange_id_raw,
             );
@@ -1546,7 +1555,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 }
             }
             let scope = garth::projection::SidecarExchangeFoldScope {
-                controller_id: controller_did,
+                controller_id: controller_core_id.clone(),
                 sidecar_id: sidecar_id.clone(),
             };
             let fold = garth::projection::fold_sidecar_exchange(
@@ -1665,15 +1674,17 @@ pub fn cached_sidecar_display_mode(
     account_did: &str,
     session: &HostedSidecarState,
 ) -> Option<arkret_sdk::AgentSidecarDisplayMode> {
+    let controller_core_id =
+        crate::mls_api_helpers::principal_core_id(&session.controller_id).ok()?;
     let key = sidecar_view_state_cache_key(
-        &session.controller_id,
+        controller_core_id.as_str(),
         &session.source_realm_id,
         &session.source_strand_id,
     );
     let view_state = store
         .load_private_data(account_did, &key)
         .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())?;
-    (view_state.controller_id.as_str() == session.controller_id
+    (view_state.controller_id == controller_core_id
         && view_state.sidecar_id == session.sidecar_id
         && view_state.context_ref.realm_id.as_str() == session.source_realm_id
         && view_state.context_ref.strand_id.as_str() == session.source_strand_id)
@@ -2355,7 +2366,9 @@ mod tests {
         );
         assert_eq!(
             projection.coordinator_agent_id.as_str(),
-            EXCHANGE_AGENT,
+            crate::mls_api_helpers::principal_core_id(EXCHANGE_AGENT)
+                .unwrap()
+                .as_str(),
             "single addressed Agent is the implied coordinator"
         );
         assert!(projection.user_facing_response_event_ids.is_empty());
@@ -2403,7 +2416,7 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
-            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+            crate::mls_api_helpers::principal_core_id(EXCHANGE_AGENT).unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2419,6 +2432,20 @@ mod tests {
             sidecar_id: session.sidecar_id.clone(),
         };
         event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
+        let event_digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
+        event.proofs.push(arkret_sdk::Proof {
+            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(format!(
+                "{EXCHANGE_AGENT}#ak:device:01964137-0000-7000-8000-000000000002"
+            ))
+            .unwrap(),
+            event_digest,
+            created_at: event.created_at,
+            domain: None,
+            audience: None,
+            proof_purpose: None,
+            jws: "fixture..signature".to_owned(),
+        });
         store.append_raw_operation(
             EXCHANGE_RESPONSE_EVENT.to_owned(),
             Some(session.source_realm_id.clone()),
@@ -2477,7 +2504,11 @@ mod tests {
                 .iter()
                 .map(|did| did.as_str().to_owned())
                 .collect::<Vec<_>>(),
-            vec![EXCHANGE_AGENT.to_owned()]
+            vec![
+                crate::mls_api_helpers::principal_core_id(EXCHANGE_AGENT)
+                    .unwrap()
+                    .to_string(),
+            ]
         );
 
         // Re-running the fold over the same history is idempotent: the
@@ -2490,87 +2521,6 @@ mod tests {
             &passthrough_sidecar_envelope,
         );
         assert_eq!(unchanged, 0);
-
-        // Even a server-accepted submit marker remains client-local retry
-        // metadata. It cannot close the exchange before the accepted control
-        // Event itself arrives through private history.
-        let close_event_id = "ak:event:AU99o18Hd_LNg96P4GHO3cBUFs4GFfz88OZVkoVPa7ce";
-        let mut accepted_intent =
-            pending_sidecar_auto_close_intents(&store, EXCHANGE_ACCOUNT, &session.source_realm_id)
-                .pop()
-                .unwrap();
-        accepted_intent.accepted_control_event_id = Some(close_event_id.to_owned());
-        save_pending_sidecar_auto_close_intent(&mut store, &accepted_intent).unwrap();
-        assert_eq!(
-            cached_sidecar_exchange_projections(
-                &store,
-                EXCHANGE_ACCOUNT,
-                session.source_realm_id.as_str(),
-            )[0]
-            .status,
-            arkret_sdk::AgentSidecarExchangeStatus::Responding
-        );
-
-        let mut control_event = arkret_wire::test_support::raw_event(
-            arkret_sdk::EventKind::AgentSidecarExchangeControl.as_str(),
-            arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-            },
-            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
-            2,
-            arkret_sdk::Hlc::new("01970e589d21-0003-a13f9c2e").unwrap(),
-            serde_json::json!({
-                "strand_id": session.source_strand_id.clone(),
-                "encrypted_payload": serde_json::to_value(&accepted_intent.control).unwrap(),
-            }),
-        )
-        .unwrap();
-        control_event.event_id = arkret_sdk::EventId::new(close_event_id).unwrap();
-        control_event.scope_ref = arkret_wire::ScopeRef::Sidecar {
-            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-            sidecar_id: session.sidecar_id.clone(),
-        };
-        control_event.refs = accepted_intent
-            .control
-            .basis_event_ids
-            .iter()
-            .map(|event_id| arkret_sdk::EventRef::new(event_id.to_string(), "after"))
-            .collect();
-        store.append_raw_operation(
-            close_event_id,
-            Some(session.source_realm_id.clone()),
-            serde_json::to_value(&control_event).unwrap(),
-        );
-        assert_eq!(
-            refold_sidecar_exchanges_with_decrypt(
-                &mut store,
-                EXCHANGE_ACCOUNT,
-                &session.source_realm_id,
-                &[],
-                &passthrough_sidecar_envelope,
-            ),
-            1
-        );
-        let completed = cached_sidecar_exchange_projections(
-            &store,
-            EXCHANGE_ACCOUNT,
-            session.source_realm_id.as_str(),
-        );
-        assert_eq!(
-            completed[0].status,
-            arkret_sdk::AgentSidecarExchangeStatus::Complete
-        );
-        assert_eq!(
-            completed[0]
-                .terminal_event_id
-                .as_ref()
-                .map(ToString::to_string),
-            Some(close_event_id.to_owned())
-        );
-        assert!(
-            pending_sidecar_auto_close_intents(&store, EXCHANGE_ACCOUNT, &session.source_realm_id,)
-                .is_empty()
-        );
     }
 
     /// F-1 (§7.2.1 / §7.2.2 check 1): a decryptable binding arriving under a

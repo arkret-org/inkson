@@ -333,8 +333,8 @@ fn local_state_store_persists_private_read_cursors() {
 
     assert_eq!(marker.body.realm_id, REALM_ID);
     assert_eq!(marker.body.position.event_id.as_str(), EVENT_ID);
-    assert_eq!(marker.body.read_scope.kind.as_str(), "strand");
-    assert_eq!(marker.body.read_scope.track.as_deref(), Some("discussion"));
+    assert_eq!(marker.body.read_scope.kind.as_str(), "realm");
+    assert_eq!(marker.body.read_scope.track, None);
 
     let reader = LocalStateStore::with_path(path);
     let persisted = reader
@@ -397,7 +397,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     store.ingest_to_device_messages(&[serde_json::from_value(serde_json::json!({
         "message_id": "ak:device_message:01904100-0000-7000-8000-000000000005",
         "kind": "ak.read_cursor.update",
-        "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+        "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
         "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
         "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -429,7 +429,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
             Some("ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy"),
         )
         .expect("read cursor update persisted");
-    assert_eq!(marker.actor, "did:web:alice.example");
+    assert_eq!(marker.actor, "ak:did_core:web:alice.example");
     assert_eq!(
         marker.body.position.event_id.as_str(),
         "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM"
@@ -451,7 +451,7 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
                 "ak:device_message:01904100-0000-7000-8000-{message_suffix}"
             ),
             "kind": "ak.read_cursor.update",
-            "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+            "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
             "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
             "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
             "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -520,7 +520,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     let message: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({
     "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
     "kind": "ak.key.verification.request",
-    "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+    "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
     "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
     "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
     "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
@@ -560,7 +560,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
         serde_json::from_value(serde_json::json!({
         "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
         "kind": "ak.key.verification.request",
-        "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+        "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
         "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
         "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
         "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
@@ -587,7 +587,7 @@ fn local_state_store_dismisses_answered_realm_key_request_by_message_id() {
     let request: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({
         "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000072",
         "kind": "ak.realm_key.request",
-        "sender_principal_id": "did:webvh:z6mkfixture:bob.example",
+        "sender_principal_id": "ak:did_core:webvh:z6mkfixture:bob.example",
         "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
         "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
         "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",

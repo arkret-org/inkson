@@ -158,8 +158,9 @@ pub fn build_disclosure_receipt(
     counterparty: &str,
     disclosed_claims: Vec<String>,
 ) -> anyhow::Result<TypedOperationBuilder> {
+    let counterparty = crate::mls_api_helpers::principal_core_id(counterparty)?;
     let payload = arkret_sdk::IdentityDisclosureReceiptStatePayload {
-        holder_principal_id: arkret_sdk::DidFullId::new(holder_did.to_owned())?,
+        holder_principal_id: crate::mls_api_helpers::principal_core_id(holder_did)?,
         value: Some(serde_json::json!({
             "request_id": request_id,
             "counterparty": counterparty,
@@ -286,7 +287,7 @@ mod tests {
         .unwrap()
         .build("node");
         assert_eq!(op.kind, "ak.identity.disclosure_receipt");
-        assert_eq!(op.payload["holder_did"], "ak:did_core:web:alice");
+        assert_eq!(op.payload["holder_principal_id"], "ak:did_core:web:alice");
         assert_eq!(op.payload["value"]["counterparty"], "ak:did_core:web:bob");
         let writes = crate::operation::direct_registered_cell_writes(&op).unwrap();
         assert_eq!(

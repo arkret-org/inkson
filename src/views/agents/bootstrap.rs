@@ -488,11 +488,12 @@ fn current_controller_backup_hpke_key_ref(
     recovery_public_key: &[u8],
     evaluated_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<String> {
+    let controller_id = crate::mls_api_helpers::principal_core_id(controller_id)?;
     let policy = active_policy.policy.as_ref().ok_or_else(|| {
         anyhow::anyhow!("active controller recovery policy omitted its signed key configuration")
     })?;
     policy.validate()?;
-    if active_policy.principal_id.as_str() != controller_id
+    if active_policy.principal_id != controller_id
         || policy.principal_id != active_policy.principal_id
         || policy.policy_id != active_policy.policy_id
         || policy.version != active_policy.version
@@ -1549,6 +1550,7 @@ mod tests {
     #[test]
     fn managed_backup_selects_exact_current_policy_hpke_ref_by_key_bytes() {
         let controller = "did:web:alice.example";
+        let controller_core = "ak:did_core:web:alice.example";
         let recipient = format!("{controller}#backup-hpke-7");
         let (_private_key, public_key) = crate::hpke_backup::derive_recovery_keypair_from_entropy(
             &[29_u8; crate::recovery_crypto::RECOVERY_KEY_BYTES],
@@ -1560,7 +1562,7 @@ mod tests {
         let policy_id = "ak:policy:01964137-0000-7000-8000-000000000071";
         let policy: crate::recovery_strand::ActiveRecoveryPolicy = serde_json::from_value(json!({
             "policy_id": policy_id,
-            "principal_id": controller,
+            "principal_id": controller_core,
             "version": 1,
             "acceptance_basis": format!("ak:seal:sha256:{}", "a".repeat(64)),
             "trust_domain": "ak:trust_domain:example.org",
@@ -1570,7 +1572,7 @@ mod tests {
             "policy": {
                 "schema": "ak.schema.recovery_policy.v1",
                 "policy_id": policy_id,
-                "principal_id": controller,
+                "principal_id": controller_core,
                 "version": 1,
                 "supersedes": null,
                 "trust_domain": "ak:trust_domain:example.org",
@@ -2034,21 +2036,26 @@ mod tests {
         assert_eq!(report.restored, 2);
         assert_eq!(report.failed, 0);
         let restored_agent = state.mls_snapshot_for(agent_realm).unwrap();
+        let agent_core_id = crate::mls_api_helpers::principal_core_id(agent_id).unwrap();
         let agent_secret =
-            crate::mls::runtime::load_device_snapshot_secret(&secure_store, agent_id, device_id)
-                .unwrap();
-        assert!(crate::mls::runtime::account_mls_secret_verified(&secure_store, agent_id).unwrap());
+            crate::mls::runtime::load_account_mls_secret(&secure_store, agent_core_id.as_str())
+                .unwrap()
+                .unwrap()
+                .secret;
+        assert!(
+            crate::mls::runtime::account_mls_secret_verified(&secure_store, agent_core_id.as_str())
+                .unwrap()
+        );
         assert_eq!(
             crate::mls::persistence::decrypt_envelope(&restored_agent, &agent_secret).unwrap(),
             agent_bytes
         );
         let restored_controller = state.mls_snapshot_for(controller_realm).unwrap();
-        let controller_secret = crate::mls::runtime::load_device_snapshot_secret(
-            &secure_store,
-            controller_id,
-            device_id,
-        )
-        .unwrap();
+        let controller_secret =
+            crate::mls::runtime::load_account_mls_secret(&secure_store, controller_id)
+                .unwrap()
+                .unwrap()
+                .secret;
         assert_eq!(controller_secret, "restored controller account secret");
         assert_eq!(
             crate::mls::persistence::decrypt_envelope(&restored_controller, &controller_secret)

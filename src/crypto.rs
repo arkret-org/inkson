@@ -8,7 +8,7 @@ pub struct ClientEncryptedMessage {
 
 mod native {
     use arkret_sdk::{
-        ArkretMlsGroup, ArkretMlsIdentity, DeviceId, DidFullId, EncryptedMessage, MessageCrypto,
+        ArkretMlsGroup, ArkretMlsIdentity, DeviceId, EncryptedMessage, MessageCrypto,
         MessageCryptoDecrypt, MlsAddMemberResult, MlsCommitEnvelope, MlsKeyPackageRecord,
         MlsProposalEnvelope, MlsRemoveMemberResult, MlsWelcomeEnvelope,
     };
@@ -332,7 +332,7 @@ mod tests {
             remove
                 .removed_principals
                 .iter()
-                .any(|did| did.as_str() == "did:web:bob.example"),
+                .any(|did| did.as_str() == "ak:did_core:web:bob.example"),
             "remove commit must name Bob as the removed principal"
         );
         // The SDK Remove uses the production by-reference wire form: the

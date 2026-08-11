@@ -54,6 +54,9 @@ impl JoinedRealmIds {
         projections: &BTreeMap<String, Value>,
         actor_id: &str,
     ) -> Self {
+        let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
+            return Self::default();
+        };
         Self(
             projections
                 .iter()
@@ -65,7 +68,7 @@ impl JoinedRealmIds {
                             members.iter().any(|member| {
                                 serde_json::from_value::<MemberRosterEntry>(member.clone())
                                     .is_ok_and(|member| {
-                                        member.actor_id.as_str() == actor_id
+                                        member.actor_id == actor_id
                                             && member.membership == MembershipState::Join
                                     })
                             })
@@ -92,10 +95,13 @@ impl JoinedRealmIds {
 }
 
 pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor_id: &str) -> bool {
+    let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
+        return false;
+    };
     entry.members.as_ref().is_some_and(|members| {
-        members.iter().any(|member| {
-            member.actor_id.as_str() == actor_id && member.membership == MembershipState::Join
-        })
+        members
+            .iter()
+            .any(|member| member.actor_id == actor_id && member.membership == MembershipState::Join)
     })
 }
 

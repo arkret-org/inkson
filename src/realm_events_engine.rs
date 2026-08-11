@@ -146,9 +146,11 @@ fn accepted_direct_message_final(
         return None;
     }
     let method = event.proofs[0].verification_method.as_str();
-    let device = method
-        .strip_prefix(event.actor_id.as_str())?
-        .strip_prefix('#')?;
+    let (controller, device) = method.rsplit_once('#')?;
+    let controller = crate::mls_api_helpers::principal_core_id(controller).ok()?;
+    if controller != event.actor_id {
+        return None;
+    }
     let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
     Some((event, device))
 }
@@ -330,7 +332,8 @@ mod tests {
 
     const REALM_ID: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     const STRAND_ID: &str = "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
-    const ACTOR_ID: &str = "did:web:alice.example";
+    const ACTOR_ID: &str = "ak:did_core:web:alice.example";
+    const ACTOR_CONTROLLER: &str = "did:web:alice.example";
     const DEVICE_ID: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 
     fn direct_message_event() -> ClientEvent {
@@ -351,7 +354,7 @@ mod tests {
         let event_digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
         event.proofs.push(arkret_sdk::Proof {
             kind: "detached_jws".to_owned(),
-            verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR_ID}#{DEVICE_ID}"))
+            verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR_CONTROLLER}#{DEVICE_ID}"))
                 .unwrap(),
             event_digest,
             created_at: event.created_at,

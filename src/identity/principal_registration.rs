@@ -166,7 +166,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         .context("reserved DID inception omits its root verification method")?
         .to_owned();
     let genesis_hlc = crate::signing_stamp::issue_realm_genesis_hlc_with_secret(
-        reserved.principal_id.as_str(),
+        reserved.full_id.as_str(),
         handoff.device_id.trim(),
         &key_material.root_seed,
     )?
@@ -181,7 +181,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         lease_fence,
         device_id: handoff.device_id.trim().to_owned(),
         trust_domain: handoff.trust_domain.clone(),
-        did: reserved.principal_id.to_string(),
+        did: reserved.full_id.to_string(),
         version_id,
         identity_abandonment: None,
         root_public_key_multibase: key_material.root_public_key_multikey.clone(),

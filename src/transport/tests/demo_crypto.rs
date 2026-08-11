@@ -6,6 +6,7 @@
 
 #[tokio::test]
 async fn publish_mls_key_package_fails_closed_without_active_signer() {
+    let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
     let record = arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: "ak:mls:kp:01904100-0000-7000-8000-000000000001".to_owned(),
         endpoint: arkret_sdk::MlsEndpointIdentity::human_device(

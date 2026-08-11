@@ -69,17 +69,20 @@ pub(crate) fn projected_realm_creator_matches_actor(
     realm_id: &str,
     actor_id: &str,
 ) -> bool {
-    projection_creator_matches_actor(projection, actor_id)
+    let Ok(actor_core_id) = crate::mls_api_helpers::principal_core_id(actor_id) else {
+        return false;
+    };
+    projection_creator_matches_actor(projection, actor_core_id.as_str())
         || crate::security_state::realm_authority_root_controller_for_realm(
             realm_tree_projections,
             realm_id,
         )
         .as_deref()
-            == Some(actor_id.trim())
+            == Some(actor_core_id.as_str())
 }
 
-pub(crate) fn projection_creator_matches_actor(projection: &Value, actor_id: &str) -> bool {
-    let actor = actor_id.trim();
+pub(crate) fn projection_creator_matches_actor(projection: &Value, actor_core_id: &str) -> bool {
+    let actor = actor_core_id.trim();
     if actor.is_empty() {
         return false;
     }
@@ -573,8 +576,8 @@ mod tests {
             "summary": { "title": "Realm", "encryption_profile": "mls_rfc9420" },
             "state": {
                 "events": [{
-                    "kind": "ak.realm.create",
-                    "payload": { "object": { "id": REALM, "created_by": ACTOR } }
+                "kind": "ak.realm.create",
+                    "payload": { "object": { "id": REALM, "created_by": "ak:did_core:web:alice.example" } }
                 }]
             }
         })

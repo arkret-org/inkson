@@ -411,24 +411,27 @@ pub(super) fn build_roster(
     actor: &str,
     peers: &[String],
     actor_devices: &BTreeMap<String, String>,
-) -> Vec<CallParticipant> {
+) -> anyhow::Result<Vec<CallParticipant>> {
     let mut ids = BTreeSet::new();
     let mut roster = Vec::new();
-    for did in std::iter::once(actor).chain(peers.iter().map(String::as_str)) {
-        let did = did.trim();
-        if did.is_empty() || !ids.insert(did.to_owned()) {
+    for full_id in std::iter::once(actor).chain(peers.iter().map(String::as_str)) {
+        let full_id = arkret_sdk::DidFullId::new(full_id.trim().to_owned())?;
+        let actor_id = arkret_sdk::project_full_id_to_core_id(&full_id)
+            .map_err(anyhow::Error::msg)?
+            .to_string();
+        if !ids.insert(actor_id.clone()) {
             continue;
         }
         roster.push(CallParticipant {
-            actor_id: did.to_owned(),
-            device_id: actor_devices.get(did).cloned(),
-            display_name: short_protocol_id(did),
+            device_id: actor_devices.get(&actor_id).cloned(),
+            display_name: short_protocol_id(&actor_id),
+            actor_id,
             muted: false,
             speaking: false,
             screen_sharing: false,
         });
     }
-    roster
+    Ok(roster)
 }
 
 pub(super) fn set_local_state(
@@ -437,9 +440,15 @@ pub(super) fn set_local_state(
     muted: bool,
     sharing: bool,
 ) {
+    let Ok(actor) = arkret_sdk::DidFullId::new(actor.trim().to_owned()) else {
+        return;
+    };
+    let Ok(actor) = arkret_sdk::project_full_id_to_core_id(&actor) else {
+        return;
+    };
     let mut roster = participants();
     for p in &mut roster {
-        if p.actor_id == actor {
+        if p.actor_id == actor.as_str() {
             p.muted = muted;
             p.screen_sharing = sharing;
         }
@@ -483,7 +492,8 @@ mod tests {
                 "did:web:alice.example".to_owned(),
             ],
             &BTreeMap::new(),
-        );
+        )
+        .unwrap();
         assert_eq!(roster.len(), 2);
         assert_eq!(roster[0].actor_id, "ak:did_core:web:alice.example");
     }
@@ -519,7 +529,7 @@ mod tests {
             &state,
             "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
         );
-        assert_eq!(dids, vec!["did:web:media.example"]);
+        assert_eq!(dids, vec!["ak:did_core:web:media.example"]);
         assert_eq!(focus_id, "fra-1");
     }
 
@@ -617,7 +627,7 @@ mod tests {
             "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
         );
         assert_eq!(
-            map.get("did:web:alice.example").map(String::as_str),
+            map.get("ak:did_core:web:alice.example").map(String::as_str),
             Some("ak:device:01904100-0000-7000-8000-00000000000a")
         );
     }
@@ -796,14 +806,14 @@ mod tests {
                             "call_id": call_id,
                             "focus_id": "fra-1",
                             "recording_id": recording_id,
-                            "media_service_id": "did:web:recorder.example",
+                            "media_service_id": "ak:did_core:web:recorder.example",
                             "recording_start_event_id": start_event_id
                         },
                         "ciphertext_digest": ciphertext_digest
                     },
                     "retention_policy_id": "ak:policy:019a7360-0000-7000-8000-000000000005",
                     "retention": retention,
-                    "produced_by": "did:web:recorder.example",
+                    "produced_by": "ak:did_core:web:recorder.example",
                     "recording_initiator_capability_ref": "ak:grant:AY8a0-KhSVbHOk2IStjbvFlEdGofW0ZyqMsOoZu6_Cqv",
                     "created_at": "2026-06-19T00:00:00.000Z",
                     "deletion_audit": {

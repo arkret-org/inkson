@@ -205,17 +205,11 @@ mod tests {
 
     #[test]
     fn kanban_projection_refresh_ignores_cursor_remints_after_sync_is_ready() {
-        let first_key = kanban_projection_refresh_key(" ak:realm:r1 ", "", true, 0, "");
+        let realm_id = "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0";
+        let first_key = kanban_projection_refresh_key(realm_id, "", true, 0, "");
 
         assert_eq!(
-            next_kanban_projection_refresh_key(
-                &first_key,
-                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
-                "",
-                true,
-                0,
-                ""
-            ),
+            next_kanban_projection_refresh_key(&first_key, realm_id, "", true, 0, ""),
             None,
             "a newly signed token for the same ready account frontier is not a durable change"
         );
@@ -255,13 +249,13 @@ mod tests {
         );
         assert_eq!(
             key,
-            Some("ak:realm:A9OzOxL7AbjP906JsdSpcyaRgJKWUkrxOe9U_OEvt1Zk".to_owned())
+            Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0||0|1|".to_owned())
         );
 
         // Same epoch + same inputs → no churn.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:A9OzOxL7AbjP906JsdSpcyaRgJKWUkrxOe9U_OEvt1Zk",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0||0|1|",
                 "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 "",
                 false,
@@ -274,14 +268,14 @@ mod tests {
         // A later epoch advances the key again.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:A9OzOxL7AbjP906JsdSpcyaRgJKWUkrxOe9U_OEvt1Zk",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0||0|1|",
                 "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 "",
                 false,
                 2,
                 ""
             ),
-            Some("ak:realm:AaqOo-i2sxEu89KI1VK_wzBF3Z5ZzJ8pHZHvSY_26TPw".to_owned())
+            Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0||0|2|".to_owned())
         );
 
         // Still no realm/view selector → no refresh even with an epoch.
@@ -343,13 +337,15 @@ mod tests {
         );
         assert_eq!(
             unlocked,
-            Some("ak:realm:A7gGTcN1qMQ_-FpM9r_GW-66OMf7JtA-pqvxvBXsibWA".to_owned())
+            Some(
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0||0|0|snap:1|ep:1".to_owned()
+            )
         );
 
         // Same snapshot signature again → no churn.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:A7gGTcN1qMQ_-FpM9r_GW-66OMf7JtA-pqvxvBXsibWA",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0||0|0|snap:1|ep:1",
                 "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 "",
                 false,

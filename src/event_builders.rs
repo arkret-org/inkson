@@ -2,7 +2,7 @@
 //!
 //! These helpers are transport-neutral and independent of the API transport.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
@@ -112,6 +112,7 @@ pub fn build_realm_bootstrap_events(
     genesis_salt: arkret_sdk::GenesisSalt,
     actor_id: &str,
     notary_did: &str,
+    notary_service_origin: &str,
     title: &str,
     summary: Option<&str>,
     discoverability: &str,
@@ -271,12 +272,35 @@ pub fn build_realm_bootstrap_events(
 
     use arkret_sdk::{
         BindingScope, BindingSource, DeliveryMode, MemberDeliveryBinding, RecipientServiceKind,
+        ServiceResolutionCarrier,
     };
+    let recipient_service_id = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
+        &arkret_sdk::DidFullId::new(notary_did.to_owned())
+            .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
+    )?);
+    let service_origin = url::Url::parse(notary_service_origin)
+        .map_err(|err| anyhow::anyhow!("invalid creator service origin: {err}"))?;
+    if service_origin.scheme() != "https"
+        || service_origin.host_str().is_none()
+        || !service_origin.username().is_empty()
+        || service_origin.password().is_some()
+        || service_origin.query().is_some()
+        || service_origin.fragment().is_some()
+    {
+        anyhow::bail!("creator service origin must be an absolute HTTPS origin");
+    }
+    let current_record_url = format!(
+        "{}{}",
+        service_origin.origin().ascii_serialization(),
+        arkret_sdk::canonical_service_current_record_path(&recipient_service_id)
+    );
+    let service_resolution = ServiceResolutionCarrier::CurrentRecordUrl {
+        current_record_url,
+        pinned_record_digest: None,
+    };
+    service_resolution.validate_shape(&recipient_service_id)?;
     let creator_delivery_binding = MemberDeliveryBinding {
-        recipient_service_id: arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new(notary_did.to_owned())
-                .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
-        )?),
+        recipient_service_id,
         recipient_service_kind: RecipientServiceKind::PrincipalServer,
         binding_scope: BindingScope::Realm,
         binding_source: BindingSource::RealmPolicy,
@@ -289,7 +313,7 @@ pub fn build_realm_bootstrap_events(
         ]
         .into_iter()
         .collect(),
-        service_endpoint: None,
+        service_resolution,
         did_document_digest: None,
         resolved_at: event_timestamp(),
         service_acceptance_ref: None,
@@ -621,11 +645,13 @@ pub fn build_direct_conversation_founding_events(
     input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     let created_at = event_timestamp();
+    let founder_actor =
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         arkret_sdk::TypedTrustDomainId::new(input.source_service_binding.trust_domain.clone())?,
         arkret_sdk::NotaryProfile::SingleDid,
-        arkret_sdk::NotaryValue::single_did(founder_id.clone()),
+        arkret_sdk::NotaryValue::single_did(founder_actor.clone()),
         arkret_sdk::current_capability_action_registry_digest()?,
         created_at,
     )?;
@@ -641,8 +667,6 @@ pub fn build_direct_conversation_founding_events(
     .build_sdk_event("inkson")?;
 
     let realm_id = create.realm_id.clone();
-    let founder_actor =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
     let peer_actor = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(peer_id)?);
     let membership = arkret_sdk::direct_conversation_peer_membership_bootstrap(
         realm_id.clone(),
@@ -727,7 +751,7 @@ fn build_realm_delivery_binding_policy(
 ) -> anyhow::Result<arkret_sdk::RealmDeliveryBindingPolicyPayload> {
     let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| anyhow::anyhow!("invalid realm_id for delivery_binding_policy: {err:?}"))?;
-    let recipient_service = arkret_sdk::DidFullId::new(notary_did.to_owned())
+    let recipient_service = crate::mls_api_helpers::principal_core_id(notary_did)
         .map_err(|err| anyhow::anyhow!("invalid delivery binding recipient service DID: {err}"))?;
     Ok(arkret_sdk::RealmDeliveryBindingPolicyPayload {
         realm_id: Some(realm_id),
@@ -807,7 +831,7 @@ fn realm_genesis_notary(
             members: vec![notary_core_id],
         },
         NotaryProfile::Mixed => arkret_sdk::NotaryValue::Mixed {
-            did: notary_did.clone(),
+            actor_id: notary_core_id.clone(),
             recovery_members: vec![parse_derived_did(&derived_recovery_member_did(
                 notary_did.as_str(),
             ))?],
@@ -819,13 +843,13 @@ fn realm_genesis_notary(
             // profile, where the host *is* the org authority). For the default
             // `did:webvh` actor the org's webvh DID carries its own SCID that is
             // unknowable client-side, so we omit the org-scoped fields and emit
-            // the orgless `{kind, did}` single_did genesis (realm.schema.json
+            // the orgless `{kind, actor_id}` single_did genesis (realm.schema.json
             // single_did allOf; decisions/0003 §7 — personal Realms fall back to
             // per-user recovery) rather than fabricate a malformed
             // `did:webvh:<host>` (no SCID) identifier.
             match inferred_controller_organization_did(notary_did.as_str()) {
                 Some(controller) => arkret_sdk::NotaryValue::single_did_with_org(
-                    notary_did.clone(),
+                    notary_core_id.clone(),
                     vec![parse_derived_did(&derived_recovery_member_did(
                         &controller,
                     ))?],
@@ -834,7 +858,7 @@ fn realm_genesis_notary(
                         &derived_recovery_controller_organization_did(&controller),
                     )?],
                 ),
-                None => arkret_sdk::NotaryValue::single_did(notary_did),
+                None => arkret_sdk::NotaryValue::single_did(notary_core_id),
             }
         }
     };
@@ -1396,6 +1420,7 @@ fn build_member_state_transition_event_with_binding(
     };
     let member_did = crate::mls_api_helpers::principal_core_id(member_actor_id)
         .map_err(|err| anyhow::anyhow!("member actor_id not a valid core_id: {err}"))?;
+    let member_cell_subject = member_did.as_str().to_owned();
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's
     // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
     // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
@@ -1423,7 +1448,7 @@ fn build_member_state_transition_event_with_binding(
     if let Some(delivery_binding) = delivery_binding {
         membership_payload = membership_payload.with_delivery_binding(delivery_binding);
     }
-    let cell = format!("ak:cell:ak.component.member.state.v1:{member_actor_id}");
+    let cell = format!("ak:cell:ak.component.member.state.v1:{member_cell_subject}");
     let preconditions = if let Some(prior) = from_state {
         vec![head_eq_precondition(
             &cell,
@@ -1437,7 +1462,7 @@ fn build_member_state_transition_event_with_binding(
         actor_id,
         membership_payload,
     )
-    .target_ref(member_actor_id)
+    .target_ref(member_cell_subject)
     .preconditions(preconditions)
     .build_sdk_event("inkson")
 }
@@ -1678,6 +1703,7 @@ mod notary_derivation_tests {
         )
         .unwrap();
         assert_eq!(notary["kind"], "single_did");
+        assert_eq!(notary["actor_id"], "ak:did_core:web:alice.example");
         assert_eq!(
             notary["controller_organization"],
             "ak:did_core:web:alice.example"
@@ -1707,13 +1733,16 @@ mod notary_derivation_tests {
             realm_genesis_notary(arkret_sdk::NotaryProfile::SingleDid, actor).unwrap(),
         )
         .unwrap();
-        // Orgless personal Realm emits the minimal `{type, did}` single_did
+        // Orgless personal Realm emits the minimal `{kind, actor_id}` single_did
         // genesis (relaxed realm.schema.json single_did allOf); the notary
         // recovery path / org-scoped fields are omitted (personal Realms fall
         // back to per-user recovery, decisions/0003 §7) rather than fabricated
         // into a malformed did:webvh:<host>.
         assert_eq!(notary["kind"], "single_did");
-        assert_eq!(notary["did"], actor);
+        assert_eq!(
+            notary["actor_id"],
+            "ak:did_core:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn"
+        );
         assert!(notary.get("recovery_members").is_none());
         assert!(notary.get("controller_organization").is_none());
         assert!(notary.get("recovery_controller_organizations").is_none());
@@ -1752,6 +1781,7 @@ mod notary_derivation_tests {
             arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
             "did:web:alice.example",
             "did:web:alice.example",
+            "https://alice.example",
             "Ordinary Realm",
             Some("summary"),
             "invite_only",

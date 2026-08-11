@@ -122,11 +122,11 @@ pub struct SyncEngineContext {
     /// ingestion bumps this even when cursor checkpointing is deliberately
     /// deferred by unacknowledged to-device key material.
     pub realm_live_epoch: crate::runtime::input::ValueCell<u64>,
-    /// Y1/Y2 - session-scoped DID resolution cache handle, provided by
-    /// `app.rs` via `use_context_provider` as documented there. While ingesting
-    /// projections, the Y2 invalidation hook uses it to call `invalidate` for
-    /// related actor DIDs when device authorization frontier events arrive
-    /// arrive, and `clear` on logout / trust-bundle reset.
+    /// Session-scoped DID resolution cache handle, provided by `app.rs` via
+    /// `use_context_provider`. Exact full-DID proof prefetches use this cache;
+    /// lifecycle reset remains responsible for clearing it. Realm projections
+    /// carrying only a principal core never select or invalidate an authority
+    /// instance through this handle.
     pub did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     pub session: crate::runtime::session::SessionCoordinator,
     pub client_runtime: crate::client_core::InksonClientRuntime,
@@ -1819,22 +1819,25 @@ fn proof_bearing_sender_device(
     // verifier when that signer is a real directory-backed device. Independent
     // Native Agent MLS endpoints use their authenticated LeafNode key instead
     // and deliberately do not form a device-directory lookup here.
-    let proof_controller = object
+    let proof_subject = object
         .get("executed_by")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|controller| !controller.is_empty())
         .unwrap_or(actor);
-    let controller_matches = proofs
-        .iter()
-        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
-        .any(|method| {
+    let proof_subject = arkret_sdk::DidCoreId::new(proof_subject.to_owned()).ok()?;
+    let proof_controller = proofs.iter().find_map(|proof| {
+        let method = proof.get("verification_method").and_then(Value::as_str)?;
+        let controller = {
             let no_query = method.split_once('?').map_or(method, |(head, _)| head);
-            no_query.split_once('#').map_or(no_query, |(head, _)| head) == proof_controller
-        });
-    if !controller_matches {
-        return None;
-    }
+            no_query.split_once('#').map_or(no_query, |(head, _)| head)
+        };
+        let controller = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
+        let controller_core = arkret_sdk::project_full_id_to_core_id(&controller)
+            .ok()
+            .map(arkret_sdk::DidCoreId::from)?;
+        (controller_core == proof_subject).then_some(controller)
+    })?;
     let device = object
         .get("device_id")
         .or_else(|| object.get("sender_device_id"))
@@ -1842,8 +1845,10 @@ fn proof_bearing_sender_device(
         .map(str::trim)
         .filter(|device| !device.is_empty())
         .map(str::to_owned)
-        .or_else(|| proof_sender_device_from_verification_method(object, proof_controller))?;
-    Some((proof_controller.to_owned(), device))
+        .or_else(|| {
+            proof_sender_device_from_verification_method(object, proof_controller.as_str())
+        })?;
+    Some((proof_controller.to_string(), device))
 }
 
 fn proof_sender_device_from_verification_method(
@@ -1890,39 +1895,12 @@ pub fn apply_response(
 ) {
     // Clone runtime adapter handles before applying this response.
     let state_store = ctx.state_store.clone();
-    let did_cache = ctx.did_cache.clone();
     let account_did = ctx.account_did.clone();
     let mut synced_theme = None;
     let mut realm_projection_changed = false;
 
-    // Y2 invalidation hook: scan identity events in this response before writing
-    // projections. On device authorization frontier changes, invalidate
-    // the related actor DID so the next authority resolution (`resolve_with_cache`)
-    // walks the resolver chain instead of trusting a stale cache entry (old key
-    // set). Keep this separate from the state-store write callback.
-    //
-    // DID-P2-B extends this from two coarse event kinds to the five classes
-    // §4 lists (rotation / deactivation / device-agent epoch / service-
-    // controller delegation / policy change), and routes them at two
-    // granularities: the DID-keyed session cache gets the DID, the durable
-    // binding store gets the precise six-dimension selectors.
-    let mut binding_selectors: Vec<arkret_sdk::identity::BindingInvalidation> = Vec::new();
-    did_cache.update(|cache| {
-        for body in response.realm_projections.values() {
-            for (did, selectors) in collect_binding_invalidations(body) {
-                cache.invalidate(&did);
-                binding_selectors.extend(selectors);
-            }
-        }
-    });
-    if !binding_selectors.is_empty() {
-        state_store.write(|store| {
-            store.invalidate_accepted_did_bindings_batch(&binding_selectors);
-        });
-    }
-
-    // The device-signing-key cache is a *separate* cache from the DID bindings
-    // above, and its 5-minute positive TTL is not sufficient on its own:
+    // The core-keyed device-signing-key cache is separate from exact authority
+    // resolution, and its 5-minute positive TTL is not sufficient on its own:
     // `signal.md` §1 forbids reusing an older positive entry once a device-list
     // or generation frontier change has been observed. Dropping the actor's
     // entries here only forces a re-query; the synchronous receive path fails
@@ -2254,9 +2232,11 @@ fn response_revokes_local_device(
     account_did: &str,
     device_id: &str,
 ) -> bool {
-    let account_did = account_did.trim();
+    let Ok(account_core_id) = crate::mls_api_helpers::principal_core_id(account_did.trim()) else {
+        return false;
+    };
     let device_id = device_id.trim();
-    if account_did.is_empty() || device_id.is_empty() {
+    if device_id.is_empty() {
         return false;
     }
     response.realm_projections.values().any(|body| {
@@ -2269,7 +2249,8 @@ fn response_revokes_local_device(
                 return false;
             };
             kind == "ak.device.revoke"
-                && payload.get("principal_id").and_then(Value::as_str) == Some(account_did)
+                && payload.get("principal_id").and_then(Value::as_str)
+                    == Some(account_core_id.as_str())
                 && payload.get("device_id").and_then(Value::as_str) == Some(device_id)
         })
     })
@@ -2693,89 +2674,6 @@ fn ingest_member_identity_events_from_projection(
     }
 }
 
-/// Core scanner for the Y2 invalidation hook.
-///
-/// Finds device-frontier events in one Realm
-/// projection `body`, then calls
-/// [`arkret_sdk::identity::DidResolutionCache::invalidate`] for the related actor
-/// DID. Events may appear in:
-/// - inline `identity_events[]` on each member roster entry;
-/// - projection event logs at `state.events[]`.
-///
-/// Actor DID is read from the event `actor_id` / `did`, falling back to the
-/// roster entry `actor_id` / `did`. Forbidden `actor` / `sender` fields are
-/// ignored. The value is validated via `DidFullId::new`; invalid DID syntax is
-/// skipped because this best-effort invalidation hook must not panic.
-///
-/// TRUST-CACHE boundary: this only clears cache entries so the next resolution
-/// walks the authority chain again; it does not replace authority validation.
-#[cfg(test)]
-fn invalidate_cache_for_revocation_events(
-    cache: &mut arkret_sdk::identity::DidResolutionCache,
-    body: &Value,
-) {
-    for (did, _) in collect_binding_invalidations(body) {
-        cache.invalidate(&did);
-    }
-}
-
-/// DID-P2-B step 4: derive the precise binding invalidations implied by one
-/// Realm projection `body`.
-///
-/// Returns `(actor DID, selectors)` pairs. The DID drives the coarse
-/// session-cache eviction (`DidResolutionCache` is keyed by DID and can express
-/// nothing finer); the selectors drive the persisted binding store, where the
-/// SDK's six-dimension conjunctive [`arkret_sdk::identity::BindingInvalidation`]
-/// keeps a device revoke from evicting a `Principal` acceptance and keeps one
-/// trust domain's rotation from touching another's.
-///
-/// The event-kind → selector mapping lives in
-/// [`crate::state::binding_invalidations_for_event`] so the table and its tests
-/// sit next to the store they act on. This function only handles *finding* the
-/// events in the two projection shapes inkson receives.
-fn collect_binding_invalidations(
-    body: &Value,
-) -> Vec<(
-    arkret_sdk::DidFullId,
-    Vec<arkret_sdk::identity::BindingInvalidation>,
-)> {
-    /// The concrete rotated key, when the event names one. Absent → the whole
-    /// DID is invalidated rather than one key, which is the conservative side.
-    fn verification_method(event: &Value) -> Option<arkret_sdk::DidUrl> {
-        let raw = event
-            .get("verification_method")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                event
-                    .pointer("/content/verification_method")
-                    .and_then(Value::as_str)
-            })?;
-        arkret_sdk::DidUrl::new(raw.to_owned()).ok()
-    }
-
-    let mut out = Vec::new();
-    for_each_projection_identity_event(body, |event, fallback| {
-        let kind = projection_event_kind(event);
-        if !crate::state::is_binding_invalidating_kind(kind) {
-            return;
-        }
-        // Invalid DID syntax is skipped: this hook must not panic, and a
-        // malformed identity event is not authority to evict anything.
-        let Some(did) = projection_event_actor_id(event, fallback)
-            .and_then(|value| arkret_sdk::DidFullId::new(value.to_owned()).ok())
-        else {
-            return;
-        };
-        let selectors = crate::state::binding_invalidations_for_event(
-            kind,
-            &did,
-            verification_method(event).as_ref(),
-        );
-        out.push((did, selectors));
-    });
-    out
-}
-
 fn projection_event_kind(event: &Value) -> &str {
     event
         .get("kind")
@@ -2862,9 +2760,12 @@ fn apply_notification_projection(
         || !response.updates.account_data.is_empty()
         || invite_notifications.is_some();
     let mut notification_projection = store.notification_projection();
+    let account_core_id = crate::mls_api_helpers::principal_core_id(account_did).ok();
     let joined_realms = crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
         &response.realm_entries,
-        account_did,
+        account_core_id
+            .as_ref()
+            .map_or("", arkret_sdk::DidCoreId::as_str),
     );
     crate::state::projection::notifications::apply_notification_projection(
         &mut notification_projection,
@@ -3128,7 +3029,7 @@ mod tests {
         let (active, frontier) = realm_membership_removal_basis(&projection).unwrap();
         assert_eq!(
             active,
-            BTreeSet::from(["did:webvh:z6mkfixture:alice.example".to_owned()])
+            BTreeSet::from(["ak:did_core:webvh:z6mkfixture:alice.example".to_owned()])
         );
         assert_eq!(
             frontier,
@@ -3453,10 +3354,10 @@ mod tests {
             }],
         });
         let directory_envelope = json!({
-            "actor_id": "ak:did_core:webvh:z6mkfixture:bob.example",
+            "actor_id": "ak:did_core:web:bob.example",
             "device_id": "ak:device:0196419b-0000-7000-8000-0000000000bb",
             "proofs": [{
-                "verification_method": "did:webvh:z6mkfixture:bob.example#key-1"
+                "verification_method": "did:web:bob.example#key-1"
             }],
         });
         let minimal_realm = "ak:realm:AR6sSnzYzneKDHwNTaEOztzBtLnt8geLs44CLQ9Bw2WW";
@@ -3477,7 +3378,7 @@ mod tests {
         assert_eq!(
             pairs,
             vec![(
-                "did:webvh:z6mkfixture:bob.example".to_owned(),
+                "did:web:bob.example".to_owned(),
                 "ak:device:0196419b-0000-7000-8000-0000000000bb".to_owned()
             )]
         );
@@ -3664,7 +3565,7 @@ mod tests {
         serde_json::from_value(json!({
             "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
             "kind": kind,
-            "sender_principal_id": "did:webvh:z6mkfixture:alice.example",
+            "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
             "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:bob.example",
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
@@ -3738,7 +3639,7 @@ mod tests {
         assert_eq!(state.raw_operations.len(), 1);
         assert_eq!(
             state.raw_operations[0].payload["actor_id"],
-            "did:web:bob.example"
+            "ak:did_core:web:bob.example"
         );
         assert_eq!(state.raw_operations[0].payload["write_state"], "synced");
         assert_eq!(
@@ -3900,8 +3801,9 @@ mod tests {
 
     #[test]
     fn delegated_event_prefetches_executing_principals_device_key() {
-        let controller = "did:web:bob.example";
-        let agent = "did:web:bob.example:agent:assistant";
+        let controller = "ak:did_core:web:bob.example";
+        let agent = "ak:did_core:web:bob.example:agent:assistant";
+        let agent_full = "did:web:bob.example:agent:assistant";
         let device = "ak:device:01904100-0000-7000-8000-0000000000aa";
         let mut response = empty_response("cursor-agent");
         response.realm_projections.insert(
@@ -3913,7 +3815,7 @@ mod tests {
                         "executed_by": agent,
                         "device_id": device,
                         "proofs": [{
-                            "verification_method": format!("{agent}#{device}")
+                            "verification_method": format!("{agent_full}#{device}")
                         }]
                     }]
                 }
@@ -3922,7 +3824,7 @@ mod tests {
 
         assert_eq!(
             collect_persistent_proof_sender_devices(&response, &|_: &str| false),
-            vec![(agent.to_owned(), device.to_owned())]
+            vec![(agent_full.to_owned(), device.to_owned())]
         );
     }
 
@@ -3968,7 +3870,8 @@ mod tests {
     #[test]
     fn notification_projection_filters_invites_by_typed_membership() {
         let mut store = temp_store("invite-membership-projection");
-        let actor_id = "did:webvh:z6mkfixture:bob.example";
+        let actor_id = "did:web:bob.example";
+        let actor_core_id = "ak:did_core:web:bob.example";
         let realm_id = "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
         let invite =
             || crate::state::projection::notifications::test_invite(0x10, realm_id, None, None);
@@ -3977,7 +3880,7 @@ mod tests {
             let realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
             let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
                 "members": [{
-                    "actor_id": actor_id,
+                    "actor_id": actor_core_id,
                     "membership": membership
                 }]
             }))
@@ -4071,41 +3974,6 @@ mod tests {
         assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
     }
 
-    // ── Y2 invalidation hook ──────────────────────────────────────────
-
-    use arkret_sdk::identity::DidResolutionCache;
-    use arkret_sdk::{DidDocument, DidFullId};
-
-    fn seed_cache(did_str: &str) -> (DidResolutionCache, DidFullId) {
-        let cache = DidResolutionCache::new(8);
-        let did = DidFullId::new(did_str.to_owned()).expect("valid did");
-        let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
-        cache
-            .insert(
-                did.clone(),
-                // `did:web` publishes no method proof.
-                arkret_sdk::identity::ResolvedDid::proofless(doc),
-                chrono::Utc::now(),
-                chrono::Duration::seconds(600),
-            )
-            .unwrap();
-        (cache, did)
-    }
-
-    #[test]
-    fn device_revoke_event_in_state_events_invalidates_actor() {
-        // state.events[] use canonical `actor_id`; forbidden
-        // `actor` / `sender` fields are ignored by the scanner.
-        let (mut cache, did) = seed_cache("did:web:bob.example");
-        let body = json!({
-            "state": { "events": [
-                { "event_id": "e9", "kind": "ak.device.revoke", "actor_id": "ak:did_core:web:bob.example" }
-            ] }
-        });
-        invalidate_cache_for_revocation_events(&mut cache, &body);
-        assert!(cache.get(&did, chrono::Utc::now()).is_none());
-    }
-
     /// `signal.md` §1: the device-signing-key cache must not outlive an
     /// observed frontier change, so the subject is taken from the payload's
     /// `principal_id` — the authoring actor may be another device of the same
@@ -4129,8 +3997,8 @@ mod tests {
         assert_eq!(
             actors.into_iter().collect::<Vec<_>>(),
             vec![
-                "did:web:bob.example".to_owned(),
-                "did:web:subject.example".to_owned(),
+                "ak:did_core:web:bob.example".to_owned(),
+                "ak:did_core:web:subject.example".to_owned(),
             ]
         );
     }
@@ -4138,6 +4006,7 @@ mod tests {
     #[test]
     fn accepted_device_revoke_targets_current_local_device() {
         let actor = "did:web:alice.example";
+        let actor_core = "ak:did_core:web:alice.example";
         let device = "ak:device:0196419b-0000-7000-8000-000000000001";
         let mut response = empty_response("ak:cursor:device-revoke");
         response.realm_projections.insert(
@@ -4147,7 +4016,7 @@ mod tests {
                     "event_id": "ak:event:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
                     "kind": "ak.device.revoke",
                     "payload": {
-                        "principal_id": actor,
+                        "principal_id": actor_core,
                         "device_id": device,
                         "revoked_by": "ak:device:0196419b-0000-7000-8000-000000000004",
                         "revoked_at": "2026-07-14T02:00:00.000Z",
@@ -4191,59 +4060,5 @@ mod tests {
         );
 
         assert!(!response_revokes_local_device(&response, actor, device));
-    }
-
-    #[test]
-    fn device_revoke_event_with_removed_actor_key_is_ignored() {
-        // Negative case: revoke events carrying only forbidden `actor` /
-        // `sender` keys must not drive cache invalidation.
-        let (mut cache, did) = seed_cache("did:web:dave.example");
-        let body = json!({
-            "state": { "events": [
-                { "event_id": "e10", "kind": "ak.device.revoke", "actor": "did:web:dave.example" },
-                { "event_id": "e11", "kind": "ak.device.revoke", "sender": "did:web:dave.example" }
-            ] }
-        });
-        invalidate_cache_for_revocation_events(&mut cache, &body);
-        assert!(
-            cache.get(&did, chrono::Utc::now()).is_some(),
-            "forbidden actor/sender keys must not drive cache invalidation"
-        );
-    }
-
-    #[test]
-    fn non_revocation_events_do_not_invalidate() {
-        // Ordinary identity update events must not clear the cache.
-        let (mut cache, did) = seed_cache("did:web:carol.example");
-        let body = json!({
-            "members": [{
-                "actor_id": "ak:did_core:web:carol.example",
-                "identity_events": [
-                    { "event_id": "e2", "kind": "ak.member.identity.update" }
-                ]
-            }]
-        });
-        invalidate_cache_for_revocation_events(&mut cache, &body);
-        assert!(
-            cache.get(&did, chrono::Utc::now()).is_some(),
-            "unrelated event must leave the cache intact"
-        );
-    }
-
-    #[test]
-    fn revocation_for_other_actor_leaves_unrelated_entry() {
-        // Alice is cached, but the revocation targets Mallory, so Alice should
-        // not be affected.
-        let (mut cache, alice) = seed_cache("did:web:alice.example");
-        let body = json!({
-            "members": [{
-                "actor_id": "ak:did_core:web:mallory.example",
-                "identity_events": [
-                    { "event_id": "e3", "kind": "ak.device.revoke" }
-                ]
-            }]
-        });
-        invalidate_cache_for_revocation_events(&mut cache, &body);
-        assert!(cache.get(&alice, chrono::Utc::now()).is_some());
     }
 }

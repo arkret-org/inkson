@@ -26,6 +26,14 @@ fn snapshot_contract_hash(seed: u8) -> arkret_sdk::Hash {
     arkret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
 }
 
+fn service_resolution(full_id: &str) -> serde_json::Value {
+    json!({
+        "full_id": full_id,
+        "method_history_head": "sha256:fixture",
+        "version_id": "fixture-v1"
+    })
+}
+
 fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let snapshot_id =
         arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
@@ -95,6 +103,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
 fn inkson_accepts_server_contract_payloads() {
     let describe = parse_server_description(json!({
         "service_id": "ak:did_core:web:server.local",
+        "service_resolution": service_resolution("did:web:server.local"),
         "trust_domain": "ak:trust_domain:server.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -181,6 +190,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     let sync_describe: arkret_sdk::ServiceDescribe = serde_json::from_value(json!({
         "service_id": "ak:did_core:web:server.local",
+        "service_resolution": service_resolution("did:web:server.local"),
         "trust_domain": "ak:trust_domain:server.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -227,6 +237,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     let directory: inkson::models::ServiceDescribe = serde_json::from_value(json!({
         "service_id": "ak:did_core:web:server.local",
+        "service_resolution": service_resolution("did:web:server.local"),
         "trust_domain": "ak:trust_domain:server.local",
         "service_kind": "directory_service",
         "protocol_version": "1.0",
@@ -279,6 +290,9 @@ fn inkson_accepts_server_contract_payloads() {
         "join_candidates": [{
             "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
             "service_id": "ak:did_core:web:server.local",
+            "service_resolution": {
+                "current_record_url": "https://server.local/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.local/resolution"
+            },
             "service_kind": "principal_server",
             "role": "primary",
             "endpoint": "http://server",
@@ -297,7 +311,7 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(resolved.join_rule, Some(arkret_sdk::JoinRule::Public));
     assert_eq!(
         resolved.join_candidates[0].service_id.as_str(),
-        "did:web:server.local"
+        "ak:did_core:web:server.local"
     );
 
     let submit: inkson::models::SubmitEventResult = serde_json::from_value(json!({
@@ -323,7 +337,10 @@ fn inkson_accepts_server_contract_payloads() {
         snapshot_head.reducer_profile,
         arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1
     );
-    assert_eq!(snapshot_head.created_by.as_str(), "did:web:server.local");
+    assert_eq!(
+        snapshot_head.created_by.as_str(),
+        "ak:did_core:web:server.local"
+    );
     assert!(
         snapshot_head
             .signature
@@ -459,9 +476,9 @@ fn inkson_accepts_server_contract_payloads() {
             "content_digest": blob_digest,
             "size_bytes": 23,
             "received_at": "2026-04-28T12:00:00.000Z",
-            "issuer_service_id": "did:web:server.local",
+            "issuer_service_id": "ak:did_core:web:server.local",
             "signature": {
-                "kid": "did:web:server.local",
+                "kid": "ak:did_core:web:server.local",
                 "signature_algorithm": "Ed25519",
                 "sig": "c2ln"
             }
@@ -474,17 +491,16 @@ fn inkson_accepts_server_contract_payloads() {
         format!("sha256:{}", "ab".repeat(32))
     );
 
-    // SDK spec shape: status is `submitted`, and routed_to is a pure DID array
-    // without fragments.
+    // SDK spec shape: status is `submitted`, and routed_to carries principal cores.
     let report: inkson::models::ModerationReportOutcome = serde_json::from_value(json!({
         "report_id": "ak:report:1760000000000",
         "status": "submitted",
-        "routed_to": ["did:web:server.local"]
+        "routed_to": ["ak:did_core:web:server.local"]
     }))
     .unwrap();
     assert_eq!(report.status, arkret_sdk::ModerationReportStatus::Submitted);
     assert_eq!(report.routed_to.len(), 1);
-    assert_eq!(report.routed_to[0].as_str(), "did:web:server.local");
+    assert_eq!(report.routed_to[0].as_str(), "ak:did_core:web:server.local");
 
     let error = decode_arkret_error(
         StatusCode::CONFLICT,
@@ -498,6 +514,7 @@ fn inkson_accepts_server_contract_payloads() {
 fn server_description_gates_event_envelope_write_plane() {
     let events_ready = parse_server_description(json!({
         "service_id": "ak:did_core:web:soland.local",
+        "service_resolution": service_resolution("did:web:soland.local"),
         "trust_domain": "ak:trust_domain:soland.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -539,6 +556,7 @@ fn server_description_gates_event_envelope_write_plane() {
     .unwrap();
     let described_with_external_compat_surface = parse_server_description(json!({
         "service_id": "ak:did_core:web:local.host",
+        "service_resolution": service_resolution("did:web:local.host"),
         "trust_domain": "ak:trust_domain:local.host",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -603,6 +621,7 @@ fn server_description_gates_event_envelope_write_plane() {
     // accepted by the SDK parser but flagged by the inkson helpers.
     let events_missing = parse_server_description(json!({
         "service_id": "ak:did_core:web:minimal.local",
+        "service_resolution": service_resolution("did:web:minimal.local"),
         "trust_domain": "ak:trust_domain:minimal.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
@@ -705,7 +724,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
 fn account_data_canonical_contact_and_realm_remark_keys_contract() {
     assert_eq!(
         realm_remark_account_data_key("ak:realm:AWBsC7hBNqnZ5M_TybXfFGKJokXyNzSLp3vORrEQnNLE"),
-        "ak.contacts.realm.ak:realm:contract"
+        "ak.contacts.realm.ak:realm:AWBsC7hBNqnZ5M_TybXfFGKJokXyNzSLp3vORrEQnNLE"
     );
     assert_eq!(
         contact_remark_account_data_key("did:web:alice.example"),

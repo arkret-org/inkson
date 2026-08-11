@@ -149,10 +149,11 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "did:web:bob.example";
+    let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let alice = ArkretMlsIdentity::new_basic(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
@@ -172,9 +173,11 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
         "message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e1",
         "kind": "ak.mls.welcome",
-        "sender_principal_id": "did:web:alice.example",
+        "sender_principal_id": crate::mls_api_helpers::principal_core_id(
+            "did:web:alice.example"
+        ).unwrap(),
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
-        "recipient_principal_id": bob_actor,
+        "recipient_principal_id": bob_principal_id,
         "recipient_device_id": bob_device,
         "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
         "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
@@ -215,10 +218,11 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let bob_actor = "did:web:bob.example";
+    let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let alice = ArkretMlsIdentity::new_basic(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
@@ -239,9 +243,11 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
         "message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e2",
         "kind": "ak.mls.welcome",
-        "sender_principal_id": "did:web:alice.example",
+        "sender_principal_id": crate::mls_api_helpers::principal_core_id(
+            "did:web:alice.example"
+        ).unwrap(),
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
-        "recipient_principal_id": bob_actor,
+        "recipient_principal_id": bob_principal_id,
         "recipient_device_id": bob_device,
         "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
         "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
@@ -315,19 +321,20 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     let mut state = temp_state_store("creator-bootstrap-mls");
     state.save_realm_tree_projection(
         realm,
         json!({
             "__kind": "realm",
-            "owner": actor,
+            "owner": actor_id,
             "content_scheme": "mls_rfc9420",
             "members_limited": false,
-            "members": [{ "actor_id": actor, "membership": "join" }],
+            "members": [{ "actor_id": actor_id, "membership": "join" }],
             "summary": {
                 "title": "Encrypted Realm",
                 "encryption_profile": "mls_rfc9420",
-                "owner": actor,
+                "owner": actor_id,
             }
         }),
     );
@@ -393,7 +400,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
     assert_eq!(
         genesis.payload["creator_principal_id"].as_str(),
-        Some(actor)
+        Some(actor_id.as_str())
     );
     assert!(genesis.payload.contains_key("governance_binding"));
     assert_registered_payload_valid(&genesis);
@@ -405,19 +412,20 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     let mut state = temp_state_store("creator-persisted-epoch-zero");
     state.save_realm_tree_projection(
         realm,
         json!({
             "__kind": "realm",
-            "owner": actor,
+            "owner": actor_id,
             "content_scheme": "mls_rfc9420",
             "members_limited": false,
-            "members": [{ "actor_id": actor, "membership": "join" }],
+            "members": [{ "actor_id": actor_id, "membership": "join" }],
             "summary": {
                 "title": "Encrypted Realm",
                 "encryption_profile": "mls_rfc9420",
-                "owner": actor,
+                "owner": actor_id,
             }
         }),
     );
@@ -470,7 +478,7 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
@@ -514,7 +522,10 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
             "active_profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
             "content_scheme": "mls_rfc9420",
             "members_limited": false,
-            "members": [{ "actor_id": actor, "membership": "join" }]
+            "members": [{
+                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "membership": "join"
+            }]
         }),
     );
     // Match the accepted-Seal frontier installed by

@@ -1,8 +1,7 @@
 use arkret_sdk::http_client::{Auth, ClientBuilder};
-use chrono::Utc;
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use garth::{AccountHandoffDisposition, OidcAccountHandoffInput, SessionGrantState};
+use garth::{AccountHandoffDisposition, OidcAccountHandoffInput};
 
 use crate::components::UiIcon;
 use crate::config::{
@@ -1007,26 +1006,6 @@ fn persist_pending_account_handoff(
     store.set_pending_account_handoff(Some(pending_handoff))
 }
 
-fn persisted_session_grant_from_state(
-    grant: &SessionGrantState,
-    session_private_key_pem: &str,
-    principal_server_url: &str,
-    actor: &str,
-    device_id: &str,
-) -> PersistedSessionGrant {
-    PersistedSessionGrant {
-        grant_jwt: grant.grant_jwt.clone(),
-        session_private_key_pem: session_private_key_pem.to_owned(),
-        grant_id: grant.grant_id.as_str().to_owned(),
-        audience: grant.audience.to_string(),
-        principal_id: actor.to_owned(),
-        device_id: device_id.to_owned(),
-        principal_server_url: principal_server_url.to_owned(),
-        grant_expires_at: Some(grant.expires_at),
-        stored_at: Utc::now(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -1278,44 +1257,5 @@ mod tests {
         let public_record = store.dpop_device_key().expect("public dpop");
         assert_eq!(public_record.jkt, new_record.jkt);
         assert!(public_record.seed_b64.is_empty());
-    }
-
-    #[test]
-    fn persisted_session_grant_from_login_carries_refresh_material() {
-        let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
-        let grant_id = "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
-        let grant = SessionGrantState {
-            principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned())
-                .unwrap(),
-            device_id: Some(arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap()),
-            grant_id: arkret_wire::SessionGrantId::new(grant_id.to_owned()).unwrap(),
-            grant_jwt: "grant.jwt".to_owned(),
-            expires_at: "2026-05-29T12:00:00.000Z".parse().unwrap(),
-            audience: arkret_sdk::DidCoreId::new("ak:did_core:web:local.host".to_owned()).unwrap(),
-            granted_scope: vec!["urn:arkret:principal-server:session.bind".to_owned()],
-            session_public_key: Some("public-key".to_owned()),
-            dpop_jkt: Some("dpop-jkt".to_owned()),
-        };
-        let persisted = persisted_session_grant_from_state(
-            &grant,
-            "private-key-pem",
-            "https://local.host",
-            "did:web:alice.example",
-            device_id,
-        );
-
-        assert_eq!(persisted.grant_jwt, "grant.jwt");
-        assert_eq!(persisted.session_private_key_pem, "private-key-pem");
-        assert_eq!(persisted.grant_id, grant_id);
-        assert_eq!(persisted.audience, "did:web:local.host");
-        assert_eq!(persisted.principal_id, "ak:did_core:web:alice.example");
-        assert_eq!(persisted.device_id, device_id);
-        assert_eq!(persisted.principal_server_url, "https://local.host");
-        assert_eq!(
-            arkret_sdk::canonical::format_timestamp_canonical(
-                persisted.grant_expires_at.expect("grant expiry")
-            ),
-            "2026-05-29T12:00:00.000Z"
-        );
     }
 }

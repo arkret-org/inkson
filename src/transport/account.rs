@@ -1420,7 +1420,7 @@ mod tests {
                 "primary_handle_claim": {
                     "schema": "ak.schema.handle_claim.v1",
                     "handle": "alice:local.host",
-                    "subject": "did:web:alice.example",
+                    "subject": "ak:did_core:web:alice.example",
                     "binding_state": "verified"
                 },
                 "profile": {
@@ -1445,8 +1445,8 @@ mod tests {
     #[test]
     fn account_viewer_projection_rejects_unverified_or_foreign_handle_claim() {
         for (subject, binding_state) in [
-            ("did:web:mallory.example", "verified"),
-            ("did:web:alice.example", "pending"),
+            ("ak:did_core:web:mallory.example", "verified"),
+            ("ak:did_core:web:alice.example", "pending"),
         ] {
             let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
                 serde_json::from_value(json!({

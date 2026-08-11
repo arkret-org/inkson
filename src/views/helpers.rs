@@ -175,7 +175,7 @@ pub fn render_actor_mention(
 
     // A malformed subject_id can't be resolved; fall straight to the
     // unresolved tier with a truncated form of the raw string.
-    let Ok(subject) = crate::mls_api_helpers::principal_core_id(subject_id) else {
+    let Ok(subject) = arkret_sdk::DidCoreId::new(subject_id.trim().to_owned()) else {
         return RenderedMention {
             label: short_protocol_id(subject_id),
             tier_class: "mention-unresolved",
@@ -479,9 +479,9 @@ mod tests {
             expires_at: Some(now + chrono::Duration::days(30)),
             ..Default::default()
         };
-        let accepted = vec!["did:web:issuer.acme.example".to_owned()];
+        let accepted = vec!["ak:did_core:web:issuer.acme.example".to_owned()];
         let rendered = render_actor_mention(
-            "did:web:acme.example:principals:alice",
+            "ak:did_core:web:acme.example:principals:alice",
             &[claim],
             &accepted,
             None,
@@ -499,7 +499,7 @@ mod tests {
         // No claims → degraded ladder. display_name_at_time is the
         // name-only fallback (audit metadata used ONLY as fallback).
         let name_only = render_actor_mention(
-            "did:web:acme.example:principals:bob",
+            "ak:did_core:web:acme.example:principals:bob",
             &[],
             &[],
             None,
@@ -512,7 +512,7 @@ mod tests {
 
         // Nothing at all → unresolved (truncated DID).
         let unresolved = render_actor_mention(
-            "did:web:acme.example:principals:bob",
+            "ak:did_core:web:acme.example:principals:bob",
             &[],
             &[],
             None,
@@ -567,7 +567,7 @@ mod tests {
         use arkret_sdk::Handle;
         let cached = Handle::parse("bob:acme.example").unwrap();
         let rendered = render_actor_mention(
-            "did:web:acme.example:principals:bob",
+            "ak:did_core:web:acme.example:principals:bob",
             &[],
             &[],
             None,

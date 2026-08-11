@@ -60,10 +60,10 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
-    device_id: &str,
     recovery_private_key: &[u8],
     expected_recovery_policy_ref: (&str, u64),
 ) -> Result<usize> {
+    let actor_core_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
     let Some(body) = select_mls_history_backups(list_payload)
         .into_iter()
         .filter(is_managed_agent_pcr_history_backup)
@@ -127,7 +127,7 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
             ));
         }
         let owner_id = if let Some(binding) = &item.managed_principal_binding {
-            if binding.controller_id.as_str() != actor_id
+            if binding.controller_id != actor_core_id
                 || binding.principal_control_realm_id.as_str() != realm_id
             {
                 return Err(anyhow!(
@@ -1274,7 +1274,6 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
         state_store,
         secure_store,
         actor_id,
-        device_id,
         recovery_private_key,
         expected_recovery_policy_ref,
     )?;

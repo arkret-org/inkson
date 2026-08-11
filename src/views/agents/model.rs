@@ -23,7 +23,7 @@ use chrono::Utc;
 use serde_json::{Value, json};
 
 pub fn build_agent_provision_event_draft(
-    controller_id: &DidCoreId,
+    controller_full_id: &DidFullId,
     controller_realm_id: &RealmId,
     agent_id: &DidCoreId,
     principal_control_realm_id: &RealmId,
@@ -32,9 +32,10 @@ pub fn build_agent_provision_event_draft(
     requested_scope_digest: &Hash,
 ) -> anyhow::Result<Event> {
     let created_at = crate::clock::now_utc();
-    let controller_actor_id = controller_id.clone();
+    let controller_actor_id =
+        DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_full_id)?);
     let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
-        controller_actor_id.as_str(),
+        controller_full_id.as_str(),
         controller_realm_id.as_str(),
     )?;
     Ok(arkret_bootstrap::build_agent_provision_event_draft(
@@ -753,7 +754,7 @@ pub fn build_agent_key_authorization_for_pairing(
     let realm_id = key_state.principal_control_realm_id.clone();
     let authorization_ref = key_state.controller_authorization_ref.clone();
     let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
-        controller_actor_id.as_str(),
+        controller.as_str(),
         realm_id.as_str(),
     )?;
     let mut event = arkret_event_draft::build_agent_key_authorize_event(
@@ -1103,35 +1104,4 @@ pub fn build_action_reject_payload(
             .map(ToOwned::to_owned),
         rejected_at: chrono::DateTime::parse_from_rfc3339(rejected_at)?.with_timezone(&chrono::Utc),
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn build_act_on_behalf_message_operation(
-    realm_id: &str,
-    controller_id: &str,
-    agent_id: &str,
-    authorization_ref: &str,
-    strand_id: &str,
-    body: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
-    let strand_id_typed = arkret_sdk::StrandId::new(strand_id.to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid strand id {strand_id:?}: {error:?}"))?;
-    let content = arkret_sdk::ContentBlock::text(body);
-    let mut payload =
-        arkret_sdk::MessageCreatePayload::with_content(strand_id_typed, "discussion", content);
-    payload.agent_context = Some(arkret_sdk::MessageAgentContext {
-        agent_id: arkret_sdk::DidCoreId::new(agent_id.to_owned())?,
-        operator_or_controller: controller_id.to_owned(),
-        execution_purpose: "act_on_behalf".to_owned(),
-        authorization_ref: authorization_ref.to_owned(),
-    });
-    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
-        realm_id,
-        controller_id,
-        payload,
-    )
-    .target_ref(strand_id)
-    .executed_by(agent_id)
-    .authorization_ref(authorization_ref)
-    .build_sdk_event("inkson")
 }

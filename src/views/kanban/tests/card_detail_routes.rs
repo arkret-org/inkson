@@ -7,11 +7,13 @@ fn card_detail_deep_link_targets_kanban_task_route() {
             "ak:space:ops",
             "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"
         ),
-        "/kanban/ak:space:ops/task/ak:strand:abc"
+        "/kanban/ak:space:ops/task/ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"
     );
     assert_eq!(
         strand_detail_deep_link_path("", "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"),
-        format!("/kanban/{DEMO_BOARD_SPACE_ID}/task/ak:strand:abc")
+        format!(
+            "/kanban/{DEMO_BOARD_SPACE_ID}/task/ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"
+        )
     );
 }
 
@@ -62,7 +64,7 @@ fn card_detail_share_link_carries_current_tab() {
             "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg",
             CardDetailContentTab::Discussion
         ),
-        "/kanban/ak:space:ops/task/ak:strand:abc?tab=discussion"
+        "/kanban/ak:space:ops/task/ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg?tab=discussion"
     );
 }
 

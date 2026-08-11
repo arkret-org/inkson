@@ -104,6 +104,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
         test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
+        "https://server.example",
         "Engineering",
         None,
         "listed",
