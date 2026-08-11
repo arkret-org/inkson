@@ -1921,8 +1921,7 @@ mod tests {
                 &recovery_key,
             )
             .unwrap();
-        let did_operation: arkret_sdk::DidOperationSubmitRequestBody =
-            serde_json::from_value(checkpoint.did_operation.clone()).unwrap();
+        let did_operation = checkpoint.did_operation.clone();
         let reserved_identity =
             arkret_sdk::ReservedIdentityCreation::from_operation(did_operation).unwrap();
         checkpoint.account_handle.clear();
@@ -1964,8 +1963,7 @@ mod tests {
                 &other_key,
             )
             .unwrap();
-        let other_operation: arkret_sdk::DidOperationSubmitRequestBody =
-            serde_json::from_value(other_checkpoint.did_operation).unwrap();
+        let other_operation = other_checkpoint.did_operation;
         let mut new_handoff = test_handoff(
             "ak:request:019f0000-0000-7000-8000-000000000011",
             Some("lease-2"),
@@ -2038,8 +2036,7 @@ mod tests {
             Some(2),
         );
         new_account_handoff.account_handle = "bob:auth.example".to_owned();
-        let operation: arkret_sdk::DidOperationSubmitRequestBody =
-            serde_json::from_value(checkpoint.did_operation.clone()).unwrap();
+        let operation = checkpoint.did_operation.clone();
         new_account_handoff.reserved_identity = Some(
             serde_json::to_value(
                 arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap(),
