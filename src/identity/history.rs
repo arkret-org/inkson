@@ -8,7 +8,7 @@ pub(crate) async fn fetch_complete_identity_history(
 ) -> anyhow::Result<arkret_sdk::IdentityLogListOutcome> {
     let mut entries = Vec::new();
     let mut cursor: Option<String> = None;
-    let mut method: Option<String> = None;
+    let mut method: Option<arkret_sdk::DidMethodUri> = None;
     let mut native_history: Option<bool> = None;
     loop {
         let page = http

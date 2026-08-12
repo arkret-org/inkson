@@ -115,7 +115,7 @@ pub fn capability_grant_actions_with_resources(
         schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
         realm_id: Some(realm_typed.clone()),
         issuer: actor_typed,
-        subject: arkret_sdk::CapabilitySubject::Did(subject_typed),
+        subject: arkret_sdk::CapabilitySubject::CoreDid(subject_typed),
         subject_authority_instance: None,
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
         resources,

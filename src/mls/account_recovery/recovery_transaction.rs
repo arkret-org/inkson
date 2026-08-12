@@ -86,7 +86,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let http = api.sdk_http_client()?;
     let history =
         crate::identity::history::fetch_complete_identity_history(&http, principal_full_id).await?;
-    if history.method != "did:webvh" || history.native_history != Some(true) {
+    if history.method != arkret_sdk::DidMethodUri::Webvh || history.native_history != Some(true) {
         anyhow::bail!("principal DID does not expose native did:webvh history");
     }
     let previous_entry = history

@@ -1325,7 +1325,7 @@ impl EventSubmitter {
         let description = self.describe().await?;
         if description.development_mode {
             description
-                .validate_current_arkret_build_identity()
+                .validate_exact_development_build_identity()
                 .map_err(|error| {
                     anyhow::anyhow!(
                         "stale or mixed Arkret SDK build; refusing to author Event in this development session: {error}. Rebuild/reload Inkson and restart Soland from the same SDK checkout"

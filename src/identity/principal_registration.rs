@@ -11,14 +11,8 @@ use crate::state::{
     PendingAccountHandoff, PendingPrincipalRegistration, PendingPrincipalRegistrationStage,
 };
 
-const INITIAL_ACCOUNT_READ_SCOPE: &str = "ak.self.account.read.describe";
-const INITIAL_EVENT_SCAN_SCOPE: &str = "ak.self.events.read.scan";
-
-pub(crate) fn standard_initial_session_scope() -> Vec<String> {
-    vec![
-        INITIAL_ACCOUNT_READ_SCOPE.to_owned(),
-        INITIAL_EVENT_SCAN_SCOPE.to_owned(),
-    ]
+pub(crate) fn standard_initial_session_scope() -> Vec<arkret_sdk::InitialSessionGrantOperation> {
+    arkret_sdk::STANDARD_INITIAL_SESSION_GRANT_OPERATIONS.to_vec()
 }
 
 /// Repair drafts authored by older clients that requested an ordinary API
@@ -699,7 +693,7 @@ async fn verify_registration_terminal_evidence(
         crate::identity::history::fetch_complete_identity_history(&principal_client, &principal_id)
             .await
             .context("fetch complete principal did.jsonl history")?;
-    if history.method != "did:webvh" || history.native_history != Some(true) {
+    if history.method != arkret_sdk::DidMethodUri::Webvh || history.native_history != Some(true) {
         anyhow::bail!("principal history is not a native did:webvh history");
     }
     let entry0 = history
@@ -746,8 +740,8 @@ mod tests {
         assert_eq!(
             standard_initial_session_scope(),
             vec![
-                "ak.self.account.read.describe".to_owned(),
-                "ak.self.events.read.scan".to_owned(),
+                arkret_sdk::InitialSessionGrantOperation::AccountReadDescribe,
+                arkret_sdk::InitialSessionGrantOperation::EventsReadScan,
             ]
         );
     }
