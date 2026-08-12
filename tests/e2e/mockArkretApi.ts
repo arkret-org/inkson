@@ -295,6 +295,9 @@ export async function mockArkretApi(
     options.advertiseListHandlesForSubject ?? true;
   const accountPrincipalId =
     options.accountPrincipalId ?? "did:web:alice.example";
+  const accountPrincipalCoreId = accountPrincipalId.startsWith("ak:did_core:")
+    ? accountPrincipalId
+    : `ak:did_core:${accountPrincipalId.replace(/^did:/, "")}`;
   const primaryHandle =
     options.primaryHandle === undefined
       ? "alice:local.host"
@@ -427,7 +430,7 @@ export async function mockArkretApi(
     options.preseedRecoveryMaterial === true
       ? {
           policy_id: seededRecoveryPolicyId,
-          principal_id: accountPrincipalId,
+          principal_id: accountPrincipalCoreId,
           version: 1,
           acceptance_basis: `ak:seal:sha256:${"a".repeat(64)}`,
           trust_domain: "ak:trust_domain:soland.local",
@@ -439,7 +442,7 @@ export async function mockArkretApi(
           policy: {
             schema: "ak.schema.recovery_policy.v1",
             policy_id: seededRecoveryPolicyId,
-            principal_id: accountPrincipalId,
+            principal_id: accountPrincipalCoreId,
             version: 1,
             supersedes: null,
             trust_domain: "ak:trust_domain:soland.local",
@@ -461,7 +464,7 @@ export async function mockArkretApi(
             recovery_key_agreements: [
               {
                 key_agreement_ref: `${accountPrincipalId}#backup-hpke-0`,
-                alg: "X25519",
+                key_agreement_algorithm: "X25519",
                 public_key_multibase: seededBackupHpkeKey,
                 hpke_suites: ["ak.hpke_x25519_aead_chacha20poly1305.v1"],
                 use: "backup_hpke",
@@ -1072,7 +1075,7 @@ export async function mockArkretApi(
     ) {
       if (url.hostname === "auth.local.host") {
         return json(route, {
-          service_id: "did:web:auth.local.host",
+          service_id: "ak:did_core:web:auth.local.host",
           service_kind: "auth_server",
           protocol_version: "1.0",
           auth_metadata: {
@@ -1102,7 +1105,12 @@ export async function mockArkretApi(
         });
       }
       return json(route, {
-        service_id: "did:web:server.local",
+        service_id: "ak:did_core:web:server.local",
+        service_resolution: {
+          full_id: "did:web:server.local",
+          method_history_head: "development-unverified",
+          version_id: "development-unverified",
+        },
         trust_domain: "ak:trust_domain:server.local",
         service_kind: "principal_server",
         protocol_version: "1.0",
@@ -1727,7 +1735,12 @@ export async function mockArkretApi(
       // Spec ak.self.events.read.describe -> canonical ServiceDescribe shape
       // (17 required fields; inkson decodes the SDK ServerDescription).
       return json(route, {
-        service_id: "did:web:server.local",
+        service_id: "ak:did_core:web:server.local",
+        service_resolution: {
+          full_id: "did:web:server.local",
+          method_history_head: "development-unverified",
+          version_id: "development-unverified",
+        },
         trust_domain: "ak:trust_domain:server.local",
         service_kind: "principal_server",
         protocol_version: "1.0",

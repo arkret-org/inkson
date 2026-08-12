@@ -1774,6 +1774,10 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
     dict.set("setup.blocker.sign_in", "创建领域前请先登录。");
     dict.set(
+        "setup.blocker.session_unavailable",
+        "认证会话不可用，请重新登录后再创建领域。",
+    );
+    dict.set(
         "setup.blocker.secure_store",
         "设备签名存储仍在启动，请稍后重试。",
     );
@@ -1823,17 +1827,13 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.done.created_realm", "已创建的领域");
     dict.set("setup.done.empty", "请先创建领域，再打开下一个上下文。");
 
-    // 加密领域的恢复软门禁。
+    // 加密领域的恢复门禁。
     dict.set("setup.recovery_gate.aria", "创建加密领域前先设置恢复方式");
     dict.set("setup.recovery_gate.title", "请先设置恢复方式");
     dict.set("setup.recovery_gate.badge", "加密领域");
     dict.set(
         "setup.recovery_gate.body",
         "这个领域是端到端加密的。如果你丢失本设备且没有配置恢复密钥或备份，其中的内容将永久无法恢复。请先设置 24 词恢复密钥并备份密钥，再创建它。",
-    );
-    dict.set(
-        "setup.recovery_gate.override_hint",
-        "如果不设置恢复方式就继续，请再次点击“创建领域”，风险由你自行承担。",
     );
 
     // 操作。
@@ -1844,10 +1844,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.action.finishing", "正在完成设置…");
     dict.set("setup.action.open_realm", "打开领域");
     dict.set("setup.action.setup_recovery_key", "设置恢复密钥");
-    dict.set(
-        "setup.action.continue_without_recovery",
-        "不设置恢复方式并继续",
-    );
 
     setup_option_strings(dict);
     setup_policy_hint_strings(dict);

@@ -70,9 +70,8 @@ pub fn SetupPanel(
     let realm_state = use_signal(|| tr("setup.state.draft"));
     let realm_create_busy = use_signal(|| false);
     let created_realm_id = use_signal(String::new);
-    // S6 recovery soft-gate for encrypted-Realm creation.
+    // recovery_material_pending gate for encrypted-Realm creation.
     let pending_recovery_gate = use_signal(|| false);
-    let recovery_gate_acknowledged = use_signal(|| false);
 
     // Phase 3 — `ak.space.create` form state.
     let new_space_realm_id = use_signal(String::new);
@@ -118,7 +117,6 @@ pub fn SetupPanel(
                     realm_create_busy,
                     created_realm_id,
                     pending_recovery_gate,
-                    recovery_gate_acknowledged,
                 }
             }
 

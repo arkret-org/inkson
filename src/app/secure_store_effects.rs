@@ -147,21 +147,19 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         .read()
                         .load_with_secure_store(secure_store.as_ref());
                     let held_token = token_for_secure_upgrade.peek().trim().to_owned();
-                    {
-                        let grant_present = state_store_for_secure_upgrade
-                            .read()
-                            .session_grant()
-                            .map(|g| !g.grant_jwt.trim().is_empty())
-                            .unwrap_or(false);
-                        tracing::debug!(
-                            target: "secure_store",
-                            held_token_empty = held_token.is_empty(),
-                            config_credential_present = !loaded_config.session_credential.trim().is_empty(),
-                            local_state_session_grant_present = grant_present,
-                            "secure store upgrade: post-upgrade credential sources (held_token from memory, config.session_credential, local_state.session_grant)"
-                        );
-                    }
-                    if held_token.is_empty() {
+                    let grant_present = state_store_for_secure_upgrade
+                        .read()
+                        .session_grant()
+                        .map(|grant| !grant.grant_jwt.trim().is_empty())
+                        .unwrap_or(false);
+                    tracing::debug!(
+                        target: "secure_store",
+                        held_token_empty = held_token.is_empty(),
+                        config_credential_present = !loaded_config.session_credential.trim().is_empty(),
+                        local_state_session_grant_present = grant_present,
+                        "secure store upgrade: post-upgrade credential sources (held_token from memory, config.session_credential, local_state.session_grant)"
+                    );
+                    if held_token.is_empty() && grant_present {
                         if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
                             &loaded_config,
                             &base_url_for_secure_upgrade(),
@@ -171,7 +169,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             tracing::debug!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
                             token_for_secure_upgrade.set(rehydrated);
                         }
-                    } else {
+                    } else if grant_present {
                         // A credential is already held in memory: sign-in completed
                         // BEFORE this IndexedDB secure-store upgrade was ready, so
                         // `config.rs` could only reach the localStorage tier, which
@@ -184,6 +182,31 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             account_did_for_secure_upgrade(),
                             device_id_for_secure_upgrade(),
                             held_token,
+                        );
+                    } else if !held_token.is_empty()
+                        || !loaded_config.session_credential.trim().is_empty()
+                    {
+                        // A bearer string alone is not an authenticated Arkret
+                        // session: request signing/rotation also requires the
+                        // complete persisted grant and its durable DPoP key. Old
+                        // builds could retain only the string when sign-in raced
+                        // IndexedDB startup, leaving the UI apparently online while
+                        // every self-path write failed. Do not preserve that
+                        // impossible half-session; the user must obtain a fresh,
+                        // atomically persisted grant through sign-in.
+                        tracing::warn!(
+                            target: "secure_store",
+                            "discarding token-only session after secure-store bootstrap"
+                        );
+                        if !held_token.is_empty() {
+                            token_for_secure_upgrade.set(String::new());
+                        }
+                        persist_config(
+                            config_store_for_secure_upgrade,
+                            base_url_for_secure_upgrade(),
+                            account_did_for_secure_upgrade(),
+                            device_id_for_secure_upgrade(),
+                            String::new(),
                         );
                     }
                     let account_scope = account_did_for_secure_upgrade.peek().trim().to_owned();

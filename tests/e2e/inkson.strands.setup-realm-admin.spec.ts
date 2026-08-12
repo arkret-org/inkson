@@ -134,11 +134,6 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
       (request.postData() ?? "").includes("ak.realm.plaintext_visible_services"),
   );
   await page.getByTestId("create-realm-button").click();
-  // S6 gate (no recovery configured in the default mock account): accept the
-  // override, then re-create so the queued requests fire.
-  await latestTestId(page, "encrypted-realm-recovery-gate-override").click();
-  await expect(latestTestId(page, "encrypted-realm-recovery-gate")).toBeHidden();
-  await page.getByTestId("create-realm-button").click();
   const [realmCreateBody, plaintextPolicyBody] = await Promise.all([
     realmCreateRequest.then((request) => request.postDataJSON()),
     plaintextPolicyRequest.then((request) => request.postDataJSON()),

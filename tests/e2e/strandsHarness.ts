@@ -4,7 +4,7 @@ import { mockArkretApi } from "./mockArkretApi";
 export const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
 export const DEMO_BOARD_SPACE = "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
 const DEFAULT_SERVER_URL = "https://local.host";
-const DEFAULT_SERVER_AUDIENCE = "did:web:server.local";
+const DEFAULT_SERVER_AUDIENCE = "ak:did_core:web:server.local";
 const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
 const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
@@ -251,11 +251,12 @@ function sessionInjectionRecord(
     dpop_seed_b64url: string;
     local_recovery_state: Record<string, unknown>;
     mls_recovery_backup_state: Record<string, unknown>;
+    recovery_gate_verified: boolean;
   }> = {},
 ) {
   return {
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
-    grant_id: "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
+    grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7",
     audience: DEFAULT_SERVER_AUDIENCE,
     principal_id: DEFAULT_ACCOUNT_DID,
     dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,
@@ -273,6 +274,7 @@ export async function addSessionGrantInjection(
     dpop_seed_b64url: string;
     local_recovery_state: Record<string, unknown>;
     mls_recovery_backup_state: Record<string, unknown>;
+    recovery_gate_verified: boolean;
   }> = {},
 ) {
   await page.addInitScript(
@@ -429,6 +431,7 @@ export function registerStrandsBeforeEach() {
     )
       ? "ak:device:01964137-0000-7000-8000-0000000000b2"
       : DEFAULT_DEVICE_ID;
+    const exercisesRecoveryKeySetup = testInfo.title.startsWith("new Recovery Key");
     await mockArkretApi(page, {
       currentDeviceId: initialDeviceId,
       advertiseListHandlesForSubject: !testInfo.title.startsWith(
@@ -477,6 +480,8 @@ export function registerStrandsBeforeEach() {
         ? "Legal review for a public beta launch with an intentionally long cross-team approval title"
         : undefined,
       preseedRecoveryMaterial:
+        testInfo.title.startsWith("configured recovery session") ||
+        testInfo.title.startsWith("setup, onboarding, and Board entry") ||
         testInfo.title.startsWith("owned agent sidecar labels") ||
         testInfo.title.startsWith(
           "agent deactivation submits controller-signed",
@@ -503,9 +508,6 @@ export function registerStrandsBeforeEach() {
     if (testInfo.title.startsWith("login page")) {
       return;
     }
-    const exercisesRecoveryKeySetup = testInfo.title.startsWith(
-      "new Recovery Key remains plaintext",
-    );
     await addSessionGrantInjection(
       page,
       exercisesRecoveryKeySetup
@@ -525,6 +527,7 @@ export function registerStrandsBeforeEach() {
             mls_recovery_backup_state: {
               backup_id: "ak:backup:e2e-configured-0000",
             },
+            recovery_gate_verified: true,
           },
     );
     await page.addInitScript(

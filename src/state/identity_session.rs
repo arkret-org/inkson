@@ -114,6 +114,16 @@ impl LocalStateStore {
 
     /// Persist (or clear via `None`) the coauth `session_grant`.
     pub fn set_session_grant(&mut self, grant: Option<PersistedSessionGrant>) {
+        // Keep a freshly minted grant live even when sign-in wins the race with
+        // the asynchronous IndexedDB/SubtleCrypto bootstrap. Account-state
+        // persistence strips this field, so staging it in `cached` never puts
+        // the credential in the plaintext/root store. The secure-store upgrade
+        // persists the staged value once the hardened backend is available.
+        //
+        // Clearing is deliberately different: if the secure delete fails, keep
+        // the live grant too so a logout/terminal revocation cannot appear to
+        // succeed and then resurrect the credential on reload.
+        self.ensure_cached_loaded();
         #[cfg(not(test))]
         {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -124,11 +134,16 @@ impl LocalStateStore {
                 }),
             };
             if let Err(error) = result {
-                tracing::error!(?error, "secure session grant persist failed");
-                return;
+                if grant.is_none() {
+                    tracing::error!(?error, "secure session grant delete failed");
+                    return;
+                }
+                tracing::warn!(
+                    ?error,
+                    "secure session grant persist deferred until secure-store bootstrap"
+                );
             }
         }
-        self.ensure_cached_loaded();
         self.cached.session_grant = grant;
         let _ = self.flush();
     }

@@ -444,7 +444,8 @@ mod wasm_bootstrap {
     use std::sync::atomic::Ordering;
 
     use super::super::{
-        LocalStateStore, load_session_grant_from_user_secure_store, user_local_store_for_principal,
+        LocalStateStore, load_session_grant_from_user_secure_store,
+        store_session_grant_in_user_secure_store, user_local_store_for_principal,
     };
     use super::{
         ClientLocalState, merge_persisted_into_live, merge_secure_session_grant_into_live,
@@ -462,23 +463,30 @@ mod wasm_bootstrap {
             secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         ) {
             let effective_did = self.effective_account_key();
-            let secure_grant = user_local_store_for_principal(&effective_did)
-                .and_then(|user_store| {
-                    load_session_grant_from_user_secure_store(&user_store, secure_store)
-                })
-                .map_err(|error| {
-                    tracing::warn!(
-                        ?error,
-                        "secure session grant hydration failed after IndexedDB upgrade"
-                    );
-                    error
-                })
-                .ok()
-                .flatten();
+            let user_store = user_local_store_for_principal(&effective_did).map_err(|error| {
+                tracing::warn!(
+                    ?error,
+                    "secure session grant scope unavailable after IndexedDB upgrade"
+                );
+                error
+            });
+            let secure_grant = user_store.as_ref().ok().and_then(|user_store| {
+                load_session_grant_from_user_secure_store(user_store, secure_store)
+                    .map_err(|error| {
+                        tracing::warn!(
+                            ?error,
+                            "secure session grant hydration failed after IndexedDB upgrade"
+                        );
+                        error
+                    })
+                    .ok()
+                    .flatten()
+            });
             let Some(stored) = self.read_account_state(&effective_did) else {
                 // No durable entry yet; keep the live state and mark loaded so the
                 // first flush persists it under the active account key.
                 merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
+                persist_staged_session_grant(&self.cached, user_store.as_ref().ok(), secure_store);
                 self.loaded.store(true, Ordering::Relaxed);
                 let _ = self.flush();
                 return;
@@ -486,8 +494,27 @@ mod wasm_bootstrap {
             let live = std::mem::replace(&mut self.cached, ClientLocalState::default());
             self.cached = merge_persisted_into_live(live, stored);
             merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
+            persist_staged_session_grant(&self.cached, user_store.as_ref().ok(), secure_store);
             self.loaded.store(true, Ordering::Relaxed);
             let _ = self.flush();
+        }
+    }
+
+    fn persist_staged_session_grant(
+        state: &ClientLocalState,
+        user_store: Option<&crate::secure_key_store::UserLocalStore>,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    ) {
+        let (Some(user_store), Some(grant)) = (user_store, state.session_grant.as_ref()) else {
+            return;
+        };
+        if let Err(error) =
+            store_session_grant_in_user_secure_store(user_store, secure_store, grant)
+        {
+            tracing::error!(
+                ?error,
+                "staged session grant persist failed after IndexedDB upgrade"
+            );
         }
     }
 }

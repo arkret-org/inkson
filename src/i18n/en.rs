@@ -2152,6 +2152,10 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
     dict.set("setup.blocker.sign_in", "Sign in before creating a Realm.");
     dict.set(
+        "setup.blocker.session_unavailable",
+        "Your authenticated session is unavailable. Sign in again before creating a Realm.",
+    );
+    dict.set(
         "setup.blocker.secure_store",
         "Device signing storage is still starting. Try again in a moment.",
     );
@@ -2214,7 +2218,7 @@ fn setup_strings(dict: &mut TranslationDict) {
         "Create a Realm before opening the next context.",
     );
 
-    // Encrypted-Realm recovery soft-gate.
+    // Encrypted-Realm recovery gate.
     dict.set(
         "setup.recovery_gate.aria",
         "Set up recovery before creating an encrypted Realm",
@@ -2225,10 +2229,6 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.recovery_gate.body",
         "This Realm is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it.",
     );
-    dict.set(
-        "setup.recovery_gate.override_hint",
-        "If you continue without recovery, press Create realm again to proceed at your own risk.",
-    );
 
     // Actions.
     dict.set("setup.action.back", "Back");
@@ -2238,10 +2238,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.action.finishing", "Finishing setup...");
     dict.set("setup.action.open_realm", "Open Realm");
     dict.set("setup.action.setup_recovery_key", "Set up Recovery Key");
-    dict.set(
-        "setup.action.continue_without_recovery",
-        "Continue without recovery",
-    );
 
     setup_option_strings(dict);
     setup_policy_hint_strings(dict);

@@ -113,12 +113,20 @@ pub(super) fn RealmsSection(
     mut realm_create_busy: Signal<bool>,
     mut created_realm_id: Signal<String>,
     mut pending_recovery_gate: Signal<bool>,
-    mut recovery_gate_acknowledged: Signal<bool>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let has_session = !token().trim().is_empty();
+    let has_usable_session_grant =
+        state_store
+            .read()
+            .session_grant()
+            .as_ref()
+            .is_some_and(|grant| {
+                crate::identity::session_refresh::grant_matches_principal_server(grant, &base_url)
+                    && !crate::identity::session_refresh::grant_is_dead(grant)
+            });
 
     let realm_discoverability_selected = use_memo(move || Some(realm_discoverability()));
     let realm_policy_join_rule_selected = use_memo(move || Some(realm_policy_join_rule()));
@@ -175,6 +183,8 @@ pub(super) fn RealmsSection(
         Some(tr("setup.blocker.already_created"))
     } else if !has_session {
         Some(tr("setup.blocker.sign_in"))
+    } else if !has_usable_session_grant {
+        Some(tr("setup.blocker.session_unavailable"))
     } else if !secure_store_ready {
         Some(tr("setup.blocker.secure_store"))
     } else if realm_create_busy_value {
@@ -191,6 +201,7 @@ pub(super) fn RealmsSection(
         NewRealmStep::Done => has_created_realm,
     };
     let can_create_realm = has_session
+        && has_usable_session_grant
         && basics_ready
         && boundary_ready
         && secure_store_ready
@@ -217,10 +228,6 @@ pub(super) fn RealmsSection(
                         div { class: "muted",
                             {tr("setup.recovery_gate.body")}
                         }
-                        div { class: "muted",
-                            "data-testid": "encrypted-realm-recovery-gate-override-hint",
-                            {tr("setup.recovery_gate.override_hint")}
-                        }
                     }
                     div { class: "modal-foot actions",
                         Link {
@@ -229,17 +236,6 @@ pub(super) fn RealmsSection(
                             to: Route::SettingsRecovery,
                             onclick: move |_| pending_recovery_gate.set(false),
                             {tr("setup.action.setup_recovery_key")}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "encrypted-realm-recovery-gate-override",
-                            onclick: move |_| {
-                                // personal_node override: accept single-point-of-failure
-                                // risk for this session and let the next Create proceed.
-                                recovery_gate_acknowledged.set(true);
-                                pending_recovery_gate.set(false);
-                            },
-                            {tr("setup.action.continue_without_recovery")}
                         }
                     }
                 }
@@ -783,12 +779,11 @@ pub(super) fn RealmsSection(
                                             );
                                             return;
                                         }
-                                        // S6 soft-gate: block encrypted-Realm creation when
-                                        // no recovery path is configured, unless the user has
-                                        // explicitly overridden via the gate dialog.
+                                        // `recovery_material_pending` is a normative hard gate:
+                                        // encrypted Realm creation requires a configured recovery path.
                                         if crate::security_state::encryption_profile_is_encrypted(
                                             &encryption_profile,
-                                        ) && !recovery_gate_acknowledged()
+                                        )
                                         {
                                             let actor_now = account_did();
                                             let recovery_ready = {
@@ -1181,10 +1176,19 @@ pub(super) fn RealmsSection(
                                                 }
                                                 }
                                                 Err(error) => {
-                                                    let message = BootstrapProgressStrings::fill(
-                                                        &strings.invalid_server_url,
-                                                        &[("error", error.to_string())],
-                                                    );
+                                                    let error_text = error.to_string();
+                                                    let message = if error_text.contains(
+                                                        "no session grant is available",
+                                                    ) || error_text.contains(
+                                                        "missing authenticated session",
+                                                    ) {
+                                                        strings.session_expired.clone()
+                                                    } else {
+                                                        BootstrapProgressStrings::fill(
+                                                            &strings.invalid_server_url,
+                                                            &[("error", error_text)],
+                                                        )
+                                                    };
                                                     realm_create_busy.set(false);
                                                     realm_state.set(message.clone());
                                                     crate::components::feedback::toast_error(

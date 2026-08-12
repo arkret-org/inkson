@@ -771,13 +771,29 @@ fn verified_recovery_gate_cache() -> &'static Mutex<std::collections::BTreeSet<S
 }
 
 pub(crate) fn remember_verified_recovery_gate(authority_principal: &str, device_id: &str) {
-    if authority_principal.trim().is_empty() || device_id.trim().is_empty() {
+    let Some(key) = normalized_recovery_gate_cache_key(authority_principal, device_id) else {
         return;
-    }
+    };
     let mut cache = verified_recovery_gate_cache()
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    cache.insert(format!("{authority_principal}\u{1f}{device_id}"));
+    cache.insert(key);
+}
+
+fn normalized_recovery_gate_cache_key(
+    authority_principal: &str,
+    device_id: &str,
+) -> Option<String> {
+    let principal = arkret_sdk::DidCoreId::new(authority_principal.to_owned())
+        .ok()
+        .or_else(|| {
+            let full = arkret_sdk::DidFullId::new(authority_principal.to_owned()).ok()?;
+            arkret_sdk::project_full_id_to_core_id(&full)
+                .ok()
+                .map(arkret_sdk::DidCoreId::from)
+        })?;
+    let device = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
+    Some(format!("{principal}\u{1f}{device}"))
 }
 
 fn recovery_gate_cache_key(event: &arkret_sdk::Event) -> Option<String> {
@@ -788,7 +804,7 @@ fn recovery_gate_cache_key(event: &arkret_sdk::Event) -> Option<String> {
         .as_str();
     let signer = crate::event_signer::active_signer()?;
     let device_id = signer.device_id()?;
-    Some(format!("{authority_principal}\u{1f}{device_id}"))
+    normalized_recovery_gate_cache_key(authority_principal, device_id)
 }
 
 pub(crate) fn reset_verified_recovery_gates() {
@@ -3237,6 +3253,15 @@ mod tests {
 
     use super::*;
     use crate::operation::EventExt;
+
+    #[test]
+    fn recovery_gate_cache_key_normalizes_full_and_core_principal_ids() {
+        let device_id = "ak:device:01964137-0000-7000-8000-0000000000a1";
+        assert_eq!(
+            normalized_recovery_gate_cache_key("did:web:alice.example", device_id),
+            normalized_recovery_gate_cache_key("ak:did_core:web:alice.example", device_id)
+        );
+    }
 
     fn decode_queued_sdk_event(value: Value) -> garth::Result<QueuedSdkEvent> {
         let queued: QueuedSdkEvent = serde_json::from_value(value)?;

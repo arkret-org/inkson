@@ -1340,9 +1340,14 @@ pub fn build_plaintext_visible_services_event(
         .map(|service| service.trim())
         .filter(|service| !service.is_empty())
         .map(|service| -> anyhow::Result<PlaintextVisibleService> {
-            let service_id = crate::mls_api_helpers::principal_core_id(service).map_err(|err| {
-                anyhow::anyhow!("invalid plaintext service DID {service:?}: {err}")
-            })?;
+            // ServiceDescribe exposes the canonical DidCoreId, while manual
+            // configuration may still supply a resolvable full DID. Accept
+            // both wire-valid representations and normalize to DidCoreId.
+            let service_id = arkret_sdk::DidCoreId::new(service.to_owned())
+                .or_else(|_| crate::mls_api_helpers::principal_core_id(service))
+                .map_err(|err| {
+                    anyhow::anyhow!("invalid plaintext service DID {service:?}: {err}")
+                })?;
             Ok(PlaintextVisibleService::new(
                 service_id,
                 "principal_server",
@@ -1909,5 +1914,21 @@ mod notary_derivation_tests {
         .unwrap();
         assert_eq!(relinquish.kind.as_str(), "ak.capability.relinquish");
         assert!(relinquish.authorization_ref.is_none());
+    }
+
+    #[test]
+    fn plaintext_service_builder_accepts_canonical_core_service_id() {
+        let event = build_plaintext_visible_services_event(
+            "ak:realm:ASxFeEp6tO9V7cjI3A4hL2nyI_lMtmbnR6TzaYTi-EgH",
+            "did:web:alice.example",
+            &["ak:did_core:web:server.local".to_owned()],
+        )
+        .unwrap()
+        .expect("a non-empty service list emits the policy event");
+
+        assert_eq!(
+            event.payload["services"][0]["service_id"],
+            "ak:did_core:web:server.local"
+        );
     }
 }

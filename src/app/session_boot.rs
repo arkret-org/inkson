@@ -328,6 +328,13 @@ pub(super) fn inject_test_session_grant(
     // the same account scope. SecureStoreEffects also selects this scope before
     // hydration so the durable snapshot is loaded from the correct namespace.
     state_store.write().switch_active_account(account_did);
+    if parsed
+        .get("recovery_gate_verified")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        crate::event_submit::remember_verified_recovery_gate(account_did, device_id);
+    }
     for (fixture_field, private_data_key) in [
         ("local_recovery_state", "recovery.state.v1"),
         ("mls_recovery_backup_state", "mls.recovery_backup.v1"),
