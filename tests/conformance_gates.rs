@@ -888,6 +888,11 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 fn managed_agent_pcr_prepare_builds_an_exact_ref_free_create() {
     let events = event_builders::build_managed_agent_pcr_bootstrap_events(
         "did:web:agent.example",
+        arkret_sdk::ResolutionCommitment {
+            full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+            method_history_head: format!("sha256:{}", "8".repeat(64)),
+            version_id: "1-Qmfixture".to_owned(),
+        },
         TEST_ACTOR_ID,
         "did:web:alice.example#delegation-0",
         "ak:trust_domain:server.example",

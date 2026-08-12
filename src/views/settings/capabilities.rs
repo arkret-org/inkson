@@ -51,9 +51,8 @@ fn decode_capability_row(grant: &CapabilityGrant) -> CapabilityRow {
             .unwrap_or_default(),
         issuer_did: grant.issuer.as_str().to_owned(),
         subject_did: match &grant.subject {
-            CapabilitySubject::CoreDid(did) => did.as_str().to_owned(),
-            CapabilitySubject::Condition(selector) => serde_json::to_string(selector)
-                .unwrap_or_else(|_| "condition".to_owned()),
+            CapabilitySubject::Did(did) => did.as_str().to_owned(),
+            CapabilitySubject::Selector(selector) => selector.to_string(),
         },
         expires_at: grant
             .expires_at
