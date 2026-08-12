@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::operation::{
     EventKind, EventRequirements, Precondition, Predicate, PredicateOp, TypedOperationBuilder,
@@ -1662,6 +1662,8 @@ pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Resu
 
 #[cfg(test)]
 mod notary_derivation_tests {
+    use serde_json::json;
+
     use super::*;
 
     fn agent_resolution() -> arkret_sdk::ResolutionCommitment {

@@ -1010,7 +1010,7 @@ pub(super) fn use_chat_controller(
     _account_did: &str,
 ) -> ChatController {
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
-        .then(|| discussion_channel_for_strand(selected_realm_id, initial_strand_id))
+        .then(|| discussion_channel_for_strand(initial_strand_id))
         .flatten();
     let initial_selected_channel = initial_default_channel
         .as_ref()

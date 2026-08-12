@@ -14,8 +14,6 @@
 //! The realm create / mutate methods build + submit signed events via the event
 //! submitter and remain inherent `TransportClient` methods.
 
-use serde_json::Value;
-
 use crate::models::{AuthzCheckOutcome, GrantList};
 use crate::operation::trim_realm_id;
 use crate::state::projection_views::CollectionProjectionView;

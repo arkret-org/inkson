@@ -2,7 +2,7 @@
 //!
 //! Capability grants write the OrSet cell `ak.component.capability.grant.v1`.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::{TypedOperationBuilder, trim_realm_id};
 
@@ -142,6 +142,8 @@ pub fn capability_grant_actions_with_resources(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]

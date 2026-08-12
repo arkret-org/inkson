@@ -12,7 +12,7 @@
 use arkret_models_integration::{
     AppletBridgeErrorClass, AppletBridgeErrorPayload, AppletBridgeVisibilityScope,
 };
-use arkret_wire::{AppletId, AppletIdentifier, DidFullId, NonEmptyString, RealmId};
+use arkret_wire::{AppletId, AppletIdentifier, NonEmptyString, RealmId};
 
 use super::TypedOperationBuilder;
 

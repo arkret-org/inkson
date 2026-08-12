@@ -126,8 +126,11 @@ pub fn verify_principal(
     Ok(doc)
 }
 
-/// Resolver-backed [`crate::identity::device_directory::DidAnchor`] for the Tier-2
-/// device-key cross-signing chain (`device-lifecycle.md` §8.3 step 1).
+/// Resolver-backed [`crate::identity::device_directory::DidAnchor`] for the
+/// Tier-2 device authorization chain (`device-lifecycle.md` §8.3): a client
+/// MUST NOT treat a server-asserted `device_signing_key` as trust, it has to
+/// replay the chain from the identity-root anchored PCR genesis. Anchoring the
+/// actor's DID is the first step of that replay.
 ///
 /// Holds the deployment `profile` (which drives the [`ResolverPolicy`]) plus a
 /// pair of *mutable* offline `did:web` / `did:webvh` resolvers and a
@@ -138,7 +141,7 @@ pub fn verify_principal(
 /// ## P3.2b: async fetch + ingest of sender DID documents
 ///
 /// `did:web` / `did:webvh` actors carry their key material off-host, so the
-/// cross-signing chain can only anchor once their `did.json` (and, for webvh,
+/// device authorization chain can only anchor once their `did.json` (and, for webvh,
 /// `did.jsonl`) is ingested. [`ResolverDidAnchor::ensure_actor_document`] is the
 /// async entry the receive path calls *before* the synchronous trait method: it
 /// fetches the actor's DID document over the caller's existing

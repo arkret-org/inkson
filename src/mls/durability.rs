@@ -427,7 +427,6 @@ pub fn build_eager_seal_events(
 #[cfg(test)]
 mod tests {
     use arkret_models_collaboration::objects::realm::DurabilityThreshold;
-    use arkret_sdk::DidFullId;
     use serde_json::json;
 
     use super::*;

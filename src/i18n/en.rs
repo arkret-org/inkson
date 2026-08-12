@@ -1071,7 +1071,7 @@ pub fn english_translations() -> TranslationDict {
         "The connected server did not return realms yet.",
     );
 
-    // Verify Device (cross-signing / SAS)
+    // Verify Device (device-lifecycle.md §10 Verification Strands: SAS / QR)
     dict.set("verify_device.title", "Device Verification");
     dict.set("verify_device.choose_method", "choose method");
     dict.set("verify_device.qr_code", "QR Code");

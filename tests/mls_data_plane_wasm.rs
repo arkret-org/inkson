@@ -1,10 +1,161 @@
 #![cfg(target_arch = "wasm32")]
 
-use arkret_sdk::{MessageCryptoDecrypt, MessageCryptoUnavailable};
-use inkson::crypto::LocalMlsDevice;
+//! Browser-side MLS data-plane behaviour: the SDK's MLS group primitives must
+//! keep their epoch/membership semantics when compiled to `wasm32`, and the
+//! four "cannot decrypt" outcomes must stay distinguishable.
+//!
+//! The `LocalMlsDevice` harness below lives in this test binary on purpose.
+//! Inkson's product paths drive MLS through `src/mls/runtime`, which owns
+//! device snapshots, the secure key store and the local state store; a bare
+//! in-memory device pair exists only to pin the SDK primitives, so it must not
+//! ship inside the library.
+
+use arkret_sdk::{
+    ArkretMlsGroup, ArkretMlsIdentity, DeviceId, EncryptedMessage, EncryptedPayload, MessageCrypto,
+    MessageCryptoDecrypt, MessageCryptoUnavailable, MlsAddMemberResult, MlsCommitEnvelope,
+    MlsKeyPackageRecord, MlsProposalEnvelope, MlsRemoveMemberResult, MlsWelcomeEnvelope,
+};
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ClientEncryptedMessage {
+    message_id: String,
+    payload: EncryptedPayload,
+}
+
+/// Minimal in-memory MLS device: one identity that either creates or joins a
+/// single group, then encrypts/decrypts application messages on it.
+struct LocalMlsDevice {
+    identity: Option<ArkretMlsIdentity>,
+    group: Option<ArkretMlsGroup>,
+}
+
+fn principal_core_id(principal_full_id: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
+    let full_id = arkret_sdk::DidFullId::new(principal_full_id.trim().to_owned())?;
+    arkret_sdk::project_full_id_to_core_id(&full_id).map_err(anyhow::Error::msg)
+}
+
+impl LocalMlsDevice {
+    fn new(principal_id: &str, device_id: &str) -> anyhow::Result<Self> {
+        Ok(Self {
+            identity: Some(ArkretMlsIdentity::new_basic(
+                principal_core_id(principal_id)?,
+                DeviceId::new(device_id.to_owned())?,
+            )?),
+            group: None,
+        })
+    }
+
+    fn key_package_record(&self) -> anyhow::Result<MlsKeyPackageRecord> {
+        let identity = self
+            .identity
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("MLS identity is already bound to a group"))?;
+        Ok(identity.key_package_record()?)
+    }
+
+    fn create_group(&mut self, group_id: impl AsRef<[u8]>) -> anyhow::Result<()> {
+        let identity = self
+            .identity
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("MLS group already created or joined"))?;
+        self.group = Some(identity.create_group(group_id)?);
+        Ok(())
+    }
+
+    fn join_from_welcome(&mut self, welcome: &MlsWelcomeEnvelope) -> anyhow::Result<()> {
+        let identity = self
+            .identity
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("MLS group already created or joined"))?;
+        self.group = Some(ArkretMlsGroup::join_from_welcome(identity, welcome)?);
+        Ok(())
+    }
+
+    fn add_member(
+        &mut self,
+        member_key_package: &MlsKeyPackageRecord,
+    ) -> anyhow::Result<MlsAddMemberResult> {
+        let group = self
+            .group
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+        Ok(group.add_member(member_key_package)?)
+    }
+
+    /// Remove a member by principal DID, advancing the local MLS epoch. The
+    /// returned result carries the commit envelope; surviving members must
+    /// apply it (via `apply_commit`) to converge.
+    fn remove_member_by_principal(
+        &mut self,
+        target_principal: &str,
+    ) -> anyhow::Result<MlsRemoveMemberResult> {
+        let group = self
+            .group
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+        let target = principal_core_id(target_principal)?;
+        Ok(group.remove_member_by_principal(&target)?)
+    }
+
+    fn apply_commit(&mut self, commit: &MlsCommitEnvelope) -> anyhow::Result<u64> {
+        let group = self
+            .group
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+        Ok(group.apply_commit(commit)?)
+    }
+
+    /// Stage a by-reference MLS proposal (e.g. one carried in
+    /// `MlsRemoveMemberResult::proposals`) so a subsequent `apply_commit` that
+    /// references it can converge. Surviving members MUST apply every proposal
+    /// a Remove commit references before applying the commit itself; Add
+    /// commits inline their proposals and never need this.
+    fn apply_proposal(&mut self, proposal: &MlsProposalEnvelope) -> anyhow::Result<()> {
+        let group = self
+            .group
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+        Ok(group.apply_proposal(proposal)?)
+    }
+
+    fn encrypt_message(
+        &mut self,
+        message_id: impl Into<String>,
+        plaintext: &[u8],
+    ) -> anyhow::Result<ClientEncryptedMessage> {
+        let message_id = message_id.into();
+        let group = self
+            .group
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
+        let encrypted = MessageCrypto::encrypt(
+            group,
+            message_id,
+            "application/vnd.arkret.message+json",
+            plaintext,
+        )?;
+        Ok(ClientEncryptedMessage {
+            message_id: encrypted.message_id,
+            payload: encrypted.payload,
+        })
+    }
+
+    fn decrypt_or_preserve(
+        &mut self,
+        message: ClientEncryptedMessage,
+    ) -> anyhow::Result<MessageCryptoDecrypt> {
+        Ok(MessageCrypto::decrypt_or_preserve(
+            self.group.as_mut(),
+            EncryptedMessage {
+                message_id: message.message_id,
+                payload: message.payload,
+            },
+        )?)
+    }
+}
 
 const ALICE_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
 const BOB_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000002";

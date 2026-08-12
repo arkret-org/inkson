@@ -129,7 +129,6 @@ struct PreparedFileTransfer {
 
 pub fn load_or_create_file_transfer_crypto_context(
     actor_id: &str,
-    device_id: &str,
 ) -> anyhow::Result<FileTransferCryptoContext> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let account_secret =

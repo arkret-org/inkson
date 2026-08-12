@@ -709,10 +709,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::mls::runtime::{
-        apply_welcome_messages_with_device_snapshot, ensure_creator_mls_snapshot,
-        store_mls_key_package_identity_state,
-    };
     use crate::secure_key_store::MemorySecureKeyStore;
     use crate::state::isolated_store_for_tests;
 
@@ -831,8 +827,6 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn welcome_device_signature_uses_active_device_signer() {
-        let state = isolated_store_for_tests("welcome-device-signer-secure-store");
-        let secure = MemorySecureKeyStore::new();
         let active_signer = std::sync::Arc::new(crate::event_signer::build_ed25519_signer(
             [7u8; 32],
             "did:key:zActiveSigner",

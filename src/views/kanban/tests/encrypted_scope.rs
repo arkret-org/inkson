@@ -73,21 +73,61 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
-    let encrypted_payload = crate::crypto::compose_local_encrypted_message(
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-        "ak:space:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
-        "ak:message:AsfAZBQhs6SPcFLENwhdXzoZil0YA-V859Z-Be8K189A",
-        "private synthesis",
+    // The ciphertext is produced by the production encryption path
+    // (`kanban::mls_encrypt` → `mls::runtime`), not by a local MLS harness, so
+    // the guard is exercised against the exact value shape the product writes.
+    let actor = "did:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
+    let mut state = temp_state_store("encrypted-scope-allows-encrypted-value");
+    state.save_realm_tree_projection(
+        TEST_REALM_ID,
+        json!({
+            "__kind": "realm",
+            "owner": actor_id,
+            "content_scheme": "mls_rfc9420",
+            "members_limited": false,
+            "members": [{ "actor_id": actor_id, "membership": "join" }],
+            "summary": {
+                "title": "Encrypted Realm",
+                "encryption_profile": "mls_rfc9420",
+                "owner": actor_id,
+            }
+        }),
+    );
+    crate::mls::governance_proof::seed_test_governance_proof(
+        &mut state,
+        TEST_REALM_ID,
+        None,
+        arkret_sdk::base64url_encode(TEST_REALM_ID.as_bytes()),
+        0,
+        0,
+    );
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let (patched, _mls_events) = encrypt_private_card_detail_patch_values_with_store(
+        json!({
+            "synthesis": {"$op": "set", "value": "private synthesis"},
+        }),
+        TEST_REALM_ID,
+        DEMO_STRAND_LEGAL_REVIEW_ID,
+        actor,
+        device,
+        &mut state,
+        &secure,
     )
-    .expect("test encryption should produce payload")
-    .payload;
-    let encrypted_payload = serde_json::to_value(encrypted_payload).unwrap();
+    .expect("complete creator projection must reach the encrypted success path");
+    let encrypted_payload = patched["synthesis"]["value"].clone();
+    assert!(
+        encrypted_payload.get("ciphertext").is_some(),
+        "production encryption must replace the plaintext value with a ciphertext envelope"
+    );
+
     let event = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        actor,
         DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "synthesis": {"$op": "set", "value": encrypted_payload},

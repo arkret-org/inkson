@@ -1004,7 +1004,7 @@ pub struct ClientLocalState {
     /// Persisted MLS group state snapshots, keyed by `realm_id`. Each
     /// entry is the encrypted envelope produced by
     /// [`crate::mls::persistence::encrypt_state`]; the boot path
-    /// rehydrates each Realm's `LocalMlsDevice` from the latest envelope
+    /// rehydrates each Realm's MLS group state from the latest envelope
     /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -1337,7 +1337,7 @@ impl RootIndex {
 /// private seed is stored as base64url-no-pad of 32 raw ed25519 bytes.
 ///
 /// We intentionally use ed25519 (Ed25519) rather than ES256 because every
-/// other signing path in inkson is already ed25519 (cross-signing,
+/// other signing path in inkson is already ed25519 (device authorization,
 /// move-signing, session-grant introspection proofs) and coauth's
 /// `DpopVerifier` accepts the `Ed25519`
 /// algorithm out of the box. Sticking with ed25519 keeps a single

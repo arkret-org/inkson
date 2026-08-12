@@ -13,9 +13,14 @@ use inkson::models::{
 };
 use inkson::operation::TypedOperationBuilder;
 use inkson::push::validate_blind_wakeup_payload;
-use inkson::service_parse::parse_server_description;
 use reqwest::StatusCode;
 use serde_json::json;
+
+fn parse_server_description(
+    value: serde_json::Value,
+) -> anyhow::Result<inkson::models::ServiceDescribe> {
+    Ok(serde_json::from_value(value)?)
+}
 
 fn snapshot_contract_event_id(suffix: &str) -> arkret_sdk::EventId {
     let seed = u8::from_str_radix(&suffix[suffix.len() - 2..], 16).unwrap();
@@ -852,48 +857,6 @@ fn inkson_config_store_preserves_server_actor_device_and_token() {
     store.save(config.clone());
 
     assert_eq!(store.load(), config);
-}
-
-#[test]
-fn inkson_e2ee_workflow_matches_protocol_mls_envelope_behavior() {
-    let mut alice = inkson::crypto::LocalMlsDevice::new(
-        "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-    )
-    .unwrap();
-    let mut bob = inkson::crypto::LocalMlsDevice::new(
-        "did:web:bob.example",
-        "ak:device:01904100-0000-7000-8000-000000000002",
-    )
-    .unwrap();
-    let bob_keys = bob.key_package_record().unwrap();
-
-    alice
-        .create_group(b"ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j")
-        .unwrap();
-    let add_result = alice.add_member(&bob_keys).unwrap();
-    bob.join_from_welcome(&add_result.welcome).unwrap();
-
-    let encrypted = alice
-        .encrypt_message(
-            "ak:message:A10jpjj6ScpTkLqE508SW4sm_E2frv4jFA-B0WD69I1A",
-            br#"{"content":{"kind":"ak.content.text","body":"hello via MLS"}}"#,
-        )
-        .unwrap();
-    assert_eq!(encrypted.payload.scheme.as_str(), "mls_rfc9420");
-    assert_eq!(
-        encrypted.payload.content_type,
-        "application/vnd.arkret.message+json"
-    );
-
-    let decrypted = bob.decrypt_or_preserve(encrypted).unwrap();
-    let arkret_sdk::MessageCryptoDecrypt::Plaintext { plaintext, .. } = decrypted else {
-        panic!("joined device should decrypt protocol MLS payload");
-    };
-    assert_eq!(
-        plaintext,
-        br#"{"content":{"kind":"ak.content.text","body":"hello via MLS"}}"#
-    );
 }
 
 // (Move/Seal pipeline tests removed — all writes now go through

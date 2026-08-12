@@ -42,7 +42,6 @@ pub mod components;
 pub mod config;
 pub mod conformance;
 pub mod content;
-pub mod crypto;
 pub mod crypto_boundary;
 pub(crate) mod directory_helpers;
 pub mod disappearing;
@@ -50,7 +49,6 @@ pub(crate) mod ephemeral;
 pub mod event_builders;
 pub mod event_signer;
 pub mod event_submit;
-pub mod federation;
 pub mod file_transfer;
 pub mod fresh_device_recovery;
 pub mod hpke_backup;
@@ -131,7 +129,6 @@ pub async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> 
     state::run_browser_account_persist_fault_contract().await
 }
 pub mod security_state;
-pub mod service_parse;
 pub mod sidecar;
 pub mod signal;
 pub mod signal_receive_engine;

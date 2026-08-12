@@ -92,7 +92,7 @@ pub(super) fn ChatEffects(
             if realm.trim().is_empty() {
                 return;
             }
-            if let Some(desired) = discussion_channel_for_strand(&realm, &initial_strand) {
+            if let Some(desired) = discussion_channel_for_strand(&initial_strand) {
                 event_sink.emit(ChatProjectionEvent::EnsureChannel(desired));
             }
         });

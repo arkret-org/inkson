@@ -42,19 +42,11 @@ default = []
 # Deferred protocol surfaces are compiled by default for unit coverage but
 # hidden from the local 1.0 UI unless explicitly opted in.
 experimental-discussion-promote = []
-experimental-agents = []
 experimental-applets = []
 # Test-only wasm escape hatch for Playwright/cotest fixtures that must inject a
 # real session grant and grant-binding seed before IndexedDB is ready. Production
 # builds must not enable this feature.
 wasm-localstorage-secrets-test = []
-# Recovery / principal-bootstrap helpers the cross-repository joint harness
-# drives from Rust. These are a test API, so they are negotiated by name.
-# `debug_assertions` only describes a build's optimization posture — the
-# `joint-e2e` profile inherits dev and turns it off — so gating a test
-# capability on it silently compiles the capability out of exactly the profile
-# that needs it. Production builds must not enable this feature.
-joint-test-api = []
 # Mobile host-bridge stubs. The `AndroidKeystoreSecureKeyStore` /
 # `IosKeychainSecureKeyStore` types are host-bridge wrappers around a
 # `HostSecretBridge` trait the platform shell installs; there is NO real

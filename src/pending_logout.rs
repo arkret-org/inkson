@@ -50,9 +50,11 @@ const RECORD_TTL_HOURS: i64 = 24;
 /// it survives a tab close or a transient coauth outage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingLogout {
-    /// The grant JWT to revoke at coauth. `None` when the logging-out
-    /// session had no persisted grant (legacy / dev sessions); then only
-    /// the soland courtesy logout runs.
+    /// The grant JWT to revoke at coauth. `None` when the store held no
+    /// session grant at the moment "Log out" was pressed — there is then no
+    /// rotation chain to terminate, so only the soland courtesy logout runs.
+    /// This is a live state, not a historical record shape: the journal is
+    /// written from whatever `session_grant()` returns at logout time.
     #[serde(default)]
     pub grant_jwt: Option<String>,
     /// Base64url seed of the device DPoP key whose thumbprint is bound

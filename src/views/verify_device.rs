@@ -2,7 +2,6 @@ use dioxus::prelude::*;
 use qrcode::render::svg;
 use qrcode::{EcLevel, QrCode};
 
-use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::ui::label::Label;

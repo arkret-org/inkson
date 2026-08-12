@@ -101,8 +101,8 @@ pub(crate) enum MessageCryptoState {
     /// Welcome may be pending, the epoch may be outside the current snapshot,
     /// or the shared-history key share has not arrived.
     KeyMissing,
-    /// Sender device hasn't been verified (cross-signing missing or
-    /// fingerprint mismatch). The body still decrypted, but we flag it.
+    /// Sender device hasn't been verified (no accepted device-directory
+    /// record for the sender, or a fingerprint mismatch). The body still decrypted, but we flag it.
     NeedsVerification,
     /// A late-recovery transition was attempted, but the required membership,
     /// key-share-source, or expiry/retention guard rejected it.

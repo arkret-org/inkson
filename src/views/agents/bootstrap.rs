@@ -8,11 +8,11 @@ use arkret_models_collaboration::events_payloads::key_backup::{
     ControllerBackupTrustAnchor, resolve_controller_backup_trust_anchor,
 };
 use arkret_models_crypto::{BackupKind, ManagedFrontierRef, ManagedPrincipalBinding};
-use arkret_wire::{BackupSeriesId, Base64UrlString, SchemaId};
+use arkret_wire::{BackupSeriesId, Base64UrlString};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::operation::{TypedOperationBuilder, uuid_v7};
 use crate::state::LocalStateStore;
@@ -1462,6 +1462,9 @@ pub(crate) async fn bootstrap_provisioned_agent(
 
 #[cfg(test)]
 mod tests {
+    use arkret_wire::SchemaId;
+    use serde_json::json;
+
     use super::*;
 
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";

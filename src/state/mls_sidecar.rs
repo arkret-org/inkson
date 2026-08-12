@@ -969,12 +969,17 @@ impl LocalStateStore {
         Ok(record.event_id)
     }
 
-    /// Repair legacy/local state that remembers only the genesis-emitted flag.
+    /// Stamp the accepted epoch-0 Event id onto a local snapshot that does not
+    /// carry one yet.
     ///
-    /// Older duplicate-genesis handling could set that flag without recording
-    /// the already-accepted Event id. A durable Realm projection is accepted
-    /// server state, so recover the exact epoch-0 reference only when its group
-    /// and effective scope match the local executable snapshot.
+    /// This is NOT a legacy repair: [`crate::mls::persistence`] always mints a
+    /// snapshot with `group_state_event_id: None`, and the id is stamped
+    /// separately once the genesis Event comes back accepted. A device that
+    /// loses that accept response — or re-syncs the group before the local
+    /// stamp lands — therefore holds a genuine epoch-0 snapshot with no
+    /// reference. A durable Realm projection is accepted server state, so
+    /// recover the exact epoch-0 reference from it, but only when its group and
+    /// effective scope match the local executable snapshot.
     pub fn reconcile_mls_genesis_group_state_ref_from_projection(
         &mut self,
         realm_id: &str,

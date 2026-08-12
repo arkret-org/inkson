@@ -324,9 +324,8 @@ fn open_refuses_tampered_ciphertext_via_digest_mismatch() {
     // recomputed digest does not match the envelope's `ciphertext_digest`,
     // catching a substituted / tampered ciphertext locally (no server GET).
     let root = test_root();
-    let mut body =
-        build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"secret payload")
-            .unwrap();
+    let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"secret payload")
+        .unwrap();
     let mut body = wire(&body);
     // Sanity: the untampered body opens with the correct passphrase.
     assert_eq!(

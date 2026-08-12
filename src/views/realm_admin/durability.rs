@@ -13,7 +13,6 @@
 use arkret_models_collaboration::objects::realm::{
     DurabilityMode, DurabilityPolicy, DurabilityThreshold, RealmRecoveryRecipient,
 };
-use arkret_sdk::DidFullId;
 use dioxus::prelude::*;
 use serde_json::Value;
 

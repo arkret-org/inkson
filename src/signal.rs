@@ -852,8 +852,6 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     fn realm() -> arkret_sdk::RealmId {

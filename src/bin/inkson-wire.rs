@@ -55,7 +55,7 @@ fn main() -> Result<()> {
 fn range_completeness(input: Value) -> Result<Value> {
     use arkret_sdk::{
         Event, EventId, EventRequirements, Hash, PayloadProof, PayloadProofPurpose, PayloadSigner,
-        Proof, ScopeRef,
+        ScopeRef,
     };
     use arkret_signatures::{Ed25519PayloadSigner, SignEventOptions, sign_event_with_digest_suite};
 

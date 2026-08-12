@@ -186,8 +186,6 @@ impl OutboundQueueStore for InksonOutboundStore {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::*;
-
     #[test]
     fn legacy_kind_content_snapshot_is_rejected() {
         let legacy = serde_json::json!({

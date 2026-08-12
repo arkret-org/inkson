@@ -1474,26 +1474,6 @@ async fn create_and_bind_identity(
         barrier.wait().await?;
     }
 
-    let checkpoint = if let Some(repaired) =
-        crate::identity::principal_registration::normalize_founding_session_scope(&checkpoint)?
-    {
-        // The cached account-register request signs the old InitialSessionGrant.
-        // Drop it before durably publishing the repaired checkpoint so the next
-        // attempt obtains a fresh challenge and signs one coherent request.
-        crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
-            &checkpoint,
-        )?;
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(repaired.clone()))?;
-            store.begin_durable_flush()?
-        };
-        barrier.wait().await?;
-        repaired
-    } else {
-        checkpoint
-    };
-
     let checkpoint =
         if checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
             // The first device identity does not belong to a user namespace

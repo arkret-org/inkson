@@ -2165,7 +2165,6 @@ fn AppBootstrap() -> Element {
                                                                                         &agent_id,
                                                                                         Some(&controller_id),
                                                                                         true,
-                                                                                        true,
                                                                                     ).await
                                                                                 },
                                                                             ).await {
@@ -2372,7 +2371,6 @@ fn AppBootstrap() -> Element {
                                                                         state_store,
                                                                         &peer_for_task,
                                                                         None,
-                                                                        true,
                                                                         false,
                                                                     ).await
                                                                 },
@@ -2636,7 +2634,6 @@ fn AppBootstrap() -> Element {
                                                                                     state_store,
                                                                                     &agent_id,
                                                                                     Some(&controller),
-                                                                                    true,
                                                                                     false,
                                                                                 ).await
                                                                             },

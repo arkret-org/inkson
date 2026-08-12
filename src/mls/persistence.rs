@@ -64,7 +64,6 @@ use chrono::{DateTime, Utc};
 use garth::MlsGroupStateRecord;
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use sha2::Sha256;
 
 /// Magic-bytes prefix burned into every v1 envelope.
@@ -659,6 +658,7 @@ use crate::canonical::{hex_decode, hex_encode};
 mod tests {
     use base64::Engine as _;
     use ed25519_dalek::Signer as _;
+    use serde_json::json;
 
     use super::*;
 
@@ -955,7 +955,7 @@ mod tests {
         // End-to-end: SDK creates a group → export_state_record →
         // encrypt → decrypt → SDK restore. The restored group must
         // report the same group_id + epoch.
-        use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+        use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         let identity = ArkretMlsIdentity::new_basic(
             crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),

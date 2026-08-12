@@ -849,9 +849,9 @@ pub fn realm_key_share_sender_device_pair(
 ///
 /// Trust resolution for `(sender_principal_id, payload.sender_device_id)`:
 /// - **Directory Hit**: the self-asserted `signer_public_key_multibase` MUST byte-equal the
-///   directory's authoritative key (which itself required a full cross-signing / service-attested
-///   trust chain to be cached). A populated signature is REQUIRED and MUST verify; an empty
-///   signature is rejected.
+///   directory's authoritative key (which itself required a full device-authorization /
+///   service-attested trust chain to be cached). A populated signature is REQUIRED and MUST verify;
+///   an empty signature is rejected.
 /// - **Directory NegativeHit** (revoked / absent / no signing key): rejected.
 /// - **Directory Miss** (resolution failed for a claimed sender, even after the caller's prefetch):
 ///   a populated signature must verify under its own embedded key; an empty signature is

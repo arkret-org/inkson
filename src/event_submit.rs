@@ -16,10 +16,11 @@ use garth::outbound::BoxOutboundFuture;
 use garth::{
     MlsAdmissionStage, OutboundEngine, OutboundEngineOutcome, OutboundGenerationFenceDecision,
     OutboundPostAcceptHook, OutboundSubmitOutcome, OutboundSubmitter,
-    QueuedAuthoredEventAttempt as AuthoredEventAttempt, QueuedEventIntent as EventIntent,
-    QueuedPostAcceptAction as PostAcceptAction, QueuedRealmBootstrap, QueuedRecord, QueuedSdkEvent,
-    ScheduledSendDispatchRecord, ScheduledSendSubmissionState,
+    QueuedAuthoredEventAttempt as AuthoredEventAttempt, QueuedPostAcceptAction as PostAcceptAction,
+    QueuedRealmBootstrap, QueuedRecord, QueuedSdkEvent,
 };
+#[cfg(test)]
+use garth::{QueuedEventIntent as EventIntent, ScheduledSendSubmissionState};
 #[cfg(test)]
 use reqwest::StatusCode;
 use serde_json::Value;

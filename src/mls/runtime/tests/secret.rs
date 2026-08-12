@@ -177,7 +177,6 @@ fn account_secret_rotation_skips_undecryptable_realm_and_records_failure() {
     use std::collections::BTreeMap;
 
     let actor = "did:web:alice.example";
-    let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let good_realm = "ak:realm:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
     let bad_realm = "ak:realm:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK";
     let old_secret = "old-account-secret";

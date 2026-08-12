@@ -79,8 +79,8 @@ fn organization_control_seed_key(org_did: &str) -> String {
 
 /// Persist an organization control signing seed (32-byte Ed25519 seed) under a
 /// stable per-organization key. The value is hex so it round-trips through every
-/// OS keychain backend without padding nuance, matching the cross-signing key
-/// persistence convention.
+/// OS keychain backend without padding nuance, matching how every other
+/// device signing seed is persisted.
 pub fn store_organization_control_seed(
     store: &dyn SecureKeyStore,
     org_did: &str,

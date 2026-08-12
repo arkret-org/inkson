@@ -555,16 +555,15 @@ pub async fn set_invite_receive_policy(
 
 /// Resolve the pair's stable Direct Conversation coordinates.
 ///
-/// This is query-only. Creation is founder-only: only the participant derived from the pair's root
-/// Contact basis may author the founding unit, which is what removes the cross-server creation
-/// race. The `create` flag therefore no longer triggers a ceremony here — it only says whether the
-/// caller is willing to act when it turns out to be the founder.
+/// This is query-only and never authors anything. Creation is founder-only: only the participant
+/// derived from the pair's root Contact basis may author the founding unit, which is what removes
+/// the cross-server creation race. Callers that turn out to be the founder submit separately via
+/// [`direct_conversation_found`].
 pub async fn direct_conversation_resolve(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
     peer_controller: Option<&str>,
-    _create: bool,
     enable_owned_agent_reply: bool,
 ) -> anyhow::Result<arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome> {
     let http = api.http();

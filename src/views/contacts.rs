@@ -447,7 +447,6 @@ fn ContactRow(
                                             state_store,
                                             &resolve_peer,
                                             None,
-                                            true,
                                             false,
                                         ).await
                                     })

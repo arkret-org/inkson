@@ -22,8 +22,8 @@
 //!   side: paste or scan the new-device request and approve through the spec account pairing route.
 //!
 //! Spec references:
-//! - `crypto-media/device-lifecycle.md` §2.1 (5-step pairing), §2.2 (revoke), §5.1–§5.2
-//!   (cross-signing binding), §6 (device list)
+//! - `crypto-media/device-lifecycle.md` §2.1 (5-step pairing), §2.2 (revoke), §5.1–§5.2 (PCR
+//!   genesis + device possession transcript), §6 (device list)
 //! - `identity/key-management.md` §5.0–§5.2 (`ak.device.authorize` / `ak.device.revoke`)
 //!
 //! ## Endpoints

@@ -12,7 +12,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dioxus::prelude::{SyncSignal, WritableExt};
 use garth::{PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore};
-use serde_json::{Value, json};
+use serde_json::Value;
 use zeroize::Zeroizing;
 
 use super::backup_body::build_mls_account_secret_backup_body_with_kek_and_version;

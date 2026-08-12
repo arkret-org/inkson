@@ -15,38 +15,6 @@ pub(crate) fn standard_initial_session_scope() -> Vec<arkret_sdk::InitialSession
     arkret_sdk::STANDARD_INITIAL_SESSION_GRANT_OPERATIONS.to_vec()
 }
 
-/// Repair drafts authored by older clients that requested an ordinary API
-/// permission for the founding session. The Account Authority deliberately
-/// caps identity-creation grants to the two operations fixed by the protocol
-/// fixture; the founding device is carried by `device_id`, not encoded as a
-/// scope token.
-/// Registration rejects an over-broad draft before publishing any identity
-/// state, so replacing this request and its cached challenge is safe to retry.
-pub fn normalize_founding_session_scope(
-    checkpoint: &PendingPrincipalRegistration,
-) -> anyhow::Result<Option<PendingPrincipalRegistration>> {
-    if !matches!(
-        checkpoint.stage,
-        PendingPrincipalRegistrationStage::GenesisDraftPrepared
-            | PendingPrincipalRegistrationStage::RegisterRequestPrepared
-    ) {
-        return Ok(None);
-    }
-    let mut initial = checkpoint
-        .initial_session
-        .clone()
-        .context("checkpoint omits initial session request")?;
-    let expected = standard_initial_session_scope();
-    if initial.requested_scope == expected {
-        return Ok(None);
-    }
-    initial.requested_scope = expected;
-    initial.validate()?;
-    let mut repaired = checkpoint.clone();
-    repaired.initial_session = Some(initial);
-    Ok(Some(repaired))
-}
-
 pub fn prepare_registration_checkpoint(
     handoff: &PendingAccountHandoff,
     device_id: &str,

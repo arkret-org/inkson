@@ -25,7 +25,7 @@
 //! recovery strand.
 
 use anyhow::{Result, anyhow, bail};
-use arkret_wire::{HPKE_SUITE_X25519_CHACHA20POLY1305_V1, SECRET_REQUEST_KIND, SECRET_SEND_KIND};
+use arkret_wire::{HPKE_SUITE_X25519_CHACHA20POLY1305_V1, SECRET_SEND_KIND};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};

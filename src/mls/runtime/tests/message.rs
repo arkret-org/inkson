@@ -802,7 +802,7 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn encrypted_write_uses_device_key_snapshot_when_ready() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";

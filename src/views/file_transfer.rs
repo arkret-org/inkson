@@ -99,7 +99,7 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
                                             return;
                                         }
                                     };
-                                    let crypto = match load_or_create_file_transfer_crypto_context(&actor, &device) {
+                                    let crypto = match load_or_create_file_transfer_crypto_context(&actor) {
                                         Ok(crypto) => crypto,
                                         Err(error) => {
                                             status.set(format!("File key unavailable: {error}"));

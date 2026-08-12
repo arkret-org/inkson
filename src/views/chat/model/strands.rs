@@ -55,7 +55,6 @@ pub(crate) fn strand_security_state_from_candidates(candidates: &[&Value]) -> Op
 }
 
 pub(crate) fn channel_from_strand_projection(
-    realm_id: &str,
     strand: &Value,
     is_default: bool,
 ) -> Option<ChannelEntity> {
@@ -204,14 +203,11 @@ pub(crate) fn u32_at_path(value: &Value, path: &[&str]) -> Option<u32> {
         })
 }
 
-pub(crate) fn default_discussion_channel(
-    realm_id: &str,
-    realm_body: Option<&Value>,
-) -> Option<ChannelEntity> {
+pub(crate) fn default_discussion_channel(realm_body: Option<&Value>) -> Option<ChannelEntity> {
     if let Some(strand) = realm_body
         .and_then(|body| body.get("summary"))
         .and_then(|summary| summary.get("strand"))
-        && let Some(channel) = channel_from_strand_projection(realm_id, strand, true)
+        && let Some(channel) = channel_from_strand_projection(strand, true)
     {
         return Some(channel);
     }
@@ -234,10 +230,7 @@ pub(crate) fn default_discussion_channel(
     })
 }
 
-pub(crate) fn discussion_channel_for_strand(
-    _realm_id: &str,
-    strand_id: &str,
-) -> Option<ChannelEntity> {
+pub(crate) fn discussion_channel_for_strand(strand_id: &str) -> Option<ChannelEntity> {
     let trimmed_strand_id = strand_id.trim();
     if trimmed_strand_id.is_empty() {
         return None;
@@ -382,7 +375,7 @@ pub(crate) fn channels_from_sync_realms(
     let mut channels = Vec::new();
     for (realm_id, body) in realms {
         if default_realm_ids.iter().any(|id| id == realm_id) {
-            channels.extend(default_discussion_channel(realm_id, Some(body)));
+            channels.extend(default_discussion_channel(Some(body)));
         }
         let Some(wire_events) = body
             .get("timeline")

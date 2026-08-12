@@ -50,8 +50,8 @@ use garth::{
 use garth::{ClientEvent, ClientProjector};
 #[cfg(test)]
 use garth::{DecodedInbound, InboundDecoder};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 use crate::models::{AccountSyncStep, RealmTreeNodeKind};

@@ -4151,12 +4151,8 @@ fn sidecar_strand_title_reads_canonical_metadata_object() {
         },
         "tracks": { "discussion": { "enabled": true } }
     });
-    let projected = channel_from_strand_projection(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        &projection,
-        false,
-    )
-    .expect("discussion projection");
+    let projected =
+        channel_from_strand_projection(&projection, false).expect("discussion projection");
     assert_eq!(projected.name, "AI sidecar");
     assert_ne!(projected.name, strand_id);
 
@@ -4252,11 +4248,8 @@ fn default_discussion_channel_uses_realm_default_strand_projection() {
         }
     });
 
-    let channel = default_discussion_channel(
-        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        Some(&body),
-    )
-    .expect("accepted projection exposes its default Strand");
+    let channel = default_discussion_channel(Some(&body))
+        .expect("accepted projection exposes its default Strand");
 
     assert_eq!(
         channel.strand_id,
@@ -4270,13 +4263,7 @@ fn default_discussion_channel_uses_realm_default_strand_projection() {
 
 #[test]
 fn default_discussion_channel_fails_closed_when_projection_is_absent() {
-    assert!(
-        default_discussion_channel(
-            "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-            None,
-        )
-        .is_none()
-    );
+    assert!(default_discussion_channel(None).is_none());
 }
 
 #[test]

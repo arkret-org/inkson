@@ -4,7 +4,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::Signer as _;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
@@ -310,7 +310,7 @@ fn mls_history_backup_decode_rejects_metadata_mismatch() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_mls_history_backup_saves_snapshot_when_fresh() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
@@ -370,7 +370,7 @@ fn restore_mls_history_backup_saves_snapshot_when_fresh() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn restore_mls_history_backup_rejects_epoch_rollback() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
@@ -426,7 +426,7 @@ fn restore_mls_history_backup_rejects_epoch_rollback() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn cross_device_recovery_restores_history_without_local_secret() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId, DidFullId};
+    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     use crate::mls::account_recovery::{
         build_mls_account_secret_backup_body_with_kek, decrypt_mls_account_secret_backup,

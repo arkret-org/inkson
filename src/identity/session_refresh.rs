@@ -581,20 +581,14 @@ fn session_grant_state_from_persisted(
 
 /// Resolve the stable core principal authorized by a persisted session grant.
 ///
-/// New records always store a `DidCoreId`. Older Inkson builds stored the full
-/// DID here, so keep that one-way compatibility conversion at this boundary
-/// instead of letting callers compare the two identifier forms as strings.
+/// Records always store a `DidCoreId`. Anything else is an invalid record: the
+/// caller must treat the failure as "no usable session" and re-authenticate,
+/// never reconstruct a core id from some other identifier form.
 pub(crate) fn persisted_grant_principal_core_id(
     grant: &PersistedSessionGrant,
 ) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    let stored = grant.principal_id.trim();
-    if let Ok(core_id) = arkret_sdk::DidCoreId::new(stored.to_owned()) {
-        return Ok(core_id);
-    }
-    let full_id = arkret_sdk::DidFullId::new(stored.to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid session principal: {error}"))?;
-    arkret_sdk::project_full_id_to_core_id(&full_id)
-        .map_err(|error| anyhow::anyhow!("project session principal: {error}"))
+    arkret_sdk::DidCoreId::new(grant.principal_id.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid session principal: {error}"))
 }
 
 pub(crate) fn grant_matches_full_principal(
@@ -836,16 +830,16 @@ mod tests {
         assert_ne!(grant.principal_id, full_id.as_str());
     }
 
+    /// A persisted grant that stores anything other than a `DidCoreId` is an
+    /// invalid record. It MUST NOT be repaired by back-projecting a full DID —
+    /// the session is simply unusable and the caller re-authenticates.
     #[test]
-    fn legacy_full_id_session_grant_is_projected_at_the_typed_boundary() {
+    fn session_grant_holding_a_full_id_is_rejected_rather_than_back_projected() {
         let full_id =
             arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
         let grant = test_persisted_grant(full_id.as_str());
 
-        assert!(grant_matches_full_principal(&grant, &full_id));
-        assert_eq!(
-            persisted_grant_principal_core_id(&grant).unwrap(),
-            arkret_sdk::project_full_id_to_core_id(&full_id).unwrap()
-        );
+        assert!(persisted_grant_principal_core_id(&grant).is_err());
+        assert!(!grant_matches_full_principal(&grant, &full_id));
     }
 }
