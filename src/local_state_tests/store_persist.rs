@@ -1067,7 +1067,8 @@ fn adopt_pending_login_keeps_pending_device_for_new_account() {
     assert!(store.pending_login().is_some());
 
     // A DID never seen on this browser is a new account.
-    let is_new = store.adopt_pending_login("did:web:newcomer.example");
+    let newcomer = arkret_sdk::DidFullId::new("did:web:newcomer.example".to_owned()).unwrap();
+    let is_new = store.adopt_pending_login(&newcomer);
     assert!(is_new, "an unknown DID adopts as a new account");
     assert!(store.pending_login().is_none(), "pending is cleared");
     assert_eq!(
@@ -1093,7 +1094,8 @@ fn adopt_pending_login_preserves_returning_account_entry() {
         store.load().sync_cursor.is_none(),
         "anonymous pre-DID state must not expose Alice's projections"
     );
-    let is_new = store.adopt_pending_login("did:web:alice.example");
+    let alice = arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap();
+    let is_new = store.adopt_pending_login(&alice);
     assert!(!is_new, "a returning DID is not a new account");
     assert!(store.pending_login().is_none());
     // Alice's own entry (with her cursor) is restored, not wiped. The
@@ -1227,7 +1229,8 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
     assert!(store.can_resume_pending_login(device));
     assert!(store.resume_pending_login(device));
 
-    store.adopt_pending_login(&did);
+    let principal_id = arkret_sdk::DidFullId::new(did.clone()).unwrap();
+    store.adopt_pending_login(&principal_id);
 
     assert_eq!(
         store

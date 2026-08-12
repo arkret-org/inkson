@@ -373,12 +373,9 @@ impl LocalStateStore {
     /// Either way the pending root entry is cleared and `did` becomes active.
     /// The pending local store is promoted into a typed `UserLocalStore` before
     /// this is called. Returning users retain their existing device identity.
-    pub fn adopt_pending_login(&mut self, did: &str) -> bool {
+    pub fn adopt_pending_login(&mut self, principal_id: &arkret_sdk::DidFullId) -> bool {
         self.ensure_cached_loaded();
-        let did = did.trim();
-        if did.is_empty() {
-            return false;
-        }
+        let did = principal_id.as_str();
         let anonymous_onboarding = self.read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE);
         let pending_registration = anonymous_onboarding
             .as_ref()

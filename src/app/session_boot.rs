@@ -488,6 +488,16 @@ pub(super) fn inject_test_session_grant(
         );
         return None;
     }
+    let principal_core_id = match arkret_sdk::project_full_id_to_core_id(&principal_id) {
+        Ok(principal_core_id) => principal_core_id,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "test session injection: principal core projection failed"
+            );
+            return None;
+        }
+    };
 
     let now = chrono::Utc::now();
     let grant = PersistedSessionGrant {
@@ -498,7 +508,7 @@ pub(super) fn inject_test_session_grant(
         session_private_key_pem: String::new(),
         grant_id,
         audience,
-        principal_id: account_did.to_owned(),
+        principal_id: principal_core_id.to_string(),
         device_id: device_id.to_owned(),
         // MUST match the active server so the bootstrap does not discard the
         // grant as stale (see `grant_matches_principal_server`).

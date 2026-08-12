@@ -31,6 +31,17 @@ use serde_json::Value;
 
 use super::ClientLocalState;
 
+/// Restore secure-store-only session material without replacing a grant that
+/// was minted in the live session while the durable wasm tier was opening.
+fn merge_secure_session_grant_into_live(
+    live: &mut ClientLocalState,
+    secure_grant: Option<super::PersistedSessionGrant>,
+) {
+    if live.session_grant.is_none() {
+        live.session_grant = secure_grant;
+    }
+}
+
 /// Recursively merge `stored` UNDER `live`: object keys are unioned (recursing
 /// into shared keys), a `null`/absent live value adopts the stored value, and a
 /// present live scalar or array wins outright.
@@ -432,8 +443,12 @@ pub(crate) use wasm_driver::{
 mod wasm_bootstrap {
     use std::sync::atomic::Ordering;
 
-    use super::super::LocalStateStore;
-    use super::{ClientLocalState, merge_persisted_into_live};
+    use super::super::{
+        LocalStateStore, load_session_grant_from_user_secure_store, user_local_store_for_principal,
+    };
+    use super::{
+        ClientLocalState, merge_persisted_into_live, merge_secure_session_grant_into_live,
+    };
 
     impl LocalStateStore {
         /// Hydrate the active account's main state from the IndexedDB entry
@@ -442,17 +457,35 @@ mod wasm_bootstrap {
         /// run before `secure_store_bootstrap_ready` is published so the account
         /// state is authoritative before session/connect starts. Persists the
         /// merged result so IndexedDB reflects any pre-init live writes.
-        pub(crate) fn hydrate_active_account_state_from_secure_store(&mut self) {
+        pub(crate) fn hydrate_active_account_state_from_secure_store(
+            &mut self,
+            secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+        ) {
             let effective_did = self.effective_account_key();
+            let secure_grant = user_local_store_for_principal(&effective_did)
+                .and_then(|user_store| {
+                    load_session_grant_from_user_secure_store(&user_store, secure_store)
+                })
+                .map_err(|error| {
+                    tracing::warn!(
+                        ?error,
+                        "secure session grant hydration failed after IndexedDB upgrade"
+                    );
+                    error
+                })
+                .ok()
+                .flatten();
             let Some(stored) = self.read_account_state(&effective_did) else {
                 // No durable entry yet; keep the live state and mark loaded so the
                 // first flush persists it under the active account key.
+                merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
                 self.loaded.store(true, Ordering::Relaxed);
                 let _ = self.flush();
                 return;
             };
             let live = std::mem::replace(&mut self.cached, ClientLocalState::default());
             self.cached = merge_persisted_into_live(live, stored);
+            merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
             self.loaded.store(true, Ordering::Relaxed);
             let _ = self.flush();
         }
@@ -586,6 +619,20 @@ pub(crate) async fn run_browser_account_persist_fault_contract() -> anyhow::Resu
 mod tests {
     use super::*;
 
+    fn session_grant(jwt: &str) -> crate::state::PersistedSessionGrant {
+        crate::state::PersistedSessionGrant {
+            grant_jwt: jwt.to_owned(),
+            session_private_key_pem: String::new(),
+            grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
+            audience: "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+            principal_id: "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
+            device_id: "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            principal_server_url: "https://soland.example".to_owned(),
+            grant_expires_at: None,
+            stored_at: chrono::Utc::now(),
+        }
+    }
+
     fn state_with_cursor(cursor: &str) -> ClientLocalState {
         ClientLocalState {
             sync_cursor: Some(cursor.to_owned()),
@@ -605,6 +652,28 @@ mod tests {
         let live = state_with_cursor("sx:live");
         let merged = merge_persisted_into_live(live.clone(), ClientLocalState::default());
         assert_eq!(merged, live);
+    }
+
+    #[test]
+    fn secure_session_grant_fills_hydrated_state_but_never_replaces_live_grant() {
+        let mut hydrated = ClientLocalState::default();
+        merge_secure_session_grant_into_live(&mut hydrated, Some(session_grant("stored")));
+        assert_eq!(
+            hydrated
+                .session_grant
+                .as_ref()
+                .map(|grant| grant.grant_jwt.as_str()),
+            Some("stored")
+        );
+
+        merge_secure_session_grant_into_live(&mut hydrated, Some(session_grant("stale")));
+        assert_eq!(
+            hydrated
+                .session_grant
+                .as_ref()
+                .map(|grant| grant.grant_jwt.as_str()),
+            Some("stored")
+        );
     }
 
     #[test]

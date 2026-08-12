@@ -847,11 +847,16 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     store
                         .session_grant()
                         .filter(|grant| {
-                            grant.principal_id.trim() == canonical_actor.trim()
-                                && crate::identity::session_refresh::grant_matches_principal_server(
-                                    grant, &base,
-                                )
-                                && crate::config::is_valid_device_id(&grant.device_id)
+                            arkret_sdk::DidFullId::new(canonical_actor.clone()).is_ok_and(
+                                |principal_id| {
+                                    crate::identity::session_refresh::grant_matches_full_principal(
+                                        grant,
+                                        &principal_id,
+                                    )
+                                },
+                            ) && crate::identity::session_refresh::grant_matches_principal_server(
+                                grant, &base,
+                            ) && crate::config::is_valid_device_id(&grant.device_id)
                         })
                         .map(|grant| grant.device_id)
                 };

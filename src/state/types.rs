@@ -1381,7 +1381,8 @@ pub struct PersistedSessionGrant {
     pub grant_id: String,
     /// Audience the grant is bound to (typically the principal-server URL).
     pub audience: String,
-    /// Principal ID the grant authorizes.
+    /// Stable core principal ID (`DidCoreId`) the grant authorizes. Legacy
+    /// records containing a full DID are projected at the session boundary.
     pub principal_id: String,
     /// Device id bound to the grant.
     pub device_id: String,

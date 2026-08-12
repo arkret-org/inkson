@@ -507,13 +507,11 @@ fn interactive_sign_in_device_id(store: &LocalStateStore) -> String {
 pub(crate) fn persist_completed_login_dpop_key(
     store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor: &str,
+    principal_id: &arkret_sdk::DidFullId,
     device_id: &str,
     record: &crate::state::DpopDeviceKeyRecord,
 ) -> Result<(), String> {
-    let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())
-        .map_err(|error| format!("bind account device signer principal: {error}"))?;
-    let principal_core_id = arkret_sdk::project_full_id_to_core_id(&principal_id)
+    let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)
         .map_err(|error| format!("project account principal to core id: {error}"))?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|error| format!("validate account device id: {error}"))?;
@@ -541,7 +539,7 @@ pub(crate) fn persist_completed_login_dpop_key(
         Some(device_id.as_str()),
     )
     .map_err(|error| format!("activate account device signer: {error}"))?;
-    crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device_id.as_str())
+    crate::event_signer::bind_active_signer_principal_device_id(principal_id, device_id.as_str())
         .map_err(|error| format!("bind account device signer principal: {error}"))?;
     Ok(())
 }
@@ -1171,6 +1169,7 @@ mod tests {
         let mut store = crate::state::isolated_store_for_tests("completed-login-dpop-key");
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
         let actor = "did:web:alice.example";
+        let principal_id = arkret_sdk::DidFullId::new(actor.to_owned()).expect("full principal id");
         let device = "ak:device:01964137-0000-7000-8000-000000000001";
         let old_seed = [3_u8; 32];
         let new_record = dpop_record_for_seed([7_u8; 32]);
@@ -1178,8 +1177,14 @@ mod tests {
         crate::secure_key_store::store_signing_seed_scoped(&secure_store, Some(actor), &old_seed)
             .expect("old account seed");
 
-        persist_completed_login_dpop_key(&mut store, &secure_store, actor, device, &new_record)
-            .expect("persist completed login dpop");
+        persist_completed_login_dpop_key(
+            &mut store,
+            &secure_store,
+            &principal_id,
+            device,
+            &new_record,
+        )
+        .expect("persist completed login dpop");
 
         let loaded_seed =
             crate::secure_key_store::load_signing_seed_scoped(&secure_store, Some(actor))

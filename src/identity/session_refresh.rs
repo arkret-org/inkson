@@ -480,15 +480,7 @@ async fn session_transport_provider(
         refresh_transport: refresh_transport.clone(),
     };
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let principal_core_id = match arkret_sdk::DidCoreId::new(grant.principal_id.clone()) {
-        Ok(core_id) => core_id,
-        Err(_) => {
-            let full_id = arkret_sdk::DidFullId::new(grant.principal_id.clone())
-                .map_err(|error| anyhow::anyhow!("invalid session principal: {error}"))?;
-            arkret_sdk::project_full_id_to_core_id(&full_id)
-                .map_err(|error| anyhow::anyhow!("project session principal: {error}"))?
-        }
-    };
+    let principal_core_id = persisted_grant_principal_core_id(grant)?;
     let state_store = PersistedSessionGrantStore {
         secure_store,
         user_store: crate::secure_key_store::UserLocalStore::new(principal_core_id),
@@ -567,8 +559,7 @@ fn session_grant_state_from_persisted(
         .grant_expires_at
         .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
     Ok(SessionGrantState {
-        principal_id: arkret_sdk::DidCoreId::new(grant.principal_id.trim().to_owned())
-            .map_err(|error| anyhow::anyhow!("invalid refresh principal_id: {error}"))?,
+        principal_id: persisted_grant_principal_core_id(grant)?,
         device_id: Some(
             arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
                 .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?,
@@ -586,6 +577,35 @@ fn session_grant_state_from_persisted(
         session_public_key: None,
         dpop_jkt: Some(device_handle.jkt().to_owned()),
     })
+}
+
+/// Resolve the stable core principal authorized by a persisted session grant.
+///
+/// New records always store a `DidCoreId`. Older Inkson builds stored the full
+/// DID here, so keep that one-way compatibility conversion at this boundary
+/// instead of letting callers compare the two identifier forms as strings.
+pub(crate) fn persisted_grant_principal_core_id(
+    grant: &PersistedSessionGrant,
+) -> anyhow::Result<arkret_sdk::DidCoreId> {
+    let stored = grant.principal_id.trim();
+    if let Ok(core_id) = arkret_sdk::DidCoreId::new(stored.to_owned()) {
+        return Ok(core_id);
+    }
+    let full_id = arkret_sdk::DidFullId::new(stored.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid session principal: {error}"))?;
+    arkret_sdk::project_full_id_to_core_id(&full_id)
+        .map_err(|error| anyhow::anyhow!("project session principal: {error}"))
+}
+
+pub(crate) fn grant_matches_full_principal(
+    grant: &PersistedSessionGrant,
+    principal_id: &arkret_sdk::DidFullId,
+) -> bool {
+    let Ok(expected_core_id) = arkret_sdk::project_full_id_to_core_id(principal_id) else {
+        return false;
+    };
+    persisted_grant_principal_core_id(grant)
+        .is_ok_and(|grant_core_id| grant_core_id == expected_core_id)
 }
 
 pub(crate) fn sdk_base_url_from_gate_account_base(gate_account_base: &str) -> anyhow::Result<Url> {
@@ -633,11 +653,10 @@ struct SoftLogoutRestoreRequestDigest<'a> {
 fn mint_session_grant_refresh_proof(
     grant: &PersistedSessionGrant,
 ) -> anyhow::Result<arkret_sdk::SessionGrantRefreshProof> {
-    let principal_id = required_trimmed(&grant.principal_id, "principal_id")?;
+    let principal_core = persisted_grant_principal_core_id(grant)?;
+    let principal_id = principal_core.as_str();
     let device_id = required_trimmed(&grant.device_id, "device_id")?;
     let audience = required_trimmed(&grant.audience, "audience")?;
-    let principal_core = arkret_sdk::DidCoreId::new(principal_id.to_owned())
-        .map_err(|error| anyhow::anyhow!("soft logout restore principal_id: {error}"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
     let principal_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())
@@ -774,6 +793,20 @@ mod tests {
         }
     }
 
+    fn test_persisted_grant(principal_id: &str) -> PersistedSessionGrant {
+        PersistedSessionGrant {
+            grant_jwt: "grant.jwt.signature".to_owned(),
+            session_private_key_pem: String::new(),
+            grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
+            audience: "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+            principal_id: principal_id.to_owned(),
+            device_id: "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            principal_server_url: "https://soland.example".to_owned(),
+            grant_expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
+            stored_at: Utc::now(),
+        }
+    }
+
     #[test]
     fn authenticated_and_refresh_transports_keep_their_respective_authorities() {
         let factory = InksonAuthenticatedTransportFactory {
@@ -790,5 +823,29 @@ mod tests {
 
         assert_eq!(authenticated.base_url().as_str(), "https://soland.example/");
         assert_eq!(refresh.base_url().as_str(), "https://coauth.example/");
+    }
+
+    #[test]
+    fn session_grant_core_id_matches_its_full_principal_without_string_equality() {
+        let full_id =
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let core_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+        let grant = test_persisted_grant(core_id.as_str());
+
+        assert!(grant_matches_full_principal(&grant, &full_id));
+        assert_ne!(grant.principal_id, full_id.as_str());
+    }
+
+    #[test]
+    fn legacy_full_id_session_grant_is_projected_at_the_typed_boundary() {
+        let full_id =
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let grant = test_persisted_grant(full_id.as_str());
+
+        assert!(grant_matches_full_principal(&grant, &full_id));
+        assert_eq!(
+            persisted_grant_principal_core_id(&grant).unwrap(),
+            arkret_sdk::project_full_id_to_core_id(&full_id).unwrap()
+        );
     }
 }

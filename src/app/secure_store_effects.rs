@@ -64,7 +64,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     // so the account state is authoritative before session/connect.
                     state_store_for_secure_upgrade
                         .write()
-                        .hydrate_active_account_state_from_secure_store();
+                        .hydrate_active_account_state_from_secure_store(secure_store.as_ref());
                     let hydrated = state_store_for_secure_upgrade
                         .write()
                         .hydrate_e2ee_plaintext_cache_with_secure_store(secure_store.as_ref());

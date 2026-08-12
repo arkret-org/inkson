@@ -404,6 +404,14 @@ fn restore_session_credential_secret_from_store(
     if account_did.is_empty() {
         return None;
     }
+    // The synchronous first-paint wasm store is intentionally forbidden from
+    // reading session credentials. Wait for the IndexedDB/SubtleCrypto tier
+    // instead of probing the forbidden localStorage path on every render and
+    // flooding the console with an expected `Unsupported` warning.
+    #[cfg(target_arch = "wasm32")]
+    if !crate::secure_key_store::wasm_secure_store_ready() {
+        return None;
+    }
     if let Ok(cache) = session_credential_cache().lock()
         && let Some(entry) = cache.get(account_did)
     {

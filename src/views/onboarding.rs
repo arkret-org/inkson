@@ -215,6 +215,31 @@ fn account_summary_complete(session_token_present: bool, account_did: &str) -> b
     session_token_present && !account_did.trim().is_empty()
 }
 
+/// A latched creation surface can outlive its durable account handoff while an
+/// async completion or reconciliation task is publishing state. That gap must
+/// always render an explicit continuation instead of removing the entire main
+/// panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MissingCreationHandoffSurface {
+    Finishing,
+    Complete,
+    SignInRequired,
+}
+
+fn missing_creation_handoff_surface(
+    busy: bool,
+    session_token_present: bool,
+    account_did: &str,
+) -> MissingCreationHandoffSurface {
+    if busy {
+        MissingCreationHandoffSurface::Finishing
+    } else if account_summary_complete(session_token_present, account_did) {
+        MissingCreationHandoffSurface::Complete
+    } else {
+        MissingCreationHandoffSurface::SignInRequired
+    }
+}
+
 /// A server reservation always outranks a local draft when selecting the key
 /// entry mode. A full-page authentication callback loses the in-memory key;
 /// generating a replacement phrase at that point can never control the
@@ -463,7 +488,7 @@ fn RootAnchoredDeviceRecovery(
                         match result {
                             Ok(completed) => {
                                 if let Some(grant) = state_store.read().session_grant() {
-                                    account_did.set(grant.principal_id.clone());
+                                    account_did.set(principal_id.clone());
                                     token.set(grant.grant_jwt);
                                 }
                                 needs_device_authorization.set(false);
@@ -624,13 +649,22 @@ async fn issue_recovery_completion_grant(
         session_grant_outcome,
         chrono::Utc::now(),
     )?;
-    let actor = session.principal_id.to_string();
+    let principal_id = handoff
+        .bound_principal_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("account handoff omits its bound principal"))
+        .and_then(|value| arkret_sdk::DidFullId::new(value.clone()).map_err(anyhow::Error::msg))?;
+    let principal_core_id = arkret_sdk::project_full_id_to_core_id(&principal_id)?;
+    if session.principal_id != principal_core_id {
+        anyhow::bail!("recovery session grant principal does not match the account handoff");
+    }
+    let actor = principal_id.to_string();
     let persisted = crate::state::PersistedSessionGrant {
         grant_jwt: session.grant_jwt.clone(),
         session_private_key_pem: holder.session_signing_key_pkcs8_pem()?.to_string(),
         grant_id: session.grant_id.to_string(),
         audience: session.audience.to_string(),
-        principal_id: actor.clone(),
+        principal_id: session.principal_id.to_string(),
         device_id: handoff.device_id.clone(),
         principal_server_url: handoff.principal_server_url.clone(),
         grant_expires_at: Some(session.expires_at),
@@ -642,11 +676,11 @@ async fn issue_recovery_completion_grant(
     {
         let mut store = state_store.write();
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        store.adopt_pending_login(&actor);
+        store.adopt_pending_login(&principal_id);
         crate::views::login::persist_completed_login_dpop_key(
             &mut store,
             secure_store.as_ref(),
-            &actor,
+            &principal_id,
             &handoff.device_id,
             &dpop_record,
         )
@@ -749,7 +783,42 @@ fn PendingAccountIdentityCreation(
     let handoff = state_store.read().pending_account_handoff();
 
     let Some(handoff) = handoff else {
-        return rsx! {};
+        let did = account_did();
+        let fallback = missing_creation_handoff_surface(busy(), !token().trim().is_empty(), &did);
+        let current_status = status();
+        return rsx! {
+            div {
+                class: "event onboarding-card onboarding-centered",
+                "data-testid": "onboarding-missing-account-handoff",
+                match fallback {
+                    MissingCreationHandoffSurface::Finishing => rsx! {
+                        SetupProgress { current: 3 }
+                        h2 { "Finishing identity setup" }
+                        p { class: "muted", "The account binding was accepted. Inkson is finishing the local recovery and session records…" }
+                        if !current_status.is_empty() {
+                            div { class: "muted", role: "status", "{current_status}" }
+                        }
+                    },
+                    MissingCreationHandoffSurface::Complete => rsx! {
+                        SetupProgress { current: 3 }
+                        div { class: "onboarding-finished", "data-testid": "onboarding-complete",
+                            div { class: "onboarding-finish-mark", "aria-hidden": "true", "✓" }
+                            h2 { "Identity ready" }
+                            p { class: "muted", "Your account, this device, and recovery backup are ready." }
+                            Link { class: "primary", to: Route::Dashboard, "Continue" }
+                        }
+                    },
+                    MissingCreationHandoffSurface::SignInRequired => rsx! {
+                        h2 { "Identity setup needs authentication" }
+                        p { class: "muted", "The previous account handoff is no longer available. Sign in again so Inkson can resume from the current Account Authority state." }
+                        if !current_status.is_empty() {
+                            div { class: "form-hint-warn", role: "status", "{current_status}" }
+                        }
+                        Link { class: "primary", to: Route::Login, "Sign in again" }
+                    },
+                }
+            }
+        };
     };
     let pending_abandonment = handoff.identity_abandonment.clone().or_else(|| {
         state_store
@@ -1532,14 +1601,19 @@ async fn create_and_bind_identity(
                 }
                 Err(error) => return Err(error),
             };
-        let actor = completion.session_grant.principal_id.to_string();
+        let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
+        let principal_core_id = arkret_sdk::project_full_id_to_core_id(&principal_id)?;
+        if completion.session_grant.principal_id != principal_core_id {
+            anyhow::bail!("initial session grant principal does not match the registered identity");
+        }
+        let actor = principal_id.to_string();
         let grant_jwt = completion.session_grant.grant_jwt.clone();
         let persisted_grant = crate::state::PersistedSessionGrant {
             grant_jwt: grant_jwt.clone(),
             session_private_key_pem: completion.session_private_key_pem,
             grant_id: completion.session_grant.grant_id.to_string(),
             audience: completion.session_grant.audience.to_string(),
-            principal_id: actor.clone(),
+            principal_id: completion.session_grant.principal_id.to_string(),
             device_id: device.to_owned(),
             principal_server_url: handoff.principal_server_url.clone(),
             grant_expires_at: Some(completion.session_grant.expires_at),
@@ -1560,11 +1634,11 @@ async fn create_and_bind_identity(
             .map_err(anyhow::Error::msg)?;
         {
             let mut store = state_store.write();
-            store.adopt_pending_login(&actor);
+            store.adopt_pending_login(&principal_id);
             crate::views::login::persist_completed_login_dpop_key(
                 &mut store,
                 secure_store.as_ref(),
-                &actor,
+                &principal_id,
                 device,
                 &completion.dpop_device_key,
             )
@@ -1584,7 +1658,12 @@ async fn create_and_bind_identity(
             .read()
             .session_grant()
             .filter(|grant| {
-                grant.principal_id == checkpoint.did && grant.device_id == checkpoint.device_id
+                arkret_sdk::DidFullId::new(checkpoint.did.clone()).is_ok_and(|principal_id| {
+                    crate::identity::session_refresh::grant_matches_full_principal(
+                        grant,
+                        &principal_id,
+                    ) && grant.device_id == checkpoint.device_id
+                })
             })
             .ok_or_else(|| {
                 anyhow::anyhow!("the unfinished setup session is unavailable; sign in again")
@@ -2050,6 +2129,23 @@ mod tests {
             true,
             "did:webvh:z6mkfixture:principal.example"
         ));
+    }
+
+    #[test]
+    fn a_latched_creation_surface_never_goes_empty_when_its_handoff_disappears() {
+        let did = "did:webvh:z6mkfixture:principal.example";
+        assert_eq!(
+            missing_creation_handoff_surface(true, false, ""),
+            MissingCreationHandoffSurface::Finishing
+        );
+        assert_eq!(
+            missing_creation_handoff_surface(false, true, did),
+            MissingCreationHandoffSurface::Complete
+        );
+        assert_eq!(
+            missing_creation_handoff_surface(false, false, did),
+            MissingCreationHandoffSurface::SignInRequired
+        );
     }
 
     #[test]
