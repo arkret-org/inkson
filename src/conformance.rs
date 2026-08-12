@@ -18,7 +18,7 @@ pub fn profile_ready(server: Option<&ServiceDescribe>, profile_id: &str) -> bool
 
 fn missing_requirements(profile_id: &str, server: &ServiceDescribe) -> Vec<String> {
     let Some(requirements) =
-        arkret_sdk::schema::generated::profile_requirements::requirements_for(profile_id)
+        arkret_wire::generated::profile_requirements::requirements_for(profile_id)
     else {
         return vec![format!("unknown profile {profile_id}")];
     };
