@@ -448,7 +448,7 @@ async fn verify_contact_request_receipt(
     let history =
         crate::identity::history::fetch_complete_identity_history(http, &issuer_full_id).await?;
     if history.did != issuer_full_id
-        || history.method != "did:webvh"
+        || history.method != arkret_sdk::DidMethodUri::Webvh
         || history.native_history == Some(false)
         || history.has_more
         || history.next_cursor.is_some()

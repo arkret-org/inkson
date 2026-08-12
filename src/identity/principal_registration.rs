@@ -11,46 +11,8 @@ use crate::state::{
     PendingAccountHandoff, PendingPrincipalRegistration, PendingPrincipalRegistrationStage,
 };
 
-const INITIAL_ACCOUNT_READ_SCOPE: &str = "ak.self.account.read.describe";
-const INITIAL_EVENT_SCAN_SCOPE: &str = "ak.self.events.read.scan";
-
-pub(crate) fn standard_initial_session_scope() -> Vec<String> {
-    vec![
-        INITIAL_ACCOUNT_READ_SCOPE.to_owned(),
-        INITIAL_EVENT_SCAN_SCOPE.to_owned(),
-    ]
-}
-
-/// Repair drafts authored by older clients that requested an ordinary API
-/// permission for the founding session. The Account Authority deliberately
-/// caps identity-creation grants to the two operations fixed by the protocol
-/// fixture; the founding device is carried by `device_id`, not encoded as a
-/// scope token.
-/// Registration rejects an over-broad draft before publishing any identity
-/// state, so replacing this request and its cached challenge is safe to retry.
-pub fn normalize_founding_session_scope(
-    checkpoint: &PendingPrincipalRegistration,
-) -> anyhow::Result<Option<PendingPrincipalRegistration>> {
-    if !matches!(
-        checkpoint.stage,
-        PendingPrincipalRegistrationStage::GenesisDraftPrepared
-            | PendingPrincipalRegistrationStage::RegisterRequestPrepared
-    ) {
-        return Ok(None);
-    }
-    let mut initial = checkpoint
-        .initial_session
-        .clone()
-        .context("checkpoint omits initial session request")?;
-    let expected = standard_initial_session_scope();
-    if initial.requested_scope == expected {
-        return Ok(None);
-    }
-    initial.requested_scope = expected;
-    initial.validate()?;
-    let mut repaired = checkpoint.clone();
-    repaired.initial_session = Some(initial);
-    Ok(Some(repaired))
+pub(crate) fn standard_initial_session_scope() -> Vec<arkret_sdk::InitialSessionGrantOperation> {
+    arkret_sdk::STANDARD_INITIAL_SESSION_GRANT_OPERATIONS.to_vec()
 }
 
 pub fn prepare_registration_checkpoint(
@@ -699,7 +661,7 @@ async fn verify_registration_terminal_evidence(
         crate::identity::history::fetch_complete_identity_history(&principal_client, &principal_id)
             .await
             .context("fetch complete principal did.jsonl history")?;
-    if history.method != "did:webvh" || history.native_history != Some(true) {
+    if history.method != arkret_sdk::DidMethodUri::Webvh || history.native_history != Some(true) {
         anyhow::bail!("principal history is not a native did:webvh history");
     }
     let entry0 = history

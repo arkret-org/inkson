@@ -238,7 +238,7 @@ fn build_formal_applet_install_events(
             schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
             realm_id: Some(realm_id.clone()),
             issuer: actor.clone(),
-            subject: arkret_sdk::CapabilitySubject::Did(snapshot.package.service_id.clone()),
+            subject: arkret_sdk::CapabilitySubject::CoreDid(snapshot.package.service_id.clone()),
             subject_authority_instance: None,
             actions: vec![action],
             resources: vec![resource.clone()],
