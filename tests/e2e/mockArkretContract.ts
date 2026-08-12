@@ -61,7 +61,7 @@ export function mockArkretContract(req) {
   }
 
   if (method === "GET" && path === "/_arkret/self/account/viewer") {
-    const principalId = req.account?.did ?? "did:web:alice.example";
+    const principalId = req.account?.core_id ?? "ak:did_core:web:alice.example";
     return json({
       principal_id: principalId,
       state: "active",
@@ -138,7 +138,8 @@ export function mockArkretContract(req) {
   if (method === "GET" && path === "/_arkret/root/identity/recovery-policy") {
     return json({
       active_policy: null,
-      principal_id: body.principal_id ?? req.account?.did ?? "did:web:alice.example",
+      principal_id:
+        body.principal_id ?? req.account?.core_id ?? "ak:did_core:web:alice.example",
     });
   }
 
