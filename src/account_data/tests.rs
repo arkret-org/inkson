@@ -164,12 +164,19 @@ fn realm_remark_key_round_trip() {
 
 #[test]
 fn contact_remark_key_round_trip() {
-    let did = "did:web:alice.example";
-    let key = contact_remark_account_data_key(did);
-    assert_eq!(key, format!("ak.contacts.actor.{did}"));
-    assert_eq!(actor_id_from_contact_remark_key(&key), Some(did));
+    let namespace_key: Vec<u8> = (0u8..=31).collect();
+    let principal_id = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+    let key = contact_remark_account_data_key(&namespace_key, &principal_id).unwrap();
     assert_eq!(
-        actor_id_from_contact_remark_key("ak.contacts.realm.x"),
+        key,
+        "ak.contacts.actor.pD0U2utjPMaXROrStCFHbCtquoTSVsA7mo9nVniePkY"
+    );
+    assert_eq!(
+        principal_key_from_contact_remark_key(&key).as_deref(),
+        Some("pD0U2utjPMaXROrStCFHbCtquoTSVsA7mo9nVniePkY")
+    );
+    assert_eq!(
+        principal_key_from_contact_remark_key("ak.contacts.realm.x"),
         None
     );
 }
@@ -290,20 +297,21 @@ fn contact_remark_serialises_minimal_private_payload() {
     let remark = ContactRemark::new(actor_did.clone(), "Alice from Ops", saved_at);
     let wire = serde_json::to_value(&remark).unwrap();
     assert_eq!(wire["version"], 1);
-    assert_eq!(wire["subject"]["kind"], "actor");
-    assert_eq!(wire["subject"]["actor_id"], actor_did.as_str());
+    assert_eq!(wire["subject"]["kind"], "human");
+    assert_eq!(wire["subject"]["principal_id"], actor_did.as_str());
     assert!(wire.get("actor_id").is_none());
-    assert_eq!(wire["local_name"], "Alice from Ops");
+    assert_eq!(wire["petname"], "Alice from Ops");
     assert!(wire.get("note").is_none());
     assert_eq!(remark.display_name("Alice"), "Alice from Ops");
 
     let empty = ContactRemark {
         version: 1,
         subject: ContactRemarkSubject {
-            kind: "actor".to_owned(),
-            actor_id: actor_did,
+            kind: "human".to_owned(),
+            principal_id: actor_did,
         },
-        local_name: " ".to_owned(),
+        petname: " ".to_owned(),
+        global_display_name_at_save: None,
         note: String::new(),
         tags: Vec::new(),
         pinned: false,
@@ -321,10 +329,11 @@ fn contact_remark_pinned_builder_preserves_private_fields() {
     let existing = ContactRemark {
         version: 1,
         subject: ContactRemarkSubject {
-            kind: "actor".to_owned(),
-            actor_id: actor_did.clone(),
+            kind: "human".to_owned(),
+            principal_id: actor_did.clone(),
         },
-        local_name: "Alice from Ops".to_owned(),
+        petname: "Alice from Ops".to_owned(),
+        global_display_name_at_save: None,
         note: "met at launch".to_owned(),
         tags: vec!["ops".to_owned()],
         pinned: false,
@@ -341,7 +350,7 @@ fn contact_remark_pinned_builder_preserves_private_fields() {
     );
 
     assert!(next.pinned);
-    assert_eq!(next.local_name, existing.local_name);
+    assert_eq!(next.petname, existing.petname);
     assert_eq!(next.note, existing.note);
     assert_eq!(next.tags, existing.tags);
     assert_eq!(
@@ -654,7 +663,9 @@ fn scheduled_send_key_requires_independent_scheduled_send_id() {
 fn contact_and_realm_remarks_are_encrypted_account_data() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let realm_key = realm_remark_account_data_key(realm_id);
-    let actor_key = contact_remark_account_data_key("did:web:alice.example");
+    let namespace_key: Vec<u8> = (0u8..=31).collect();
+    let principal_id = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+    let actor_key = contact_remark_account_data_key(&namespace_key, &principal_id).unwrap();
 
     assert_eq!(
         private_account_data_key_prefix(&realm_key),

@@ -127,7 +127,7 @@ pub fn DirectoryPanel(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     // (state_store: F-REMARK-FANOUT-1 — handle resolution prefers the
-    // actor-private ContactRemark.local_name over the raw DID.)
+    // accepted-human ContactRemark.petname over the canonical principal id.)
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
     let mut active_tab = use_signal(|| DirectoryTab::Realms);

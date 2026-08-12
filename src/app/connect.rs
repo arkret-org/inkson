@@ -1299,6 +1299,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // (represented by absence from that full projection)
                             // clears the durable local cache as well.
                             let mut blocklist_snapshot_seen = false;
+                            let mut contact_remark_snapshot_keys = BTreeSet::new();
                             for event in &sync.updates.account_data {
                                 let entry = &event.payload;
                                 let Some(account_data_key) =
@@ -1517,25 +1518,61 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if let Some(actor_id) =
-                                    crate::account_data::actor_id_from_contact_remark_key(
-                                        account_data_key,
-                                    )
+                                if crate::account_data::principal_key_from_contact_remark_key(
+                                    account_data_key,
+                                )
+                                .is_some()
                                 {
+                                    contact_remark_snapshot_keys
+                                        .insert(account_data_key.to_owned());
+                                    if entry.get("tombstone").and_then(serde_json::Value::as_bool)
+                                        == Some(true)
+                                    {
+                                        match crate::account_data::account_data_namespace_key(
+                                            &account_did(),
+                                        ) {
+                                            Ok(namespace_key) => {
+                                                store.remove_contact_remark_by_storage_key(
+                                                    &namespace_key,
+                                                    account_data_key,
+                                                );
+                                            }
+                                            Err(error) => tracing::warn!(
+                                                key = %account_data_key,
+                                                "Contact petname tombstone cannot be applied: {error}"
+                                            ),
+                                        }
+                                        continue;
+                                    }
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
                                         account_data_key,
                                         entry,
                                     )
                                     .and_then(|content| {
-                                        serde_json::from_value(content).map_err(Into::into)
+                                        let remark: crate::account_data::ContactRemark =
+                                            serde_json::from_value(content)?;
+                                        let namespace_key =
+                                            crate::account_data::account_data_namespace_key(
+                                                &account_did(),
+                                            )?;
+                                        remark
+                                            .validate_for_account_data_key(
+                                                &namespace_key,
+                                                account_data_key,
+                                            )
+                                            .map_err(anyhow::Error::msg)?;
+                                        Ok(remark)
                                     }) {
                                         Ok(remark) => {
-                                            store.set_contact_remark(actor_id.to_owned(), remark);
+                                            let principal_id =
+                                                remark.subject.principal_id.to_string();
+                                            store.set_contact_remark(principal_id, remark);
                                         }
                                         Err(error) => {
                                             tracing::warn!(
-                                                "ignoring malformed Contact remark for {actor_id}: {error}"
+                                                key = %account_data_key,
+                                                "ignoring malformed Contact petname: {error}"
                                             );
                                         }
                                     }
@@ -1568,6 +1605,16 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             }
                             if !blocklist_snapshot_seen {
                                 store.set_client_blocklist(0, Vec::new());
+                            }
+                            match crate::account_data::account_data_namespace_key(&account_did()) {
+                                Ok(namespace_key) => store.retain_contact_remarks_for_storage_keys(
+                                    &namespace_key,
+                                    &contact_remark_snapshot_keys,
+                                ),
+                                Err(error) => tracing::warn!(
+                                    %error,
+                                    "complete Contact petname snapshot cannot be reconciled"
+                                ),
                             }
                             // Force a synchronous flush so that if the user
                             // refreshes the tab immediately after a successful

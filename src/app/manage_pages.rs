@@ -313,14 +313,20 @@ pub(super) fn ContactsManagePage(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     {
         let base = base_url.clone();
         use_effect(move || {
             if contacts_loaded() || token().trim().is_empty() {
                 return;
             }
-            load_direct_contacts_for_sidebar(base.clone(), token(), contact_rows, contacts_loaded);
+            load_direct_contacts_for_sidebar(
+                base.clone(),
+                token(),
+                state_store,
+                contact_rows,
+                contacts_loaded,
+            );
         });
     }
 
@@ -477,6 +483,9 @@ pub(super) fn ContactsManagePage(
                                                 .await
                                                 {
                                                     Ok(response) => {
+                                                        state_store
+                                                            .write()
+                                                            .replace_accepted_human_contacts(&response.contacts);
                                                         contact_rows.set(response.contacts);
                                                         contacts_loaded.set(true);
                                                     }

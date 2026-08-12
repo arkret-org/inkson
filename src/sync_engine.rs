@@ -2935,21 +2935,42 @@ pub(crate) fn apply_account_data_entries(
             }
             continue;
         }
-        // ak.contacts.actor.<did> — actor-private contact remarks.
-        if let Some(actor_id) =
-            crate::account_data::actor_id_from_contact_remark_key(account_data_key)
-        {
+        // ak.contacts.actor.<principal_key> — holder-private global petnames.
+        if crate::account_data::principal_key_from_contact_remark_key(account_data_key).is_some() {
+            if entry.payload.get("tombstone").and_then(Value::as_bool) == Some(true) {
+                match crate::account_data::account_data_namespace_key(account_did) {
+                    Ok(namespace_key) => {
+                        store
+                            .remove_contact_remark_by_storage_key(&namespace_key, account_data_key);
+                    }
+                    Err(error) => tracing::warn!(
+                        key = %account_data_key,
+                        "sync engine: Contact petname tombstone cannot be applied: {error}",
+                    ),
+                }
+                continue;
+            }
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
                 account_data_key,
                 &entry.payload,
             )
-            .and_then(|content| serde_json::from_value(content).map_err(Into::into))
-            {
-                Ok(remark) => store.set_contact_remark(actor_id.to_owned(), remark),
+            .and_then(|content| {
+                let remark: crate::account_data::ContactRemark = serde_json::from_value(content)?;
+                let namespace_key = crate::account_data::account_data_namespace_key(account_did)?;
+                remark
+                    .validate_for_account_data_key(&namespace_key, account_data_key)
+                    .map_err(anyhow::Error::msg)?;
+                Ok(remark)
+            }) {
+                Ok(remark) => {
+                    let principal_id = remark.subject.principal_id.to_string();
+                    store.set_contact_remark(principal_id, remark);
+                }
                 Err(error) => {
                     tracing::warn!(
-                        "sync engine: ignoring malformed Contact remark for {actor_id}: {error}",
+                        key = %account_data_key,
+                        "sync engine: ignoring malformed Contact petname: {error}",
                     );
                 }
             }

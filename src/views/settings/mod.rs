@@ -406,7 +406,40 @@ pub(crate) fn push_contact_remark_account_data(
     actor_id: String,
     remark: crate::account_data::ContactRemark,
 ) {
-    let key = crate::account_data::contact_remark_account_data_key(&actor_id);
+    let holder = match crate::secure_key_store::active_device_seed_scope()
+        .filter(|holder| !holder.trim().is_empty())
+    {
+        Some(holder) => holder,
+        None => {
+            tracing::warn!("contact petname upload skipped: active account scope is unavailable");
+            return;
+        }
+    };
+    if actor_id != remark.subject.principal_id.as_str() {
+        tracing::warn!(%actor_id, "contact petname upload rejected: map key does not match subject.principal_id");
+        return;
+    }
+    let namespace_key = match crate::account_data::account_data_namespace_key(&holder) {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::warn!(%error, "contact petname upload skipped: namespace key unavailable");
+            return;
+        }
+    };
+    let key = match crate::account_data::contact_remark_account_data_key(
+        &namespace_key,
+        &remark.subject.principal_id,
+    ) {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::warn!(%error, "contact petname key derivation failed");
+            return;
+        }
+    };
+    if let Err(error) = remark.validate_for_account_data_key(&namespace_key, &key) {
+        tracing::warn!(%error, "contact petname value rejected before upload");
+        return;
+    }
     spawn(async move {
         if remark.is_empty() {
             let key_for_log = key.clone();
@@ -563,17 +596,7 @@ pub fn SettingsPanel(
     });
     let mut new_realm_remark_id = use_signal(String::new);
     let mut new_realm_remark_name = use_signal(String::new);
-    let mut contact_remarks_snapshot = use_signal(|| state_store.read().contact_remarks());
-    let mut contact_remark_inputs = use_signal(|| {
-        state_store
-            .read()
-            .contact_remarks()
-            .into_iter()
-            .map(|(did, r)| (did, r.local_name))
-            .collect::<std::collections::BTreeMap<String, String>>()
-    });
-    let mut new_contact_remark_did = use_signal(String::new);
-    let mut new_contact_remark_name = use_signal(String::new);
+    let contact_remarks_snapshot = use_signal(|| state_store.read().contact_remarks());
     // A4b — profile (display_name / bio / avatar) state.
     // `avatar_blob_ref` mirrors the most-recently uploaded avatar via
     // `ak.account_data.set("ak.client.ui_state", { avatar_blob_ref })` and is also
@@ -2833,8 +2856,11 @@ pub fn SettingsPanel(
 
                 div { class: "event", "data-testid": "contact-remarks-editor",
                     div { class: "event-head",
-                        span { "Contact remarks" }
+                        span { "Contact petnames" }
                         span { "Private" }
+                    }
+                    div { class: "muted",
+                        "Petnames are global across all Realms. Add or edit them from an accepted human Contact row; arbitrary DIDs and Realm members cannot receive a petname."
                     }
                     {
                         let remarks = contact_remarks_snapshot();
@@ -2843,7 +2869,7 @@ pub fn SettingsPanel(
                                 div {
                                     class: "muted",
                                     "data-testid": "contact-remarks-empty",
-                                    "No contact remarks yet. Add a DID below to label someone privately."
+                                    "No saved contact petnames."
                                 }
                             }
                         } else {
@@ -2858,179 +2884,13 @@ pub fn SettingsPanel(
                                                 "data-testid": "contact-remark-row",
                                                 "data-actor-did": "{actor_id}",
                                                 span { title: "{actor_id}", "{actor_id_label}" }
-                                                Input {
-                                                    r#type: "text",
-                                                    "data-testid": "contact-remark-input",
-                                                    placeholder: "Local name (private)",
-                                                    value: "{contact_remark_inputs().get(&actor_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
-                                                    oninput: {
-                                                        let did = actor_id.clone();
-                                                        move |event: FormEvent| {
-                                                            let mut current = contact_remark_inputs();
-                                                            current.insert(did.clone(), event.value());
-                                                            contact_remark_inputs.set(current);
-                                                        }
-                                                    },
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "contact-remark-save",
-                                                    onclick: {
-                                                        let did = actor_id.clone();
-                                                        let existing = remark.clone();
-                                                        move |_| {
-                                                            let did = did.clone();
-                                                            let next_name = contact_remark_inputs()
-                                                                .get(&did)
-                                                                .cloned()
-                                                                .unwrap_or_default();
-                                                            let mut next = existing.clone();
-                                                            next.local_name = next_name.trim().to_owned();
-                                                            next.updated_at = Some(chrono::Utc::now());
-                                                            state_store
-                                                                .write()
-                                                                .set_contact_remark(did.clone(), next.clone());
-                                                            contact_remarks_snapshot.set(
-                                                                state_store.read().contact_remarks(),
-                                                            );
-                                                            let did_label =
-                                                                actor_display_label(&state_store.read(), &did);
-                                                            if next.is_empty() {
-                                                                crate::components::feedback::toast_success(
-                                                                    "feedback.contact_remark_cleared",
-                                                                    vec![("name", did_label)],
-                                                                );
-                                                            } else {
-                                                                crate::components::feedback::toast_success(
-                                                                    "feedback.contact_remark_saved",
-                                                                    vec![
-                                                                        ("name", did_label),
-                                                                        ("local_name", next.local_name.clone()),
-                                                                    ],
-                                                                );
-                                                            }
-                                                            push_contact_remark_account_data(
-                                                                base_url(),
-                                                                token(),
-                                                                did,
-                                                                next,
-                                                            );
-                                                        }
-                                                    },
-                                                    "Save"
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "contact-remark-delete",
-                                                    onclick: {
-                                                        let did = actor_id.clone();
-                                                        move |_| {
-                                                            let did = did.clone();
-                                                            state_store.write().remove_contact_remark(&did);
-                                                            let mut inputs = contact_remark_inputs();
-                                                            inputs.remove(&did);
-                                                            contact_remark_inputs.set(inputs);
-                                                            contact_remarks_snapshot.set(
-                                                                state_store.read().contact_remarks(),
-                                                            );
-                                                            let Ok(contact_did) =
-                                                                crate::mls_api_helpers::principal_core_id(&did)
-                                                            else {
-                                                                crate::components::feedback::toast_error(
-                                                                    "feedback.invalid_actor_identifier",
-                                                                    vec![],
-                                                                    None,
-                                                                );
-                                                                return;
-                                                            };
-                                                            let did_label =
-                                                                actor_display_label(&state_store.read(), &did);
-                                                            crate::components::feedback::toast_success(
-                                                                "feedback.contact_remark_cleared",
-                                                                vec![("name", did_label)],
-                                                            );
-                                                            push_contact_remark_account_data(
-                                                                base_url(),
-                                                                token(),
-                                                                did.clone(),
-                                                                crate::account_data::ContactRemark::new(
-                                                                    contact_did,
-                                                                    "",
-                                                                    chrono::Utc::now(),
-                                                                ),
-                                                            );
-                                                        }
-                                                    },
-                                                    "Delete"
-                                                }
+                                                span { class: "pill", {crate::i18n::tr("contacts.petname.badge")} }
+                                                span { "{remark.petname}" }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
-                    }
-                    div { class: "actions", "data-testid": "contact-remark-add-row",
-                        Input {
-                            r#type: "text",
-                            "data-testid": "contact-remark-add-did",
-                            placeholder: "alice:example.com or did:web:...",
-                            value: "{new_contact_remark_did()}",
-                            oninput: move |event: FormEvent| new_contact_remark_did.set(event.value()),
-                        }
-                        Input {
-                            r#type: "text",
-                            "data-testid": "contact-remark-add-name",
-                            placeholder: "Local name",
-                            value: "{new_contact_remark_name()}",
-                            oninput: move |event: FormEvent| new_contact_remark_name.set(event.value()),
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            "data-testid": "contact-remark-add-save",
-                            onclick: move |_| {
-                                let raw_actor = new_contact_remark_did();
-                                let Some(actor_id) =
-                                    crate::identity::handle::principal_did_from_identifier(&raw_actor)
-                                else {
-                                    crate::components::feedback::toast_error("feedback.invalid_actor_identifier", vec![], None);
-                                    return;
-                                };
-                                let local_name = new_contact_remark_name().trim().to_owned();
-                                if local_name.is_empty() {
-                                    crate::components::feedback::toast_info("feedback.enter_actor_and_name", vec![]);
-                                    return;
-                                }
-                                let mut remark = crate::account_data::ContactRemark::new(
-                                    crate::mls_api_helpers::principal_core_id(&actor_id)
-                                        .expect("normalized actor DID is valid"),
-                                    local_name.clone(),
-                                    chrono::Utc::now(),
-                                );
-                                remark.updated_at = Some(remark.saved_at);
-                                state_store
-                                    .write()
-                                    .set_contact_remark(actor_id.clone(), remark.clone());
-                                contact_remarks_snapshot.set(state_store.read().contact_remarks());
-                                new_contact_remark_did.set(String::new());
-                                new_contact_remark_name.set(String::new());
-                                let actor_label =
-                                    actor_display_label(&state_store.read(), &actor_id);
-                                crate::components::feedback::toast_success(
-                                    "feedback.contact_remark_saved",
-                                    vec![
-                                        ("name", actor_label),
-                                        ("local_name", local_name.clone()),
-                                    ],
-                                );
-                                push_contact_remark_account_data(
-                                    base_url(),
-                                    token(),
-                                    actor_id,
-                                    remark,
-                                );
-                            },
-                            "Add contact"
                         }
                     }
                 }

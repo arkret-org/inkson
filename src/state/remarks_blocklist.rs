@@ -78,6 +78,52 @@ impl LocalStateStore {
         self.load().contact_remarks
     }
 
+    /// Replace the transient eligibility projection used by live labels.
+    /// Only accepted human Contacts contribute a canonical principal.
+    pub fn replace_accepted_human_contacts(&mut self, contacts: &[crate::models::ContactListRow]) {
+        self.ensure_cached_loaded();
+        self.cached.accepted_human_contact_principals = contacts
+            .iter()
+            .filter(|contact| contact.state == arkret_sdk::ContactState::Accepted)
+            .filter_map(|contact| match &contact.peer {
+                arkret_sdk::contact_operations::ContactPeer::Human { principal_id } => {
+                    Some(principal_id.to_string())
+                }
+                arkret_sdk::contact_operations::ContactPeer::Agent { .. } => None,
+            })
+            .collect();
+    }
+
+    pub fn is_accepted_human_contact(&self, principal_id: &str) -> bool {
+        self.load()
+            .accepted_human_contact_principals
+            .contains(principal_id)
+    }
+
+    /// A retained record is active as a live label only while its subject is
+    /// still present in the accepted-human Contact projection.
+    pub fn active_contact_remark(
+        &self,
+        principal_id: &str,
+    ) -> Option<crate::account_data::ContactRemark> {
+        self.is_accepted_human_contact(principal_id)
+            .then(|| self.contact_remark(principal_id))
+            .flatten()
+    }
+
+    pub fn active_contact_remarks(&self) -> BTreeMap<String, crate::account_data::ContactRemark> {
+        let state = self.load();
+        state
+            .contact_remarks
+            .into_iter()
+            .filter(|(principal_id, _)| {
+                state
+                    .accepted_human_contact_principals
+                    .contains(principal_id)
+            })
+            .collect()
+    }
+
     pub fn set_contact_remark(
         &mut self,
         actor_id: impl Into<String>,
@@ -99,11 +145,68 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    /// Apply an opaque physical-delete tombstone received from another device.
+    /// The server cannot name the principal, so match the slot by recomputing
+    /// keys only over the holder's bounded local Contact remark set.
+    pub fn remove_contact_remark_by_storage_key(
+        &mut self,
+        namespace_key: &[u8],
+        storage_key: &str,
+    ) -> bool {
+        self.ensure_cached_loaded();
+        let principal_id = self
+            .cached
+            .contact_remarks
+            .keys()
+            .find(|principal_id| {
+                arkret_sdk::DidCoreId::new(principal_id.as_str())
+                    .ok()
+                    .and_then(|principal_id| {
+                        crate::account_data::contact_remark_account_data_key(
+                            namespace_key,
+                            &principal_id,
+                        )
+                        .ok()
+                    })
+                    .as_deref()
+                    == Some(storage_key)
+            })
+            .cloned();
+        let removed = principal_id
+            .as_deref()
+            .and_then(|principal_id| self.cached.contact_remarks.remove(principal_id))
+            .is_some();
+        if removed {
+            let _ = self.flush();
+        }
+        removed
+    }
+
+    /// Reconcile against a complete Account Data projection. Physical deletes
+    /// may be represented by absence rather than an inline tombstone.
+    pub fn retain_contact_remarks_for_storage_keys(
+        &mut self,
+        namespace_key: &[u8],
+        live_storage_keys: &BTreeSet<String>,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached.contact_remarks.retain(|principal_id, _| {
+            arkret_sdk::DidCoreId::new(principal_id.as_str())
+                .ok()
+                .and_then(|principal_id| {
+                    crate::account_data::contact_remark_account_data_key(
+                        namespace_key,
+                        &principal_id,
+                    )
+                    .ok()
+                })
+                .is_some_and(|storage_key| live_storage_keys.contains(&storage_key))
+        });
+    }
+
     pub fn display_name_for_actor(&self, actor_id: &str, public_name: &str) -> String {
         match self
-            .load()
-            .contact_remarks
-            .get(actor_id)
+            .active_contact_remark(actor_id)
             .map(|r| r.display_name(public_name).to_owned())
         {
             Some(name) => name,

@@ -1164,11 +1164,19 @@ pub struct ClientLocalState {
     /// `local_name` when set.
     #[serde(default)]
     pub realm_remarks: BTreeMap<String, crate::account_data::RealmRemark>,
-    /// Actor-private contact remarks per
-    /// `discovery/client-preferences.md` §3.6. Keyed by actor DID and
-    /// hydrated from `ak.contacts.actor.<did>` account_data entries.
-    #[serde(default)]
+    /// Account-private global Contact petnames per
+    /// `discovery/client-preferences.md` §3.6. Keyed by the decrypted human
+    /// Contact `principal_id`; the opaque account-data slot is verified before
+    /// an entry reaches this map.
+    #[serde(default, skip)]
     pub contact_remarks: BTreeMap<String, crate::account_data::ContactRemark>,
+    /// Principals from the latest accepted-human Contact projection. This is a
+    /// transient eligibility index: retained remarks stay in `contact_remarks`
+    /// after a Contact becomes inactive, but must not decorate live surfaces.
+    /// Until the Contact projection is refreshed after startup, the safe
+    /// behavior is therefore to show no petnames.
+    #[serde(default, skip)]
+    pub accepted_human_contact_principals: BTreeSet<String>,
     /// Actor-private personal blocklist per
     /// `discovery/client-preferences.md` (`ak.account.blocklist`). Each
     /// entry hides messages from the targeted DID in chat
@@ -1458,6 +1466,7 @@ impl Default for ClientLocalState {
             history_secrets: BTreeMap::new(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
+            accepted_human_contact_principals: BTreeSet::new(),
             client_blocklist: Vec::new(),
             client_blocklist_revision: 0,
             pending_personal_block_sagas: BTreeSet::new(),

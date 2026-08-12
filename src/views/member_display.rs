@@ -21,6 +21,7 @@ pub(crate) struct RealmMemberRow {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ResolvedMemberDisplay {
     pub label: String,
+    pub collision_public_display: String,
     pub primary_handle: Option<String>,
     pub display_name: Option<String>,
     pub avatar_blob_ref: Option<arkret_sdk::BlobRef>,
@@ -300,9 +301,15 @@ pub(crate) fn resolve_member_display(
         let name = identity.display_profile.display_name.trim();
         (!name.is_empty()).then(|| name.to_owned())
     });
-    let label = member_label(row, identity.as_ref(), primary_handle.as_deref());
+    let public_label = member_label(row, identity.as_ref(), primary_handle.as_deref());
+    let collision_public_display = display_name
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| public_label.clone());
+    let label = member_label_with_contact_petname(store, row, &public_label);
     ResolvedMemberDisplay {
         label,
+        collision_public_display,
         primary_handle,
         display_name,
         avatar_blob_ref: identity.and_then(|identity| identity.display_profile.avatar_blob_ref),
@@ -311,29 +318,89 @@ pub(crate) fn resolve_member_display(
 }
 
 /// Canonical actor label for surfaces that only have a DID and no Realm
-/// roster row. Verified current-account and Directory handles win; a local
-/// contact remark is the human-readable fallback; the protocol id remains the
-/// final unresolved form.
+/// roster row. An accepted human Contact's global petname wins; verified
+/// handles remain the secondary fallback and the protocol id is last.
 pub(crate) fn actor_display_label(store: &LocalStateStore, did: &str) -> String {
     store
-        .primary_handle_for_did(did)
-        .and_then(|handle| {
-            crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
+        .active_contact_remark(did)
+        .and_then(|remark| {
+            let petname = remark.petname.trim();
+            (!petname.is_empty()).then(|| petname.to_owned())
+        })
+        .or_else(|| {
+            store
+                .primary_handle_for_did(did)
+                .and_then(|handle| crate::identity::handle::parse_user_handle(&handle))
+                .map(|parsed| parsed.display)
         })
         .or_else(|| {
             store
                 .cached_member_handle_lookup(did, None, None)
                 .and_then(|entry| entry.primary_handle)
-                .and_then(|handle| {
-                    crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
-                })
-        })
-        .or_else(|| {
-            store
-                .contact_remark(did)
-                .map(|remark| remark.display_name(did).to_owned())
+                .and_then(|handle| crate::identity::handle::parse_user_handle(&handle))
+                .map(|parsed| parsed.display)
         })
         .unwrap_or_else(|| short_protocol_id(did))
+}
+
+/// Realm roster variant. A petname is joined only through a unique verified
+/// subject_id projection; actor ids and display strings are never guessed as
+/// Contact principals.
+pub(crate) fn member_label_with_contact_petname(
+    store: &LocalStateStore,
+    row: &RealmMemberRow,
+    public_label: &str,
+) -> String {
+    row.subject_id
+        .as_deref()
+        .and_then(|principal_id| store.active_contact_remark(principal_id))
+        .and_then(|remark| {
+            let petname = remark.petname.trim();
+            (!petname.is_empty()).then(|| petname.to_owned())
+        })
+        .unwrap_or_else(|| public_label.to_owned())
+}
+
+/// Build the bounded local anchor index used to warn when a visible public
+/// display string collides with another accepted Contact's saved identity.
+pub(crate) fn contact_petname_anchor_index(
+    remarks: &BTreeMap<String, crate::account_data::ContactRemark>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut index = BTreeMap::<String, BTreeSet<String>>::new();
+    for (principal_id, remark) in remarks {
+        for anchor in [
+            Some(remark.petname.as_str()),
+            remark.global_display_name_at_save.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|anchor| !anchor.is_empty())
+        {
+            if let Ok(skeleton) = arkret_sdk::display_confusable_skeleton_v1(anchor) {
+                index
+                    .entry(skeleton)
+                    .or_default()
+                    .insert(principal_id.clone());
+            }
+        }
+    }
+    index
+}
+
+pub(crate) fn public_display_conflicts_with_other_contact(
+    anchor_index: &BTreeMap<String, BTreeSet<String>>,
+    subject_principal_id: Option<&str>,
+    public_display: &str,
+) -> bool {
+    let Ok(skeleton) = arkret_sdk::display_confusable_skeleton_v1(public_display) else {
+        return false;
+    };
+    anchor_index.get(&skeleton).is_some_and(|principals| {
+        principals
+            .iter()
+            .any(|principal| Some(principal.as_str()) != subject_principal_id)
+    })
 }
 
 pub(crate) fn member_label(
@@ -366,4 +433,110 @@ pub(crate) fn owned_agent_slug<'a>(
                 .and_then(|subject| owned_agent_slugs.get(subject))
         })
         .map(String::as_str)
+}
+
+#[cfg(test)]
+mod petname_tests {
+    use super::*;
+
+    fn remark(principal_id: &str, petname: &str) -> crate::account_data::ContactRemark {
+        crate::account_data::ContactRemark::new(
+            arkret_sdk::DidCoreId::new(principal_id).unwrap(),
+            petname,
+            chrono::Utc::now(),
+        )
+    }
+
+    fn accepted_human(principal_id: &str) -> crate::models::ContactListRow {
+        crate::models::ContactListRow {
+            peer: arkret_sdk::contact_operations::ContactPeer::Human {
+                principal_id: arkret_sdk::DidCoreId::new(principal_id).unwrap(),
+            },
+            state: arkret_sdk::ContactState::Accepted,
+            request_event_ref: None,
+            request_receipt: None,
+            response_event_ref: None,
+            tombstone_event_ref: None,
+            next_prepare_input: None,
+            granted_to_peer_scopes: Vec::new(),
+            granted_by_peer_scopes: Vec::new(),
+            bidirectional_scopes: Vec::new(),
+            effective_scopes: None,
+            peer_service_id: None,
+            direct_conversation: None,
+            agents: Vec::new(),
+        }
+    }
+
+    fn realm_row(actor_id: &str, subject_id: Option<&str>) -> RealmMemberRow {
+        RealmMemberRow {
+            actor_id: actor_id.to_owned(),
+            membership: Some("join".to_owned()),
+            identity_event_ids: Vec::new(),
+            member_display_state_digest: None,
+            subject_id: subject_id.map(ToOwned::to_owned),
+            handle_claims: Vec::new(),
+            handle_claims_limited: false,
+        }
+    }
+
+    #[test]
+    fn realm_petname_requires_both_accepted_contact_and_verified_subject_join() {
+        let principal = "ak:did_core:web:alice.example";
+        let mut store = LocalStateStore::default();
+        store.set_contact_remark(principal, remark(principal, "Alice from Ops"));
+        store.replace_accepted_human_contacts(&[accepted_human(principal)]);
+
+        assert_eq!(
+            member_label_with_contact_petname(
+                &store,
+                &realm_row("ak:did_core:key:realm-actor", None),
+                "Public Alice",
+            ),
+            "Public Alice"
+        );
+        assert_eq!(
+            member_label_with_contact_petname(
+                &store,
+                &realm_row("ak:did_core:key:realm-actor", Some(principal)),
+                "Public Alice",
+            ),
+            "Alice from Ops"
+        );
+
+        store.replace_accepted_human_contacts(&[]);
+        assert_eq!(
+            member_label_with_contact_petname(
+                &store,
+                &realm_row("ak:did_core:key:realm-actor", Some(principal)),
+                "Public Alice",
+            ),
+            "Public Alice"
+        );
+    }
+
+    #[test]
+    fn contact_anchor_index_excludes_the_visible_subjects_own_anchor() {
+        let alice = "ak:did_core:web:alice.example";
+        let bob = "ak:did_core:web:bob.example";
+        let remarks = BTreeMap::from([
+            (alice.to_owned(), remark(alice, "Alice")),
+            (bob.to_owned(), remark(bob, "Bob")),
+        ]);
+        let index = contact_petname_anchor_index(&remarks);
+
+        assert!(!public_display_conflicts_with_other_contact(
+            &index,
+            Some(alice),
+            "Ａlice"
+        ));
+        assert!(public_display_conflicts_with_other_contact(
+            &index,
+            Some(bob),
+            "Ａlice"
+        ));
+        assert!(public_display_conflicts_with_other_contact(
+            &index, None, "Ａlice"
+        ));
+    }
 }

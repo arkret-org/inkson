@@ -1572,22 +1572,6 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.invalid_realm_id",
         "Realm ID must start with ak:realm:",
     );
-    dict.set(
-        "feedback.contact_remark_saved",
-        "Contact remark saved: {name} \u{2192} {local_name}",
-    );
-    dict.set(
-        "feedback.contact_remark_cleared",
-        "Contact remark cleared for {name}",
-    );
-    dict.set(
-        "feedback.invalid_actor_identifier",
-        "Enter an actor DID or handle like alice:example.com",
-    );
-    dict.set(
-        "feedback.enter_actor_and_name",
-        "Enter both an actor identifier and a local name",
-    );
 }
 
 /// English strings for the contacts surfaces (contact-request panel, contact
@@ -1660,6 +1644,24 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.action.rejecting", "Declining…");
     dict.set("contacts.action.withdrawing", "Withdrawing…");
     dict.set("contacts.action.blocking", "Blocking…");
+    dict.set("contacts.petname.placeholder", "Petname (private)");
+    dict.set("contacts.petname.save", "Save petname");
+    dict.set("contacts.petname.saved", "Petname saved");
+    dict.set("contacts.petname.cleared", "Petname cleared");
+    dict.set("contacts.petname.badge", "Petname");
+    dict.set("contacts.petname.invalid", "Invalid petname");
+    dict.set(
+        "contacts.petname.invalid_principal",
+        "Invalid Contact principal",
+    );
+    dict.set(
+        "contacts.petname.confusable_warning",
+        "Possible Contact impersonation",
+    );
+    dict.set(
+        "contacts.petname.confusable_warning_detail",
+        "This public name is confusable with another accepted Contact's petname or saved public name. Verify the principal identifier.",
+    );
     dict.set("contacts.dm.opening", "Opening direct chat…");
     dict.set(
         "contacts.dm.awaiting_founder",

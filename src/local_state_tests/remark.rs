@@ -89,13 +89,33 @@ fn realm_remark_persists_to_disk_between_instances() {
 fn contact_remark_set_tombstone_and_display_name() {
     let path = temp_state_path("contact-remark-set");
     let mut store = LocalStateStore::with_path(path);
-    let did = "did:web:alice.example";
+    let did = "ak:did_core:web:alice.example";
     assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice");
+
+    let accepted = crate::models::ContactListRow {
+        peer: arkret_sdk::contact_operations::ContactPeer::Human {
+            principal_id: arkret_sdk::DidCoreId::new(did).unwrap(),
+        },
+        state: arkret_sdk::ContactState::Accepted,
+        request_event_ref: None,
+        request_receipt: None,
+        response_event_ref: None,
+        tombstone_event_ref: None,
+        next_prepare_input: None,
+        granted_to_peer_scopes: Vec::new(),
+        granted_by_peer_scopes: Vec::new(),
+        bidirectional_scopes: Vec::new(),
+        effective_scopes: None,
+        peer_service_id: None,
+        direct_conversation: None,
+        agents: Vec::new(),
+    };
+    store.replace_accepted_human_contacts(std::slice::from_ref(&accepted));
 
     store.set_contact_remark(
         did,
         crate::account_data::ContactRemark::new(
-            crate::mls_api_helpers::principal_core_id(did).unwrap(),
+            arkret_sdk::DidCoreId::new(did).unwrap(),
             "Alice from Ops",
             chrono::Utc::now(),
         ),
@@ -103,13 +123,49 @@ fn contact_remark_set_tombstone_and_display_name() {
     assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice from Ops");
     assert!(store.contact_remarks().contains_key(did));
 
+    store.replace_accepted_human_contacts(&[]);
+    assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice");
+    assert!(store.contact_remarks().contains_key(did));
+    store.replace_accepted_human_contacts(&[accepted]);
+
     store.set_contact_remark(
         did,
         crate::account_data::ContactRemark::new(
-            crate::mls_api_helpers::principal_core_id(did).unwrap(),
+            arkret_sdk::DidCoreId::new(did).unwrap(),
             "",
             chrono::Utc::now(),
         ),
     );
     assert!(store.contact_remark(did).is_none());
+}
+
+#[test]
+fn opaque_contact_remark_tombstone_removes_only_the_bound_principal() {
+    let path = temp_state_path("contact-remark-opaque-tombstone");
+    let mut store = LocalStateStore::with_path(path);
+    let namespace_key: Vec<u8> = (0_u8..=31).collect();
+    let alice = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+    let bob = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
+    store.set_contact_remark(
+        alice.to_string(),
+        crate::account_data::ContactRemark::new(
+            alice.clone(),
+            "Alice from Ops",
+            chrono::Utc::now(),
+        ),
+    );
+    store.set_contact_remark(
+        bob.to_string(),
+        crate::account_data::ContactRemark::new(bob.clone(), "Bob", chrono::Utc::now()),
+    );
+    let persisted_projection = serde_json::to_string(&store.load()).unwrap();
+    assert!(!persisted_projection.contains("Alice from Ops"));
+    assert!(!persisted_projection.contains("\"contact_remarks\""));
+
+    let alice_key =
+        crate::account_data::contact_remark_account_data_key(&namespace_key, &alice).unwrap();
+    assert!(store.remove_contact_remark_by_storage_key(&namespace_key, &alice_key));
+    assert!(store.contact_remark(alice.as_str()).is_none());
+    assert!(store.contact_remark(bob.as_str()).is_some());
+    assert!(!store.remove_contact_remark_by_storage_key(&namespace_key, &alice_key));
 }

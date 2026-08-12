@@ -103,12 +103,14 @@ pub(super) fn load_own_agents_for_sidebar(
 pub(super) fn load_direct_contacts_and_agents_for_sidebar(
     base: String,
     api_token: String,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
     mut own_agent_rows: Signal<Vec<arkret_sdk::AgentProjection>>,
     mut own_agents_loaded: Signal<bool>,
 ) {
     if api_token.trim().is_empty() {
+        state_store.write().replace_accepted_human_contacts(&[]);
         direct_contact_rows.set(Vec::new());
         direct_contacts_loaded.set(false);
         own_agent_rows.set(Vec::new());
@@ -128,7 +130,12 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
         {
             Ok((contacts, agents)) => {
                 match contacts {
-                    Ok(response) => direct_contact_rows.set(response.contacts),
+                    Ok(response) => {
+                        state_store
+                            .write()
+                            .replace_accepted_human_contacts(&response.contacts);
+                        direct_contact_rows.set(response.contacts);
+                    }
                     Err(err) => {
                         direct_contacts_loaded.set(false);
                         crate::components::feedback::toast_error(
@@ -162,10 +169,12 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
 pub(super) fn load_direct_contacts_for_sidebar(
     base: String,
     api_token: String,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
 ) {
     if api_token.trim().is_empty() {
+        state_store.write().replace_accepted_human_contacts(&[]);
         direct_contact_rows.set(Vec::new());
         direct_contacts_loaded.set(false);
         return;
@@ -180,7 +189,12 @@ pub(super) fn load_direct_contacts_for_sidebar(
         )
         .await
         {
-            Ok(response) => direct_contact_rows.set(response.contacts),
+            Ok(response) => {
+                state_store
+                    .write()
+                    .replace_accepted_human_contacts(&response.contacts);
+                direct_contact_rows.set(response.contacts);
+            }
             Err(err) => {
                 direct_contacts_loaded.set(false);
                 crate::components::feedback::toast_error(
@@ -401,7 +415,7 @@ pub(super) fn delete_sidebar_contact(
     base_url: String,
     api_token: String,
     peer: String,
-    state_store: SyncSignal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
 ) {
@@ -422,12 +436,14 @@ pub(super) fn delete_sidebar_contact(
         .await
         {
             Ok(_) => {
-                direct_contact_rows.set(
-                    direct_contact_rows()
-                        .into_iter()
-                        .filter(|row| crate::models::contact_peer_id(row).as_str() != peer)
-                        .collect(),
-                );
+                let next_rows: Vec<_> = direct_contact_rows()
+                    .into_iter()
+                    .filter(|row| crate::models::contact_peer_id(row).as_str() != peer)
+                    .collect();
+                state_store
+                    .write()
+                    .replace_accepted_human_contacts(&next_rows);
+                direct_contact_rows.set(next_rows);
                 direct_contacts_loaded.set(true);
                 crate::components::feedback::toast_success(
                     "feedback.contact_deleted",

@@ -202,7 +202,7 @@ fn ContactRow(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let nav = use_navigator();
     let mut row_status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -219,9 +219,21 @@ fn ContactRow(
         .map(ToString::to_string)
         .filter(|service_id| !service_id.trim().is_empty());
     let peer_label = actor_display_label(&state_store.read(), &peer);
+    let existing_remark = state_store.read().contact_remark(&peer);
+    let mut petname_input = use_signal(|| {
+        existing_remark
+            .as_ref()
+            .map(|remark| remark.petname.clone())
+            .unwrap_or_default()
+    });
     let is_pending_incoming = state == arkret_sdk::ContactState::PendingIncoming;
     let is_pending_outgoing = state == arkret_sdk::ContactState::PendingOutgoing;
     let is_accepted = state == arkret_sdk::ContactState::Accepted;
+    let is_accepted_human = is_accepted
+        && matches!(
+            &contact.peer,
+            arkret_sdk::contact_operations::ContactPeer::Human { .. }
+        );
     let is_weak = matches!(
         state,
         arkret_sdk::ContactState::Rejected | arkret_sdk::ContactState::Tombstoned
@@ -272,6 +284,67 @@ fn ContactRow(
             }
 
             div { class: "actions",
+                if is_accepted_human {
+                    Input {
+                        r#type: "text",
+                        "data-testid": "contact-petname-{peer}",
+                        placeholder: tr("contacts.petname.placeholder"),
+                        value: "{petname_input}",
+                        maxlength: "128",
+                        oninput: move |event: FormEvent| petname_input.set(event.value()),
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "contact-petname-save-{peer}",
+                        onclick: {
+                            let peer = peer.clone();
+                            let existing = existing_remark.clone();
+                            let base = base_url.clone();
+                            move |_| {
+                                let petname = petname_input().trim().to_owned();
+                                if !petname.is_empty()
+                                    && let Err(error) = arkret_sdk::validate_single_line_display_text(
+                                        &petname,
+                                        128,
+                                        512,
+                                    )
+                                {
+                                    row_status.set(format!("{}: {error}", tr("contacts.petname.invalid")));
+                                    return;
+                                }
+                                let Ok(principal_id) = arkret_sdk::DidCoreId::new(peer.clone()) else {
+                                    row_status.set(tr("contacts.petname.invalid_principal"));
+                                    return;
+                                };
+                                let mut remark = existing
+                                    .clone()
+                                    .unwrap_or_else(|| crate::account_data::ContactRemark::new(
+                                        principal_id,
+                                        "",
+                                        chrono::Utc::now(),
+                                    ));
+                                remark.petname = petname.clone();
+                                remark.updated_at = Some(chrono::Utc::now());
+                                state_store
+                                    .write()
+                                    .set_contact_remark(peer.clone(), remark.clone());
+                                row_status.set(if petname.is_empty() {
+                                    tr("contacts.petname.cleared")
+                                } else {
+                                    tr("contacts.petname.saved")
+                                });
+                                crate::views::settings::push_contact_remark_account_data(
+                                    base.clone(),
+                                    token(),
+                                    peer.clone(),
+                                    remark,
+                                );
+                            }
+                        },
+                        {tr("contacts.petname.save")}
+                    }
+                    span { class: "pill muted xs", {tr("contacts.petname.badge")} }
+                }
                 if is_pending_incoming {
                     Button {
                         variant: ButtonVariant::Primary,
@@ -692,9 +765,10 @@ fn run_contact_action(
 
 #[component]
 pub fn ContactsPanel(token: Signal<String>) -> Element {
-    // A4 — base_url from session context instead of a prop. (state_store is now
-    // read from context directly by ContactRow, so ContactsPanel no longer needs it.)
+    // A4 — base_url and the account-scoped state store come from session
+    // context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut contacts = use_signal(Vec::<ContactListRow>::new);
     let mut status = use_signal(|| "loading".to_owned());
     let mut error = use_signal(|| Option::<String>::None);
@@ -723,6 +797,9 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                 {
                     Ok(response) => {
                         let count = response.contacts.len();
+                        state_store
+                            .write()
+                            .replace_accepted_human_contacts(&response.contacts);
                         contacts.set(response.contacts);
                         status.set(format!("contacts {count}"));
                     }

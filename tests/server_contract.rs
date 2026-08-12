@@ -726,9 +726,11 @@ fn account_data_canonical_contact_and_realm_remark_keys_contract() {
         realm_remark_account_data_key("ak:realm:AWBsC7hBNqnZ5M_TybXfFGKJokXyNzSLp3vORrEQnNLE"),
         "ak.contacts.realm.ak:realm:AWBsC7hBNqnZ5M_TybXfFGKJokXyNzSLp3vORrEQnNLE"
     );
+    let namespace_key: Vec<u8> = (0u8..=31).collect();
+    let principal_id = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
     assert_eq!(
-        contact_remark_account_data_key("did:web:alice.example"),
-        "ak.contacts.actor.did:web:alice.example"
+        contact_remark_account_data_key(&namespace_key, &principal_id).unwrap(),
+        "ak.contacts.actor.pD0U2utjPMaXROrStCFHbCtquoTSVsA7mo9nVniePkY"
     );
     assert_eq!(
         AccountDataKey::ClientReadReceipts.as_wire(),
@@ -760,6 +762,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         secret,
         chrono::Utc::now(),
     );
+    assert_eq!(contact_remark.petname, secret);
     let realm_id = "ak:realm:ATEG2QCavtpxeXB5vkEeQqzkPjtieb9NlGtUvdteawYZ";
     let mut realm_remark = RealmRemark::new(
         arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
@@ -789,6 +792,8 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
     validate_blind_wakeup_payload(&blind_push).unwrap();
     validate_blind_wakeup_payload(&json!({"local_name": secret}))
         .expect_err("blind push must reject local remark fields");
+    validate_blind_wakeup_payload(&json!({"petname": secret}))
+        .expect_err("blind push must reject contact petnames");
 
     let search = inkson::models::IndexSearchView {
         query: "hello".to_owned(),

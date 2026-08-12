@@ -96,6 +96,7 @@ const BLIND_WAKEUP_FORBIDDEN_KEYS: &[&str] = &[
     "local_name",
     "message_id",
     "note",
+    "petname",
     "principal_did",
     "principal_id",
     "push_target_id",

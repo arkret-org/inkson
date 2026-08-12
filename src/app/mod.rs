@@ -827,7 +827,7 @@ fn AppBootstrap() -> Element {
     // generational-box when the opening state is cleared.
     let own_agent_rows_for_sidebar = own_agent_rows.read().clone();
     let realm_remarks_for_sidebar = state_store.read().realm_remarks();
-    let contact_remarks_for_sidebar = state_store.read().contact_remarks();
+    let contact_remarks_for_sidebar = state_store.read().active_contact_remarks();
     let filtered_realm_tree: Vec<_> = realm_tree
         .iter()
         .filter(|item| {
@@ -1912,6 +1912,7 @@ fn AppBootstrap() -> Element {
                                         load_direct_contacts_and_agents_for_sidebar(
                                             base.clone(),
                                             token(),
+                                            state_store,
                                             direct_contact_rows,
                                             direct_contacts_loaded,
                                             own_agent_rows,
@@ -1954,6 +1955,7 @@ fn AppBootstrap() -> Element {
                                                 load_direct_contacts_and_agents_for_sidebar(
                                                     base.clone(),
                                                     token(),
+                                                    state_store,
                                                     direct_contact_rows,
                                                     direct_contacts_loaded,
                                                     own_agent_rows,
@@ -2009,6 +2011,7 @@ fn AppBootstrap() -> Element {
                                             load_direct_contacts_and_agents_for_sidebar(
                                                 base.clone(),
                                                 token(),
+                                                state_store,
                                                 direct_contact_rows,
                                                 direct_contacts_loaded,
                                                 own_agent_rows,
@@ -2259,6 +2262,12 @@ fn AppBootstrap() -> Element {
                                     let can_resolve =
                                         contact.state == arkret_sdk::ContactState::Accepted
                                             && (has_direct_scope || has_active_direct);
+                                    let can_edit_contact_remark =
+                                        contact.state == arkret_sdk::ContactState::Accepted
+                                            && matches!(
+                                                &contact.peer,
+                                                arkret_sdk::contact_operations::ContactPeer::Human { .. }
+                                            );
                                     let contact_remark =
                                         contact_remarks_for_sidebar.get(&peer).cloned();
                                     let display_name = actor_display_label(&state_store.read(), &peer);
@@ -2281,7 +2290,7 @@ fn AppBootstrap() -> Element {
                                     };
                                                                         let has_contact_remark = contact_remark
                                         .as_ref()
-                                        .is_some_and(|remark| !remark.local_name.trim().is_empty());
+                                        .is_some_and(|remark| !remark.petname.trim().is_empty());
                                     let is_pinned_contact =
                                         contact_remark.as_ref().is_some_and(|remark| remark.pinned);
                                     let pin_contact_label = if is_pinned_contact {
@@ -2490,6 +2499,7 @@ fn AppBootstrap() -> Element {
                                                         class: "sidebar-row-menu-panel",
                                                         role: "menu",
                                                         "aria-label": "Contact actions",
+                                                        if can_edit_contact_remark {
                                                         button {
                                                             class: "sidebar-row-menu-item",
                                                             r#type: "button",
@@ -2517,6 +2527,7 @@ fn AppBootstrap() -> Element {
                                                             },
                                                             UiIcon { name: "pin" }
                                                             span { "{pin_contact_label}" }
+                                                        }
                                                         }
                                                         button {
                                                             class: "sidebar-row-menu-item danger",

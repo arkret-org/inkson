@@ -115,6 +115,7 @@ struct MemberProfile {
     handles: Vec<String>,
     remark_name: Option<String>,
     remark_note: Option<String>,
+    confusable_contact_warning: bool,
     membership: Option<String>,
     member_display_state_digest: Option<String>,
     is_owner: bool,
@@ -133,6 +134,7 @@ impl MemberProfile {
             handles: Vec::new(),
             remark_name: None,
             remark_note: None,
+            confusable_contact_warning: false,
             membership: None,
             member_display_state_digest: None,
             is_owner: false,
@@ -420,6 +422,7 @@ fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
     }
     target.is_owner |= incoming.is_owner;
     target.is_admin |= incoming.is_admin;
+    target.confusable_contact_warning |= incoming.confusable_contact_warning;
 }
 
 fn should_replace_member_membership(current: Option<&str>, incoming: Option<&str>) -> bool {
@@ -462,11 +465,19 @@ fn projected_member_profiles_for_realm(
 ) -> Vec<MemberProfile> {
     let state = store.load();
     let mut rows = BTreeMap::<String, MemberProfile>::new();
+    let contact_anchor_index =
+        crate::views::member_display::contact_petname_anchor_index(&store.active_contact_remarks());
     if let Some(projection) = state.realm_tree_projections.get(realm_id) {
         for row in crate::views::member_display::realm_member_roster(Some(projection)) {
             let display =
                 crate::views::member_display::resolve_member_display(store, realm_id, &row);
             let mut profile = MemberProfile::bare(row.actor_id);
+            profile.confusable_contact_warning =
+                crate::views::member_display::public_display_conflicts_with_other_contact(
+                    &contact_anchor_index,
+                    display.subject_id.as_deref(),
+                    &display.collision_public_display,
+                );
             profile.subject_id = display.subject_id;
             profile.display_name = display.display_name;
             profile.avatar_blob_ref = display.avatar_blob_ref;
@@ -514,9 +525,15 @@ fn projected_member_profiles_for_realm(
     }
     let mut out: Vec<MemberProfile> = rows.into_values().collect();
     for profile in &mut out {
-        if let Some(remark) = store.contact_remark(&profile.actor_id) {
+        // Realm actor ids are not Contact identity keys. Join a global
+        // petname only through the verified subject projection.
+        if let Some(remark) = profile
+            .subject_id
+            .as_deref()
+            .and_then(|principal_id| store.active_contact_remark(principal_id))
+        {
             profile.remark_name =
-                (!remark.local_name.trim().is_empty()).then(|| remark.local_name.trim().to_owned());
+                (!remark.petname.trim().is_empty()).then(|| remark.petname.trim().to_owned());
             profile.remark_note =
                 (!remark.note.trim().is_empty()).then(|| remark.note.trim().to_owned());
         }
@@ -3352,6 +3369,9 @@ pub fn RealmMembersPanel(
                             .into_iter()
                             .filter(|c| c.state == arkret_sdk::ContactState::Accepted)
                             .collect();
+                        state_store
+                            .write()
+                            .replace_accepted_human_contacts(&accepted);
                         let count = accepted.len();
                         invite_contacts.set(accepted);
                         invite_contacts_status.set(if count == 0 {
@@ -4462,6 +4482,14 @@ pub fn RealmMembersPanel(
                                                         span { class: "badge amber", "Owner" }
                                                     } else if member_profile.is_admin {
                                                         span { class: "badge blue", "Admin" }
+                                                    }
+                                                    if member_profile.confusable_contact_warning {
+                                                        span {
+                                                            class: "badge amber",
+                                                            "data-testid": "member-contact-confusable-warning",
+                                                            title: "{crate::i18n::tr(\"contacts.petname.confusable_warning_detail\")}",
+                                                            {crate::i18n::tr("contacts.petname.confusable_warning")}
+                                                        }
                                                     }
                                                     if !is_self && has_agents {
                                                         span {

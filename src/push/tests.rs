@@ -139,6 +139,7 @@ fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
         serde_json::json!({"sender": "did:web:alice.example"}),
         serde_json::json!({"items": [{"strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q"}]}),
         serde_json::json!({"local_name": "Alice from Ops"}),
+        serde_json::json!({"petname": "Alice from Ops"}),
         serde_json::json!({"remark": "private label"}),
         serde_json::json!({"opaque": "did:web:alice.example"}),
     ] {

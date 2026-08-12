@@ -1457,22 +1457,6 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
         "feedback.invalid_realm_id",
         "Realm ID 必须以 ak:realm: 开头",
     );
-    dict.set(
-        "feedback.contact_remark_saved",
-        "联系人备注已保存:{name} \u{2192} {local_name}",
-    );
-    dict.set(
-        "feedback.contact_remark_cleared",
-        "已清除 {name} 的联系人备注",
-    );
-    dict.set(
-        "feedback.invalid_actor_identifier",
-        "请输入 DID 或形如 alice:example.com 的 handle",
-    );
-    dict.set(
-        "feedback.enter_actor_and_name",
-        "请同时输入联系人标识和本地名称",
-    );
 }
 
 /// Chinese translations for the contacts surfaces — mirrors
@@ -1534,6 +1518,18 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.action.rejecting", "正在拒绝…");
     dict.set("contacts.action.withdrawing", "正在撤回…");
     dict.set("contacts.action.blocking", "正在拉黑…");
+    dict.set("contacts.petname.placeholder", "备注名（仅自己可见）");
+    dict.set("contacts.petname.save", "保存备注名");
+    dict.set("contacts.petname.saved", "备注名已保存");
+    dict.set("contacts.petname.cleared", "备注名已清除");
+    dict.set("contacts.petname.badge", "备注名");
+    dict.set("contacts.petname.invalid", "备注名无效");
+    dict.set("contacts.petname.invalid_principal", "联系人主体无效");
+    dict.set("contacts.petname.confusable_warning", "疑似冒充联系人");
+    dict.set(
+        "contacts.petname.confusable_warning_detail",
+        "此公开名称与另一位已接受联系人的备注名或保存时公开名称高度相似，请核对主体标识。",
+    );
     dict.set("contacts.dm.opening", "正在打开私聊…");
     dict.set(
         "contacts.dm.awaiting_founder",
