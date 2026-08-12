@@ -75,12 +75,14 @@ pub fn prepare_registration_checkpoint(
         .ok_or_else(|| anyhow!("account handoff has no lease fence"))?;
     let draft = arkret_sdk::webvh::prepare_principal_inception(
         &arkret_sdk::webvh::PrincipalInceptionInput {
+            provider_endpoint: &endpoint,
             principal_endpoint: &endpoint,
             local_id: &local_id,
             also_known_as: &[],
             version_time: created_at,
             root_seed: &key_material.root_seed,
             next_root_public_key_multibase: &key_material.next_root_public_key_multikey,
+            witness_policy: None,
         },
     )?;
     let genesis_hlc = crate::signing_stamp::issue_realm_genesis_hlc_with_secret(

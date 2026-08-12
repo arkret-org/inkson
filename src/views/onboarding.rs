@@ -16,6 +16,8 @@ use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
+const CURRENT_DEPLOYMENT_HUMAN_ANCHOR_METHOD: &str = "did:webvh";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum IdentityChoice {
     #[default]
@@ -993,6 +995,7 @@ fn PendingAccountIdentityCreation(
                         } else {
                             h3 { "Create your identity" }
                             p { "It will be anchored by a Recovery Key and hosted with {hosting_name}. No device approval step is needed." }
+                            p { class: "muted", "This deployment creates a {CURRENT_DEPLOYMENT_HUMAN_ANCHOR_METHOD} identity. Arkret also permits did:web and did:key human anchors in deployments that support them; they are not registration options here." }
                         }
                         Button {
                             variant: ButtonVariant::Primary,
@@ -1970,6 +1973,11 @@ mod tests {
             "identity.example"
         );
         assert_eq!(hosting_label("not a url"), "your selected service");
+    }
+
+    #[test]
+    fn current_deployment_exposes_only_its_connected_human_anchor_method() {
+        assert_eq!(CURRENT_DEPLOYMENT_HUMAN_ANCHOR_METHOD, "did:webvh");
     }
 
     #[test]
