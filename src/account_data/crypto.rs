@@ -21,9 +21,10 @@ pub fn encrypt_account_data_value(
     let secret: [u8; 32] = secret
         .try_into()
         .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
+    let actor_core_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
     let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
         &secret,
-        actor_id,
+        &actor_core_id,
         account_data_key,
         plaintext,
     )?;
@@ -48,9 +49,10 @@ pub fn decrypt_account_data_value(
     let secret: [u8; 32] = secret
         .try_into()
         .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
+    let actor_core_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
     arkret_sdk::account_data_crypto::open_account_data_value(
         &secret,
-        actor_id,
+        &actor_core_id,
         account_data_key,
         &envelope,
     )

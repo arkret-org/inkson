@@ -896,9 +896,10 @@ fn seal_record_envelope(
         aad,
         ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
     })?;
+    let actor_core_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
     let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
         &crypto.account_data_secret,
-        actor_id,
+        &actor_core_id,
         account_data_key,
         &inner_envelope,
     )?;
