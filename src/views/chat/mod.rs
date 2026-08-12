@@ -946,9 +946,9 @@ async fn ensure_owned_agent_sidecar(
     }
     if addressed
         .iter()
-        .any(|agent_id| !view.owned_agent_ids.contains(agent_id))
+        .any(|agent_id| !view.desired_agent_ids.contains(agent_id))
     {
-        anyhow::bail!("an addressed Agent is not owned by this native Sidecar controller");
+        anyhow::bail!("an addressed Agent is not a desired member of this Realm Sidecar");
     }
     tracing::info!(
         target: "sidecar",

@@ -3325,10 +3325,10 @@ export async function mockArkretApi(
         access_readiness:
           sidecarPendingMemberReconciliations.length === 0
             ? "ready"
-            : "access_reconciliation_pending",
+            : "key_material_pending",
         pending_access_reconciliations: sidecarPendingMemberReconciliations.map(
           (item) => ({
-            provisioning_phase: "backing_scope_membership",
+            provisioning_phase: "mls_welcome",
             ...item,
           }),
         ),
@@ -3340,9 +3340,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       const sidecarId = "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm";
-      const backingCircleId = "ak:circle:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP";
       const desiredAgentIds = [...sidecarAgentIds].sort();
-      const principalIds = [accountPrincipalId, ...desiredAgentIds].sort();
       const ready = sidecarPendingMemberReconciliations.length === 0;
       return json(route, {
         items: [
@@ -3352,7 +3350,6 @@ export async function mockArkretApi(
               schema: "ak.schema.agent_sidecar.v1",
               realm_id: DEMO_REALM,
               controller_id: accountPrincipalId,
-              backing_circle_id: backingCircleId,
               encryption_profile: "mls_rfc9420",
               state: "active",
               created_at: "2026-07-20T00:00:00.000Z",
@@ -3360,12 +3357,12 @@ export async function mockArkretApi(
             desired_agent_ids: desiredAgentIds,
             effective_agent_ids: ready ? desiredAgentIds : [],
             mls_context: {
-              desired_access_digest: canonicalSha256({
-                domain: "ak.sidecar.desired_access.v1",
+              participant_authority_digest: canonicalSha256({
+                domain: "ak.sidecar.participant_authority.v1",
                 sidecar_id: sidecarId,
                 realm_id: DEMO_REALM,
                 controller_id: accountPrincipalId,
-                principal_ids: principalIds,
+                desired_agent_ids: desiredAgentIds,
               }),
               control_frontier: [
                 "ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh",
@@ -3380,10 +3377,10 @@ export async function mockArkretApi(
                 : {}),
               current_controller_device_ready: ready,
             },
-            access_readiness: ready ? "ready" : "access_reconciliation_pending",
+            access_readiness: ready ? "ready" : "key_material_pending",
             pending_access_reconciliations:
               sidecarPendingMemberReconciliations.map((item) => ({
-                provisioning_phase: "backing_scope_membership",
+                provisioning_phase: "mls_welcome",
                 ...item,
               })),
           },
@@ -3397,9 +3394,7 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       const sidecarId = "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm";
-      const backingCircleId = "ak:circle:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP";
       const desiredAgentIds = [...sidecarAgentIds].sort();
-      const principalIds = [accountPrincipalId, ...desiredAgentIds].sort();
       const ready = sidecarPendingMemberReconciliations.length === 0;
       return json(route, {
         sidecar: {
@@ -3407,7 +3402,6 @@ export async function mockArkretApi(
           schema: "ak.schema.agent_sidecar.v1",
           realm_id: DEMO_REALM,
           controller_id: accountPrincipalId,
-          backing_circle_id: backingCircleId,
           encryption_profile: "mls_rfc9420",
           state: "active",
           created_at: "2026-07-20T00:00:00.000Z",
@@ -3415,12 +3409,12 @@ export async function mockArkretApi(
         desired_agent_ids: desiredAgentIds,
         effective_agent_ids: ready ? desiredAgentIds : [],
         mls_context: {
-          desired_access_digest: canonicalSha256({
-            domain: "ak.sidecar.desired_access.v1",
+          participant_authority_digest: canonicalSha256({
+            domain: "ak.sidecar.participant_authority.v1",
             sidecar_id: sidecarId,
             realm_id: DEMO_REALM,
             controller_id: accountPrincipalId,
-            principal_ids: principalIds,
+            desired_agent_ids: desiredAgentIds,
           }),
           control_frontier: ["ak:event:ASxjW4aTY3IHG1S2ppEjlCLLjAWhegQuSyKadYw7T3oh"],
           ...(ready
@@ -3433,10 +3427,10 @@ export async function mockArkretApi(
             : {}),
           current_controller_device_ready: ready,
         },
-        access_readiness: ready ? "ready" : "access_reconciliation_pending",
+        access_readiness: ready ? "ready" : "key_material_pending",
         pending_access_reconciliations: sidecarPendingMemberReconciliations.map(
           (item) => ({
-            provisioning_phase: "backing_scope_membership",
+            provisioning_phase: "mls_welcome",
             ...item,
           }),
         ),

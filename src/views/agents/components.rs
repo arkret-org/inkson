@@ -1,5 +1,4 @@
-//! Reusable agent UI components: actor-kind badge, Sidecar exposure
-//! disclosure, the action-approve dialog, and the
+//! Reusable agent UI components: actor-kind badge, the action-approve dialog, and the
 //! controller-owned draft-approval panel.
 
 use dioxus::prelude::*;
@@ -28,86 +27,6 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
             "data-testid": "actor-kind-badge",
             "data-actor-kind": kind.unwrap_or("unknown"),
             "{label}"
-        }
-    }
-}
-
-/// AKP-0009 §3 invariant 10 / AKP-0008 §4.5 — sidecar exposure
-/// disclosure panel. Before resume, the controller MUST acknowledge any
-/// Sidecars that became newly visible while the agent was paused.
-/// The acknowledged object_refs feed `resume_sidecar_refs`, which the
-/// resume button folds into a real `agent_sidecar_exposure_ack`.
-///
-/// Data source: soland's sidecar exposure projection is not yet wired, so
-/// the disclosed refs are entered by the operator here; once the projection
-/// ships, the agent view's exposure field populates this list automatically.
-#[component]
-pub fn SidecarExposureDisclosure(
-    controller_id: String,
-    resume_sidecar_refs: Signal<Vec<String>>,
-) -> Element {
-    let mut ref_input = use_signal(String::new);
-    rsx! {
-        div { class: "event", "data-testid": "sidecar-exposure-disclosure",
-            div { class: "event-head",
-                span { "Sidecar exposure disclosure" }
-                span { class: "badge", "AKP-0009 §3 inv. 10" }
-            }
-            div { class: "muted",
-                "Controller: {controller_id}. Before resuming a paused agent, acknowledge any Sidecars that became newly visible while it was paused. Acknowledged refs are sent as the resume sidecar_exposure_ack."
-            }
-            div { class: "muted", "data-testid": "sidecar-exposure-data-source",
-                "Data source: soland sidecar exposure projection pending — enter the disclosed sidecar object_refs below until the projection auto-populates this list."
-            }
-            div { class: "workflow-form",
-                Input {
-                    "data-testid": "sidecar-exposure-ref-input",
-                    placeholder: "Sidecar object_ref (ak:sidecar:...)",
-                    value: "{ref_input}",
-                    oninput: move |event: FormEvent| ref_input.set(event.value()),
-                }
-                div { class: "actions",
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "sidecar-exposure-ack-add-button",
-                        disabled: ref_input().trim().is_empty(),
-                        onclick: move |_| {
-                            let value = ref_input().trim().to_owned();
-                            if value.is_empty() { return; }
-                            let mut refs = resume_sidecar_refs.write();
-                            if !refs.contains(&value) {
-                                refs.push(value);
-                            }
-                            ref_input.set(String::new());
-                        },
-                        "Acknowledge ref"
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "sidecar-exposure-ack-clear-button",
-                        disabled: resume_sidecar_refs.read().is_empty(),
-                        onclick: move |_| resume_sidecar_refs.set(Vec::new()),
-                        "Clear"
-                    }
-                }
-                if resume_sidecar_refs.read().is_empty() {
-                    div { class: "muted", "data-testid": "sidecar-exposure-ack-empty",
-                        "No newly-exposed sidecars acknowledged. Resume will send no exposure ack."
-                    }
-                } else {
-                    div { class: "timeline", "data-testid": "sidecar-exposure-ack-list",
-                        for sidecar_ref in resume_sidecar_refs.read().iter() {
-                            div {
-                                class: "metric",
-                                "data-testid": "sidecar-exposure-ack-row",
-                                "data-sidecar-ref": "{sidecar_ref}",
-                                span { class: "mono", "{sidecar_ref}" }
-                                span { class: "badge green", "acknowledged" }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

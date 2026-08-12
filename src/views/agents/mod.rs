@@ -11,9 +11,7 @@ pub(crate) use bootstrap::{bootstrap_provisioned_agent, seal_managed_agent_pcr_c
 mod tests;
 
 pub use admin::PersonalAgentAdminPanel;
-pub use components::{
-    ActionApproveDialog, ActorKindBadge, DraftApprovalPanel, SidecarExposureDisclosure,
-};
+pub use components::{ActionApproveDialog, ActorKindBadge, DraftApprovalPanel};
 pub(crate) use model::mentionable_owned_agent_slugs;
 pub use model::{
     ActionApproveDialogState, ActionRequestNonceStatus, AgentGrantPreset, AgentServiceScopePreset,

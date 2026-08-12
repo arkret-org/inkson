@@ -1931,7 +1931,7 @@ mod tests {
             access_readiness: if pending.is_empty() {
                 arkret_sdk::AgentSidecarAccessReadiness::Ready
             } else {
-                arkret_sdk::AgentSidecarAccessReadiness::AccessReconciliationPending
+                arkret_sdk::AgentSidecarAccessReadiness::KeyMaterialPending
             },
             pending_access_reconciliations: pending,
             mls_context: arkret_sdk::AgentSidecarMlsContext {
@@ -1963,9 +1963,8 @@ mod tests {
         let session = session(vec![arkret_sdk::PendingSidecarAccessReconciliationItem {
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:assistant")
                 .unwrap(),
-            provisioning_phase:
-                arkret_sdk::PendingSidecarAccessReconciliationStage::BackingScopeMembership,
-            reason: arkret_sdk::NonEmptyString::new("membership_projection_pending").unwrap(),
+            provisioning_phase: arkret_sdk::PendingSidecarAccessReconciliationStage::MlsWelcome,
+            reason: arkret_sdk::NonEmptyString::new("native_sidecar_mls_welcome_pending").unwrap(),
             membership_frontier: None,
         }]);
         assert!(!session.membership_ready());

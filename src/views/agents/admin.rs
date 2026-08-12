@@ -799,7 +799,6 @@ fn spawn_set_agent_enabled(
                     realm_id: key_state.principal_control_realm_id.clone(),
                 },
                 key_state.controller_authorization_ref.clone(),
-                None,
                 1,
                 placeholder_hlc,
                 status_changed_at,
@@ -864,10 +863,7 @@ fn spawn_set_agent_enabled(
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("lifecycle submission is missing"))?;
             let outcome = if enabled {
-                let body = AgentResumeRequestBody {
-                    sidecar_exposure_ack: None,
-                    lifecycle_event,
-                };
+                let body = AgentResumeRequestBody { lifecycle_event };
                 submitter
                     .http()
                     .agent_resume(&id, &body)
