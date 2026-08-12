@@ -243,13 +243,45 @@ pub fn ensure_device_key(store: &mut LocalStateStore) -> Result<DpopHandle, Auth
     #[cfg(not(test))]
     {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        ensure_device_key_with_secure_store(store, secure_store.as_ref())
+        if let Some(device_id) = crate::secure_key_store::pending_login_device_id() {
+            let device_id = arkret_sdk::DeviceId::new(device_id)
+                .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?;
+            let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id);
+            ensure_pending_device_key_with_secure_store(
+                store,
+                secure_store.as_ref(),
+                &pending_store,
+            )
+        } else {
+            ensure_device_key_with_secure_store(store, secure_store.as_ref())
+        }
     }
 
     #[cfg(test)]
     {
         ensure_device_key_in_plaintext_state(store)
     }
+}
+
+/// Generate or load the grant-binding DPoP key for a pre-principal login
+/// transaction. This path never consults a user scope: the caller supplies the
+/// validated pending-device store, which is promoted only after the authority
+/// returns a principal DID.
+pub fn ensure_pending_device_key_with_secure_store(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    pending_store: &crate::secure_key_store::PendingLocalStore,
+) -> Result<DpopHandle, AuthDpopError> {
+    let material = pending_store
+        .ensure_grant_binding_seed(secure_store)
+        .map_err(|error| {
+            AuthDpopError::SecureStore(format!("ensure pending grant-binding seed: {error}"))
+        })?;
+    let (handle, record) = handle_and_record_from_seed(material.seed)?;
+    store
+        .set_pending_dpop_device_key_with_secure_store(Some(record), secure_store, pending_store)
+        .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?;
+    Ok(handle)
 }
 
 /// Generate or load the DPoP key using the supplied secure-key backend.
@@ -431,6 +463,62 @@ pub fn load_or_recover_device_key_with_secure_store(
         Some(record) => persist_loaded_record(store, secure_store, record).map(Some),
         None => Ok(None),
     }
+}
+
+/// Read the DPoP holder for one pre-principal authentication transaction.
+///
+/// The pending device id is the storage boundary until the authority returns
+/// a principal core id. Consequently this path never reads or writes an active
+/// [`crate::secure_key_store::UserLocalStore`]. It also never generates a new
+/// holder key: losing the original key must fail the handoff closed.
+pub fn load_or_recover_pending_device_key_with_secure_store(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    pending_store: &crate::secure_key_store::PendingLocalStore,
+) -> Result<Option<DpopHandle>, AuthDpopError> {
+    if let Some(material) = pending_store
+        .load_grant_binding_seed(secure_store)
+        .map_err(|error| {
+            AuthDpopError::SecureStore(format!("load pending grant-binding seed: {error}"))
+        })?
+    {
+        let stored_jkt = store
+            .load_pending_dpop_device_key_with_secure_store(secure_store, pending_store)
+            .ok()
+            .flatten()
+            .map(|record| record.jkt);
+        let (handle, record) = handle_and_record_from_seed(material.seed)?;
+        if stored_jkt.as_deref() != Some(handle.jkt()) {
+            tracing::warn!(
+                device_id = %pending_store.device_id(),
+                stored_jkt = stored_jkt.as_deref().unwrap_or(""),
+                seed_jkt = handle.jkt(),
+                "recovering pending DPoP record from its grant-binding seed"
+            );
+        }
+        store
+            .set_pending_dpop_device_key_with_secure_store(
+                Some(record),
+                secure_store,
+                pending_store,
+            )
+            .map_err(|error| {
+                AuthDpopError::SecureStore(format!("recover pending DPoP record: {error}"))
+            })?;
+        return Ok(Some(handle));
+    }
+
+    let Some(record) = store
+        .load_pending_dpop_device_key_with_secure_store(secure_store, pending_store)
+        .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let handle = decode_record(&record)?;
+    store
+        .set_pending_dpop_device_key_with_secure_store(Some(record), secure_store, pending_store)
+        .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?;
+    Ok(Some(handle))
 }
 
 /// Rebuild a [`DpopHandle`] from a persisted seed + thumbprint pair,
@@ -714,6 +802,7 @@ mod tests {
         let _lock = seed_scope_test_lock();
         let mut store = isolated_store("secure");
         let secure = MemorySecureKeyStore::default();
+        let _scope = set_seed_scope("did:web:secure.example");
         let first = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
         let public_record = store.dpop_device_key().expect("public record");
         assert_eq!(public_record.jkt, first.jkt());
@@ -723,6 +812,33 @@ mod tests {
             .unwrap()
             .expect("loaded");
         assert_eq!(second.jkt(), first.jkt());
+    }
+
+    #[test]
+    fn pending_handoff_recovers_holder_without_an_active_user_scope() {
+        let _lock = seed_scope_test_lock();
+        crate::secure_key_store::set_active_device_seed_scope(None);
+        crate::secure_key_store::set_pending_login_device_id(None);
+        let mut store = isolated_store("pending-handoff-holder");
+        let secure = MemorySecureKeyStore::default();
+        let pending_store = crate::secure_key_store::PendingLocalStore::new(
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000099".to_owned())
+                .unwrap(),
+        );
+        let created =
+            ensure_pending_device_key_with_secure_store(&mut store, &secure, &pending_store)
+                .unwrap();
+
+        let recovered = load_or_recover_pending_device_key_with_secure_store(
+            &mut store,
+            &secure,
+            &pending_store,
+        )
+        .unwrap()
+        .expect("pending holder");
+
+        assert_eq!(recovered.jkt(), created.jkt());
+        assert!(crate::secure_key_store::active_device_seed_scope().is_none());
     }
 
     #[test]

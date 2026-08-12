@@ -708,6 +708,15 @@ fn rehydrated_session_credential_only_matches_active_config() {
         )
         .is_none()
     );
+    assert!(
+        rehydrated_session_credential_for_active_config(
+            &config,
+            "https://local.host",
+            "",
+            "ak:device:01964137-0000-7000-8000-000000000099",
+        )
+        .is_none()
+    );
 }
 
 #[test]

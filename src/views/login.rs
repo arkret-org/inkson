@@ -210,6 +210,9 @@ pub fn LoginPanel(
                 // soft continuation, so retain the holder key.
                 crate::secure_key_store::set_active_device_seed_scope(None);
             } else {
+                reset_state_store
+                    .write()
+                    .begin_pending_login(device.trim(), None);
                 if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
                     secure_store.as_ref(),
                 ) {
@@ -228,20 +231,18 @@ pub fn LoginPanel(
                     .write()
                     .resume_pending_login(device.trim());
                 debug_assert!(resumed, "validated handoff resume must remain valid");
-            } else {
-                reset_state_store
-                    .write()
-                    .begin_pending_login(device.trim(), None);
             }
-            // Persist the pending device_id under the bootstrap scope. On a
-            // returning account this should match the account-scoped device id;
-            // on first sign-in it becomes the account-scoped protocol device.
-            if let Err(error) = crate::secure_key_store::store_device_id_scoped(
-                secure_store.as_ref(),
-                None,
-                device.trim(),
-            ) {
-                tracing::warn!(%error, "persist bootstrap device_id for sign-in failed");
+            let pending_store = match arkret_sdk::DeviceId::new(device.trim().to_owned()) {
+                Ok(device_id) => crate::secure_key_store::PendingLocalStore::new(device_id),
+                Err(error) => {
+                    is_busy.set(false);
+                    auth_status.set(format!("The generated device id is invalid: {error}"));
+                    return;
+                }
+            };
+            pending_store.activate();
+            if let Err(error) = pending_store.save_device_id(secure_store.as_ref()) {
+                tracing::warn!(%error, "persist pending device_id for sign-in failed");
             }
             match start_oidc_strand(&principal, device.trim(), "", account_intent, &ui_locale).await
             {
@@ -489,9 +490,14 @@ pub fn LoginPanel(
     }
 }
 
-fn restore_oidc_callback_device_seed_scope(device_id: &str) {
-    crate::secure_key_store::set_active_device_seed_scope(None);
-    crate::secure_key_store::set_pending_login_device_id(Some(device_id));
+fn restore_oidc_callback_device_seed_scope(
+    device_id: &str,
+) -> Result<crate::secure_key_store::PendingLocalStore, String> {
+    let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())
+        .map_err(|error| format!("invalid pending login device id: {error}"))?;
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id);
+    pending_store.activate();
+    Ok(pending_store)
 }
 
 fn interactive_sign_in_device_id(persisted_actor: &str, persisted_device: &str) -> String {
@@ -533,25 +539,37 @@ pub(crate) fn persist_completed_login_dpop_key(
     device_id: &str,
     record: &crate::state::DpopDeviceKeyRecord,
 ) -> Result<(), String> {
-    crate::secure_key_store::set_active_device_seed_scope(Some(actor));
-    crate::secure_key_store::store_grant_binding_seed_b64url(secure_store, &record.seed_b64)
+    let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())
+        .map_err(|error| format!("bind account device signer principal: {error}"))?;
+    let principal_core_id = arkret_sdk::project_full_id_to_core_id(&principal_id)
+        .map_err(|error| format!("project account principal to core id: {error}"))?;
+    let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())
+        .map_err(|error| format!("validate account device id: {error}"))?;
+    let user_store = crate::secure_key_store::UserLocalStore::new(principal_core_id);
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id.clone());
+    pending_store
+        .promote_to(secure_store, &user_store)
+        .map_err(|error| format!("promote pending local store: {error}"))?;
+    user_store
+        .save_grant_binding_seed_b64url(secure_store, &record.seed_b64)
         .map_err(|error| format!("store grant-binding seed: {error}"))?;
-    crate::secure_key_store::store_device_id_scoped(secure_store, Some(actor), device_id)
+    user_store
+        .save_device_id(secure_store, &device_id)
         .map_err(|error| format!("store account-scoped device id: {error}"))?;
+    user_store.activate();
     store
         .set_dpop_device_key_with_secure_store(Some(record.clone()), secure_store)
         .map_err(|error| format!("store account-scoped DPoP key: {error}"))?;
-    let material = crate::secure_key_store::ensure_signing_seed_scoped(secure_store, Some(actor))
+    let material = user_store
+        .ensure_signing_seed(secure_store)
         .map_err(|error| format!("ensure account device signing seed: {error}"))?;
     crate::event_signer::activate_device_signer_from_seed_for_device(
         material.seed,
         Some(secure_store),
-        Some(device_id),
+        Some(device_id.as_str()),
     )
     .map_err(|error| format!("activate account device signer: {error}"))?;
-    let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())
-        .map_err(|error| format!("bind account device signer principal: {error}"))?;
-    crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device_id)
+    crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device_id.as_str())
         .map_err(|error| format!("bind account device signer principal: {error}"))?;
     Ok(())
 }
@@ -631,6 +649,7 @@ pub(crate) async fn start_oidc_strand(
         login_hint,
         device_id,
         &resolver.principal_audience,
+        &account_intent,
         ui_locale,
     )
     .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
@@ -747,14 +766,20 @@ async fn finish_oidc_callback(
         return Err("No device identifier is available for this session.".to_owned());
     }
     let device = normalize_device_id(&device);
-    restore_oidc_callback_device_seed_scope(&device);
+    let pending_store = restore_oidc_callback_device_seed_scope(&device)?;
     #[cfg(target_arch = "wasm32")]
     crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
         .await
         .map_err(|error| format!("DPoP key store not ready: {error}"))?;
     let dpop_handle = {
         let mut store = state_store.write();
-        let handle = crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let handle =
+            crate::identity::account_auth::grant_dpop::ensure_pending_device_key_with_secure_store(
+                &mut store,
+                secure_store.as_ref(),
+                &pending_store,
+            )
             .map_err(|error| format!("DPoP key failed: {error}"))?;
         crate::event_signer::bind_active_signer_device_id(&device)
             .map_err(|error| format!("Event signer device binding failed: {error}"))?;
@@ -796,7 +821,7 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("Account Authority handoff failed: {error}"))?;
     let disposition = garth::account_handoff_disposition(&handoff)
         .map_err(|error| format!("Account handoff outcome failed validation: {error}"))?;
-    validate_account_handoff_intent(&scaffold.account_intent, &disposition)?;
+    validate_account_handoff_binding(&scaffold.account_intent, &disposition)?;
     if let AccountHandoffDisposition::IdentityCreationActive(lease) = &disposition {
         let pending_handoff = crate::state::PendingAccountHandoff {
             principal_server_url,
@@ -915,7 +940,14 @@ async fn finish_oidc_callback(
     })
 }
 
-fn validate_account_handoff_intent(
+/// Validate only the identity assertion that the client can know locally.
+///
+/// For a continuation of an already-known principal, a different/unbound
+/// server account is a hard mismatch. For account-first entry points there is
+/// no local principal assertion: Account Authority's typed `binding.state` is
+/// authoritative and selects either identity creation or the already-bound
+/// principal path (account-lifecycle §2.1.2).
+fn validate_account_handoff_binding(
     intent: &OidcAccountIntent,
     disposition: &AccountHandoffDisposition,
 ) -> Result<(), String> {
@@ -930,20 +962,8 @@ fn validate_account_handoff_intent(
             "The Account Authority authenticated a different account than the existing local principal. No device identity or onboarding state was adopted. Use the intended account, or choose Create account to start a separate identity."
                 .to_owned(),
         ),
-        (
-            OidcAccountIntent::RecoverAuthenticatedPrincipal,
-            AccountHandoffDisposition::Bound { .. },
-        ) => Ok(()),
-        (OidcAccountIntent::RecoverAuthenticatedPrincipal, _) => Err(
-            "The authenticated Account Authority account has no bound principal. No identity was created from the Sign in flow. Use Create account to start a separate identity."
-                .to_owned(),
-        ),
-        (OidcAccountIntent::CreateIdentity, AccountHandoffDisposition::IdentityCreationActive(_))
-        | (OidcAccountIntent::CreateIdentity, AccountHandoffDisposition::IdentityCreationBusy { .. }) => Ok(()),
-        (OidcAccountIntent::CreateIdentity, AccountHandoffDisposition::Bound { .. }) => Err(
-            "The selected Account Authority account is already bound to a principal. No new device identity was adopted. Return to Sign in for that account, or create a different service account."
-                .to_owned(),
-        ),
+        (OidcAccountIntent::RecoverAuthenticatedPrincipal, _)
+        | (OidcAccountIntent::CreateIdentity, _) => Ok(()),
     }
 }
 
@@ -1172,7 +1192,8 @@ mod tests {
         let _reset = SeedScopeReset::new();
         crate::secure_key_store::set_active_device_seed_scope(Some("did:web:old.example"));
 
-        restore_oidc_callback_device_seed_scope("ak:device:01964137-0000-7000-8000-000000000001");
+        restore_oidc_callback_device_seed_scope("ak:device:01964137-0000-7000-8000-000000000001")
+            .expect("pending local store");
 
         assert_eq!(crate::secure_key_store::active_device_seed_scope(), None);
         assert_eq!(
@@ -1242,21 +1263,21 @@ mod tests {
     }
 
     #[test]
-    fn account_handoff_intent_never_crosses_account_or_flow_boundaries() {
+    fn account_handoff_uses_server_state_without_crossing_known_principal_boundary() {
         let alice = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
         let continue_alice = OidcAccountIntent::ContinuePrincipal {
             expected_principal_id: alice,
         };
 
         assert!(
-            validate_account_handoff_intent(
+            validate_account_handoff_binding(
                 &continue_alice,
                 &bound_disposition("ak:did_core:web:alice.example")
             )
             .is_ok()
         );
         assert!(
-            validate_account_handoff_intent(
+            validate_account_handoff_binding(
                 &continue_alice,
                 &bound_disposition("ak:did_core:web:bob.example")
             )
@@ -1264,40 +1285,40 @@ mod tests {
             "an existing-account login must reject a different principal"
         );
         assert!(
-            validate_account_handoff_intent(&continue_alice, &busy_disposition()).is_err(),
+            validate_account_handoff_binding(&continue_alice, &busy_disposition()).is_err(),
             "an existing-account login must not turn into identity creation"
         );
 
         assert!(
-            validate_account_handoff_intent(
+            validate_account_handoff_binding(
                 &OidcAccountIntent::RecoverAuthenticatedPrincipal,
                 &bound_disposition("ak:did_core:web:alice.example")
             )
             .is_ok()
         );
         assert!(
-            validate_account_handoff_intent(
+            validate_account_handoff_binding(
                 &OidcAccountIntent::RecoverAuthenticatedPrincipal,
                 &busy_disposition()
             )
-            .is_err(),
-            "account recovery must not create a new identity"
+            .is_ok(),
+            "an account-first flow must follow the server-authored creation state"
         );
 
         assert!(
-            validate_account_handoff_intent(
+            validate_account_handoff_binding(
                 &OidcAccountIntent::CreateIdentity,
                 &busy_disposition()
             )
             .is_ok()
         );
         assert!(
-            validate_account_handoff_intent(
+            validate_account_handoff_binding(
                 &OidcAccountIntent::CreateIdentity,
                 &bound_disposition("ak:did_core:web:alice.example")
             )
-            .is_err(),
-            "new identity creation must not attach an existing principal"
+            .is_ok(),
+            "an already-bound server account must follow the bound-principal path"
         );
     }
 

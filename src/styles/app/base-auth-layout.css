@@ -16,6 +16,15 @@ button, input, textarea, select { font: inherit; }
 [data-theme="dark"] .auth-form input { border-color: #3a4b63; background: #111827; color: #e5edf7; }
 .auth-primary{ width: 100%; max-width: 100%; margin-top: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auth-status { color: #64748b; font-size: 13px; overflow-wrap: anywhere; }
+.auth-error { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 12px; border: 1px solid #dc2626; border-radius: 8px; background: #fef2f2; color: #7f1d1d; }
+[data-theme="dark"] .auth-error { border-color: #ef4444; background: rgba(127, 29, 29, 0.22); color: #fecaca; }
+.auth-error-mark { width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center; background: #dc2626; color: #fff; font-size: 13px; font-weight: 800; line-height: 1; }
+.auth-error-content { min-width: 0; }
+.auth-error-content strong { display: block; font-size: 14px; line-height: 1.35; }
+.auth-error-content p { margin: 3px 0 0; font-size: 13px; line-height: 1.45; }
+.auth-error-content details { margin-top: 8px; font-size: 12px; }
+.auth-error-content summary { width: fit-content; cursor: pointer; color: inherit; font-weight: 700; }
+.auth-error-content code { display: block; margin-top: 6px; padding: 8px; border-radius: 6px; background: rgba(127, 29, 29, 0.08); color: inherit; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
 .auth-restore { gap: 16px; }
 .auth-restore-indicator { width: 100%; height: 4px; border-radius: 999px; overflow: hidden; background: rgba(100, 116, 139, 0.18); }
 .auth-restore-indicator::before { content: ""; display: block; width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f59e0b, #fb7185); animation: auth-restore-slide 1.1s ease-in-out infinite; }

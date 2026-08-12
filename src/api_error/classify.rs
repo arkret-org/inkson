@@ -114,6 +114,26 @@ pub fn is_pcr_genesis_already_accepted_error(error: &anyhow::Error) -> bool {
     })
 }
 
+/// The identity-binding challenge is short lived and belongs to one lease
+/// fence. A prepared register request that carries this terminal reason can
+/// never succeed again; the client must discard only that prepared request and
+/// obtain a fresh challenge from the same authoritative lease.
+pub fn is_identity_creation_challenge_expired_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        let reason = envelope
+            .details()
+            .get("reason_code")
+            .or_else(|| envelope.details().get("reason"))
+            .and_then(serde_json::Value::as_str);
+        status == StatusCode::CONFLICT
+            && envelope.code() == arkret_sdk::error::ErrorCode::FAILED_PRECONDITION
+            && (reason == Some("identity_creation_challenge_expired")
+                || envelope
+                    .message()
+                    .contains("reason_code=identity_creation_challenge_expired"))
+    })
+}
+
 /// True when the error envelope says the persisted coauth session grant
 /// itself is terminal (revoked, expired, locked, suspended, or otherwise
 /// not active). Soland currently maps these through `capability_denied`

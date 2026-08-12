@@ -33,8 +33,15 @@ pub async fn refresh_pending_onboarding(
         .peek()
         .pending_account_handoff()
         .ok_or_else(|| anyhow::anyhow!("no account handoff is pending"))?;
-    let dpop = super::grant_dpop::load_or_recover_device_key(&mut state_store.write())?
-        .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?;
+    let pending_device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let dpop = super::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
+        &mut state_store.write(),
+        secure_store.as_ref(),
+        &pending_store,
+    )?
+    .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?;
     let grant = super::load_account_handoff_grant(&handoff)?
         .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
     let snapshot = account_client(&handoff, &dpop, grant)?

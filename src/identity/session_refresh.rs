@@ -165,19 +165,21 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
 #[derive(Clone)]
 struct PersistedSessionGrantStore {
     secure_store: Arc<dyn SecureKeyStore + Send + Sync>,
+    user_store: crate::secure_key_store::UserLocalStore,
     principal_server_url: String,
     device_handle: DpopHandle,
 }
 
 impl SessionGrantStore for PersistedSessionGrantStore {
     fn load(&self) -> garth::Result<Option<SessionGrantState>> {
-        crate::state::load_session_grant_from_secure_store(self.secure_store.as_ref())
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?
-            .map(|grant| {
-                session_grant_state_from_persisted(&grant, &self.device_handle, Utc::now())
-            })
-            .transpose()
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
+        crate::state::load_session_grant_from_user_secure_store(
+            &self.user_store,
+            self.secure_store.as_ref(),
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+        .map(|grant| session_grant_state_from_persisted(&grant, &self.device_handle, Utc::now()))
+        .transpose()
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 
     fn save<'a>(
@@ -195,9 +197,9 @@ impl SessionGrantStore for PersistedSessionGrantStore {
             let encoded = encoded?;
             self.secure_store
                 .put_secret(
-                    &crate::secure_key_store::account_scoped_device_key(
-                        LocalStateStore::SECURE_SESSION_GRANT_KEY,
-                    ),
+                    &self
+                        .user_store
+                        .secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY),
                     &encoded,
                     PutSecretOptions {
                         durability: SecretDurability::DurableBeforeReturn,
@@ -211,9 +213,11 @@ impl SessionGrantStore for PersistedSessionGrantStore {
 
     fn clear(&self) -> garth::Result<()> {
         self.secure_store
-            .delete_secret(&crate::secure_key_store::account_scoped_device_key(
-                LocalStateStore::SECURE_SESSION_GRANT_KEY,
-            ))
+            .delete_secret(
+                &self
+                    .user_store
+                    .secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY),
+            )
             .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 }
@@ -476,8 +480,18 @@ async fn session_transport_provider(
         refresh_transport: refresh_transport.clone(),
     };
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let principal_core_id = match arkret_sdk::DidCoreId::new(grant.principal_id.clone()) {
+        Ok(core_id) => core_id,
+        Err(_) => {
+            let full_id = arkret_sdk::DidFullId::new(grant.principal_id.clone())
+                .map_err(|error| anyhow::anyhow!("invalid session principal: {error}"))?;
+            arkret_sdk::project_full_id_to_core_id(&full_id)
+                .map_err(|error| anyhow::anyhow!("project session principal: {error}"))?
+        }
+    };
     let state_store = PersistedSessionGrantStore {
         secure_store,
+        user_store: crate::secure_key_store::UserLocalStore::new(principal_core_id),
         principal_server_url: grant.principal_server_url.clone(),
         device_handle: device_handle.clone(),
     };

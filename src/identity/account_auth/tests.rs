@@ -225,6 +225,7 @@ fn state_and_nonce_diverge_for_same_caller() {
         "",
         "device-aaaa-1111",
         "https://principal.example/api",
+        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
         "en",
     )
     .unwrap();
@@ -235,6 +236,7 @@ fn state_and_nonce_diverge_for_same_caller() {
         "",
         "device-aaaa-1111",
         "https://principal.example/api",
+        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
         "en",
     )
     .unwrap();
@@ -254,6 +256,7 @@ fn bundle_challenge_is_s256_of_verifier_when_supported() {
         "",
         "device-bbbb-2222",
         "https://principal.example/api",
+        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
         "en",
     )
     .unwrap();
@@ -279,6 +282,7 @@ fn authorize_scaffold_rejects_plain_only_pkce_discovery() {
         "",
         "device-plain-only",
         "https://principal.example/api",
+        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
         "en",
     )
     .unwrap_err();
@@ -295,6 +299,7 @@ fn authorize_url_forces_reauthentication() {
         "",
         "device-cccc-3333",
         "https://principal.example/api",
+        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
         "zh",
     )
     .unwrap();
@@ -325,6 +330,37 @@ fn authorize_url_forces_reauthentication() {
     );
 }
 
+/// A new-identity transaction must enter the issuer's registration strand;
+/// treating it as login loses the original creation intent when the user has
+/// to create an Account Authority account first.
+#[test]
+fn create_identity_authorize_url_uses_prompt_create() {
+    let bundle = build_oidc_authorize_scaffold(
+        &test_discovery(),
+        &test_oidc_method(),
+        "https://app.example/auth/callback",
+        "",
+        "device-create-3333",
+        "https://principal.example/api",
+        &OidcAccountIntent::CreateIdentity,
+        "zh",
+    )
+    .unwrap();
+    let parsed = Url::parse(&bundle.authorize_url).unwrap();
+    assert_eq!(
+        parsed
+            .query_pairs()
+            .find(|(key, _)| key == "prompt")
+            .unwrap()
+            .1,
+        "create"
+    );
+    assert!(
+        parsed.query_pairs().all(|(key, _)| key != "max_age"),
+        "prompt=create must not inherit login-only max_age"
+    );
+}
+
 #[test]
 fn authorize_url_carries_login_hint_when_known_account_selected() {
     let bundle = build_oidc_authorize_scaffold(
@@ -334,6 +370,7 @@ fn authorize_url_carries_login_hint_when_known_account_selected() {
         "chris",
         "device-known-account",
         "https://principal.example/api",
+        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
         "en",
     )
     .unwrap();
@@ -359,6 +396,7 @@ fn authorize_url_requests_standard_and_device_scope() {
         "",
         "device-dddd-4444",
         "https://principal.example/api",
+        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
         "en",
     )
     .unwrap();
@@ -390,6 +428,7 @@ fn authorize_url_falls_back_to_native_client_id() {
         "",
         "device-eeee-5555",
         "https://principal.example/api",
+        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
         "en",
     )
     .unwrap();

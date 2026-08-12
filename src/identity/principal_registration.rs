@@ -518,6 +518,7 @@ pub async fn complete_account_handoff_binding(
 
     let register_request = if let Some(prepared) =
         crate::identity::account_auth::load_prepared_identity_creation_request(
+            handoff,
             expected_account_subject,
             &checkpoint.did,
             &checkpoint.lease_id,
@@ -546,15 +547,61 @@ pub async fn complete_account_handoff_binding(
             &challenge,
             expected_account_subject,
             did_operation,
-            unit,
+            unit.clone(),
             initial.clone(),
             &key_material.root_seed,
             None,
         )?;
-        crate::identity::account_auth::persist_prepared_identity_creation_request(&request).await?;
+        crate::identity::account_auth::persist_prepared_identity_creation_request(
+            handoff, &request,
+        )
+        .await?;
         request
     };
-    let register_outcome = account_client.account_register(&register_request).await?;
+    let (register_request, register_outcome) = match account_client
+        .account_register(&register_request)
+        .await
+    {
+        Ok(outcome) => (register_request, outcome),
+        Err(error) => {
+            let error = anyhow::Error::new(error);
+            if !crate::api_error::is_identity_creation_challenge_expired_error(&error) {
+                return Err(error);
+            }
+            // A challenge is the sole ephemeral field in the prepared
+            // request. Keep the lease, DID operation, genesis unit and
+            // user-confirmed Recovery Key; replace only this terminal
+            // server-authored challenge, and retry once.
+            crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
+                checkpoint,
+            )?;
+            let renewed_challenge_request = garth::identity_binding_challenge_request(
+                arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
+                &lease,
+                checkpoint.did_operation.clone(),
+                &unit,
+                &initial,
+            )?;
+            let challenge = account_client
+                .auth_issue_identity_binding_challenge(&renewed_challenge_request)
+                .await?;
+            let request = garth::identity_creation_register_request(
+                &challenge,
+                expected_account_subject,
+                checkpoint.did_operation.clone(),
+                unit.clone(),
+                initial.clone(),
+                &key_material.root_seed,
+                None,
+            )?;
+            crate::identity::account_auth::persist_prepared_identity_creation_request(
+                handoff, &request,
+            )
+            .await?;
+            let outcome = account_client.account_register(&request).await?;
+            (request, outcome)
+        }
+    };
     garth::validate_identity_creation_outcome(&register_outcome, &register_request)?;
     let binding_receipt = register_outcome.binding_receipt.clone();
     let checkpoint_full_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
@@ -614,7 +661,7 @@ async fn verify_registration_terminal_evidence(
     checkpoint: &PendingPrincipalRegistration,
     request: &arkret_sdk::AccountRegisterRequestBody,
     receipt: &arkret_sdk::AccountBindingReceipt,
-    account_client: &arkret_sdk::http_client::Client,
+    _account_client: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<()> {
     let authority_full_id = arkret_sdk::DidFullId::new(
         receipt
@@ -628,22 +675,26 @@ async fn verify_registration_terminal_evidence(
     if arkret_sdk::project_full_id_to_core_id(&authority_full_id)? != receipt.account_authority_id {
         anyhow::bail!("Account Authority receipt proof controller mismatch");
     }
+    // Both the Account Authority service DID and the newly-created principal
+    // DID are method histories hosted by the configured Principal Server.
+    // The Account Authority client only serves gate/account operations; its
+    // human root is not an identity registry and cannot resolve either log.
+    let principal_client =
+        arkret_sdk::http_client::ClientBuilder::new(Url::parse(&checkpoint.principal_server_url)?)
+            .allow_insecure_localhost()
+            .build()?;
     let authority_history = crate::identity::history::fetch_complete_identity_history(
-        account_client,
+        &principal_client,
         &authority_full_id,
     )
     .await
-    .context("fetch complete Account Authority DID history")?;
+    .context("fetch complete Account Authority DID history from Principal Server")?;
     let authority_resolver =
         crate::identity::history::FrozenAuthorityHistoryResolver::new(&authority_history)?;
     garth::verify_binding_receipt_at_issuance(receipt, &authority_resolver)
         .map_err(|error| anyhow!("verify Account Authority receipt at issuance: {error}"))?;
 
     let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
-    let principal_client =
-        arkret_sdk::http_client::ClientBuilder::new(Url::parse(&checkpoint.principal_server_url)?)
-            .allow_insecure_localhost()
-            .build()?;
     let history =
         crate::identity::history::fetch_complete_identity_history(&principal_client, &principal_id)
             .await

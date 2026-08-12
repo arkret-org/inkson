@@ -228,4 +228,17 @@ mod tests {
 
         assert!(!is_mls_governance_binding_stale_error(&error));
     }
+
+    #[test]
+    fn identity_creation_expired_classifier_accepts_coauth_wire_message() {
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(ErrorEnvelope::new(
+                arkret_sdk::error::ErrorCode::FAILED_PRECONDITION,
+                "reason_code=identity_creation_challenge_expired; lease, fence, reservation, or challenge is stale",
+            )),
+        });
+
+        assert!(is_identity_creation_challenge_expired_error(&error));
+    }
 }

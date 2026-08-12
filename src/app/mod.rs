@@ -260,19 +260,22 @@ fn AppBootstrap() -> Element {
     let initial_server_url = initial_config.server_url.clone();
     let initial_account_did = initial_config.account_did.clone();
     let initial_device_id = initial_config.device_id.clone();
-    // Pin the active per-account device-seed scope to the persisted account on
-    // boot, before any async secure-store effect activates the device signer.
-    // Without this the process-global scope would default to bootstrap after a
-    // reload and the signer would read an empty bootstrap seed instead of this
-    // account's device key. Login completion (`adopt_device_seed_scope_on_login`)
-    // updates the scope when a different principal signs in.
+    // Pin the active typed user store to the persisted server-authored
+    // principal before async signer bootstrap begins.
     {
         let boot_seed_scope = initial_config.account_did.clone();
         use_hook(move || {
             let scope = boot_seed_scope.trim();
-            crate::secure_key_store::set_active_device_seed_scope(
-                (!scope.is_empty()).then_some(scope),
-            );
+            if scope.is_empty() {
+                crate::secure_key_store::set_active_device_seed_scope(None);
+            } else if let Ok(full_id) = arkret_sdk::DidFullId::new(scope.to_owned())
+                && let Ok(core_id) = arkret_sdk::project_full_id_to_core_id(&full_id)
+            {
+                crate::secure_key_store::UserLocalStore::new(core_id).activate();
+            } else {
+                tracing::error!(principal = %scope, "persisted account principal is invalid; user local store not activated");
+                crate::secure_key_store::set_active_device_seed_scope(None);
+            }
         });
     }
     let base_url = use_signal(move || initial_server_url);

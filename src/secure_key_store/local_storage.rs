@@ -25,17 +25,17 @@ use super::{
 ///
 /// This backend is only for non-sensitive first-paint secrets. Ed25519
 /// signing seeds, local identity seeds, account MLS secrets, and session
-/// credentials are refused so they cannot land in localStorage. The IndexedDB
-/// + non-extractable SubtleCrypto tier uses the same
-/// `inkson.secret.<service_name>.<key>` namespace after async upgrade.
+/// credentials are refused so they cannot land in localStorage. Callers hand
+/// this backend an already-scoped physical key (for example
+/// `inkson.<did-core-tail>.<logical-key>` or
+/// `inkson.pending.<device-id-tail>.<logical-key>`). The backend MUST preserve
+/// that key verbatim; adding another service/secret prefix here would defeat
+/// the typed store's single namespace boundary.
 pub struct LocalStorageSecureKeyStore {
-    service_name: String,
     wrapping_key: [u8; 32],
 }
 
 impl LocalStorageSecureKeyStore {
-    const WRAPPING_KEY_STORAGE_KEY_SUFFIX: &'static str = ".wrap_seed.v1";
-
     /// Initialise the store for the given service namespace. Boot
     /// reads the wrapping-key seed from `localStorage`, generating a
     /// fresh one via `getrandom` if none exists yet. The seed is
@@ -73,10 +73,7 @@ impl LocalStorageSecureKeyStore {
                 seed
             }
         };
-        Ok(Self {
-            service_name: service_name.to_owned(),
-            wrapping_key,
-        })
+        Ok(Self { wrapping_key })
     }
 
     fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
@@ -89,28 +86,17 @@ impl LocalStorageSecureKeyStore {
             .ok_or_else(|| SecureKeyStoreError::Unsupported("window.localStorage not available"))
     }
 
-    /// The wrap_seed key — `inkson.secret.<namespace>.wrap_seed.v1`. The
-    /// namespace is GLOBAL (the bare `service_name`); see
-    /// [`super::wrap_seed_namespace`] for why it must stay constant across a
-    /// sign-in. Per-account device-key isolation is at the entry-key level, not
-    /// the wrapping key.
+    /// The wrap_seed key — `inkson.global.secure_store.wrap_seed.v1`. The
+    /// namespace is explicitly GLOBAL. Per-account device-key isolation is at
+    /// the entry-key level, not the wrapping key.
     pub(super) fn wrapping_seed_key(service_name: &str) -> String {
-        let namespace = super::wrap_seed_namespace(service_name);
-        format!(
-            "inkson.secret.{namespace}{}",
-            Self::WRAPPING_KEY_STORAGE_KEY_SUFFIX
-        )
-    }
-
-    fn entry_key(&self, key: &str) -> String {
-        format!("inkson.secret.{}.{key}", self.service_name)
+        super::GlobalLocalStore::new(service_name).key("secure_store.wrap_seed.v1")
     }
 }
 
 impl std::fmt::Debug for LocalStorageSecureKeyStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LocalStorageSecureKeyStore")
-            .field("service_name", &self.service_name)
             .field("wrapping_key", &"<redacted>")
             .finish()
     }
@@ -140,7 +126,7 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
         let storage = Self::storage()?;
         let wrapped = wrap_secret(value, &self.wrapping_key)?;
         storage
-            .set_item(&self.entry_key(key), &wrapped)
+            .set_item(key, &wrapped)
             .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage set: {err:?}")))
     }
 
@@ -159,7 +145,7 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
         }
         let storage = Self::storage()?;
         let Some(wrapped) = storage
-            .get_item(&self.entry_key(key))
+            .get_item(key)
             .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage get: {err:?}")))?
         else {
             return Ok(None);
@@ -171,29 +157,21 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
         let storage = Self::storage()?;
         storage
-            .remove_item(&self.entry_key(key))
+            .remove_item(key)
             .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage remove: {err:?}")))
     }
 
     fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
-        let storage = Self::storage()?;
-        let entry_prefix = format!("inkson.secret.{}.", self.service_name);
-        let length = storage
-            .length()
-            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage length: {err:?}")))?;
-        let mut out = Vec::new();
-        for i in 0..length {
-            let Ok(Some(full_key)) = storage.key(i) else {
-                continue;
-            };
-            let Some(entry) = full_key.strip_prefix(&entry_prefix) else {
-                continue;
-            };
-            if prefix.is_none_or(|prefix| entry.starts_with(prefix)) {
-                out.push(entry.to_owned());
-            }
-        }
-        Ok(out)
+        let _ = prefix;
+        // localStorage also contains public app state and OIDC scaffolds. Now
+        // that secure entries preserve their typed physical key verbatim,
+        // scanning the entire origin would falsely expose those unrelated
+        // records as SecureKeyStore entries. Enumeration is available from the
+        // IndexedDB primary after secure-store initialization; the first-paint
+        // fallback deliberately does not guess.
+        Err(SecureKeyStoreError::Unsupported(
+            "localStorage secure-key enumeration is unavailable",
+        ))
     }
 
     fn backend_info(&self) -> SecureKeyStoreBackendInfo {

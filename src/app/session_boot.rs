@@ -82,13 +82,19 @@ pub(super) fn rehydrated_session_credential_for_active_config(
     account_did: &str,
     device_id: &str,
 ) -> Option<String> {
+    // Signed-out boot has no user scope to restore. A freshly generated
+    // anonymous device id is expected to differ from the last signed-in
+    // account's persisted device id; that is not a credential mismatch.
+    if account_did.trim().is_empty() {
+        return None;
+    }
     let cred_empty = config.session_credential.trim().is_empty();
     let server_mismatch =
         normalize_server_url(&config.server_url) != normalize_server_url(base_url);
     let account_mismatch = config.account_did.trim() != account_did.trim();
     let device_mismatch = config.device_id.trim() != device_id.trim();
     if cred_empty || server_mismatch || account_mismatch || device_mismatch {
-        tracing::warn!(
+        tracing::debug!(
             target: "secure_store",
             cred_empty,
             server_mismatch,

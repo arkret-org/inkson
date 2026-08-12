@@ -42,6 +42,15 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
             tracing::debug!(target: "secure_store", "initializing IndexedDB secure store");
             match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
+                    // The durable logout journal is IndexedDB-only on wasm.
+                    // Retry it only after that backend is installed; the old
+                    // application-wide boot effect raced this initialization
+                    // and reported an expected unavailable backend as a fault.
+                    crate::pending_logout::run_pending_logout_with_store(
+                        chrono::Utc::now(),
+                        secure_store.as_ref(),
+                    )
+                    .await;
                     #[cfg(feature = "wasm-localstorage-secrets-test")]
                     state_store_for_secure_upgrade
                         .write()
@@ -144,7 +153,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             .session_grant()
                             .map(|g| !g.grant_jwt.trim().is_empty())
                             .unwrap_or(false);
-                        tracing::warn!(
+                        tracing::debug!(
                             target: "secure_store",
                             held_token_empty = held_token.is_empty(),
                             config_credential_present = !loaded_config.session_credential.trim().is_empty(),
@@ -177,28 +186,47 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             held_token,
                         );
                     }
-                    let dpop_record = {
-                        let store = state_store_for_secure_upgrade.read();
-                        store.load_dpop_device_key_with_secure_store(secure_store.as_ref())
-                    };
-                    match dpop_record {
-                        Ok(Some(record)) => {
-                            if let Err(error) = state_store_for_secure_upgrade
-                                .write()
-                                .set_dpop_device_key_with_secure_store(
-                                    Some(record),
-                                    secure_store.as_ref(),
-                                )
-                            {
-                                tracing::warn!(
-                                    ?error,
-                                    "IndexedDB DPoP key metadata refresh failed",
-                                );
+                    let account_scope = account_did_for_secure_upgrade.peek().trim().to_owned();
+                    let user_store = if account_scope.is_empty() {
+                        None
+                    } else {
+                        match arkret_sdk::DidFullId::new(account_scope.clone())
+                            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
+                        {
+                            Ok(core_id) => {
+                                Some(crate::secure_key_store::UserLocalStore::new(core_id))
+                            }
+                            Err(error) => {
+                                tracing::warn!(target: "secure_store", %error, "invalid active account principal");
+                                None
                             }
                         }
-                        Ok(None) => {}
-                        Err(error) => {
-                            tracing::warn!(?error, "IndexedDB DPoP key load failed");
+                    };
+                    if let Some(user_store) = user_store.as_ref() {
+                        user_store.activate();
+                        let dpop_record = {
+                            let store = state_store_for_secure_upgrade.read();
+                            store.load_dpop_device_key_with_secure_store(secure_store.as_ref())
+                        };
+                        match dpop_record {
+                            Ok(Some(record)) => {
+                                if let Err(error) = state_store_for_secure_upgrade
+                                    .write()
+                                    .set_dpop_device_key_with_secure_store(
+                                        Some(record),
+                                        secure_store.as_ref(),
+                                    )
+                                {
+                                    tracing::warn!(
+                                        ?error,
+                                        "IndexedDB DPoP key metadata refresh failed",
+                                    );
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::warn!(?error, "IndexedDB DPoP key load failed");
+                            }
                         }
                     }
                     // Pin the stable, account-scoped `device_id` from the secure
@@ -215,39 +243,29 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     // state"). Resolving from the seed-paired secure-store entry
                     // makes `device_id` exactly as stable as the signing seed
                     // across reloads and re-logins of the same account.
-                    let stable_device_id_for_signer = {
+                    let stable_device_id_for_signer = user_store.as_ref().and_then(|user_store| {
                         let store = secure_store.as_ref();
-                        let account_scope = account_did_for_secure_upgrade.peek().trim().to_owned();
-                        if account_scope.is_empty() {
-                            tracing::warn!(
-                                target: "secure_store",
-                                "device identity signer bootstrap skipped: no account scope yet"
-                            );
-                            None
-                        } else {
-                            crate::secure_key_store::set_active_device_seed_scope(Some(
-                                &account_scope,
-                            ));
                             let current = device_id_for_secure_upgrade.peek().trim().to_owned();
-                            let resolved = match crate::secure_key_store::load_device_id_scoped(
-                                store,
-                                Some(&account_scope),
-                            ) {
-                                Ok(Some(existing)) => Some(existing),
+                            let resolved = match user_store.load_device_id(store) {
+                                Ok(Some(existing)) => Some(existing.to_string()),
                                 Ok(None) => {
                                     let chosen = if crate::config::is_valid_device_id(&current) {
                                         current.clone()
                                     } else {
                                         crate::config::new_device_id()
                                     };
-                                    match crate::secure_key_store::store_device_id_scoped(
-                                        store,
-                                        Some(&account_scope),
-                                        &chosen,
-                                    ) {
-                                        Ok(()) => Some(chosen),
+                                    match arkret_sdk::DeviceId::new(chosen.clone()) {
+                                        Ok(device_id) => {
+                                            match user_store.save_device_id(store, &device_id) {
+                                                Ok(()) => Some(chosen),
+                                                Err(error) => {
+                                                    tracing::warn!(target: "secure_store", ?error, "persist stable device_id failed");
+                                                    None
+                                                }
+                                            }
+                                        }
                                         Err(error) => {
-                                            tracing::warn!(target: "secure_store", ?error, "persist stable device_id failed");
+                                            tracing::warn!(target: "secure_store", ?error, "generated stable device_id was invalid");
                                             None
                                         }
                                     }
@@ -282,36 +300,30 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 }
                                 None => None,
                             }
-                        }
-                    };
-                    match stable_device_id_for_signer {
-                        Some(stable_device_id) => {
-                            match crate::event_signer::bootstrap_default_signer_for_device(
-                                "inkson",
-                                &stable_device_id,
-                            ) {
-                                Ok(_) => {
-                                    tracing::info!(
-                                        target: "secure_store",
-                                        device_id = %stable_device_id,
-                                        "IndexedDB device identity signer bootstrap succeeded"
-                                    );
-                                }
-                                Err(error) => {
-                                    tracing::warn!(
-                                        target: "secure_store",
-                                        ?error,
-                                        "IndexedDB device identity signer bootstrap failed"
-                                    );
-                                }
+                    });
+                    if let (Some(user_store), Some(stable_device_id)) =
+                        (user_store.as_ref(), stable_device_id_for_signer)
+                    {
+                        match crate::event_signer::bootstrap_default_signer_for_device(
+                            "inkson",
+                            &stable_device_id,
+                        ) {
+                            Ok(_) => {
+                                tracing::info!(
+                                    target: "secure_store",
+                                    device_id = %stable_device_id,
+                                    "IndexedDB device identity signer bootstrap succeeded"
+                                );
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    target: "secure_store",
+                                    ?error,
+                                    "IndexedDB device identity signer bootstrap failed"
+                                );
                             }
                         }
-                        None => {
-                            tracing::warn!(
-                                target: "secure_store",
-                                "IndexedDB device identity signer bootstrap skipped: no stable device_id"
-                            );
-                        }
+                        let _ = user_store;
                     }
                 }
                 Ok(None) => {

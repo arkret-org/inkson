@@ -138,12 +138,5 @@ pub(super) fn GlobalEffects(
         }
     });
 
-    // Complete a durable hard-logout intent left by a tab that closed before
-    // the server-side revoke finished.
-    use_future(move || async move {
-        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-        crate::pending_logout::run_pending_logout_if_any(chrono::Utc::now()).await;
-    });
-
     rsx! {}
 }

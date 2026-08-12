@@ -223,6 +223,29 @@ pub fn english_translations() -> TranslationDict {
     dict.set("login.status.signed_out", "signed-out");
     dict.set("login.status.session_expired", "session-expired");
     dict.set("login.status.signed_in", "signed-in");
+    dict.set("register.opening", "Opening the account service…");
+    dict.set("register.error.technical_details", "Technical details");
+    dict.set(
+        "register.error.invalid_server.title",
+        "Invalid server address",
+    );
+    dict.set(
+        "register.error.invalid_server.guidance",
+        "Check the address and try again.",
+    );
+    dict.set(
+        "register.error.unavailable.title",
+        "Account service unavailable",
+    );
+    dict.set(
+        "register.error.unavailable.guidance",
+        "Try again in a moment.",
+    );
+    dict.set("register.error.unexpected.title", "Could not continue");
+    dict.set(
+        "register.error.unexpected.guidance",
+        "Try again. If the problem continues, open the technical details below.",
+    );
     dict.set("login.refresh_now", "Refresh now");
 
     dict.set("dashboard.home", "Home");

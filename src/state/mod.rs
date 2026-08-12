@@ -306,7 +306,7 @@ fn member_handle_cache_key(subject_id: &str, realm_id: Option<&str>) -> String {
 impl LocalStateStore {
     const SECURE_IDENTITY_KEY: &'static str = "identity.local.primary.v1";
 
-    const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
+    pub(crate) const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
 
     pub(crate) const SECURE_SESSION_GRANT_KEY: &'static str = "auth.session_grant.v1";
 
@@ -728,20 +728,32 @@ impl LocalStateStore {
     /// root index, then reads that entry. `None` when the entry is
     /// absent.
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
-        let state = self
-            .read_account_state(&self.effective_account_key())
-            .unwrap_or_default();
+        let active_did = self.read_root().active_did;
+        let account_key = active_did.as_deref().unwrap_or(ANONYMOUS_ACCOUNT_NAMESPACE);
+        let state = self.read_account_state(account_key).unwrap_or_default();
         #[cfg(not(test))]
         {
             let mut state = state;
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let secure_grant = load_session_grant_from_secure_store(secure_store.as_ref())
-                .map_err(|error| {
-                    tracing::warn!(?error, "secure session grant restore failed");
-                    error
-                })
-                .ok()
-                .flatten();
+            let secure_grant = active_did.as_deref().and_then(|principal| {
+                let user_store = match user_local_store_for_principal(principal) {
+                    Ok(user_store) => user_store,
+                    Err(error) => {
+                        tracing::warn!(
+                            ?error,
+                            "secure session grant restore skipped for invalid principal"
+                        );
+                        return None;
+                    }
+                };
+                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                load_session_grant_from_user_secure_store(&user_store, secure_store.as_ref())
+                    .map_err(|error| {
+                        tracing::warn!(?error, "secure session grant restore failed");
+                        error
+                    })
+                    .ok()
+                    .flatten()
+            });
             if let Some(grant) = secure_grant {
                 state.session_grant = Some(grant);
             } else {

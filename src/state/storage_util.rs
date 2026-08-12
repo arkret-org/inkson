@@ -161,6 +161,37 @@ pub(crate) fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+pub(super) fn active_user_local_store()
+-> Result<crate::secure_key_store::UserLocalStore, crate::secure_key_store::SecureKeyStoreError> {
+    let principal = crate::secure_key_store::active_device_seed_scope().ok_or_else(|| {
+        crate::secure_key_store::SecureKeyStoreError::Backend(
+            "user local store is unavailable before a principal core id is active".to_owned(),
+        )
+    })?;
+    user_local_store_for_principal(&principal)
+}
+
+pub(super) fn user_local_store_for_principal(
+    principal: &str,
+) -> Result<crate::secure_key_store::UserLocalStore, crate::secure_key_store::SecureKeyStoreError> {
+    let core_id = match arkret_sdk::DidCoreId::new(principal.to_owned()) {
+        Ok(core_id) => core_id,
+        Err(_) => {
+            let full_id = arkret_sdk::DidFullId::new(principal.to_owned()).map_err(|error| {
+                crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+                    "principal id is invalid: {error}"
+                ))
+            })?;
+            arkret_sdk::project_full_id_to_core_id(&full_id).map_err(|error| {
+                crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+                    "principal cannot be projected to core id: {error}"
+                ))
+            })?
+        }
+    };
+    Ok(crate::secure_key_store::UserLocalStore::new(core_id))
+}
+
 pub(crate) fn load_identity_record_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<LocalIdentityRecord> {
@@ -171,7 +202,14 @@ pub(crate) fn load_identity_record_from_secure_store(
         tracing::warn!(?error, "secure identity read refused on wasm");
         return None;
     }
-    match secure_store.get_secret(LocalStateStore::SECURE_IDENTITY_KEY) {
+    let user_store = match active_user_local_store() {
+        Ok(user_store) => user_store,
+        Err(error) => {
+            tracing::warn!(?error, "secure identity read skipped without user scope");
+            return None;
+        }
+    };
+    match user_store.load_secret(secure_store, LocalStateStore::SECURE_IDENTITY_KEY) {
         Ok(Some(json)) => serde_json::from_str(&json).ok(),
         Ok(None) => None,
         Err(error) => {
@@ -191,16 +229,18 @@ pub(crate) fn store_identity_record_in_secure_store(
             "serialize identity record: {error}"
         ))
     })?;
-    secure_store.store_secret(LocalStateStore::SECURE_IDENTITY_KEY, &json)
+    active_user_local_store()?.save_secret(
+        secure_store,
+        LocalStateStore::SECURE_IDENTITY_KEY,
+        &json,
+    )
 }
 
 pub(crate) fn load_dpop_device_key_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
-    let Some(json) =
-        secure_store.get_secret(&crate::secure_key_store::account_scoped_device_key(
-            LocalStateStore::SECURE_DPOP_DEVICE_KEY,
-        ))?
+    let Some(json) = active_user_local_store()?
+        .load_secret(secure_store, LocalStateStore::SECURE_DPOP_DEVICE_KEY)?
     else {
         return Ok(None);
     };
@@ -221,10 +261,9 @@ pub(crate) fn store_dpop_device_key_in_secure_store(
             "serialize DPoP device key record: {error}"
         ))
     })?;
-    secure_store.store_secret(
-        &crate::secure_key_store::account_scoped_device_key(
-            LocalStateStore::SECURE_DPOP_DEVICE_KEY,
-        ),
+    active_user_local_store()?.save_secret(
+        secure_store,
+        LocalStateStore::SECURE_DPOP_DEVICE_KEY,
         &json,
     )
 }
@@ -232,10 +271,16 @@ pub(crate) fn store_dpop_device_key_in_secure_store(
 pub(crate) fn load_session_grant_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<Option<PersistedSessionGrant>, crate::secure_key_store::SecureKeyStoreError> {
-    let key = crate::secure_key_store::account_scoped_device_key(
-        LocalStateStore::SECURE_SESSION_GRANT_KEY,
-    );
-    let Some(json) = secure_store.get_secret(&key)? else {
+    load_session_grant_from_user_secure_store(&active_user_local_store()?, secure_store)
+}
+
+pub(crate) fn load_session_grant_from_user_secure_store(
+    user_store: &crate::secure_key_store::UserLocalStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<Option<PersistedSessionGrant>, crate::secure_key_store::SecureKeyStoreError> {
+    let Some(json) =
+        user_store.load_secret(secure_store, LocalStateStore::SECURE_SESSION_GRANT_KEY)?
+    else {
         return Ok(None);
     };
     serde_json::from_str(&json).map(Some).map_err(|error| {
@@ -250,15 +295,22 @@ pub(crate) fn store_session_grant_in_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     grant: &PersistedSessionGrant,
 ) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+    store_session_grant_in_user_secure_store(&active_user_local_store()?, secure_store, grant)
+}
+
+pub(crate) fn store_session_grant_in_user_secure_store(
+    user_store: &crate::secure_key_store::UserLocalStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    grant: &PersistedSessionGrant,
+) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
     let json = serde_json::to_string(grant).map_err(|error| {
         crate::secure_key_store::SecureKeyStoreError::Backend(format!(
             "serialize session grant: {error}"
         ))
     })?;
-    secure_store.store_secret(
-        &crate::secure_key_store::account_scoped_device_key(
-            LocalStateStore::SECURE_SESSION_GRANT_KEY,
-        ),
+    user_store.save_secret(
+        secure_store,
+        LocalStateStore::SECURE_SESSION_GRANT_KEY,
         &json,
     )
 }

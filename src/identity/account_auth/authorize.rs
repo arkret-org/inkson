@@ -25,6 +25,7 @@ pub fn build_oidc_authorize_scaffold(
     login_hint: &str,
     device_id: &str,
     principal_audience: &str,
+    account_intent: &OidcAccountIntent,
     ui_locale: &str,
 ) -> anyhow::Result<OidcScaffoldBundle> {
     let client_id = method
@@ -48,6 +49,7 @@ pub fn build_oidc_authorize_scaffold(
         login_hint,
         device_id,
         principal_audience,
+        account_intent,
         ui_locale,
         &state,
         &nonce,
@@ -77,6 +79,7 @@ fn build_standard_authorize_url(
     login_hint: &str,
     device_id: &str,
     principal_audience: &str,
+    account_intent: &OidcAccountIntent,
     ui_locale: &str,
     state: &str,
     nonce: &str,
@@ -130,10 +133,20 @@ fn build_standard_authorize_url(
         if !ui_locale.trim().is_empty() {
             query.append_pair("ui_locales", ui_locale.trim());
         }
-        // OIDC Core §3.1.2.1: force re-prompt so an app-level logout is not
-        // silently undone by a live IdP SSO cookie.
-        query.append_pair("prompt", "login");
-        query.append_pair("max_age", "0");
+        // Keep the OIDC ceremony aligned with the closed local intent.  A
+        // new-identity flow must enter the issuer's registration strand;
+        // existing-account flows force re-authentication so a live IdP cookie
+        // cannot silently select a different account.
+        match account_intent {
+            OidcAccountIntent::CreateIdentity => {
+                query.append_pair("prompt", "create");
+            }
+            OidcAccountIntent::RecoverAuthenticatedPrincipal
+            | OidcAccountIntent::ContinuePrincipal { .. } => {
+                query.append_pair("prompt", "login");
+                query.append_pair("max_age", "0");
+            }
+        }
         query.append_pair("code_challenge_method", pkce_method);
         query.append_pair("code_challenge", code_challenge);
     }

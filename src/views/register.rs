@@ -12,16 +12,35 @@ use crate::ui::card::Card;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum RegistrationFeedback {
+    #[default]
+    Idle,
+    Progress,
+    Error(RegistrationFailure),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RegistrationFailure {
+    kind: RegistrationFailureKind,
+    technical_detail: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegistrationFailureKind {
+    InvalidServerAddress,
+    ServiceUnavailable,
+    Unexpected,
+}
+
 #[component]
 pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
     let mut principal_server = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
     let i18n = use_context::<crate::i18n::I18nSignal>();
     let mut busy = use_signal(|| false);
-    let mut status = use_signal(|| {
-        "Create or authenticate the service account at its Account Authority. Identity custody continues here after the callback."
-            .to_owned()
-    });
+    let mut feedback = use_signal(RegistrationFeedback::default);
+    let feedback_value = feedback();
 
     rsx! {
         Card {
@@ -37,7 +56,30 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                 }
             }
             div { class: "auth-form",
-                div { class: "auth-status", role: "status", "aria-live": "polite", "{status}" }
+                if matches!(feedback_value, RegistrationFeedback::Progress) {
+                    div {
+                        class: "auth-status",
+                        role: "status",
+                        "aria-live": "polite",
+                        {crate::i18n::tr("register.opening")}
+                    }
+                }
+                if let RegistrationFeedback::Error(failure) = &feedback_value {
+                    div {
+                        class: "auth-error",
+                        role: "alert",
+                        "aria-live": "assertive",
+                        div { class: "auth-error-mark", "aria-hidden": "true", "!" }
+                        div { class: "auth-error-content",
+                            strong { {registration_error_title(failure.kind)} }
+                            p { {registration_error_guidance(failure.kind)} }
+                            details {
+                                summary { {crate::i18n::tr("register.error.technical_details")} }
+                                code { "{failure.technical_detail}" }
+                            }
+                        }
+                    }
+                }
                 Label { html_for: "register-server", "Principal server" }
                 Input {
                     id: "register-server",
@@ -45,14 +87,6 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                     value: "{principal_server}",
                     disabled: busy(),
                     oninput: move |event: FormEvent| principal_server.set(event.value()),
-                }
-                div { class: "muted",
-                    strong { "Account recovery" }
-                    " restores the Account Authority login (password, passkey or OIDC). It does not recover or rotate your principal DID."
-                }
-                div { class: "muted",
-                    strong { "Principal recovery" }
-                    " uses the Recovery Key generated on this device. It does not reset the service-account password."
                 }
                 Button {
                     variant: ButtonVariant::Primary,
@@ -67,24 +101,54 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                         let device = crate::config::new_device_id();
                         device_id.set(device.clone());
                         busy.set(true);
-                        status.set("Opening the Account Authority…".to_owned());
+                        feedback.set(RegistrationFeedback::Progress);
                         spawn(async move {
                             let result = async {
                                 #[cfg(target_arch = "wasm32")]
-                                crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
-                                    .await
-                                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                                let secure_store = {
+                                    tracing::info!(
+                                        target: "account_onboarding",
+                                        device_id = %device,
+                                        "create identity: waiting for IndexedDB secure store"
+                                    );
+                                    let store = crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson")
+                                        .await
+                                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                                    tracing::info!(
+                                        target: "account_onboarding",
+                                        backend = store.backend_name(),
+                                        device_id = %device,
+                                        "create identity: secure store ready"
+                                    );
+                                    store
+                                };
+                                #[cfg(not(target_arch = "wasm32"))]
                                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                                state_store.write().begin_pending_login(device.trim(), None);
                                 crate::secure_key_store::reset_device_seed_scope_for_signin(
                                     secure_store.as_ref(),
                                 )?;
+                                tracing::info!(
+                                    target: "account_onboarding",
+                                    device_id = %device,
+                                    "create identity: bootstrap key scope reset"
+                                );
                                 state_store.write().set_dpop_device_key(None);
-                                state_store.write().begin_pending_login(device.trim(), None);
-                                crate::secure_key_store::store_device_id_scoped(
-                                    secure_store.as_ref(),
-                                    None,
-                                    device.trim(),
-                                )?;
+                                tracing::info!(
+                                    target: "account_onboarding",
+                                    device_id = %device,
+                                    "create identity: pending login established"
+                                );
+                                let pending_store = crate::secure_key_store::PendingLocalStore::new(
+                                    arkret_sdk::DeviceId::new(device.trim().to_owned())?,
+                                );
+                                pending_store.activate();
+                                pending_store.save_device_id(secure_store.as_ref())?;
+                                tracing::info!(
+                                    target: "account_onboarding",
+                                    device_id = %device,
+                                    "create identity: bootstrap device persisted; opening authority"
+                                );
                                 crate::views::login::start_oidc_strand(
                                     &server,
                                     device.trim(),
@@ -97,17 +161,74 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                             }
                             .await;
                             if let Err(error) = result {
-                                status.set(format!("Could not open account creation: {error}"));
+                                tracing::error!(
+                                    target: "account_onboarding",
+                                    error = %error,
+                                    "create identity: account authority handoff failed"
+                                );
+                                feedback.set(RegistrationFeedback::Error(
+                                    registration_failure(&error),
+                                ));
                                 busy.set(false);
                             }
                         });
                     },
-                    "Continue at Account Authority"
+                    {crate::i18n::tr("login.continue")}
                 }
                 div { class: "auth-footer",
                     Link { to: crate::routes::Route::Login, "Already have an account? Sign in" }
                 }
             }
         }
+    }
+}
+
+fn registration_failure(error: &anyhow::Error) -> RegistrationFailure {
+    let detail = error.to_string().to_ascii_lowercase();
+    let kind = if detail.contains("invalid url") || detail.contains("relative url") {
+        RegistrationFailureKind::InvalidServerAddress
+    } else if detail.contains("service unavailable")
+        || detail.contains("temporarily unavailable")
+        || detail.contains("status was 503")
+    {
+        RegistrationFailureKind::ServiceUnavailable
+    } else {
+        RegistrationFailureKind::Unexpected
+    };
+    RegistrationFailure {
+        kind,
+        technical_detail: error.to_string(),
+    }
+}
+
+fn registration_error_title(kind: RegistrationFailureKind) -> String {
+    crate::i18n::tr(match kind {
+        RegistrationFailureKind::InvalidServerAddress => "register.error.invalid_server.title",
+        RegistrationFailureKind::ServiceUnavailable => "register.error.unavailable.title",
+        RegistrationFailureKind::Unexpected => "register.error.unexpected.title",
+    })
+}
+
+fn registration_error_guidance(kind: RegistrationFailureKind) -> String {
+    crate::i18n::tr(match kind {
+        RegistrationFailureKind::InvalidServerAddress => "register.error.invalid_server.guidance",
+        RegistrationFailureKind::ServiceUnavailable => "register.error.unavailable.guidance",
+        RegistrationFailureKind::Unexpected => "register.error.unexpected.guidance",
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RegistrationFailureKind, registration_failure};
+
+    #[test]
+    fn registration_errors_separate_user_message_from_protocol_diagnostics() {
+        let unavailable = anyhow::anyhow!(
+            "OIDC discovery remained unavailable after 60 seconds (13 attempts); last status was 503 Service Unavailable"
+        );
+        let failure = registration_failure(&unavailable);
+        assert_eq!(failure.kind, RegistrationFailureKind::ServiceUnavailable);
+        assert!(failure.technical_detail.contains("OIDC"));
+        assert!(failure.technical_detail.contains("503"));
     }
 }

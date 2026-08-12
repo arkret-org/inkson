@@ -274,7 +274,11 @@ pub fn OnboardingPanel(
             }
         });
     });
-    match &*server_reconciliation.read() {
+    // Clone the small status value before rendering. Holding a Signal read
+    // guard while the reconciliation task publishes its result causes Dioxus'
+    // single-threaded RefCell to panic instead of scheduling a rerender.
+    let reconciliation_status = server_reconciliation();
+    match &reconciliation_status {
         ServerReconciliationStatus::Loading => {
             return rsx! {
                 div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
@@ -638,7 +642,6 @@ async fn issue_recovery_completion_grant(
     {
         let mut store = state_store.write();
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        crate::secure_key_store::adopt_device_seed_scope_on_login(secure_store.as_ref(), &actor)?;
         store.adopt_pending_login(&actor);
         crate::views::login::persist_completed_login_dpop_key(
             &mut store,
@@ -1354,6 +1357,9 @@ async fn create_and_bind_identity(
     config_store: Signal<crate::config::LocalConfigStore>,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<(String, String, String)> {
+    let pending_device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     // Keep the handoff panel mounted while the durable registration advances.
     // The checkpoint deliberately contains no Recovery Key, but this component
     // still has the user-confirmed key in memory. Switching to the generic
@@ -1418,8 +1424,17 @@ async fn create_and_bind_identity(
 
     let checkpoint =
         if checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
-            let signer = crate::event_signer::active_signer()
-                .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
+            // The first device identity does not belong to a user namespace
+            // until the authority accepts the principal binding. Create/load it
+            // in this handoff's pending namespace, then activate the same key in
+            // memory for the genesis proofs. Promotion happens only after the
+            // server returns the principal.
+            let signing_material = pending_store.ensure_signing_seed(secure_store.as_ref())?;
+            let signer = crate::event_signer::activate_device_signer_from_seed_for_device(
+                signing_material.seed,
+                None,
+                Some(device),
+            )?;
             let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
             let signer =
                 crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device)?
@@ -1437,10 +1452,12 @@ async fn create_and_bind_identity(
                 )?;
                 crate::identity::did_key::encode_x25519_multibase(&public_key)
             };
-            let dpop = {
-                let mut store = state_store.write();
-                crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-            };
+            let dpop =
+            crate::identity::account_auth::grant_dpop::ensure_pending_device_key_with_secure_store(
+                &mut state_store.write(),
+                secure_store.as_ref(),
+                &pending_store,
+            )?;
             let prepared = crate::identity::principal_registration::prepare_genesis_draft(
                 &checkpoint,
                 recovery_key,
@@ -1466,10 +1483,12 @@ async fn create_and_bind_identity(
         crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared
             | crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared
     ) {
-        let dpop = {
-            let mut store = state_store.write();
-            crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-        };
+        let dpop =
+            crate::identity::account_auth::grant_dpop::ensure_pending_device_key_with_secure_store(
+                &mut state_store.write(),
+                secure_store.as_ref(),
+                &pending_store,
+            )?;
         let completion =
             match crate::identity::principal_registration::complete_account_handoff_binding(
                 handoff,
@@ -1526,8 +1545,6 @@ async fn create_and_bind_identity(
             grant_expires_at: Some(completion.session_grant.expires_at),
             stored_at: chrono::Utc::now(),
         };
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        crate::secure_key_store::adopt_device_seed_scope_on_login(secure_store.as_ref(), &actor)?;
         let mut accepted = checkpoint;
         accepted.binding_receipt = Some(completion.binding_receipt.clone());
         accepted.pcr_genesis_receipt = Some(completion.pcr_genesis_receipt.clone());

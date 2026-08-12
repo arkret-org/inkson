@@ -119,11 +119,9 @@ impl LocalStateStore {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let result = match grant.as_ref() {
                 Some(grant) => store_session_grant_in_secure_store(secure_store.as_ref(), grant),
-                None => {
-                    secure_store.delete_secret(&crate::secure_key_store::account_scoped_device_key(
-                        Self::SECURE_SESSION_GRANT_KEY,
-                    ))
-                }
+                None => active_user_local_store().and_then(|user_store| {
+                    user_store.delete_secret(secure_store.as_ref(), Self::SECURE_SESSION_GRANT_KEY)
+                }),
             };
             if let Err(error) = result {
                 tracing::error!(?error, "secure session grant persist failed");
@@ -147,29 +145,26 @@ impl LocalStateStore {
         #[cfg(not(test))]
         {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            if let Err(error) = secure_store.delete_secret(
-                &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
-            ) {
-                tracing::debug!(
-                    ?error,
-                    "secure_key_store DPoP key delete on logout failed (likely already missing)",
-                );
-            }
-            if let Err(error) = secure_store.delete_secret(
-                &crate::secure_key_store::account_scoped_device_key(Self::SECURE_SESSION_GRANT_KEY),
-            ) {
-                tracing::debug!(
-                    ?error,
-                    "secure_key_store session grant delete on logout failed (likely already missing)",
-                );
-            }
-            if let Err(error) =
-                crate::secure_key_store::delete_grant_binding_seed(secure_store.as_ref())
-            {
-                tracing::debug!(
-                    ?error,
-                    "secure_key_store grant-binding seed delete on logout failed (likely already missing)",
-                );
+            match active_user_local_store() {
+                Ok(user_store) => {
+                    if let Err(error) = user_store
+                        .delete_secret(secure_store.as_ref(), Self::SECURE_DPOP_DEVICE_KEY)
+                    {
+                        tracing::debug!(?error, "secure DPoP key delete on logout failed");
+                    }
+                    if let Err(error) = user_store
+                        .delete_secret(secure_store.as_ref(), Self::SECURE_SESSION_GRANT_KEY)
+                    {
+                        tracing::debug!(?error, "secure session grant delete on logout failed");
+                    }
+                    if let Err(error) = user_store.delete_grant_binding_seed(secure_store.as_ref())
+                    {
+                        tracing::debug!(?error, "grant-binding seed delete on logout failed");
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(?error, "logout had no active user local store");
+                }
             }
         }
         self.ensure_cached_loaded();

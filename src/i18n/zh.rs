@@ -298,6 +298,20 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("login.status.signed_out", "未登录");
     dict.set("login.status.session_expired", "会话已过期");
     dict.set("login.status.signed_in", "已登录");
+    dict.set("register.opening", "正在打开账户服务…");
+    dict.set("register.error.technical_details", "技术详情");
+    dict.set("register.error.invalid_server.title", "服务器地址无效");
+    dict.set(
+        "register.error.invalid_server.guidance",
+        "请检查地址后重试。",
+    );
+    dict.set("register.error.unavailable.title", "账户服务暂时不可用");
+    dict.set("register.error.unavailable.guidance", "请稍后重试。");
+    dict.set("register.error.unexpected.title", "无法继续");
+    dict.set(
+        "register.error.unexpected.guidance",
+        "请重试。如果问题持续，请展开下方技术详情。",
+    );
     dict.set("login.refresh_now", "立即刷新");
 
     dict.set("dashboard.home", "主页");

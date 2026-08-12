@@ -371,10 +371,8 @@ impl LocalStateStore {
     ///   `true` (new account).
     ///
     /// Either way the pending root entry is cleared and `did` becomes active.
-    /// The secure-store device seed/device_id scope selection itself is handled
-    /// by `adopt_device_seed_scope_on_login` before this is called; returning
-    /// accounts keep their existing device identity while first-time accounts may
-    /// adopt bootstrap material.
+    /// The pending local store is promoted into a typed `UserLocalStore` before
+    /// this is called. Returning users retain their existing device identity.
     pub fn adopt_pending_login(&mut self, did: &str) -> bool {
         self.ensure_cached_loaded();
         let did = did.trim();
@@ -477,15 +475,14 @@ impl LocalStateStore {
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) {
         let account = self.active_account_did();
-        let _ =
-            secure_store.delete_secret(&crate::secure_key_store::account_scoped_device_key_for(
-                Self::SECURE_DPOP_DEVICE_KEY,
-                account.as_deref(),
-            ));
-        let _ = secure_store.delete_secret(Self::SECURE_IDENTITY_KEY);
-        let _ = crate::secure_key_store::delete_grant_binding_seed(secure_store);
-        if let Some(account) = account.as_deref() {
-            let _ = crate::secure_key_store::delete_device_identity_scope(secure_store, account);
+        if let Some(account) = account.as_deref()
+            && let Ok(full_id) = arkret_sdk::DidFullId::new(account.to_owned())
+            && let Ok(core_id) = arkret_sdk::project_full_id_to_core_id(&full_id)
+        {
+            let user_store = crate::secure_key_store::UserLocalStore::new(core_id);
+            let _ = user_store.delete_secret(secure_store, Self::SECURE_DPOP_DEVICE_KEY);
+            let _ = user_store.delete_secret(secure_store, Self::SECURE_IDENTITY_KEY);
+            let _ = user_store.delete_device_identity(secure_store);
         }
         crate::event_signer::clear_active_device_signer();
         self.clear_device_scoped_state();
@@ -511,9 +508,9 @@ impl LocalStateStore {
         #[cfg(not(test))]
         if record.is_none() {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            if let Err(error) = secure_store.delete_secret(
-                &crate::secure_key_store::account_scoped_device_key(Self::SECURE_DPOP_DEVICE_KEY),
-            ) {
+            if let Err(error) = active_user_local_store().and_then(|user_store| {
+                user_store.delete_secret(secure_store.as_ref(), Self::SECURE_DPOP_DEVICE_KEY)
+            }) {
                 tracing::debug!(
                     ?error,
                     "secure_key_store DPoP key delete on clear failed (likely already missing)",
@@ -541,9 +538,40 @@ impl LocalStateStore {
                 Some(public_record)
             }
             None => {
-                secure_store.delete_secret(&crate::secure_key_store::account_scoped_device_key(
-                    Self::SECURE_DPOP_DEVICE_KEY,
-                ))?;
+                active_user_local_store()?
+                    .delete_secret(secure_store, Self::SECURE_DPOP_DEVICE_KEY)?;
+                None
+            }
+        };
+        self.ensure_cached_loaded();
+        self.cached.dpop_device_key = public_record.clone();
+        let _ = self.flush();
+        Ok(public_record)
+    }
+
+    /// Persist a pre-principal DPoP key in the transaction-scoped pending
+    /// store. The pending namespace is explicit and can only be promoted to a
+    /// user namespace after the Account Authority returns a principal.
+    pub fn set_pending_dpop_device_key_with_secure_store(
+        &mut self,
+        record: Option<DpopDeviceKeyRecord>,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+        pending_store: &crate::secure_key_store::PendingLocalStore,
+    ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
+        let public_record = match record {
+            Some(record) => {
+                let json = serde_json::to_string(&record).map_err(|error| {
+                    crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+                        "serialize pending DPoP device key record: {error}"
+                    ))
+                })?;
+                pending_store.save_secret(secure_store, Self::SECURE_DPOP_DEVICE_KEY, &json)?;
+                let mut public_record = record;
+                public_record.seed_b64.clear();
+                Some(public_record)
+            }
+            None => {
+                pending_store.delete_secret(secure_store, Self::SECURE_DPOP_DEVICE_KEY)?;
                 None
             }
         };
@@ -559,6 +587,25 @@ impl LocalStateStore {
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
         load_dpop_device_key_from_secure_store(secure_store)
+    }
+
+    /// Load a pre-principal DPoP key from the explicitly selected pending
+    /// transaction. This must not consult the active user scope: no principal
+    /// core id exists until the Account Authority completes the binding.
+    pub fn load_pending_dpop_device_key_with_secure_store(
+        &self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+        pending_store: &crate::secure_key_store::PendingLocalStore,
+    ) -> Result<Option<DpopDeviceKeyRecord>, crate::secure_key_store::SecureKeyStoreError> {
+        let Some(json) = pending_store.load_secret(secure_store, Self::SECURE_DPOP_DEVICE_KEY)?
+        else {
+            return Ok(None);
+        };
+        serde_json::from_str(&json).map(Some).map_err(|error| {
+            crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+                "deserialize pending DPoP device key record: {error}"
+            ))
+        })
     }
 
     pub fn stage_saved_account_data_item(

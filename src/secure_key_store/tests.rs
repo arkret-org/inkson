@@ -1,17 +1,5 @@
 use super::*;
 
-fn lock_scope_tests() -> std::sync::MutexGuard<'static, ()> {
-    lock_active_device_seed_scope_for_test()
-}
-
-struct SeedScopeReset;
-
-impl Drop for SeedScopeReset {
-    fn drop(&mut self) {
-        set_active_device_seed_scope(None);
-    }
-}
-
 /// T5.2 — store / load signing seed round-trips through a
 /// MemorySecureKeyStore. `load_signing_seed` returns None on a
 /// fresh store; `store_signing_seed` followed by
@@ -19,16 +7,19 @@ impl Drop for SeedScopeReset {
 /// derived did:key.
 #[test]
 fn signing_seed_round_trips_through_memory_store() {
-    let _scope_guard = lock_scope_tests();
     let store = MemorySecureKeyStore::new();
-    assert!(load_signing_seed(&store).unwrap().is_none());
+    let user = UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
+    assert!(user.load_signing_seed(&store).unwrap().is_none());
 
     let seed = [11u8; 32];
-    let saved = store_signing_seed(&store, &seed).expect("store");
+    let saved = user.save_signing_seed(&store, &seed).expect("store");
     assert_eq!(saved.seed, seed);
     assert!(saved.local_signing_did.starts_with("did:key:z"));
 
-    let loaded = load_signing_seed(&store)
+    let loaded = user
+        .load_signing_seed(&store)
         .expect("load")
         .expect("seed present");
     assert_eq!(loaded.seed, seed);
@@ -39,146 +30,118 @@ fn signing_seed_round_trips_through_memory_store() {
 /// and is idempotent on subsequent calls.
 #[test]
 fn ensure_signing_seed_generates_and_is_idempotent() {
-    let _scope_guard = lock_scope_tests();
     let store = MemorySecureKeyStore::new();
-    let first = ensure_signing_seed(&store).expect("first");
+    let user = UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
+    let first = user.ensure_signing_seed(&store).expect("first");
     // Seed must be non-trivial.
     assert!(first.seed.iter().any(|b| *b != 0));
-    let second = ensure_signing_seed(&store).expect("second");
+    let second = user.ensure_signing_seed(&store).expect("second");
     assert_eq!(first.seed, second.seed);
     assert_eq!(first.local_signing_did, second.local_signing_did);
 }
 
 #[test]
-fn login_adopt_preserves_returning_account_device_identity() {
-    let _scope_guard = lock_scope_tests();
-    let _reset = SeedScopeReset;
-    set_active_device_seed_scope(None);
+fn pending_promotion_preserves_returning_user_device_identity() {
     let store = MemorySecureKeyStore::new();
-    let account = "did:web:alice.example";
-    let old_device = "ak:device:01964137-0000-7000-8000-000000000001";
-    let bootstrap_device = "ak:device:01964137-0000-7000-8000-000000000002";
+    let user = UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
+    let old_device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
+            .unwrap();
+    let pending_device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
+            .unwrap();
+    let pending = PendingLocalStore::new(pending_device);
     let old_seed = [1u8; 32];
-    let bootstrap_seed = [2u8; 32];
+    user.save_signing_seed(&store, &old_seed).unwrap();
+    user.save_device_id(&store, &old_device).unwrap();
+    pending.save_signing_seed(&store, &[2u8; 32]).unwrap();
+    pending.save_device_id(&store).unwrap();
 
-    store_signing_seed_scoped(&store, Some(account), &old_seed).expect("old account seed");
-    store_device_id_scoped(&store, Some(account), old_device).expect("old account device id");
-    store_signing_seed_scoped(&store, None, &bootstrap_seed).expect("bootstrap seed");
-    store_device_id_scoped(&store, None, bootstrap_device).expect("bootstrap device id");
+    pending.promote_to(&store, &user).unwrap();
 
-    adopt_device_seed_scope_on_login(&store, account).expect("adopt login scope");
-
-    let adopted_seed = load_signing_seed_scoped(&store, Some(account))
-        .expect("load account seed")
-        .expect("account seed present");
+    let adopted_seed = user.load_signing_seed(&store).unwrap().unwrap();
     assert_eq!(adopted_seed.seed, old_seed);
+    assert_eq!(user.load_device_id(&store).unwrap(), Some(old_device));
+}
+
+#[test]
+fn identity_storage_has_no_historical_key_compatibility_paths() {
+    let sources = [
+        include_str!("identity_store.rs"),
+        include_str!("local_storage.rs"),
+        include_str!("signing_seed.rs"),
+        include_str!("../identity/account_auth/handoff.rs"),
+    ];
+    let forbidden = [
+        "legacy_seed_key",
+        "inkson.secret.global",
+        "inkson.device_id.v1",
+        "ACCOUNT_HANDOFF_GRANT_SECRET_KEY: &str",
+        "PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY: &str",
+    ];
+
+    for needle in forbidden {
+        assert!(
+            sources.iter().all(|source| !source.contains(needle)),
+            "identity storage must not reintroduce historical key compatibility: {needle}"
+        );
+    }
+}
+
+#[test]
+fn pending_promotion_moves_material_for_first_time_user() {
+    let store = MemorySecureKeyStore::new();
+    let user = UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
+    let pending = PendingLocalStore::new(
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
+            .unwrap(),
+    );
+    pending.save_signing_seed(&store, &[2u8; 32]).unwrap();
+    pending.save_device_id(&store).unwrap();
+
+    pending.promote_to(&store, &user).unwrap();
+
     assert_eq!(
-        load_device_id_scoped(&store, Some(account))
-            .expect("load account device")
-            .as_deref(),
-        Some(old_device)
+        user.load_signing_seed(&store).unwrap().unwrap().seed,
+        [2u8; 32]
     );
-    assert!(
-        load_signing_seed_scoped(&store, None)
-            .expect("load bootstrap seed")
-            .is_none()
-    );
-    assert!(
-        load_device_id_scoped(&store, None)
-            .expect("load bootstrap device")
-            .is_none()
+    assert_eq!(
+        user.load_device_id(&store).unwrap(),
+        Some(pending.device_id().clone())
     );
 }
 
 #[test]
-fn login_adopt_rehomes_bootstrap_material_for_first_time_account() {
-    let _scope_guard = lock_scope_tests();
-    let _reset = SeedScopeReset;
-    set_active_device_seed_scope(None);
+fn deleting_pending_transaction_preserves_user_identity() {
     let store = MemorySecureKeyStore::new();
-    let account = "did:web:alice.example";
-    let bootstrap_device = "ak:device:01964137-0000-7000-8000-000000000002";
-    let bootstrap_seed = [2u8; 32];
+    let user = UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
+    let user_device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
+            .unwrap();
+    let pending = PendingLocalStore::new(
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
+            .unwrap(),
+    );
+    user.save_signing_seed(&store, &[1u8; 32]).unwrap();
+    user.save_device_id(&store, &user_device).unwrap();
+    pending.save_signing_seed(&store, &[2u8; 32]).unwrap();
+    pending.save_device_id(&store).unwrap();
 
-    store_signing_seed_scoped(&store, None, &bootstrap_seed).expect("bootstrap seed");
-    store_device_id_scoped(&store, None, bootstrap_device).expect("bootstrap device id");
+    pending.delete(&store).unwrap();
 
-    adopt_device_seed_scope_on_login(&store, account).expect("adopt login scope");
-
-    let adopted_seed = load_signing_seed_scoped(&store, Some(account))
-        .expect("load account seed")
-        .expect("account seed present");
-    assert_eq!(adopted_seed.seed, bootstrap_seed);
     assert_eq!(
-        load_device_id_scoped(&store, Some(account))
-            .expect("load account device")
-            .as_deref(),
-        Some(bootstrap_device)
+        user.load_signing_seed(&store).unwrap().unwrap().seed,
+        [1u8; 32]
     );
-    assert!(
-        load_signing_seed_scoped(&store, None)
-            .expect("load bootstrap seed")
-            .is_none()
-    );
-    assert!(
-        load_device_id_scoped(&store, None)
-            .expect("load bootstrap device")
-            .is_none()
-    );
-}
-
-#[test]
-fn signin_reset_preserves_account_identity_and_rotates_grant_binding() {
-    let _scope_guard = lock_scope_tests();
-    let _reset = SeedScopeReset;
-    let store = MemorySecureKeyStore::new();
-    let account = "did:web:alice.example";
-    let account_device = "ak:device:01964137-0000-7000-8000-000000000001";
-    let account_seed = [1u8; 32];
-    let bootstrap_seed = [2u8; 32];
-    let bootstrap_device = "ak:device:01964137-0000-7000-8000-000000000002";
-    let old_grant_binding = [3u8; 32];
-
-    set_active_device_seed_scope(Some(account));
-    store_signing_seed_scoped(&store, Some(account), &account_seed).expect("account seed");
-    store_device_id_scoped(&store, Some(account), account_device).expect("account device");
-    store_signing_seed_scoped(&store, None, &bootstrap_seed).expect("bootstrap seed");
-    store_device_id_scoped(&store, None, bootstrap_device).expect("bootstrap device");
-    store_grant_binding_seed(&store, &old_grant_binding).expect("old grant-binding");
-
-    reset_device_seed_scope_for_signin(&store).expect("reset for signin");
-
-    assert_eq!(active_device_seed_scope(), None);
-    assert_eq!(
-        load_signing_seed_scoped(&store, Some(account))
-            .expect("load account seed")
-            .expect("account seed")
-            .seed,
-        account_seed
-    );
-    assert_eq!(
-        load_device_id_scoped(&store, Some(account))
-            .expect("load account device")
-            .as_deref(),
-        Some(account_device)
-    );
-    assert!(
-        load_signing_seed_scoped(&store, None)
-            .expect("load bootstrap seed")
-            .is_none()
-    );
-    assert!(
-        load_device_id_scoped(&store, None)
-            .expect("load bootstrap device")
-            .is_none()
-    );
-    assert_ne!(
-        load_grant_binding_seed(&store)
-            .expect("load grant-binding")
-            .expect("grant-binding")
-            .seed,
-        old_grant_binding
-    );
+    assert_eq!(user.load_device_id(&store).unwrap(), Some(user_device));
 }
 
 /// Corrupt entry → backend error so the boot path surfaces a
@@ -186,15 +149,16 @@ fn signin_reset_preserves_account_identity_and_rotates_grant_binding() {
 #[test]
 fn load_signing_seed_rejects_short_entries() {
     let store = MemorySecureKeyStore::new();
+    let user = UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
     store
-        .store_secret(SIGNING_SEED_KEY, &STANDARD_NO_PAD.encode([1u8; 16]))
+        .store_secret(
+            &user.secret_key(SIGNING_SEED_KEY),
+            &STANDARD_NO_PAD.encode([1u8; 16]),
+        )
         .unwrap();
-    // Load through the explicit bootstrap scope rather than
-    // `load_signing_seed` (which reads the process-global
-    // `ACTIVE_DEVICE_SEED_SCOPE`): the seed above is stored under the bare
-    // `SIGNING_SEED_KEY`, so a concurrently-running scope test flipping the
-    // global must not turn this length-rejection assertion into `Ok(None)`.
-    let err = load_signing_seed_scoped(&store, None).unwrap_err();
+    let err = user.load_signing_seed(&store).unwrap_err();
     assert!(matches!(err, SecureKeyStoreError::Backend(_)));
 }
 
@@ -217,10 +181,10 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
         "coauth.session_credential.did:example:alice"
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
-        "auth.dpop.device_key.v1.did:example:alice"
+        "inkson.pending.01964137-0000-7000-8000-000000000001.auth.dpop.device_key.v1"
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
-        "auth.session_grant.v1.did:example:alice"
+        "inkson.web:alice.example.auth.session_grant.v1"
     ));
     assert!(is_wasm_indexeddb_required_secret_key(
         "inkson.device_hpke_x25519.private.ak:device:01964137-0000-7000-8000-000000000001"
@@ -253,7 +217,7 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
 fn wasm_test_downgrade_is_limited_to_device_signing_seed_fixtures() {
     assert!(is_wasm_test_downgrade_fixture_key(SIGNING_SEED_KEY));
     assert!(is_wasm_test_downgrade_fixture_key(
-        "device.ed25519.signing_seed.v1.account-digest"
+        "inkson.web:alice.example.device.ed25519.signing_seed.v1"
     ));
     assert!(!is_wasm_test_downgrade_fixture_key(
         "inkson.e2ee_plaintext_cache.v1.account-digest"

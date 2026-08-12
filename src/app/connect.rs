@@ -869,13 +869,30 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 }
                 {
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    crate::secure_key_store::set_active_device_seed_scope(Some(&canonical_actor));
-                    if let Err(error) = crate::secure_key_store::store_device_id_scoped(
-                        secure_store.as_ref(),
-                        Some(&canonical_actor),
-                        &device,
-                    ) {
-                        tracing::warn!(?error, "connect: persist canonical device_id failed");
+                    match arkret_sdk::DidFullId::new(canonical_actor.clone())
+                        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
+                    {
+                        Ok(core_id) => {
+                            let user_store = crate::secure_key_store::UserLocalStore::new(core_id);
+                            user_store.activate();
+                            match arkret_sdk::DeviceId::new(device.clone()) {
+                                Ok(device_id) => {
+                                    if let Err(error) =
+                                        user_store.save_device_id(secure_store.as_ref(), &device_id)
+                                    {
+                                        tracing::warn!(
+                                            ?error,
+                                            "connect: persist canonical device_id failed"
+                                        );
+                                    }
+                                }
+                                Err(error) => tracing::warn!(
+                                    ?error,
+                                    "connect: canonical device_id is invalid"
+                                ),
+                            }
+                        }
+                        Err(error) => tracing::warn!(?error, "connect: canonical actor is invalid"),
                     }
                     if let Err(error) =
                         crate::event_signer::bootstrap_default_signer_for_device("inkson", &device)

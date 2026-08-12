@@ -25,6 +25,7 @@ use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
 
 mod fallback;
 mod host_bridge;
+mod identity_store;
 mod indexed_db;
 mod keyring;
 mod local_storage;
@@ -48,6 +49,7 @@ pub use host_bridge::{
     HostBridgeSecureKeyStore, HostSecretBridge, host_secret_bridge_installed,
     install_host_secret_bridge,
 };
+pub use identity_store::{GlobalLocalStore, PendingLocalStore, UserLocalStore};
 #[cfg(target_arch = "wasm32")]
 pub use indexed_db::{IndexedDbSecureKeyStore, initialize_wasm_secure_key_store_async};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -58,18 +60,18 @@ pub use local_storage::LocalStorageSecureKeyStore;
 pub use platform::AndroidKeystoreSecureKeyStore;
 #[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 pub use platform::IosKeychainSecureKeyStore;
-#[cfg(test)]
-pub(crate) use signing_seed::lock_active_device_seed_scope_for_test;
 pub use signing_seed::{
     GRANT_BINDING_SEED_KEY, SIGNING_SEED_KEY, SigningSeedMaterial, account_scoped_device_key,
-    account_scoped_device_key_for, active_device_seed_scope, adopt_device_seed_scope_on_login,
-    delete_device_identity_scope, delete_grant_binding_seed, ensure_grant_binding_seed,
-    ensure_signing_seed, ensure_signing_seed_scoped, load_device_id, load_device_id_scoped,
-    load_grant_binding_seed, load_signing_seed, load_signing_seed_scoped, pending_login_device_id,
-    reset_device_seed_scope_for_signin, rotate_grant_binding_seed, set_active_device_seed_scope,
-    set_pending_login_device_id, store_device_id, store_device_id_scoped, store_grant_binding_seed,
-    store_grant_binding_seed_b64url, store_signing_seed, store_signing_seed_scoped,
-    wrap_seed_namespace,
+    active_device_seed_scope, delete_grant_binding_seed, ensure_grant_binding_seed,
+    ensure_signing_seed, load_device_id, load_grant_binding_seed, load_signing_seed,
+    pending_login_device_id, reset_device_seed_scope_for_signin, rotate_grant_binding_seed,
+    set_active_device_seed_scope, set_pending_login_device_id, store_device_id,
+    store_grant_binding_seed, store_grant_binding_seed_b64url, store_signing_seed,
+};
+#[cfg(test)]
+pub(crate) use signing_seed::{
+    account_scoped_device_key_for, ensure_signing_seed_scoped, load_device_id_scoped,
+    load_signing_seed_scoped, store_device_id_scoped, store_signing_seed_scoped,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -151,13 +153,14 @@ pub async fn ensure_wasm_secure_key_store_ready(
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
-    // Matches both the bootstrap seed key and every per-account scoped seed
-    // key (`<SIGNING_SEED_KEY>.<account-b64>`) so account-scoped device seeds
-    // keep the IndexedDB-only, no-localStorage-mirror seed tier.
+    // Typed browser stores prepend their identity namespace to the logical
+    // key. Classification therefore accepts both the bare logical key used by
+    // native/test backends and the scoped physical key used in the browser.
     key == SIGNING_SEED_KEY
-        || key.starts_with(&format!("{SIGNING_SEED_KEY}."))
+        || key.ends_with(&format!(".{SIGNING_SEED_KEY}"))
         || key == WASM_LOCAL_IDENTITY_SEED_KEY
         || key == GRANT_BINDING_SEED_KEY
+        || key.ends_with(&format!(".{GRANT_BINDING_SEED_KEY}"))
 }
 
 /// SecureKeyStore key prefix for per-realm aggregated MLS `history_secret`s
@@ -185,23 +188,27 @@ pub(crate) const ACCOUNT_LOCAL_STATE_KEY_PREFIX: &str = "inkson.local_state.v1.a
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
+    let scoped_prefix = |logical_prefix: &str| {
+        key.starts_with(logical_prefix) || key.contains(&format!(".{logical_prefix}"))
+    };
     is_wasm_ed25519_seed_key(key)
         || key == PENDING_LOGOUT_SECRET_KEY
-        || key == crate::identity::account_auth::ACCOUNT_HANDOFF_GRANT_SECRET_KEY
-        || key.starts_with(crate::identity::account_auth::ACCOUNT_HANDOFF_GRANT_SECRET_KEY_PREFIX)
-        || key == crate::identity::account_auth::PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY
-        || key.starts_with(
+        || key.ends_with(&format!(".{PENDING_LOGOUT_SECRET_KEY}"))
+        || scoped_prefix(crate::identity::account_auth::ACCOUNT_HANDOFF_GRANT_SECRET_KEY_PREFIX)
+        || scoped_prefix(
             crate::identity::account_auth::PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY_PREFIX,
         )
-        || key.starts_with(
+        || scoped_prefix(
             crate::identity::account_auth::PENDING_IDENTITY_CREATION_RECOVERY_KEY_PREFIX,
         )
         || key.starts_with("inkson.mls_snapshot.account_secret.")
         || key.starts_with("inkson_mls_account_secret")
         || key.starts_with("inkson.mls_key_package.identity_state.")
         || key.starts_with("coauth.session_credential.")
-        || key.starts_with("auth.dpop.device_key.v1")
-        || key.starts_with("auth.session_grant.v1")
+        || key == "auth.dpop.device_key.v1"
+        || key.ends_with(".auth.dpop.device_key.v1")
+        || key == "auth.session_grant.v1"
+        || key.ends_with(".auth.session_grant.v1")
         || key.starts_with("inkson.device_hpke_x25519.private.")
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
