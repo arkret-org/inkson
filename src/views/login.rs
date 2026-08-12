@@ -9,7 +9,7 @@ use crate::config::{
     same_server_url,
 };
 use crate::identity::account_auth::{
-    AuthorityResolver, OidcAccountIntent, build_oidc_authorize_scaffold,
+    AuthorityResolver, OidcEntryPoint, build_oidc_authorize_scaffold,
     build_persisted_oidc_scaffold, capture_current_browser_callback_url,
     clear_persisted_oidc_scaffold, extract_authorization_code_from_callback,
     extract_error_description_from_callback, extract_error_from_callback,
@@ -31,41 +31,55 @@ struct OidcCallbackOutcome {
     preferred_locale: Option<crate::i18n::Locale>,
 }
 
-#[derive(Debug, thiserror::Error)]
-enum PendingHandoffResumeError {
-    #[error(
-        "This unfinished identity setup no longer has its holder key on this device. Wait for its displayed lease deadline before starting over."
-    )]
-    MissingHolderKey,
-    #[error("Could not recover the holder key for this unfinished identity setup: {0}")]
-    HolderKeyRecovery(#[source] crate::identity::account_auth::grant_dpop::AuthDpopError),
-    #[error(
-        "This unfinished identity setup belongs to a different holder key. Wait for its displayed lease deadline before starting over."
-    )]
-    HolderKeyMismatch,
-}
-
 fn recover_pending_handoff_for_sign_in(
     store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     device_id: &str,
-) -> Result<bool, PendingHandoffResumeError> {
+) -> bool {
     let pending_holder = store
         .pending_account_handoff()
         .filter(|handoff| handoff.device_id == device_id)
         .map(|handoff| handoff.holder_jkt);
     if let Some(expected_holder) = pending_holder {
-        let recovered = crate::identity::account_auth::grant_dpop::load_or_recover_device_key_with_secure_store(
+        let pending_device_id = match arkret_sdk::DeviceId::new(device_id.to_owned()) {
+            Ok(device_id) => device_id,
+            Err(error) => {
+                tracing::warn!(%error, device_id, "starting fresh sign-in because the unfinished handoff device id is invalid");
+                return false;
+            }
+        };
+        let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
+        let recovered = match crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
             store,
             secure_store,
-        )
-        .map_err(PendingHandoffResumeError::HolderKeyRecovery)?
-        .ok_or(PendingHandoffResumeError::MissingHolderKey)?;
+            &pending_store,
+        ) {
+            Ok(Some(recovered)) => recovered,
+            Ok(None) => {
+                tracing::warn!(
+                    device_id,
+                    "starting fresh sign-in because the unfinished handoff holder key is missing"
+                );
+                return false;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    device_id,
+                    "starting fresh sign-in because the unfinished handoff holder could not be recovered"
+                );
+                return false;
+            }
+        };
         if recovered.jkt() != expected_holder {
-            return Err(PendingHandoffResumeError::HolderKeyMismatch);
+            tracing::warn!(
+                device_id,
+                "starting fresh sign-in because the unfinished handoff belongs to a different holder"
+            );
+            return false;
         }
     }
-    Ok(store.can_resume_pending_login(device_id))
+    store.can_resume_pending_login(device_id)
 }
 
 // Process-global OIDC-callback completion guard. `callback_started` below is a
@@ -149,26 +163,15 @@ pub fn LoginPanel(
         is_busy.set(false);
     });
 
-    // Account selection belongs to the Account Authority. For a locally known
-    // account, carry its principal DID as the explicit session-grant binding
-    // assertion; coauth still authenticates the selected account and rejects a
-    // mismatch. This is not a login hint or silent account selection. Reuse the
-    // stable protocol device id so a hard re-login rotates only the
-    // grant-binding key, not the E2EE device identity.
+    // Account selection and the resulting principal binding belong to the
+    // Account Authority. A stale local account must never constrain a new
+    // interactive sign-in. Only a verified unfinished handoff can retain its
+    // pending device id; every other account-first sign-in starts in a fresh
+    // anonymous device namespace.
     let launch_sign_in = move || {
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
-        // The Account Authority authenticates the service account.  Inkson
-        // still owns the user's local intent and validates the returned typed
-        // handoff disposition before adopting any device/account state.
-        let (account_intent, device) =
-            match interactive_sign_in_context(&account_did(), &device_id()) {
-                Ok(context) => context,
-                Err(error) => {
-                    auth_status.set(error);
-                    return;
-                }
-            };
+        let device = interactive_sign_in_device_id(&state_store.read());
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
         is_busy.set(true);
@@ -188,19 +191,7 @@ pub fn LoginPanel(
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let resume_account_handoff = {
                 let mut store = reset_state_store.write();
-                match recover_pending_handoff_for_sign_in(
-                    &mut store,
-                    secure_store.as_ref(),
-                    &device,
-                ) {
-                    Ok(resume) => resume,
-                    Err(error) => {
-                        tracing::warn!(%error, "recover pending handoff holder before sign-in failed");
-                        is_busy.set(false);
-                        auth_status.set(error.to_string());
-                        return;
-                    }
-                }
+                recover_pending_handoff_for_sign_in(&mut store, secure_store.as_ref(), &device)
             };
             if resume_account_handoff {
                 // An unfinished identity-creation lease is fenced to this DPoP
@@ -244,7 +235,13 @@ pub fn LoginPanel(
             if let Err(error) = pending_store.save_device_id(secure_store.as_ref()) {
                 tracing::warn!(%error, "persist pending device_id for sign-in failed");
             }
-            match start_oidc_strand(&principal, device.trim(), "", account_intent, &ui_locale).await
+            match start_oidc_strand(
+                &principal,
+                device.trim(),
+                OidcEntryPoint::SignIn,
+                &ui_locale,
+            )
+            .await
             {
                 Ok(()) => {}
                 Err(error) => {
@@ -405,8 +402,7 @@ pub fn LoginPanel(
                         .unwrap_or_default();
                     let actor_label = actor_display_label(&store_snapshot, &actor_value);
                     drop(store_snapshot);
-                    let show_session_diagnostics =
-                        session_status != "signed-out" || !jkt_display.is_empty();
+                    let show_session_diagnostics = session_status != "signed-out";
                     let device_label = short_protocol_id(&device_value);
                     let jkt_label = short_protocol_id(&jkt_display);
                     let session_status_label = crate::i18n::tr(match session_status {
@@ -500,36 +496,12 @@ fn restore_oidc_callback_device_seed_scope(
     Ok(pending_store)
 }
 
-fn interactive_sign_in_device_id(persisted_actor: &str, persisted_device: &str) -> String {
-    let actor = persisted_actor.trim();
-    let device = persisted_device.trim();
-    if !actor.is_empty() && crate::config::is_valid_device_id(device) {
-        device.to_owned()
-    } else {
-        crate::config::new_device_id()
-    }
-}
-
-fn interactive_sign_in_context(
-    persisted_actor: &str,
-    persisted_device: &str,
-) -> Result<(OidcAccountIntent, String), String> {
-    let actor = persisted_actor.trim();
-    let account_intent = if actor.is_empty() {
-        OidcAccountIntent::RecoverAuthenticatedPrincipal
-    } else {
-        let expected_full_id = arkret_sdk::DidFullId::new(actor.to_owned())
-            .map_err(|error| format!("The saved account principal is invalid: {error}"))?;
-        let expected_principal_id = arkret_sdk::project_full_id_to_core_id(&expected_full_id)
-            .map_err(|error| format!("The saved account principal cannot be projected: {error}"))?;
-        OidcAccountIntent::ContinuePrincipal {
-            expected_principal_id,
-        }
-    };
-    Ok((
-        account_intent,
-        interactive_sign_in_device_id(persisted_actor, persisted_device),
-    ))
+fn interactive_sign_in_device_id(store: &LocalStateStore) -> String {
+    store
+        .pending_account_handoff()
+        .map(|handoff| handoff.device_id)
+        .filter(|device| crate::config::is_valid_device_id(device))
+        .unwrap_or_else(crate::config::new_device_id)
 }
 
 pub(crate) fn persist_completed_login_dpop_key(
@@ -600,25 +572,13 @@ fn discard_failed_oidc_callback(error: String) -> String {
     {
         tracing::warn!(%clear_error, "clear failed OIDC scaffold failed");
     }
-    // Principal-binding mismatch gets specific guidance: the raw wire reason
-    // ("proof_invalid; principal binding mismatch: …") tells the user nothing
-    // actionable — the actual fix is signing in with the intended account.
-    if error.contains("principal binding mismatch") {
-        return "The account signed in at the Account Authority does not match this local device session. Start sign-in again with the intended account."
-            .to_owned();
-    }
-    if error.contains("principal_unknown") {
-        return "The Account Authority reported that the verified principal binding is missing. No new identity was created; authenticate again and use account recovery or diagnostics if this device was already bound."
-            .to_owned();
-    }
     format!("{error} Start sign-in again.")
 }
 
 pub(crate) async fn start_oidc_strand(
     principal_server_url: &str,
     device_id: &str,
-    login_hint: &str,
-    account_intent: OidcAccountIntent,
+    entry_point: OidcEntryPoint,
     ui_locale: &str,
 ) -> Result<(), String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
@@ -646,10 +606,9 @@ pub(crate) async fn start_oidc_strand(
         &discovery,
         &method,
         &redirect_uri,
-        login_hint,
         device_id,
         &resolver.principal_audience,
-        &account_intent,
+        &entry_point,
         ui_locale,
     )
     .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
@@ -658,7 +617,6 @@ pub(crate) async fn start_oidc_strand(
         &bundle,
         &resolver.gate_account_base,
         principal_server_url,
-        account_intent,
         device_id,
         &discovery.issuer,
         &resolver.principal_trust_domain,
@@ -821,7 +779,6 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("Account Authority handoff failed: {error}"))?;
     let disposition = garth::account_handoff_disposition(&handoff)
         .map_err(|error| format!("Account handoff outcome failed validation: {error}"))?;
-    validate_account_handoff_binding(&scaffold.account_intent, &disposition)?;
     if let AccountHandoffDisposition::IdentityCreationActive(lease) = &disposition {
         let pending_handoff = crate::state::PendingAccountHandoff {
             principal_server_url,
@@ -938,33 +895,6 @@ async fn finish_oidc_callback(
     Ok(OidcCallbackOutcome {
         preferred_locale: handoff.preferred_locale,
     })
-}
-
-/// Validate only the identity assertion that the client can know locally.
-///
-/// For a continuation of an already-known principal, a different/unbound
-/// server account is a hard mismatch. For account-first entry points there is
-/// no local principal assertion: Account Authority's typed `binding.state` is
-/// authoritative and selects either identity creation or the already-bound
-/// principal path (account-lifecycle §2.1.2).
-fn validate_account_handoff_binding(
-    intent: &OidcAccountIntent,
-    disposition: &AccountHandoffDisposition,
-) -> Result<(), String> {
-    match (intent, disposition) {
-        (
-            OidcAccountIntent::ContinuePrincipal {
-                expected_principal_id,
-            },
-            AccountHandoffDisposition::Bound { principal_id, .. },
-        ) if principal_id == expected_principal_id => Ok(()),
-        (OidcAccountIntent::ContinuePrincipal { .. }, _) => Err(
-            "The Account Authority authenticated a different account than the existing local principal. No device identity or onboarding state was adopted. Use the intended account, or choose Create account to start a separate identity."
-                .to_owned(),
-        ),
-        (OidcAccountIntent::RecoverAuthenticatedPrincipal, _)
-        | (OidcAccountIntent::CreateIdentity, _) => Ok(()),
-    }
 }
 
 fn apply_authenticated_account_locale(
@@ -1107,29 +1037,54 @@ mod tests {
     fn sign_in_recovers_pending_handoff_holder_from_secure_grant_binding_seed() {
         let mut store = crate::state::isolated_store_for_tests("recover-pending-handoff-holder");
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
-        let seed = [29_u8; 32];
-        let expected = dpop_record_for_seed(seed);
         let mut handoff = pending_handoff_for_test(
             "ak:request:019f0000-0000-7000-8000-000000000011",
             "alice:auth.example",
         );
+        let pending_store = crate::secure_key_store::PendingLocalStore::new(
+            arkret_sdk::DeviceId::new(handoff.device_id.clone()).unwrap(),
+        );
+        let seed = pending_store
+            .ensure_grant_binding_seed(&secure_store)
+            .expect("grant-binding seed")
+            .seed;
+        let expected = dpop_record_for_seed(seed);
         handoff.holder_jkt = expected.jkt.clone();
         let device_id = handoff.device_id.clone();
         store
             .set_pending_account_handoff(Some(handoff))
             .expect("pending handoff");
-        crate::secure_key_store::store_grant_binding_seed(&secure_store, &seed)
-            .expect("grant-binding seed");
 
         assert!(!store.can_resume_pending_login(&device_id));
-        assert!(
-            recover_pending_handoff_for_sign_in(&mut store, &secure_store, &device_id)
-                .expect("recover pending holder")
-        );
+        assert!(recover_pending_handoff_for_sign_in(
+            &mut store,
+            &secure_store,
+            &device_id
+        ));
         assert_eq!(
             store.dpop_device_key().expect("public holder record").jkt,
             expected.jkt
         );
+    }
+
+    #[test]
+    fn sign_in_starts_fresh_when_pending_handoff_holder_is_missing() {
+        let mut store = crate::state::isolated_store_for_tests("missing-pending-handoff-holder");
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        let handoff = pending_handoff_for_test(
+            "ak:request:019f0000-0000-7000-8000-000000000012",
+            "alice:auth.example",
+        );
+        let device_id = handoff.device_id.clone();
+        store
+            .set_pending_account_handoff(Some(handoff))
+            .expect("pending handoff");
+
+        assert!(!recover_pending_handoff_for_sign_in(
+            &mut store,
+            &secure_store,
+            &device_id
+        ));
     }
 
     #[test]
@@ -1161,28 +1116,8 @@ mod tests {
     #[test]
     fn failed_callback_prompts_fresh_sign_in() {
         assert_eq!(
-            discard_failed_oidc_callback("Account Authority session-grant issue failed".to_owned()),
-            "Account Authority session-grant issue failed Start sign-in again."
-        );
-    }
-
-    #[test]
-    fn principal_binding_mismatch_gets_specific_login_guidance() {
-        assert_eq!(
-            discard_failed_oidc_callback(
-                "Account Authority session-grant issue failed: reason_code=proof_invalid; principal binding mismatch: the request principal_id does not match the authenticated user".to_owned()
-            ),
-            "The account signed in at the Account Authority does not match this local device session. Start sign-in again with the intended account."
-        );
-    }
-
-    #[test]
-    fn unknown_principal_fails_closed_without_minting_guidance() {
-        assert_eq!(
-            discard_failed_oidc_callback(
-                "Account Authority session-grant issue failed: principal_unknown".to_owned()
-            ),
-            "The Account Authority reported that the verified principal binding is missing. No new identity was created; authenticate again and use account recovery or diagnostics if this device was already bound."
+            discard_failed_oidc_callback("Account Authority handoff failed".to_owned()),
+            "Account Authority handoff failed Start sign-in again."
         );
     }
 
@@ -1203,123 +1138,30 @@ mod tests {
     }
 
     #[test]
-    fn interactive_sign_in_reuses_known_account_device_id() {
-        let existing = "ak:device:01964137-0000-7000-8000-000000000001";
-        assert_eq!(
-            interactive_sign_in_device_id("did:web:alice.example", existing),
-            existing
-        );
+    fn interactive_sign_in_never_reuses_an_active_accounts_device() {
+        let store = crate::state::isolated_store_for_tests("account-first-fresh-device");
+        let selected = interactive_sign_in_device_id(&store);
+
+        assert!(crate::config::is_valid_device_id(&selected));
         assert_ne!(
-            interactive_sign_in_device_id("", existing),
-            existing,
-            "first login mints a fresh protocol device id"
-        );
-        assert_ne!(
-            interactive_sign_in_device_id("did:web:alice.example", "not-a-device"),
-            "not-a-device",
-            "invalid persisted ids are never reused"
+            selected, "ak:device:01964137-0000-7000-8000-000000000001",
+            "account-first sign-in must not inherit a device from a locally active account"
         );
     }
 
     #[test]
-    fn interactive_sign_in_carries_known_principal_binding() {
-        let actor = "did:webvh:z6mkfixture:alice.example";
-        let device = "ak:device:01964137-0000-7000-8000-000000000001";
-
-        let (intent, selected_device) =
-            interactive_sign_in_context(&format!("  {actor}  "), device).unwrap();
-
-        assert_eq!(
-            intent,
-            OidcAccountIntent::ContinuePrincipal {
-                expected_principal_id: arkret_sdk::project_full_id_to_core_id(
-                    &arkret_sdk::DidFullId::new(actor.to_owned()).unwrap()
-                )
-                .unwrap(),
-            }
+    fn interactive_sign_in_only_reuses_a_pending_handoff_device() {
+        let mut store = crate::state::isolated_store_for_tests("account-first-pending-device");
+        let handoff = pending_handoff_for_test(
+            "ak:request:019f0000-0000-7000-8000-000000000013",
+            "alice:auth.example",
         );
-        assert_eq!(selected_device, device);
+        let expected = handoff.device_id.clone();
+        store
+            .set_pending_account_handoff(Some(handoff))
+            .expect("pending handoff");
 
-        let (unbound, fresh_device) = interactive_sign_in_context("   ", device).unwrap();
-        assert_eq!(unbound, OidcAccountIntent::RecoverAuthenticatedPrincipal);
-        assert_ne!(
-            fresh_device, device,
-            "unknown-account recovery needs a fresh device identity"
-        );
-    }
-
-    fn bound_disposition(principal: &str) -> AccountHandoffDisposition {
-        AccountHandoffDisposition::Bound {
-            principal_id: arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
-            full_id: arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap(),
-        }
-    }
-
-    fn busy_disposition() -> AccountHandoffDisposition {
-        AccountHandoffDisposition::IdentityCreationBusy {
-            retry_after_ms: 500,
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
-        }
-    }
-
-    #[test]
-    fn account_handoff_uses_server_state_without_crossing_known_principal_boundary() {
-        let alice = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
-        let continue_alice = OidcAccountIntent::ContinuePrincipal {
-            expected_principal_id: alice,
-        };
-
-        assert!(
-            validate_account_handoff_binding(
-                &continue_alice,
-                &bound_disposition("ak:did_core:web:alice.example")
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_account_handoff_binding(
-                &continue_alice,
-                &bound_disposition("ak:did_core:web:bob.example")
-            )
-            .is_err(),
-            "an existing-account login must reject a different principal"
-        );
-        assert!(
-            validate_account_handoff_binding(&continue_alice, &busy_disposition()).is_err(),
-            "an existing-account login must not turn into identity creation"
-        );
-
-        assert!(
-            validate_account_handoff_binding(
-                &OidcAccountIntent::RecoverAuthenticatedPrincipal,
-                &bound_disposition("ak:did_core:web:alice.example")
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_account_handoff_binding(
-                &OidcAccountIntent::RecoverAuthenticatedPrincipal,
-                &busy_disposition()
-            )
-            .is_ok(),
-            "an account-first flow must follow the server-authored creation state"
-        );
-
-        assert!(
-            validate_account_handoff_binding(
-                &OidcAccountIntent::CreateIdentity,
-                &busy_disposition()
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_account_handoff_binding(
-                &OidcAccountIntent::CreateIdentity,
-                &bound_disposition("ak:did_core:web:alice.example")
-            )
-            .is_ok(),
-            "an already-bound server account must follow the bound-principal path"
-        );
+        assert_eq!(interactive_sign_in_device_id(&store), expected);
     }
 
     #[test]

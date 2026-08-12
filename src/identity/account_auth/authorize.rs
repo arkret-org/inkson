@@ -2,15 +2,13 @@ use anyhow::Context;
 use sha2::{Digest as _, Sha256};
 use url::Url;
 
-#[cfg(target_arch = "wasm32")]
-use super::OIDC_SCAFFOLD_STORAGE_KEY;
 use super::util::{
     PKCE_VERIFIER_BYTES, STATE_NONCE_TOKEN_BYTES, pkce_code_challenge_s256, preferred_pkce_method,
     random_url_safe_token,
 };
 use super::{
     ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OIDC_SCAFFOLD_STORAGE_KEY_PREFIX,
-    OidcAccountIntent, OidcDiscoveryDocument, OidcScaffoldBundle, PersistedOidcScaffold,
+    OidcDiscoveryDocument, OidcEntryPoint, OidcScaffoldBundle, PersistedOidcScaffold,
 };
 
 /// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
@@ -22,10 +20,9 @@ pub fn build_oidc_authorize_scaffold(
     discovery: &OidcDiscoveryDocument,
     method: &arkret_sdk::AuthMethod,
     redirect_uri: &str,
-    login_hint: &str,
     device_id: &str,
     principal_audience: &str,
-    account_intent: &OidcAccountIntent,
+    entry_point: &OidcEntryPoint,
     ui_locale: &str,
 ) -> anyhow::Result<OidcScaffoldBundle> {
     let client_id = method
@@ -46,10 +43,9 @@ pub fn build_oidc_authorize_scaffold(
         method,
         &client_id,
         redirect_uri,
-        login_hint,
         device_id,
         principal_audience,
-        account_intent,
+        entry_point,
         ui_locale,
         &state,
         &nonce,
@@ -76,10 +72,9 @@ fn build_standard_authorize_url(
     method: &arkret_sdk::AuthMethod,
     client_id: &str,
     redirect_uri: &str,
-    login_hint: &str,
     device_id: &str,
     principal_audience: &str,
-    account_intent: &OidcAccountIntent,
+    entry_point: &OidcEntryPoint,
     ui_locale: &str,
     state: &str,
     nonce: &str,
@@ -107,10 +102,10 @@ fn build_standard_authorize_url(
     {
         scope_tokens.push("offline_access".to_owned());
     }
-    // Bind this OAuth session to the stable device id so introspection returns
-    // a stable `org.arkret.device_id` (avoids per-session device drift →
-    // cursor_integrity_invalid). This is a parameterized capability scope,
-    // accepted verbatim by the issuer; not gated by discovery scopes_supported.
+    // Bind this OAuth session to the pending device id so every authority call
+    // in this sign-in strand observes one `org.arkret.device_id`. This is a
+    // parameterized capability scope accepted verbatim by the issuer; it is
+    // not gated by discovery scopes_supported.
     let device_id = device_id.trim();
     if !device_id.is_empty() {
         scope_tokens.push(format!("{ARKRET_DEVICE_SCOPE_PREFIX}{device_id}"));
@@ -126,23 +121,18 @@ fn build_standard_authorize_url(
         query.append_pair("scope", &scope);
         query.append_pair("state", state);
         query.append_pair("nonce", nonce);
-        if !login_hint.trim().is_empty() {
-            query.append_pair("login_hint", login_hint);
-        }
         query.append_pair("resource", principal_audience);
         if !ui_locale.trim().is_empty() {
             query.append_pair("ui_locales", ui_locale.trim());
         }
-        // Keep the OIDC ceremony aligned with the closed local intent.  A
-        // new-identity flow must enter the issuer's registration strand;
-        // existing-account flows force re-authentication so a live IdP cookie
-        // cannot silently select a different account.
-        match account_intent {
-            OidcAccountIntent::CreateIdentity => {
+        // This selects only the Account Authority interaction surface. The
+        // returned typed handoff remains authoritative for the authenticated
+        // account's bound or identity-creation state.
+        match entry_point {
+            OidcEntryPoint::CreateIdentity => {
                 query.append_pair("prompt", "create");
             }
-            OidcAccountIntent::RecoverAuthenticatedPrincipal
-            | OidcAccountIntent::ContinuePrincipal { .. } => {
+            OidcEntryPoint::SignIn => {
                 query.append_pair("prompt", "login");
                 query.append_pair("max_age", "0");
             }
@@ -156,13 +146,11 @@ fn build_standard_authorize_url(
 /// Assemble the durable scaffold record from a freshly-built authorize bundle
 /// plus the resolved Account Authority routing. Persisted across the browser
 /// redirect so the callback can restore PKCE verifier / state / nonce and the
-/// `gate_account_base` to POST the session-grant to.
-#[allow(clippy::too_many_arguments)]
+/// `gate_account_base` to POST the account handoff to.
 pub fn build_persisted_oidc_scaffold(
     bundle: &OidcScaffoldBundle,
     gate_account_base: &str,
     principal_server_url: &str,
-    account_intent: OidcAccountIntent,
     device_id: &str,
     issuer: &str,
     principal_trust_domain: &arkret_sdk::TypedTrustDomainId,
@@ -173,7 +161,6 @@ pub fn build_persisted_oidc_scaffold(
         code_verifier: bundle.code_verifier.clone(),
         client_id: bundle.client_id.clone(),
         principal_server_url: principal_server_url.to_owned(),
-        account_intent,
         device_id: device_id.to_owned(),
         principal_audience: bundle.principal_audience.clone(),
         callback_uri: bundle.callback_uri.clone(),
@@ -186,7 +173,7 @@ pub fn build_persisted_oidc_scaffold(
 
 fn oidc_scaffold_storage_key(state: &str) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"inkson.oidc-scaffold-state-v2\0");
+    digest.update(b"inkson.oidc-scaffold-state-v1\0");
     digest.update(state.as_bytes());
     format!(
         "{OIDC_SCAFFOLD_STORAGE_KEY_PREFIX}{}",
@@ -277,8 +264,7 @@ pub fn clear_all_persisted_oidc_scaffolds() -> anyhow::Result<()> {
     let mut keys = Vec::new();
     for index in 0..storage.length().unwrap_or_default() {
         if let Ok(Some(key)) = storage.key(index)
-            && (key == OIDC_SCAFFOLD_STORAGE_KEY
-                || key.starts_with(OIDC_SCAFFOLD_STORAGE_KEY_PREFIX))
+            && key.starts_with(OIDC_SCAFFOLD_STORAGE_KEY_PREFIX)
         {
             keys.push(key);
         }

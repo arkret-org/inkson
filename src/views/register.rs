@@ -152,8 +152,7 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                                 crate::views::login::start_oidc_strand(
                                     &server,
                                     device.trim(),
-                                    "",
-                                    crate::identity::account_auth::OidcAccountIntent::CreateIdentity,
+                                    crate::identity::account_auth::OidcEntryPoint::CreateIdentity,
                                     &ui_locale,
                                 )
                                 .await

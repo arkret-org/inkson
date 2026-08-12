@@ -222,10 +222,9 @@ fn state_and_nonce_diverge_for_same_caller() {
         &discovery,
         &method,
         "https://app.example/auth/callback",
-        "",
         "device-aaaa-1111",
         "https://principal.example/api",
-        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+        &OidcEntryPoint::SignIn,
         "en",
     )
     .unwrap();
@@ -233,10 +232,9 @@ fn state_and_nonce_diverge_for_same_caller() {
         &discovery,
         &method,
         "https://app.example/auth/callback",
-        "",
         "device-aaaa-1111",
         "https://principal.example/api",
-        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+        &OidcEntryPoint::SignIn,
         "en",
     )
     .unwrap();
@@ -253,10 +251,9 @@ fn bundle_challenge_is_s256_of_verifier_when_supported() {
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "",
         "device-bbbb-2222",
         "https://principal.example/api",
-        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+        &OidcEntryPoint::SignIn,
         "en",
     )
     .unwrap();
@@ -279,10 +276,9 @@ fn authorize_scaffold_rejects_plain_only_pkce_discovery() {
         &discovery,
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "",
         "device-plain-only",
         "https://principal.example/api",
-        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+        &OidcEntryPoint::SignIn,
         "en",
     )
     .unwrap_err();
@@ -296,10 +292,9 @@ fn authorize_url_forces_reauthentication() {
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "",
         "device-cccc-3333",
         "https://principal.example/api",
-        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+        &OidcEntryPoint::SignIn,
         "zh",
     )
     .unwrap();
@@ -339,10 +334,9 @@ fn create_identity_authorize_url_uses_prompt_create() {
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "",
         "device-create-3333",
         "https://principal.example/api",
-        &OidcAccountIntent::CreateIdentity,
+        &OidcEntryPoint::CreateIdentity,
         "zh",
     )
     .unwrap();
@@ -361,42 +355,17 @@ fn create_identity_authorize_url_uses_prompt_create() {
     );
 }
 
-#[test]
-fn authorize_url_carries_login_hint_when_known_account_selected() {
-    let bundle = build_oidc_authorize_scaffold(
-        &test_discovery(),
-        &test_oidc_method(),
-        "https://app.example/auth/callback",
-        "chris",
-        "device-known-account",
-        "https://principal.example/api",
-        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
-        "en",
-    )
-    .unwrap();
-    let parsed = Url::parse(&bundle.authorize_url).unwrap();
-    assert_eq!(
-        parsed
-            .query_pairs()
-            .find(|(key, _)| key == "login_hint")
-            .unwrap()
-            .1,
-        "chris"
-    );
-}
-
 /// The authorize URL MUST request `openid`, the method scopes, and the
-/// stable device-binding scope (prevents cursor_integrity_invalid drift).
+/// pending device-binding scope used throughout this sign-in strand.
 #[test]
 fn authorize_url_requests_standard_and_device_scope() {
     let bundle = build_oidc_authorize_scaffold(
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "",
         "device-dddd-4444",
         "https://principal.example/api",
-        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+        &OidcEntryPoint::SignIn,
         "en",
     )
     .unwrap();
@@ -425,10 +394,9 @@ fn authorize_url_falls_back_to_native_client_id() {
         &test_discovery(),
         &method,
         "https://app.example/auth/callback",
-        "",
         "device-eeee-5555",
         "https://principal.example/api",
-        &OidcAccountIntent::RecoverAuthenticatedPrincipal,
+        &OidcEntryPoint::SignIn,
         "en",
     )
     .unwrap();
