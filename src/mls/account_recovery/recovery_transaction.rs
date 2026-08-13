@@ -197,7 +197,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         device_authorize_payload_digest(&serde_json::to_value(&authorize_payload)?, digest_suite)?,
     )?;
 
-    let reanchor_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
+    let reexpiry_start_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
         verified_session.principal_id.as_str(),
         scope_ref.realm_id().as_str(),
     )?;
@@ -215,7 +215,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         rotation.version_id.clone(),
         "did_recovery_anchor",
     ))
-    .author(frontier.next_actor_seq, reanchor_hlc, created_at)?;
+    .author(frontier.next_actor_seq, reexpiry_start_hlc, created_at)?;
     let root_did = arkret_sdk::DidFullId::new(
         rotation
             .current_root_verification_method

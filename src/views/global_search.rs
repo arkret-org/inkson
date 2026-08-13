@@ -640,7 +640,7 @@ mod tests {
                 ],
                 completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
                 coordinator_agent_id: None,
-                source_frontier_anchor: None,
+                source_event_id: None,
             },
             message_id: "ak:message:ASiSP84x2Juep0Q8j2fao1vAfdzqs8Y728RHY5FFyKDb".to_owned(),
             local_operation_id: "local-sidecar-search-test".to_owned(),

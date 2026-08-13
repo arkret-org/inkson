@@ -556,7 +556,7 @@ pub async fn set_invite_receive_policy(
 /// Resolve the pair's stable Direct Conversation coordinates.
 ///
 /// This is query-only and never authors anything. Creation is founder-only: only the participant
-/// derived from the pair's root Contact basis may author the founding unit, which is what removes
+/// derived from the pair's root Contact round may author the founding unit, which is what removes
 /// the cross-server creation race. Callers that turn out to be the founder submit separately via
 /// [`direct_conversation_found`].
 pub async fn direct_conversation_resolve(
@@ -688,7 +688,7 @@ pub async fn create_direct_conversation_from_resolve(
         idempotency_key: arkret_sdk::IdempotencyKey::new(crate::operation::uuid_v7())
             .map_err(anyhow::Error::msg)?,
         events,
-        founder_basis_evidence: next_founding_input.founder_basis_evidence.clone(),
+        founding_authority_evidence: next_founding_input.founding_authority_evidence.clone(),
         source_service_binding: next_founding_input.source_service_binding.clone(),
         cba_proof_bundles: Vec::new(),
     };
@@ -1070,7 +1070,7 @@ pub async fn tombstone_contact(
         operation_id: operation_id.clone(),
         idempotency_key: idempotency_key.clone(),
         peer: row.peer,
-        basis_id: next.basis_id,
+        contact_round_id: next.contact_round_id,
         version: next.version,
         predecessor_event_ref: next.predecessor_event_ref,
     });

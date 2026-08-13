@@ -2086,7 +2086,7 @@ mod tests {
                     .unwrap(),
                     track_name: "discussion".to_owned(),
                 },
-                source_frontier_anchor: None,
+                source_event_id: None,
                 source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
                 client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
                 addressed_agent_ids: vec![coordinator.clone()],
@@ -2190,7 +2190,7 @@ mod tests {
             ],
             completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
             coordinator_agent_id: None,
-            source_frontier_anchor: None,
+            source_event_id: None,
         }
     }
 

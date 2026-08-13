@@ -834,7 +834,7 @@ mod tests {
                 tombstone_event_ref: None,
                 next_prepare_input: (state == arkret_sdk::ContactState::Accepted).then(|| {
                     arkret_sdk::contact_operations::ContactNextPrepareInput {
-                        basis_id: arkret_sdk::Hash::new(
+                        contact_round_id: arkret_sdk::Hash::new(
                             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         )
                         .unwrap(),

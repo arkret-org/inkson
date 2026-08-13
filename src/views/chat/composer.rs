@@ -1754,7 +1754,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let api_token = token();
                                     let wait_for = active_sync_token(sync_cursor());
                                     let own_controller_handle = own_controller_handle.clone();
-                                    let source_frontier_anchor = latest_source_event_anchor(
+                                    let source_event_id = latest_source_event_anchor(
                                         &messages.read(),
                                         &session.source_realm_id,
                                         &session.source_strand_id,
@@ -1801,7 +1801,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 &session.source_realm_id,
                                                 &session.source_strand_id,
                                                 &source_strand_id,
-                                                source_frontier_anchor.as_deref(),
+                                                source_event_id.as_deref(),
                                                 &body,
                                                 &resolved_mentions,
                                                 &session.addressed_agent_ids,

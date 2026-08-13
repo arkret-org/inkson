@@ -465,8 +465,9 @@ fn projected_member_profiles_for_realm(
 ) -> Vec<MemberProfile> {
     let state = store.load();
     let mut rows = BTreeMap::<String, MemberProfile>::new();
-    let contact_anchor_index =
-        crate::views::member_display::contact_petname_anchor_index(&store.active_contact_remarks());
+    let contact_anchor_index = crate::views::member_display::contact_petname_binding_index(
+        &store.active_contact_remarks(),
+    );
     if let Some(projection) = state.realm_tree_projections.get(realm_id) {
         for row in crate::views::member_display::realm_member_roster(Some(projection)) {
             let display =

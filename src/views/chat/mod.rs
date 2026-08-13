@@ -240,7 +240,7 @@ fn project_visible_messages(
                 .get(&message.id)
                 .is_none_or(|projection| {
                     projection
-                        .source_frontier_anchor
+                        .source_event_id
                         .as_ref()
                         .is_none_or(|anchor| visible_source_ids.contains(anchor.as_str()))
                 })
@@ -286,7 +286,7 @@ fn project_visible_messages(
                 continue;
             };
             let mut insert_at = projection
-                .source_frontier_anchor
+                .source_event_id
                 .as_ref()
                 .and_then(|anchor| {
                     ordered
@@ -295,13 +295,11 @@ fn project_visible_messages(
                         .map(|position| position + 1)
                 })
                 .unwrap_or(ordered.len());
-            while projection.source_frontier_anchor.is_some()
+            while projection.source_event_id.is_some()
                 && insert_at < ordered.len()
                 && echo_projection_by_event
                     .get(&ordered[insert_at].id)
-                    .is_some_and(|existing| {
-                        existing.source_frontier_anchor == projection.source_frontier_anchor
-                    })
+                    .is_some_and(|existing| existing.source_event_id == projection.source_event_id)
             {
                 insert_at += 1;
             }
@@ -1133,7 +1131,7 @@ async fn submit_source_routed_sidecar_message(
     source_realm_id: &str,
     attached_source_strand_id: &str,
     routed_source_strand_id: &str,
-    source_frontier_anchor: Option<&str>,
+    source_event_id: Option<&str>,
     body: &str,
     mentions: &[MentionNode],
     addressed_agent_ids: &[String],
@@ -1237,7 +1235,7 @@ async fn submit_source_routed_sidecar_message(
             addressed_agent_ids: addressed.clone(),
             completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
             coordinator_agent_id: (addressed.len() > 1).then(|| addressed[0].clone()),
-            source_frontier_anchor: source_frontier_anchor
+            source_event_id: source_event_id
                 .filter(|anchor| !anchor.trim().is_empty())
                 .and_then(|anchor| arkret_sdk::EventId::new(anchor.to_owned()).ok()),
         });

@@ -80,7 +80,7 @@ fn chat_message_matches_protocol_id_after_server_rekeys_render_id() {
 fn delivered_exchange_projection_fixture(
     realm_id: &str,
     source_strand_id: &str,
-    source_frontier_anchor: Option<&str>,
+    source_event_id: Option<&str>,
     request_event_id: &str,
 ) -> arkret_sdk::AgentSidecarExchangeProjection {
     let coordinator =
@@ -102,8 +102,7 @@ fn delivered_exchange_projection_fixture(
             strand_id: arkret_sdk::StrandId::new(source_strand_id).unwrap(),
             track_name: "discussion".to_owned(),
         },
-        source_frontier_anchor: source_frontier_anchor
-            .map(|anchor| arkret_sdk::EventId::new(anchor).unwrap()),
+        source_event_id: source_event_id.map(|anchor| arkret_sdk::EventId::new(anchor).unwrap()),
         source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
         client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
         addressed_agent_ids: vec![coordinator.clone()],
@@ -170,7 +169,7 @@ fn source_routed_echo_waits_until_its_anchor_is_visible() {
         project_visible_messages(&messages, source, realm, None, &[projection.clone()]).is_empty()
     );
 
-    projection.source_frontier_anchor = None;
+    projection.source_event_id = None;
     let visible = project_visible_messages(&messages, source, realm, None, &[projection]);
     assert_eq!(visible.len(), 1);
     assert_eq!(visible[0].id, echo);
@@ -202,7 +201,7 @@ fn routed_request_binding_travels_only_in_encrypted_metadata_plaintext() {
         ],
         completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
         coordinator_agent_id: None,
-        source_frontier_anchor: None,
+        source_event_id: None,
     };
     let binding = arkret_sdk::AgentSidecarEventExchangeBinding::request(
         arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008").unwrap(),

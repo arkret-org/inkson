@@ -363,7 +363,7 @@ pub(crate) fn member_label_with_contact_petname(
 
 /// Build the bounded local anchor index used to warn when a visible public
 /// display string collides with another accepted Contact's saved identity.
-pub(crate) fn contact_petname_anchor_index(
+pub(crate) fn contact_petname_binding_index(
     remarks: &BTreeMap<String, crate::account_data::ContactRemark>,
 ) -> BTreeMap<String, BTreeSet<String>> {
     let mut index = BTreeMap::<String, BTreeSet<String>>::new();
@@ -523,7 +523,7 @@ mod petname_tests {
             (alice.to_owned(), remark(alice, "Alice")),
             (bob.to_owned(), remark(bob, "Bob")),
         ]);
-        let index = contact_petname_anchor_index(&remarks);
+        let index = contact_petname_binding_index(&remarks);
 
         assert!(!public_display_conflicts_with_other_contact(
             &index,

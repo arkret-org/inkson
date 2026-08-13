@@ -491,7 +491,7 @@ mod tests {
                 "peer": {"kind": "human", "principal_id": "ak:did_core:web:bob.example"},
                 "state": "accepted",
                 "next_prepare_input": {
-                    "basis_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "contact_round_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "version": 2,
                     "predecessor_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
                 },
@@ -700,7 +700,7 @@ mod tests {
             ),
             tombstone_event_ref: None,
             next_prepare_input: Some(arkret_sdk::contact_operations::ContactNextPrepareInput {
-                basis_id: arkret_sdk::Hash::new(
+                contact_round_id: arkret_sdk::Hash::new(
                     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 )
                 .unwrap(),

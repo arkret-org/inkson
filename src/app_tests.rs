@@ -7,7 +7,7 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
             "peer": {"kind": "human", "principal_id": "ak:did_core:web:example.com:users:alice"},
             "state": "accepted",
             "next_prepare_input": {
-                "basis_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "contact_round_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "version": 2,
                 "predecessor_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
             },
