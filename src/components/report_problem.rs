@@ -284,6 +284,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         // SAFETY: env vars are process-global; the mutex above scopes
         // mutation to one test at a time within this binary.
+        #[allow(
+            unsafe_code,
+            reason = "the test mutates crash telemetry environment under ENV_LOCK"
+        )]
         unsafe {
             std::env::remove_var("INKSON_CRASH_TELEMETRY_OPT_IN");
         }
@@ -297,6 +301,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         for value in ["1", "true", "TRUE", "on", "yes"] {
             // SAFETY: env mutation is serialised by ENV_LOCK above.
+            #[allow(
+                unsafe_code,
+                reason = "the test mutates crash telemetry environment under ENV_LOCK"
+            )]
             unsafe {
                 std::env::set_var("INKSON_CRASH_TELEMETRY_OPT_IN", value);
             }
@@ -304,6 +312,10 @@ mod tests {
             assert!(prefs.is_opt_in(), "expected opt-in for value {value}");
         }
         // SAFETY: env mutation is serialised by ENV_LOCK above.
+        #[allow(
+            unsafe_code,
+            reason = "the test restores crash telemetry environment under ENV_LOCK"
+        )]
         unsafe {
             std::env::remove_var("INKSON_CRASH_TELEMETRY_OPT_IN");
         }

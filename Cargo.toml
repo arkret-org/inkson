@@ -7,6 +7,9 @@ description = "Dioxus desktop and web Arkret v1 reference client"
 license = "Apache-2.0"
 repository = "https://github.com/arkret-org/inkson"
 
+[lints]
+workspace = true
+
 [profile.wasm-dev]
 inherits = "dev"
 opt-level = 1
@@ -357,6 +360,15 @@ generational-box = { path = "vendor/generational-box" }
 
 [workspace]
 resolver = "3"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+mem_forget = "deny"
+todo = "deny"
+unimplemented = "deny"
 
 [workspace.dependencies]
 anyhow = "1.0.102"

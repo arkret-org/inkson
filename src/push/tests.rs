@@ -212,6 +212,10 @@ fn vapid_extractor_falls_back_to_env_when_webpush_advertised() {
     // Guard env var manipulation behind cfg(not(target_arch=wasm32))
     // because std::env::set_var doesn't compile on wasm.
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(
+        unsafe_code,
+        reason = "the test mutates push environment before loading configuration"
+    )]
     unsafe {
         std::env::set_var("VAPID_PUBLIC_KEY", "BFakeVapidPublicKey-base64url-string");
     }
@@ -219,6 +223,10 @@ fn vapid_extractor_falls_back_to_env_when_webpush_advertised() {
     // SAFETY: same serial-guard rationale as the set_var above; this restores
     // the env so neighbouring tests start from a clean slate.
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(
+        unsafe_code,
+        reason = "the test restores push environment after loading configuration"
+    )]
     unsafe {
         std::env::remove_var("VAPID_PUBLIC_KEY");
     }
