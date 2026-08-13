@@ -49,7 +49,7 @@ pub struct LateRecoveredEvent {
 /// Minimal pure guard inputs for the late -> late_recovered transition.
 ///
 /// The caller resolves these booleans from sealed T0 membership/policy state,
-/// the recovery-source policy, and disappearing/retention projections. This
+/// the recovery-source policy, and retention projections. This
 /// module keeps only the fail-closed transition decision so UI and storage
 /// paths share one ordering and one reason vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,23 +58,12 @@ pub struct LateRecoveryGuardInput {
     pub receiver_joined_at_event_epoch: bool,
     /// The late key source is allowed by the Realm recovery/share policy.
     pub key_share_source_authorized: bool,
-    /// Disappearing expiry has passed beyond grace for the target event.
-    pub event_expired: bool,
-    /// Retention policy has destroyed, or requires destroying, the content key.
-    pub content_key_destroyed_by_retention: bool,
-}
-
-impl LateRecoveryGuardInput {
-    pub fn expired_or_retained_out(self) -> bool {
-        self.event_expired || self.content_key_destroyed_by_retention
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LateRecoveryRejection {
     Membership,
     ShareNotAuthorized,
-    Expired,
 }
 
 impl LateRecoveryRejection {
@@ -82,7 +71,6 @@ impl LateRecoveryRejection {
         match self {
             Self::Membership => arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP,
             Self::ShareNotAuthorized => arkret_sdk::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED,
-            Self::Expired => arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_EXPIRED,
         }
     }
 }
@@ -113,7 +101,7 @@ impl LateRecoveryDecision {
 /// event from `decryption_failed` to `late_recovered`.
 ///
 /// Guard order mirrors spec section 2.3.5: membership at T0/epoch, recovery
-/// source authorization, then expiry/retention. The first failure is returned
+/// source authorization. The first failure is returned
 /// so callers can log one distinguishable `late_recovery_*` reason.
 pub fn evaluate_late_recovery_guards(input: LateRecoveryGuardInput) -> LateRecoveryDecision {
     if !input.receiver_joined_at_event_epoch {
@@ -121,9 +109,6 @@ pub fn evaluate_late_recovery_guards(input: LateRecoveryGuardInput) -> LateRecov
     }
     if !input.key_share_source_authorized {
         return LateRecoveryDecision::Reject(LateRecoveryRejection::ShareNotAuthorized);
-    }
-    if input.expired_or_retained_out() {
-        return LateRecoveryDecision::Reject(LateRecoveryRejection::Expired);
     }
     LateRecoveryDecision::Accept
 }
@@ -189,17 +174,6 @@ pub fn evaluate_late_recovery_transition_event(event: &Value) -> LateRecoveryTra
                 "source_authorized",
                 "source_rechecked_current_share_policy",
                 "current_share_policy_allows_delivery",
-            ],
-        )
-        .unwrap_or(false),
-        event_expired: event_expired_for_late_recovery(&contexts),
-        content_key_destroyed_by_retention: bool_from_contexts(
-            &contexts,
-            &[
-                "content_key_destroyed_by_retention",
-                "retention_destroyed_content_key",
-                "retention_requires_key_destroy",
-                "content_key_destroyed",
             ],
         )
         .unwrap_or(false),
@@ -320,26 +294,6 @@ fn bool_from_contexts(contexts: &[&Value], keys: &[&str]) -> Option<bool> {
         keys.iter()
             .find_map(|key| value.get(*key).and_then(Value::as_bool))
     })
-}
-
-fn event_expired_for_late_recovery(contexts: &[&Value]) -> bool {
-    bool_from_contexts(
-        contexts,
-        &[
-            "event_expired",
-            "expired",
-            "expiry_stub",
-            "disappearing_expired",
-        ],
-    ) == Some(true)
-        || contexts.iter().any(|value| {
-            string_from_value(value, &["expiry_state", "retention_state"]).is_some_and(|state| {
-                matches!(
-                    state,
-                    "expired" | "retention_destroyed" | "content_key_destroyed"
-                )
-            })
-        })
 }
 
 fn timestamp_from_contexts(value: &Value, keys: &[&str]) -> Option<DateTime<Utc>> {
@@ -536,8 +490,6 @@ mod tests {
         LateRecoveryGuardInput {
             receiver_joined_at_event_epoch: true,
             key_share_source_authorized: true,
-            event_expired: false,
-            content_key_destroyed_by_retention: false,
         }
     }
 
@@ -574,30 +526,6 @@ mod tests {
     }
 
     #[test]
-    fn late_recovery_rejects_expiry_or_retention() {
-        for input in [
-            LateRecoveryGuardInput {
-                event_expired: true,
-                ..base_guard_input()
-            },
-            LateRecoveryGuardInput {
-                content_key_destroyed_by_retention: true,
-                ..base_guard_input()
-            },
-        ] {
-            let decision = evaluate_late_recovery_guards(input);
-            assert_eq!(
-                decision,
-                LateRecoveryDecision::Reject(LateRecoveryRejection::Expired)
-            );
-            assert_eq!(
-                decision.rejection_reason_code(),
-                Some(arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_EXPIRED)
-            );
-        }
-    }
-
-    #[test]
     fn late_recovery_accepts_when_all_guards_pass() {
         let decision = evaluate_late_recovery_guards(base_guard_input());
         assert!(decision.is_accept());
@@ -611,8 +539,7 @@ mod tests {
             "decryption_state": "decryption_failed",
             "late_recovery": {
                 "receiver_visible_at_t0": false,
-                "source_rechecked_current_share_policy": false,
-                "event_expired": true
+                "source_rechecked_current_share_policy": false
             }
         });
         assert_eq!(
@@ -620,32 +547,17 @@ mod tests {
             LateRecoveryTransitionDecision::Reject(LateRecoveryRejection::Membership)
         );
 
-        let share_and_expiry_fail = serde_json::json!({
+        let share_fail = serde_json::json!({
             "kind": "ak.message.create",
             "decryption_state": "decryption_failed",
             "late_recovery": {
                 "receiver_visible_at_t0": true,
-                "source_rechecked_current_share_policy": false,
-                "event_expired": true
+                "source_rechecked_current_share_policy": false
             }
         });
         assert_eq!(
-            evaluate_late_recovery_transition_event(&share_and_expiry_fail),
+            evaluate_late_recovery_transition_event(&share_fail),
             LateRecoveryTransitionDecision::Reject(LateRecoveryRejection::ShareNotAuthorized)
-        );
-
-        let expiry_fails_last = serde_json::json!({
-            "kind": "ak.message.create",
-            "decryption_state": "decryption_failed",
-            "late_recovery": {
-                "receiver_visible_at_t0": true,
-                "source_rechecked_current_share_policy": true,
-                "event_expired": true
-            }
-        });
-        assert_eq!(
-            evaluate_late_recovery_transition_event(&expiry_fails_last),
-            LateRecoveryTransitionDecision::Reject(LateRecoveryRejection::Expired)
         );
     }
 
@@ -665,9 +577,7 @@ mod tests {
             "decryption_state": "decryption_failed",
             "late_recovery": {
                 "receiver_visible_at_t0": true,
-                "source_rechecked_current_share_policy": true,
-                "event_expired": false,
-                "content_key_destroyed_by_retention": false
+                "source_rechecked_current_share_policy": true
             }
         });
         assert_eq!(

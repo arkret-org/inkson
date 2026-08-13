@@ -772,45 +772,6 @@ fn browser_storage_warning_starts_at_eighty_percent() {
 }
 
 #[test]
-fn disappearing_message_plaintext_drop_clears_sidecar_and_decrypt_cache() {
-    use crate::mls::persistence::encrypt_state;
-
-    let path = temp_state_path("disappearing-shred");
-    let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let strand = "ak:strand:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8";
-    let message = "ak:message:AXYOPItXAzTTu_rqIAINR7C7AvNSR5bjjBslclmJ9ZVt";
-    let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let mut store = LocalStateStore::with_path(path.clone());
-    store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");
-    store.advance_mls_receive_chain(
-        realm,
-        encrypt_state(realm, "abcd", 1, b"x", "p", b"salt"),
-        digest,
-        b"remote secret body",
-    );
-
-    assert_eq!(
-        store.private_plaintext_for(realm, strand, &format!("message:{message}")),
-        Some("secret body".to_owned())
-    );
-    assert_eq!(
-        store.mls_decrypted_plaintext_for(realm, digest).as_deref(),
-        Some(&b"remote secret body"[..])
-    );
-
-    assert!(store.drop_disappearing_message_plaintext(realm, strand, message, Some(digest)));
-    assert!(!store.drop_disappearing_message_plaintext(realm, strand, message, Some(digest)));
-
-    let reader = LocalStateStore::with_path(path);
-    assert!(
-        reader
-            .private_plaintext_for(realm, strand, &format!("message:{message}"))
-            .is_none()
-    );
-    assert!(reader.mls_decrypted_plaintext_for(realm, digest).is_none());
-}
-
-#[test]
 fn private_data_store_encrypts_and_persists() {
     let path = temp_state_path("private");
     let mut store = LocalStateStore::with_path(path.clone());

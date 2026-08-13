@@ -2017,11 +2017,6 @@ pub fn apply_response(
                 // surface needs to resolve a display identity.
                 ingest_member_identity_events_from_projection(store, id, &projection);
             }
-            crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
-                store,
-                &response.realm_projections,
-            );
-
             synced_theme = apply_account_data(store, response, &account_did);
             apply_notification_projection(
                 store,
@@ -3353,6 +3348,7 @@ mod tests {
                 realm_id: sdk_realm_id(),
             },
             sdk_actor_id(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,

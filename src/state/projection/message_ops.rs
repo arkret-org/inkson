@@ -198,6 +198,7 @@ mod tests {
                 .unwrap(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,

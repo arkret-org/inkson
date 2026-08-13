@@ -724,40 +724,6 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
 }
 
 #[test]
-fn chat_message_create_operation_with_expiry_puts_contract_at_payload_top_level() {
-    let expiry = arkret_sdk::DisappearingMessageExpiry::new(
-        60_000,
-        arkret_sdk::DisappearingMessageExpiryTrigger::OnFirstRead,
-    )
-    .unwrap()
-    .with_grace_ms(5_000);
-    let op = chat_message_create_operation_with_content_and_expiry(
-        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
-        "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "ak:message:AVWVGlDqGwJJ7DILnxJ4oq7JGdtoXGIQaK4PoiEf2yBZ",
-        "short lived",
-        arkret_sdk::ContentBlock::text("short lived"),
-        &[],
-        None,
-        Some(expiry),
-    )
-    .expect("builds");
-
-    assert_eq!(op.payload["expiry"]["ttl_ms"], 60_000);
-    assert_eq!(op.payload["expiry"]["trigger"], "on_first_read");
-    assert_eq!(op.payload["expiry"]["grace_ms"], 5_000);
-    assert!(op.payload["content"].get("expiry").is_none());
-    arkret_sdk::schema::event_payload_validator_catalog()
-        .unwrap()
-        .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
-        )
-        .unwrap();
-}
-
-#[test]
 fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     let mentions = parse_mention_nodes("ping @here and @carol:example.com");
     let op = production_chat_message_create_operation(
@@ -2456,6 +2422,7 @@ fn moderation_appeal_prompts_read_control_plane_sync_state() {
             realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
         },
         arkret_sdk::DidCoreId::new("ak:did_core:web:moderator.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         1,
         arkret_sdk::Hlc::new("019f73a34c00-0000-12345678").unwrap(),
         json!({
@@ -2497,6 +2464,7 @@ fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
         "realm_id": realm_id,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": "ak:did_core:web:moderator.example",
+        "principal_server_id": "ak:did_core:web:principal.example",
         "actor_seq": 1,
         "created_at": "2026-07-19T00:00:00.000Z",
         "hlc": "019f73a34c00-0000-12345678",
@@ -2773,42 +2741,6 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
 }
 
 #[test]
-fn expiry_stub_does_not_restore_authors_plaintext_sidecar() {
-    let temp = std::env::temp_dir().join(format!("inkson-expiry-stub-sidecar-{}", uuid_v7()));
-    let mut store = LocalStateStore::with_path(temp);
-    let realm = "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q";
-    let strand = "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c";
-    let message_id = "ak:message:AEFbRnxYfrSVBFC6Txw2FSmG8HmUsjvVsFfn_p3bGXk8";
-    store.save_private_plaintext(
-        realm,
-        strand,
-        &format!("message:{message_id}"),
-        "secret discussion body",
-    );
-    let mut event = json!({
-        "event_id": "ak:event:AFQAR2XErrXGAnlXE6bKXYyKeXf07nWETTDROpEmLSeo",
-        "kind": "ak.message.create",
-        "actor_id": "ak:did_core:web:alice.example",
-        "realm_id": realm,
-        "strand_id": strand,
-        "message_id": message_id,
-        "expiry_stub": true,
-        "expiry_state": "expired",
-        "content": {
-            "kind": "ak.content.text",
-            "body": "[expired]"
-        }
-    });
-    sign_chat_fixture(&mut event);
-
-    let message =
-        chat_message_from_event_with_sidecar(realm, &event, Some(&store), None).expect("message");
-
-    assert_eq!(message.body, "[expired]");
-    assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
-}
-
-#[test]
 fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
     let temp = std::env::temp_dir().join(format!("inkson-late-recovery-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
@@ -2831,8 +2763,7 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
         "decryption_state": "decryption_failed",
         "late_recovery": {
             "receiver_visible_at_t0": false,
-            "source_rechecked_current_share_policy": true,
-            "event_expired": false
+            "source_rechecked_current_share_policy": true
         },
         "content": {
             "encrypted_content": true
@@ -2877,9 +2808,7 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
         "decryption_state": "decryption_failed",
         "late_recovery": {
             "receiver_visible_at_t0": true,
-            "source_rechecked_current_share_policy": true,
-            "event_expired": false,
-            "content_key_destroyed_by_retention": false
+            "source_rechecked_current_share_policy": true
         },
         "content": {
             "encrypted_content": true

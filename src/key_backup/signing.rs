@@ -230,7 +230,7 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
     recovery_key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<Value> {
     recovery_session.validate()?;
-    if recovery_session.principal_id.as_str() != principal_id
+    if recovery_session.principal_authority.principal_id.as_str() != principal_id
         || recovery_session.requesting_device_id.as_str() != requesting_device_id
         || !matches!(
             recovery_session.state,
@@ -329,7 +329,7 @@ pub async fn fetch_key_backup_for_verified_recovery_session(
     let backup_id = summary.backup_id.to_string();
     let proof = build_key_backup_unlock_proof(
         &summary,
-        session.principal_id.as_str(),
+        session.principal_authority.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         Some(session),
         None,

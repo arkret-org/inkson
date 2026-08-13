@@ -116,7 +116,7 @@ pub fn capability_grant_actions_with_resources(
         realm_id: Some(realm_typed.clone()),
         issuer: actor_typed,
         subject: arkret_sdk::CapabilitySubject::CoreDid(subject_typed),
-        subject_authority_instance: None,
+        subject_principal_server_id: Some(crate::operation::authoring_principal_server_id()?),
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
         resources,
         capability_action_registry_digest: registry_digest,
@@ -191,15 +191,18 @@ mod tests {
             writes[0].op.tag.as_deref(),
             Some(format!("{}:0", event.event_id).as_str())
         );
+        let mut projected_payload = event.payload.clone();
+        projected_payload
+            .get_mut("grant")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .insert(
+                "issuer_principal_server_id".to_owned(),
+                Value::String(event.principal_server_id.to_string()),
+            );
         assert_eq!(
             writes[0].op.value.as_ref(),
-            Some(&Value::Object(
-                event
-                    .payload
-                    .clone()
-                    .into_iter()
-                    .collect::<serde_json::Map<_, _>>()
-            ))
+            Some(&Value::Object(projected_payload.into_iter().collect()))
         );
     }
 }

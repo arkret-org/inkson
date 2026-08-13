@@ -718,11 +718,6 @@ pub struct PendingPrincipalRegistration {
     pub genesis_salt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_receipt: Option<arkret_sdk::AccountBindingReceipt>,
-    /// Principal-authored, service-accepted post-registration binding.  Kept
-    /// with the setup checkpoint until the entire recovery gate is durable so
-    /// response-loss replay never authors a second binding generation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub principal_service_binding: Option<arkret_sdk::AcceptedAtServiceBinding>,
     pub stage: PendingPrincipalRegistrationStage,
 }
 
@@ -741,11 +736,9 @@ pub struct RecoveryMaterialEvidence {
     pub principal_control_realm_id: arkret_sdk::RealmId,
     pub pcr_genesis_unit: arkret_wire::PcrGenesisUnit,
     pub bootstrap_seal: arkret_sdk::Seal,
-    /// Exact accepted PCR authority instance used for controller-authorized
-    /// operations. Older persisted state predates this selector and must be
-    /// refreshed through identity recovery before it can provision an Agent.
+    /// Public account authority pair used for controller-authorized operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_authority_instance: Option<arkret_sdk::PrincipalAuthorityInstance>,
+    pub controller_authority: Option<arkret_sdk::PrincipalAuthorityKey>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -195,6 +195,7 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
     personal_handles.set(Vec::new());
     personal_handles_status.set("Not published".to_owned());
     personal_handles_lookup_key.set(String::new());
+    crate::operation::set_authoring_principal_server_id(None);
     server_description.set(None);
     server_probe_status.set("server not probed".to_owned());
     status.set(ConnectionState::Offline.label().to_owned());

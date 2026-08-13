@@ -170,6 +170,7 @@ fn range_completeness(input: Value) -> Result<Value> {
             realm_id: input.realm_id,
         },
         actor_id: issuer.clone(),
+        principal_server_id: issuer.clone(),
         executed_by: None,
         authorization_ref: None,
         applet_id: None,

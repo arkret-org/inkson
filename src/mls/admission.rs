@@ -754,8 +754,6 @@ mod tests {
                 arkret_sdk::EventId::new(device_authorize_event_id.to_owned()).unwrap(),
             ),
             agent_key_authorize_event_id: None,
-            target_device_signing_key_evidence: None,
-            target_agent_signer_evidence: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
             device_signature: arkret_sdk::KeyOperationSignature {
                 kid: arkret_sdk::NonEmptyString::new(format!("{}#device", principal_id.as_str()))

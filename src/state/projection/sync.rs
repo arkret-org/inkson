@@ -124,10 +124,6 @@ pub fn projection_events_from_sync_realms(
                 .or_else(|| projection_text_from_content_value(content))
                 .unwrap_or("[message]")
                 .to_owned();
-            let is_expiry_stub = crate::disappearing::message_event_is_expiry_stub(event);
-            if is_expiry_stub {
-                body = crate::disappearing::message_expiry_stub_body(event);
-            }
             let late_recovery_transition =
                 crate::late_recovery::evaluate_late_recovery_transition_event(event);
             let late_recovery_rejection = late_recovery_transition
@@ -142,8 +138,7 @@ pub fn projection_events_from_sync_realms(
             // decrypting their OWN ciphertext) and otherwise a remote-member
             // decrypt-on-read. Leave the `[message]` fallback untouched when
             // neither store nor identity is available, or recovery soft-fails.
-            if !is_expiry_stub
-                && late_recovery_transition.allows_plaintext()
+            if late_recovery_transition.allows_plaintext()
                 && let Some(encrypted_content) = encrypted_payload.as_ref()
             {
                 let message_realm = content

@@ -1376,7 +1376,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
         }
         arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent { .. } => {
             return Err(
-                    "Native Agent claim_envelope verification is unavailable until current AgentSignerEvidence observation is normatively bound to this Welcome"
+                    "Native Agent claim_envelope verification is unavailable until its authorization Event is normatively bound to this Welcome"
                         .to_owned(),
                 );
         }

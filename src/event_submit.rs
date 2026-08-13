@@ -1444,6 +1444,21 @@ impl EventSubmitter {
         Ok(self.describe_cached().await?.service_id.to_string())
     }
 
+    async fn verify_origin_principal_server(
+        &self,
+        event: &arkret_sdk::Event,
+    ) -> anyhow::Result<()> {
+        let origin = self.describe_cached().await?.service_id.clone();
+        if event.principal_server_id != origin {
+            anyhow::bail!(
+                "Event-declared origin {} does not match this Principal Server {}",
+                event.principal_server_id,
+                origin
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) async fn service_full_id(&self) -> anyhow::Result<String> {
         Ok(self
             .describe_cached()
@@ -2330,6 +2345,7 @@ impl EventSubmitter {
         #[cfg(all(debug_assertions, not(test)))]
         self.diagnose_exact_development_sdk_build().await?;
         let mut signed = event.clone();
+        self.verify_origin_principal_server(&signed).await?;
         self.refresh_unsigned_sdk_event_actor_frontier(&mut signed)
             .await?;
         self.stamp_cba_basis_for_sdk_event_inner(&mut signed, authoring)
@@ -2668,6 +2684,7 @@ impl EventSubmitter {
             || is_managed_agent_pcr_create
             || is_direct_conversation_founding;
         for event in &mut events {
+            self.verify_origin_principal_server(event).await?;
             attach_capability_grant_payload_proof(event)?;
         }
         let genesis_digest_suite = events
@@ -2886,13 +2903,13 @@ fn validate_capability_grant_payload(event: &arkret_sdk::Event) -> anyhow::Resul
 }
 
 fn validate_signed_sdk_event_for_submit(event: &arkret_sdk::Event) -> anyhow::Result<()> {
-    if event.proofs.is_empty() {
+    let [arkret_sdk::EventProof::Producer(_)] = event.proofs.as_slice() else {
         anyhow::bail!(
-            "submit refuses unsigned SDK Event (event_id={}, kind={})",
+            "submit requires exactly one producer proof and forbids caller-supplied admission proofs (event_id={}, kind={})",
             event.event_id,
             event.kind.as_str()
         );
-    }
+    };
     event.validate_proof_bindings().map_err(|err| {
         anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
     })?;
@@ -3350,6 +3367,7 @@ mod tests {
                 "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
             },
             "actor_id": "ak:did_core:web:alice.example",
+            "principal_server_id": "ak:did_core:web:principal.example",
             "actor_seq": 7,
             "created_at": "2026-08-07T00:00:00.000Z",
             "hlc": "01986f440000-0001-a13f9c2e",
@@ -3684,6 +3702,7 @@ mod tests {
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "actor_id": actor_id,
+            "principal_server_id": "ak:did_core:web:principal.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
@@ -3710,6 +3729,7 @@ mod tests {
             "realm_id": realm_id,
             "scope_ref": {"kind": "realm", "realm_id": realm_id},
             "actor_id": actor_id,
+            "principal_server_id": "ak:did_core:web:principal.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
@@ -3734,6 +3754,7 @@ mod tests {
             "kind": "ak.realm.create",
             "scope_ref": {"kind": "realm_genesis"},
             "actor_id": created_by,
+            "principal_server_id": "ak:did_core:web:principal.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
@@ -4202,7 +4223,11 @@ mod tests {
                 .map(|event| event.realm_id.to_string())
                 .ok_or_else(|| "prepared bootstrap is empty".to_owned())?;
             for event in &prepared {
-                for proof in &event.proofs {
+                for proof in event
+                    .proofs
+                    .iter()
+                    .filter_map(arkret_sdk::EventProof::as_producer)
+                {
                     println!(
                         "prepared {} proof vm={:?} kind={:?}",
                         event.kind.as_str(),
@@ -4637,7 +4662,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realm_bootstrap_preparation_authors_genesis_without_remote_frontier() {
+    async fn realm_bootstrap_preparation_requires_a_described_principal_server() {
+        crate::operation::set_authoring_principal_server_id(Some(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
+        ));
         let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(
             std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
                 [42_u8; 32],
@@ -4674,36 +4702,20 @@ mod tests {
 
         let previous_proof_mode = crate::operation::current_proof_mode();
         crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
-        let prepared = EventSubmitter::new(http)
+        let error = EventSubmitter::new(http)
             .prepare_sdk_events_batch(events)
-            .await;
+            .await
+            .expect_err("authoring must resolve the selected Principal Server");
         crate::operation::set_proof_mode(previous_proof_mode);
-        let prepared =
-            prepared.expect("validated Realm bootstrap must be authored from local genesis");
-
-        assert!(!prepared.is_empty());
-        let final_realm_id = prepared[0].realm_id.clone();
-        assert_ne!(final_realm_id.as_str(), draft_realm_id);
-        for (index, event) in prepared.iter().enumerate() {
-            assert_eq!(event.realm_id, final_realm_id);
-            assert_eq!(event.actor_seq, index as u64);
-            if index == 0 {
-                assert!(event.prev_refs.is_empty());
-            } else {
-                assert_eq!(event.prev_refs, vec![prepared[index - 1].event_id.clone()]);
-            }
-            assert!(!event.proofs.is_empty());
-            event
-                .verify_event_id_matches_content_with_digest_suite(
-                    arkret_sdk::canonical::DigestSuite::Sha256,
-                )
-                .unwrap();
-            event.validate_proof_bindings().unwrap();
-        }
+        assert!(!draft_realm_id.as_str().is_empty());
+        assert!(format!("{error:#}").contains("server describe"));
     }
 
     #[tokio::test]
-    async fn ordinary_event_preparation_still_requires_remote_frontier() {
+    async fn ordinary_event_preparation_requires_describe_before_remote_frontier() {
+        crate::operation::set_authoring_principal_server_id(Some(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ));
         let event = sdk_event_without_proof("did:web:alice.example");
         let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
             .allow_insecure_localhost()
@@ -4715,9 +4727,10 @@ mod tests {
             .await
             .expect_err("ordinary Realm Event must refresh its combined actor frontier");
 
+        let detail = format!("{error:#}");
         assert!(
-            format!("{error:#}")
-                .contains("refresh actor frontier for ak:did_core:web:alice.example before submit")
+            detail.contains("server describe"),
+            "unexpected preparation error: {detail}"
         );
     }
 

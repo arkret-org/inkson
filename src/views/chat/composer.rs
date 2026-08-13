@@ -2022,7 +2022,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     None,
                                     None,
                                     None,
-                                    None,
                                 ) {
                                     Ok(build) => build,
                                     Err(message) => {

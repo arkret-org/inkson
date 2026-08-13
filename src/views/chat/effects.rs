@@ -606,10 +606,6 @@ pub(super) fn ChatEffects(
                         for (realm_id, projection) in &sync.realm_projections {
                             store.save_realm_tree_projection(realm_id.clone(), projection.clone());
                         }
-                        crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
-                            &mut store,
-                            &sync.realm_projections,
-                        );
                     }
                     crate::sync_engine::prefetch_persistent_event_sender_keys(
                         &api,

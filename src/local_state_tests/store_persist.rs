@@ -717,6 +717,10 @@ fn dpop_device_key_uses_secure_key_store() {
     let path = temp_state_path("dpop-secure-store");
     let mut store = LocalStateStore::with_path(path);
     let secure = MemorySecureKeyStore::default();
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
+    user_store.activate();
     let record = DpopDeviceKeyRecord {
         seed_b64: "seed-material".to_owned(),
         jkt: "jkt-1".to_owned(),
@@ -732,7 +736,7 @@ fn dpop_device_key_uses_secure_key_store() {
     assert!(store.dpop_device_key().unwrap().seed_b64.is_empty());
 
     let secure_json = secure
-        .get_secret(LocalStateStore::SECURE_DPOP_DEVICE_KEY)
+        .get_secret(&user_store.secret_key(LocalStateStore::SECURE_DPOP_DEVICE_KEY))
         .expect("read secure dpop")
         .expect("secure dpop present");
     assert!(secure_json.contains("seed-material"));
@@ -749,7 +753,7 @@ fn dpop_device_key_uses_secure_key_store() {
     assert!(store.dpop_device_key().is_none());
     assert!(
         secure
-            .get_secret(LocalStateStore::SECURE_DPOP_DEVICE_KEY)
+            .get_secret(&user_store.secret_key(LocalStateStore::SECURE_DPOP_DEVICE_KEY))
             .expect("read secure dpop after clear")
             .is_none()
     );

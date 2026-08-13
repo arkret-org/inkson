@@ -489,6 +489,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             network_state.set("offline".to_owned());
                             last_error.set(Some(message.clone()));
                             server_probe_status.set(message);
+                            crate::operation::set_authoring_principal_server_id(None);
                             server_description.set(None);
                             did_resolution_health.set(
                                 crate::components::DidResolutionHealth::unsupported_principal_server(),
@@ -528,6 +529,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 Some(description.trust_domain.as_str().to_owned());
                             store.save(snapshot);
                         }
+                        crate::operation::set_authoring_principal_server_id(Some(
+                            description.service_id.clone(),
+                        ));
                         server_description.set(Some(description.clone()));
                         Some(description)
                     }
@@ -539,6 +543,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         network_state.set("reconnecting".to_owned());
                         last_error.set(Some(format!("describe: {error}")));
                         server_probe_status.set(format!("server describe failed: {error}"));
+                        crate::operation::set_authoring_principal_server_id(None);
                         server_description.set(None);
                         None
                     }
@@ -1265,10 +1270,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 store.merge_realm_seal_view_from_sync_body(id, body);
                                 store.ingest_move_event_states(id, body);
                             }
-                            crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
-                                &mut store,
-                                &sync.realm_projections,
-                            );
                             // Keep notification projection current even when
                             // invites live on `authz/invites` rather than the
                             // normal account subscribe notification stream.
@@ -1662,13 +1663,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         )
                         .await;
                         let synced_projection_events = {
-                            {
-                                let mut store = state_store.write();
-                                crate::disappearing::shred_expired_message_plaintext_from_sync_realms(
-                                    &mut store,
-                                    &sync.realm_projections,
-                                );
-                            }
                             // Merge encrypted bodies on read (author sidecar →
                             // remote decrypt-on-read). The `store` write guard
                             // above is out of scope here; take a fresh read
@@ -1903,6 +1897,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 network_state.set("offline".to_owned());
                 last_error.set(Some(format!("invalid URL: {error}")));
                 server_probe_status.set(format!("server describe skipped: invalid URL: {error}"));
+                crate::operation::set_authoring_principal_server_id(None);
                 server_description.set(None);
                 let cache = ctx.did_cache.read();
                 did_resolution_health.set(

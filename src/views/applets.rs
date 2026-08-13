@@ -239,7 +239,7 @@ fn build_formal_applet_install_events(
             realm_id: Some(realm_id.clone()),
             issuer: actor.clone(),
             subject: arkret_sdk::CapabilitySubject::CoreDid(snapshot.package.service_id.clone()),
-            subject_authority_instance: None,
+            subject_principal_server_id: Some(snapshot.package.service_id.clone()),
             actions: vec![action],
             resources: vec![resource.clone()],
             capability_action_registry_digest: Some(registry_digest.clone()),

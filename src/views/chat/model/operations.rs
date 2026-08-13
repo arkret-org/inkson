@@ -393,8 +393,8 @@ pub(crate) fn chat_message_create_operation_with_content(
     mentions: &[MentionNode],
     reply_to: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    chat_message_create_operation_with_content_and_expiry(
-        realm_id, actor, strand_id, message_id, body, content, mentions, reply_to, None,
+    chat_message_create_operation_with_content_inner(
+        realm_id, actor, strand_id, message_id, body, content, mentions, reply_to,
     )
 }
 
@@ -435,7 +435,7 @@ pub(crate) fn confirmed_sidecar_publish_message_operation(
     Ok(event)
 }
 
-pub(crate) fn chat_message_create_operation_with_content_and_expiry(
+fn chat_message_create_operation_with_content_inner(
     realm_id: &str,
     actor: &str,
     strand_id: &str,
@@ -444,7 +444,6 @@ pub(crate) fn chat_message_create_operation_with_content_and_expiry(
     mut content: arkret_sdk::ContentBlock,
     mentions: &[MentionNode],
     reply_to: Option<&str>,
-    expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
 ) -> anyhow::Result<arkret_sdk::Event> {
     if let Some(error) = public_update_policy_error(body) {
         anyhow::bail!(error);
@@ -486,9 +485,6 @@ pub(crate) fn chat_message_create_operation_with_content_and_expiry(
             anyhow::bail!("reply_to must be a ak:message id");
         }
         payload = payload.with_reply_to(reply_to);
-    }
-    if let Some(expiry) = expiry {
-        payload = payload.with_expiry(expiry);
     }
     crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
         realm_id, actor, payload,

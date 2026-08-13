@@ -246,11 +246,13 @@ mod tests {
     use super::*;
 
     fn sample_grant(subject: serde_json::Value) -> CapabilityGrant {
-        serde_json::from_value(json!({
+        let principal_subject = subject.is_string();
+        let mut value = json!({
             "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
             "schema": "ak.schema.capability.v1",
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
             "issuer": "ak:did_core:web:alice.example",
+            "issuer_principal_server_id": "ak:did_core:web:principal.example",
             "subject": subject,
             "actions": ["ak.message.create"],
             "resources": [
@@ -265,8 +267,11 @@ mod tests {
                 "controller_epoch_at_issuance": 0,
                 "authority_generation": 0
             }]
-        }))
-        .expect("sample grant decodes as SDK CapabilityGrant")
+        });
+        if principal_subject {
+            value["subject_principal_server_id"] = json!("ak:did_core:web:principal.example");
+        }
+        serde_json::from_value(value).expect("sample grant decodes as SDK CapabilityGrant")
     }
 
     #[test]
@@ -285,7 +290,10 @@ mod tests {
 
     #[test]
     fn selector_subject_renders_as_json() {
-        let row = decode_capability_row(&sample_grant(json!({"kind": "circle", "circle": "ops"})));
-        assert!(row.subject_did.contains("circle"));
+        let row = decode_capability_row(&sample_grant(json!({
+            "kind": "condition",
+            "required_claims": []
+        })));
+        assert!(row.subject_did.contains("condition"));
     }
 }

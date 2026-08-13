@@ -72,16 +72,10 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
     if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != claim.principal_id {
         anyhow::bail!("KeyPackage claim signer does not project to principal_id");
     }
-    if claim.device_id.is_some()
-        && (claim.device_authorize_event_id.is_none()
-            || claim.target_agent_signer_evidence.is_some())
-    {
-        anyhow::bail!("device KeyPackage claim has mixed or missing authorization evidence");
+    if claim.device_id.is_some() && claim.device_authorize_event_id.is_none() {
+        anyhow::bail!("device KeyPackage claim is missing its authorization event");
     }
-    if claim.agent_id.is_some()
-        && (claim.device_authorize_event_id.is_some()
-            || claim.target_device_signing_key_evidence.is_some())
-    {
+    if claim.agent_id.is_some() && claim.device_authorize_event_id.is_some() {
         anyhow::bail!("Native Agent KeyPackage claim has mixed authorization evidence");
     }
     let endpoint = match (
@@ -226,8 +220,6 @@ mod tests {
                     .unwrap(),
             ),
             agent_key_authorize_event_id: None,
-            target_device_signing_key_evidence: None,
-            target_agent_signer_evidence: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::minutes(5),
             device_signature: arkret_sdk::KeyOperationSignature {
                 kid: arkret_sdk::NonEmptyString::new(kid).unwrap(),
@@ -257,7 +249,6 @@ mod tests {
             arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc")
                 .unwrap();
         claim.agent_key_authorize_event_id = Some(authorization_ref.clone());
-        claim.target_agent_signer_evidence = None;
 
         let converted = keypackage_claim_record_to_mls_record(&claim).unwrap();
         assert_eq!(

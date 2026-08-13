@@ -544,7 +544,10 @@ async fn recover_bound_principal_device(
         .ok_or_else(|| anyhow::anyhow!("the identity has no active Recovery Key policy"))?;
     let session = api
         .create_recovery_session(&arkret_models_crypto::RecoverySessionCreateRequestBody {
-            principal_id: crate::mls_api_helpers::principal_core_id(principal_id)?,
+            principal_authority: arkret_sdk::PrincipalAuthorityKey::new(
+                crate::mls_api_helpers::principal_core_id(principal_id)?,
+                crate::operation::authoring_principal_server_id()?,
+            ),
             requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
             trust_domain: arkret_sdk::TypedTrustDomainId::new(handoff.trust_domain.clone())?,
             expected_recovery_policy_ref: Some(arkret_models_crypto::RecoveryPolicyRef {
@@ -1796,36 +1799,6 @@ async fn finish_principal_setup(
         );
     }
 
-    if registration.principal_service_binding.is_none() {
-        let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())?;
-        let signer = crate::event_signer::active_signer()
-            .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
-        if signer.device_id() != Some(device) {
-            anyhow::bail!("active signer does not match the founding PCR device");
-        }
-        let binding = crate::transport::auth::with_authed_sdk_client(
-            base_url,
-            active_session.clone(),
-            move |http| async move {
-                crate::identity::principal_registration::ensure_principal_service_binding(
-                    &http,
-                    &principal_id,
-                    signer.as_ref(),
-                )
-                .await
-            },
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.display()))?;
-        registration.principal_service_binding = Some(binding);
-        let barrier = {
-            let mut store = state_store.write();
-            store.set_pending_principal_registration(Some(registration.clone()))?;
-            store.begin_durable_flush()?
-        };
-        barrier.wait().await?;
-    }
-
     let bootstrap_seal: arkret_sdk::Seal = match registration.pcr_bootstrap_seal.clone() {
         Some(seal) => seal,
         None => {
@@ -1885,27 +1858,23 @@ async fn finish_principal_setup(
         .pcr_genesis_unit
         .clone()
         .context("recovery-material evidence omits PCR genesis unit")?;
-    let pcr_genesis_receipt = registration
-        .pcr_genesis_receipt
-        .clone()
-        .context("recovery-material evidence omits PCR genesis receipt")?;
     let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())?;
     let principal_core_id = arkret_sdk::project_full_id_to_core_id(&principal_id)?;
-    let receipt_digest =
-        arkret_sdk::Hash::new(crate::canonical::canonical_sha256(&pcr_genesis_receipt)?)?;
-    let controller_authority_instance = arkret_sdk::PrincipalAuthorityInstance::new(
-        principal_core_id,
-        pcr_genesis_receipt.issuer.clone(),
-        bootstrap_seal.realm_id.clone(),
-        receipt_digest,
-    )?;
+    let principal_server_id = registration
+        .pcr_genesis_receipt
+        .as_ref()
+        .context("recovery-material evidence omits PCR genesis receipt")?
+        .issuer
+        .clone();
+    let controller_authority =
+        arkret_sdk::PrincipalAuthorityKey::new(principal_core_id, principal_server_id);
     let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
         principal_id,
         device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
         principal_control_realm_id: bootstrap_seal.realm_id.clone(),
         pcr_genesis_unit,
         bootstrap_seal,
-        controller_authority_instance: Some(controller_authority_instance),
+        controller_authority: Some(controller_authority),
     };
     let completed_registration = registration.clone();
     {

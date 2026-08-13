@@ -7,7 +7,7 @@
 
 use arkret_models_collaboration::events_payloads::device_identity::{
     DeviceAuthorizationBindingKind, DeviceOrPrincipalRef, DeviceReanchorPayload,
-    UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
+    RecoveryAuthorityKind, UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
 };
 use arkret_wire::{
     CanonicalPublicMaterial, EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash,
@@ -54,7 +54,9 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .recovery_session(session.recovery_session_id.as_str())
         .await?;
     verified_session.validate()?;
-    if arkret_sdk::project_full_id_to_core_id(principal_full_id)? != verified_session.principal_id {
+    if arkret_sdk::project_full_id_to_core_id(principal_full_id)?
+        != verified_session.principal_authority.principal_id
+    {
         anyhow::bail!("selected recovery principal full_id does not match the verified session");
     }
     if verified_session.state != arkret_sdk::SessionState::Verified
@@ -143,7 +145,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .clone();
     let frontier = submitter
         .events_frontier_actor(
-            verified_session.principal_id.as_str(),
+            verified_session.principal_authority.principal_id.as_str(),
             scope_ref.realm_id().as_str(),
         )
         .await?;
@@ -162,7 +164,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
         secure_store.as_ref(),
-        verified_session.principal_id.as_str(),
+        verified_session.principal_authority.principal_id.as_str(),
         verified_session.requesting_device_id.as_str(),
     )?;
     let hpke_key = crate::identity::did_key::encode_x25519_multibase(&hpke_public_key);
@@ -171,13 +173,13 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .map(|value| non_empty((*value).to_owned()))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let authorize_payload = UnsignedDeviceAuthorizePayload::new(
-        verified_session.principal_id.clone(),
+        verified_session.principal_authority.principal_id.clone(),
         verified_session.requesting_device_id.clone(),
         non_empty(device_public_key)?,
         non_empty(hpke_key)?,
         algorithms,
         Some(non_empty("Ed25519".to_owned())?),
-        DeviceOrPrincipalRef::Principal(verified_session.principal_id.clone()),
+        DeviceOrPrincipalRef::Principal(verified_session.principal_authority.principal_id.clone()),
         None,
         created_at,
         None,
@@ -198,16 +200,21 @@ pub(crate) async fn prepare_root_anchored_recovery(
     )?;
 
     let reexpiry_start_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
-        verified_session.principal_id.as_str(),
+        verified_session.principal_authority.principal_id.as_str(),
         scope_ref.realm_id().as_str(),
     )?;
     let authorize_hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
-        verified_session.principal_id.as_str(),
+        verified_session.principal_authority.principal_id.as_str(),
         scope_ref.realm_id().as_str(),
     )?;
+    let principal_server_id = crate::operation::authoring_principal_server_id()?;
+    if principal_server_id != verified_session.principal_authority.principal_server_id {
+        anyhow::bail!("verified recovery session belongs to a different principal authority pair");
+    }
     let mut reanchor = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceReanchor>::new(
         scope_ref.clone(),
-        verified_session.principal_id.clone(),
+        verified_session.principal_authority.principal_id.clone(),
+        principal_server_id.clone(),
         reanchor_payload,
     )?
     .with_prev_refs(frontier.frontier_event_ids)
@@ -245,7 +252,8 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             scope_ref,
-            verified_session.principal_id.clone(),
+            verified_session.principal_authority.principal_id.clone(),
+            principal_server_id,
             authorize_payload,
         )?
         .with_prev_refs(vec![reanchor_event_id.clone()])
@@ -264,11 +272,11 @@ pub(crate) async fn prepare_root_anchored_recovery(
 
     let previous_entry_ref = format!(
         "{}?versionId={}",
-        verified_session.principal_id, rotation.previous_version_id
+        verified_session.principal_authority.principal_id, rotation.previous_version_id
     );
     let expected_entry_ref = format!(
         "{}?versionId={}",
-        verified_session.principal_id, rotation.version_id
+        verified_session.principal_authority.principal_id, rotation.version_id
     );
     let did_entry = CanonicalPublicMaterial::canonical_json(rotation.log_entry)?;
     let coordinator_service_id = arkret_sdk::DidCoreId::new(submitter.service_id().await?)?;
@@ -303,7 +311,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
     };
     let create_request = RecoveryTransactionCreateRequest::new(
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?,
-        verified_session.principal_id.clone(),
+        verified_session.principal_authority.principal_id.clone(),
         std::cmp::min(
             verified_session.expires_at,
             crate::clock::now_utc() + chrono::Duration::hours(1),
@@ -331,14 +339,26 @@ pub(crate) async fn prepare_root_anchored_recovery(
 }
 
 fn exact_device_reanchor_payload(
-    _session: &arkret_sdk::RecoverySessionState,
-    _previous_device_generation: u64,
-    _new_device_generation: u64,
-    _replacement_authorize_payload_digest: Hash,
+    session: &arkret_sdk::RecoverySessionState,
+    previous_device_generation: u64,
+    new_device_generation: u64,
+    replacement_authorize_payload_digest: Hash,
 ) -> anyhow::Result<DeviceReanchorPayload> {
-    anyhow::bail!(
-        "root-anchored DeviceReanchor requires the frozen five-field principal authority instance; the current recovery-session contract does not relay principal_server_id, PCR realm, and principal genesis receipt digest"
-    )
+    let payload = DeviceReanchorPayload {
+        principal_id: session.principal_authority.principal_id.clone(),
+        authority: session.principal_authority.clone(),
+        recovery_authority_kind: RecoveryAuthorityKind::PcrPolicy,
+        recovery_policy_id: session.policy_id.clone(),
+        recovery_policy_version: session.policy_version,
+        recovery_session_id: session.recovery_session_id.clone(),
+        previous_device_generation,
+        new_device_generation,
+        did_root_evidence_digest: None,
+        pre_fence_seal_frontier: session.accepted_seal_frontier.clone(),
+        replacement_authorize_payload_digest,
+    };
+    payload.validate().map_err(anyhow::Error::msg)?;
+    Ok(payload)
 }
 
 fn did_webvh_version_sequence(version_id: &str) -> anyhow::Result<u64> {
@@ -433,7 +453,7 @@ pub(crate) async fn execute_root_anchored_recovery(
         )?;
     let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
         api,
-        session.principal_id.as_str(),
+        session.principal_authority.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         session,
         &recovery_material,
@@ -445,7 +465,7 @@ pub(crate) async fn execute_root_anchored_recovery(
             &restore_payload,
             &mut store,
             secure_store.as_ref(),
-            session.principal_id.as_str(),
+            session.principal_authority.principal_id.as_str(),
             session.requesting_device_id.as_str(),
             prepared.recovery_private_key.as_slice(),
             (session.policy_id.as_str(), session.policy_version),
@@ -602,7 +622,7 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
         )?;
     let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
         api,
-        session.principal_id.as_str(),
+        session.principal_authority.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         &session,
         &recovery_material,
@@ -614,7 +634,7 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
             &restore_payload,
             &mut store,
             secure_store.as_ref(),
-            session.principal_id.as_str(),
+            session.principal_authority.principal_id.as_str(),
             session.requesting_device_id.as_str(),
             &recovery_material.backup_hpke_serialized_private_key,
             (session.policy_id.as_str(), session.policy_version),

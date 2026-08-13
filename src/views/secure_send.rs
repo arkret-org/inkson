@@ -240,7 +240,6 @@ pub(crate) fn build_secure_send(
     reply_to: Option<&str>,
     plaintext_bytes: &[u8],
     metadata_plaintext_bytes: Option<&[u8]>,
-    expiry: Option<arkret_sdk::DisappearingMessageExpiry>,
     circle_id: Option<&str>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<SecureSendBuild, String> {
@@ -386,9 +385,6 @@ pub(crate) fn build_secure_send(
     }
     if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
         message_payload = message_payload.with_reply_to(reply_to);
-    }
-    if let Some(expiry) = expiry {
-        message_payload = message_payload.with_expiry(expiry);
     }
     let message_envelope = crate::operation::TypedOperationBuilder::new::<
         arkret_sdk::event_spec::MessageCreate,

@@ -137,7 +137,7 @@ pub async fn update_profile(
             .ok_or_else(|| anyhow::anyhow!("accepted account profile omits its exact PCR realm"))?;
         if principal_control_realm_id != authority_evidence.principal_control_realm_id {
             anyhow::bail!(
-                "accepted account profile and durable authoring evidence select different PCR authority instances"
+                "accepted account profile and durable authoring evidence select different principal-control realms"
             );
         }
         let basis = arkret_models_collaboration::account_lifecycle::AccountProfileAcceptedBasis {
@@ -671,9 +671,11 @@ pub async fn create_direct_conversation_from_resolve(
     else {
         anyhow::bail!("Direct Conversation resolver did not grant founding authority");
     };
+    let trust_domain = submitter.events_describe().await?.trust_domain;
     let events = crate::event_builders::build_direct_conversation_founding_events(
         founder_id,
         peer_id,
+        trust_domain,
         next_founding_input,
     )?;
     let signed = submitter.prepare_sdk_events_batch(events).await?;
@@ -689,7 +691,6 @@ pub async fn create_direct_conversation_from_resolve(
             .map_err(anyhow::Error::msg)?,
         events,
         founding_authority_evidence: next_founding_input.founding_authority_evidence.clone(),
-        source_service_binding: next_founding_input.source_service_binding.clone(),
         cba_proof_bundles: Vec::new(),
     };
     direct_conversation_found(submitter, resolve, prepared).await

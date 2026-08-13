@@ -141,11 +141,16 @@ fn accepted_direct_message_final(
     let event = &message.event;
     if event.kind != arkret_sdk::EventKind::MessageCreate
         || event.executed_by.is_some()
-        || event.proofs.len() != 1
+        || event.validate_principal_server_admission_binding().is_err()
     {
         return None;
     }
-    let method = event.proofs[0].verification_method.as_str();
+    let method = event
+        .proofs
+        .iter()
+        .find_map(arkret_sdk::EventProof::as_producer)?
+        .verification_method
+        .as_str();
     let (controller, device) = method.rsplit_once('#')?;
     let controller = crate::mls_api_helpers::principal_core_id(controller).ok()?;
     if controller != event.actor_id {
@@ -342,6 +347,7 @@ mod tests {
             arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Realm { realm_id },
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             json!({
@@ -352,17 +358,42 @@ mod tests {
         )
         .unwrap();
         let event_digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
-        event.proofs.push(arkret_sdk::Proof {
-            kind: "detached_jws".to_owned(),
-            verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR_CONTROLLER}#{DEVICE_ID}"))
+        event.proofs.push(
+            arkret_sdk::Proof {
+                kind: "detached_jws".to_owned(),
+                verification_method: arkret_sdk::DidUrl::new(format!(
+                    "{ACTOR_CONTROLLER}#{DEVICE_ID}"
+                ))
                 .unwrap(),
-            event_digest,
-            created_at: event.created_at,
-            domain: None,
-            audience: None,
-            proof_purpose: None,
-            jws: "a..b".to_owned(),
-        });
+                event_digest,
+                created_at: event.created_at,
+                domain: None,
+                audience: None,
+                proof_purpose: None,
+                jws: "a..b".to_owned(),
+            }
+            .into(),
+        );
+        let producer = event.proofs[0].as_producer().unwrap().clone();
+        event.proofs.push(
+            arkret_sdk::PrincipalServerAdmissionProof {
+                kind: arkret_sdk::PrincipalServerAdmissionProofKind::PrincipalServerAdmission,
+                verification_method: arkret_sdk::DidUrl::new(
+                    "did:web:principal.example#admission-1",
+                )
+                .unwrap(),
+                event_digest: producer.event_digest.clone(),
+                producer_proof_digest:
+                    arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)
+                        .unwrap(),
+                producer_verification_method: producer.verification_method.clone(),
+                producer_signing_key: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
+                    .unwrap(),
+                accepted_at: event.created_at,
+                jws: "header..admission".to_owned(),
+            }
+            .into(),
+        );
         match garth::InboundDecoder::new()
             .try_decode_event(event)
             .unwrap()

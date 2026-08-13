@@ -25,7 +25,7 @@ pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Val
     let transcript = arkret_sdk::PrincipalSigningTranscript {
         schema: "ak.identity.recovery_proof.v1".to_owned(),
         kind: arkret_sdk::RecoveryProofKind::PrincipalSigning,
-        principal_id: state.principal_id,
+        principal_authority: state.principal_authority,
         requesting_device_id: state.requesting_device_id,
         trust_domain: state.trust_domain,
         policy_id: state.policy_id,

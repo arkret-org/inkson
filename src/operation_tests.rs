@@ -700,7 +700,11 @@ fn sign_ed25519_attaches_typed_proof() {
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
         .expect("sign ok");
-    let proof = op.proofs.first().expect("proof present");
+    let proof = op
+        .proofs
+        .iter()
+        .find_map(arkret_sdk::EventProof::as_producer)
+        .expect("proof present");
     assert_eq!(proof.verification_method, "did:web:alice#device");
     assert!(proof.event_digest.as_str().starts_with("sha256:"));
     // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
@@ -746,7 +750,10 @@ fn sdk_submit_event_conversion_preserves_signed_digest() {
     let sdk_event = op.clone();
     assert_eq!(sdk_event.event_id, op.event_id);
     assert_eq!(sdk_event.event_digest().unwrap().as_str(), local_digest);
-    assert_eq!(op.proofs[0].event_digest.as_str(), local_digest);
+    assert_eq!(
+        op.require_proof().unwrap().event_digest.as_str(),
+        local_digest
+    );
 }
 
 #[test]

@@ -1210,6 +1210,14 @@ mod tests {
         .build("test_node")
     }
 
+    fn producer_proof(event: &arkret_sdk::Event) -> &arkret_sdk::ProducerEventProof {
+        event
+            .proofs
+            .iter()
+            .find_map(arkret_sdk::EventProof::as_producer)
+            .expect("producer proof")
+    }
+
     #[test]
     fn build_ed25519_signer_sets_did_and_verification_method() {
         let _g = reset();
@@ -1302,7 +1310,7 @@ mod tests {
             .sign_sdk_event_with_context(&mut event, EventProofContext::default())
             .unwrap();
         assert_eq!(
-            event.proofs[0].verification_method.as_str(),
+            producer_proof(&event).verification_method.as_str(),
             rebound.verification_method()
         );
     }
@@ -1395,7 +1403,7 @@ mod tests {
 
         signer.sign_envelope(&mut event).expect("sign");
 
-        let proof = event.proofs.first().expect("real proof attached");
+        let proof = producer_proof(&event);
         assert_eq!(proof.kind, "detached_jws");
         assert_eq!(
             proof.verification_method,
@@ -1429,7 +1437,7 @@ mod tests {
 
         signer.sign_envelope(&mut event).expect("sign");
 
-        let proof = event.proofs.first().expect("proof");
+        let proof = producer_proof(&event);
         assert_eq!(
             proof.verification_method,
             format!("did:web:alice.example#{TEST_DEVICE_ID}")
@@ -1466,7 +1474,7 @@ mod tests {
         // over the spec proof-binding object. Event proofs sign
         // `{event_digest, actor_id, verification_method, created_at}`,
         // not the full event bytes directly.
-        let proof = event.proofs.first().unwrap();
+        let proof = producer_proof(&event);
         assert_eq!(
             proof.event_digest.as_str(),
             event.event_digest().unwrap().as_str()
@@ -1518,7 +1526,7 @@ mod tests {
             .sign_envelope_with_context(&mut event, context)
             .expect("sign");
 
-        let proof = event.proofs.first().unwrap();
+        let proof = producer_proof(&event);
         assert_eq!(
             proof.domain.as_deref(),
             Some("ak:trust_domain:server.example")
@@ -1557,6 +1565,7 @@ mod tests {
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
             "actor_id": "ak:did_core:web:sdk.example",
+            "principal_server_id": "ak:did_core:web:principal.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
@@ -1576,7 +1585,7 @@ mod tests {
             .sign_sdk_event_with_context(&mut event, context)
             .expect("sign SDK event");
 
-        let proof = event.proofs.first().expect("proof");
+        let proof = producer_proof(&event);
         assert_eq!(proof.kind, "detached_jws");
         assert!(proof.event_digest.as_str().starts_with("blake3:"));
         assert_eq!(
@@ -1600,6 +1609,7 @@ mod tests {
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
             "actor_id": "ak:did_core:web:sdk.example",
+            "principal_server_id": "ak:did_core:web:principal.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
@@ -1638,6 +1648,7 @@ mod tests {
             "realm_id": TEST_REALM_ID,
             "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
             "actor_id": "ak:did_core:web:sdk.example",
+            "principal_server_id": "ak:did_core:web:principal.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",
@@ -1713,6 +1724,10 @@ mod tests {
     #[test]
     fn activate_device_signer_from_seed_b64url_persists_and_replaces_stale_signer() {
         let _g = reset();
+        let user_store = crate::secure_key_store::UserLocalStore::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+        );
+        user_store.activate();
         let stale = Arc::new(build_ed25519_signer([8u8; 32], "did:web:stale.example"));
         assert!(install_active_signer(stale));
 
@@ -1731,7 +1746,8 @@ mod tests {
                 .verification_method(),
             format!("{did}#device")
         );
-        let persisted = crate::secure_key_store::load_signing_seed(&store)
+        let persisted = user_store
+            .load_signing_seed(&store)
             .unwrap()
             .expect("persisted seed");
         assert_eq!(persisted.seed, seed);
@@ -1754,7 +1770,7 @@ mod tests {
         sign_with_active(&mut event).expect("auto sign");
         set_proof_mode(prior_mode);
 
-        let proof = event.proofs.first().expect("auto-attached proof");
+        let proof = producer_proof(&event);
         assert_eq!(
             proof.verification_method,
             format!("did:web:dave.example#{TEST_DEVICE_ID}")

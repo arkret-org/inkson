@@ -30,6 +30,10 @@ const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "did:web:server.example";
 
 fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
+    inkson::operation::set_authoring_principal_server_id(Some(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
+            .expect("test Principal Server core id is canonical"),
+    ));
     arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         .expect("test Realm genesis salt is canonical")
 }
@@ -140,7 +144,8 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
 fn assert_jws_is_real_signature(envelope: &Event) {
     let proof = envelope
         .proofs
-        .first()
+        .iter()
+        .find_map(arkret_sdk::EventProof::as_producer)
         .unwrap_or_else(|| panic!("envelope kind={} missing proofs[0]", envelope.kind));
     assert_ne!(
         proof.jws, "a..b",
@@ -173,7 +178,8 @@ fn assert_jws_is_real_signature(envelope: &Event) {
 fn assert_event_digest_is_sha256(envelope: &Event) {
     let proof = envelope
         .proofs
-        .first()
+        .iter()
+        .find_map(arkret_sdk::EventProof::as_producer)
         .unwrap_or_else(|| panic!("envelope kind={} missing proofs[0]", envelope.kind));
     let hex = proof
         .event_digest

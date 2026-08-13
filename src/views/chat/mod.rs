@@ -650,8 +650,10 @@ fn sign_prepared_sidecar_event(
     if signed_digest != draft.event_digest
         || event.proofs.is_empty()
         || event.proofs.iter().any(|proof| {
-            proof.event_digest != draft.event_digest
-                || proof.verification_method != expected_verification_method
+            proof.as_producer().is_none_or(|proof| {
+                proof.event_digest != draft.event_digest
+                    || proof.verification_method != expected_verification_method
+            })
         })
     {
         anyhow::bail!("signed Sidecar Event no longer matches its reservation draft");
@@ -1263,7 +1265,6 @@ async fn submit_source_routed_sidecar_message(
         None,
         &content_bytes,
         Some(&metadata_bytes),
-        None,
         None,
         Some(sidecar_mls_binding(view)),
     )

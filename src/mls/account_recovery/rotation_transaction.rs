@@ -791,6 +791,10 @@ mod rotation_resume_tests {
     #[tokio::test]
     async fn pending_rotation_index_round_trips_and_clears() {
         let store = garth::MemorySecureKeyStore::new();
+        let user_store = crate::secure_key_store::UserLocalStore::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+        );
+        user_store.activate();
         let target = "ak:device:01964137-0000-7000-8000-000000000022";
         let pending = PendingRotation {
             transaction_id: TransactionId::new(

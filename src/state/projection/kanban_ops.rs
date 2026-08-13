@@ -227,6 +227,7 @@ pub(crate) fn sdk_events_from_values(values: &[serde_json::Value]) -> Vec<arkret
                 kind.as_str(),
                 arkret_sdk::ScopeRef::Realm { realm_id },
                 actor_id,
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").ok()?,
                 1,
                 arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").ok()?,
                 payload,
@@ -268,6 +269,7 @@ mod tests {
                 .unwrap(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             json!({

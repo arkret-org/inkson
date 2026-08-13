@@ -645,14 +645,15 @@ pub fn build_managed_agent_pcr_bootstrap_events(
 pub fn build_direct_conversation_founding_events(
     founder_id: &arkret_sdk::DidFullId,
     peer_id: &arkret_sdk::DidFullId,
-    input: &arkret_sdk::DirectConversationFoundingInput,
+    trust_domain: arkret_sdk::TypedTrustDomainId,
+    _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     let created_at = event_timestamp();
     let founder_actor =
         arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
-        input.source_service_binding.trust_domain.clone(),
+        trust_domain,
         arkret_sdk::NotaryProfile::SingleDid,
         arkret_sdk::NotaryValue::single_did(founder_actor.clone()),
         arkret_sdk::current_capability_action_registry_digest()?,
@@ -1078,9 +1079,11 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
         realm_id: realm_id.clone(),
     };
     let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
+    let principal_server_id = crate::operation::authoring_principal_server_id()?;
     let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")?;
-    let mut event = arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)?
-        .author(0, hlc, created_at)?;
+    let mut event =
+        arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, principal_server_id, payload)?
+            .author(0, hlc, created_at)?;
 
     // event-kind-registry.json declares that `cell_writes[]` is the sole
     // authority for reducer targets; the old flattened descriptor fields are

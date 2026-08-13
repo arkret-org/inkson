@@ -639,7 +639,11 @@ pub(crate) fn authority_proof_signer_dids(
         }
     }
     for event in &bundle.frontier_events {
-        for proof in &event.proofs {
+        for proof in event
+            .proofs
+            .iter()
+            .filter_map(arkret_sdk::EventProof::as_producer)
+        {
             if event_device_proof_pair(event, proof)?.is_none() {
                 signers.insert(
                     verification_method_did(&proof.verification_method)
@@ -656,7 +660,11 @@ fn event_device_proof_pairs(
 ) -> Result<BTreeSet<(String, String)>, String> {
     let mut pairs = BTreeSet::new();
     for event in &bundle.frontier_events {
-        for proof in &event.proofs {
+        for proof in event
+            .proofs
+            .iter()
+            .filter_map(arkret_sdk::EventProof::as_producer)
+        {
             if let Some(pair) = event_device_proof_pair(event, proof)? {
                 pairs.insert(pair);
             }
@@ -874,7 +882,11 @@ where
                     "MLS governance frontier Event has no proof".to_owned(),
                 ));
             }
-            for proof in &event.proofs {
+            for proof in event
+                .proofs
+                .iter()
+                .filter_map(arkret_sdk::EventProof::as_producer)
+            {
                 if let Some((actor, device)) = event_device_proof_pair(event, proof)
                     .map_err(arkret_sdk::Error::Protocol)?
                 {
@@ -1384,6 +1396,7 @@ fn managed_agent_pcr_delegated_controller(
     let controller_full_id = create
         .proofs
         .iter()
+        .filter_map(arkret_sdk::EventProof::as_producer)
         .filter_map(|proof| verification_method_did(&proof.verification_method).ok())
         .find(|full_id| {
             arkret_sdk::project_full_id_to_core_id(full_id)
@@ -1572,6 +1585,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e".to_owned()).unwrap(),
             serde_json::json!({}),

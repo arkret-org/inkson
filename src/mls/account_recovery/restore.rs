@@ -779,6 +779,7 @@ async fn verify_active_series_range_completeness(
         let issuer_full_id = attestation_event
             .proofs
             .first()
+            .and_then(arkret_sdk::EventProof::as_producer)
             .and_then(|proof| proof.verification_method.as_str().split_once('#'))
             .map(|(controller, _)| controller.to_owned())
             .ok_or_else(|| anyhow!("range-completeness proof omits issuer DID fragment"))?;
@@ -796,22 +797,28 @@ async fn verify_active_series_range_completeness(
         resolver
             .documents
             .insert(issuer_full_id.as_str().to_owned(), document);
-        let outer_verified = attestation_event.proofs.iter().all(|proof| {
-            let Ok(mut context) = arkret_sdk::event_proof_verification_context_with_digest_suite(
-                attestation_event,
-                digest_suite,
-            ) else {
-                return false;
-            };
-            context.replay_window = chrono::Duration::MAX;
-            arkret_sdk::verify_event_proof_with_did_resolver_context(
-                attestation_event,
-                proof,
-                &resolver,
-                context,
-            )
-            .is_ok_and(|verification| verification.valid)
-        });
+        let outer_verified = attestation_event
+            .proofs
+            .iter()
+            .filter_map(arkret_sdk::EventProof::as_producer)
+            .all(|proof| {
+                let Ok(mut context) =
+                    arkret_sdk::event_proof_verification_context_with_digest_suite(
+                        attestation_event,
+                        digest_suite,
+                    )
+                else {
+                    return false;
+                };
+                context.replay_window = chrono::Duration::MAX;
+                arkret_sdk::verify_event_proof_with_did_resolver_context(
+                    attestation_event,
+                    proof,
+                    &resolver,
+                    context,
+                )
+                .is_ok_and(|verification| verification.valid)
+            });
         if !outer_verified {
             first_error.get_or_insert_with(|| {
                 "active-series range-completeness Event signature is invalid".to_owned()

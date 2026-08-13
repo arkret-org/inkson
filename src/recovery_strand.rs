@@ -699,8 +699,11 @@ pub fn build_recovery_unlock_proof_from_words(
         "",
         0,
     )?;
-    let recovery_secret_ref =
-        validate_active_policy_key_material(policy, session.principal_id.as_str(), &key_material)?;
+    let recovery_secret_ref = validate_active_policy_key_material(
+        policy,
+        session.principal_authority.principal_id.as_str(),
+        &key_material,
+    )?;
     arkret_sdk::identity_root::build_recovery_unlock_proof(
         session,
         recovery_secret_ref.as_str(),
@@ -753,7 +756,10 @@ pub fn create_session_body(
     expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<RecoverySessionCreateRequestBody> {
     Ok(RecoverySessionCreateRequestBody {
-        principal_id: crate::mls_api_helpers::principal_core_id(principal_id)?,
+        principal_authority: arkret_sdk::PrincipalAuthorityKey::new(
+            crate::mls_api_helpers::principal_core_id(principal_id)?,
+            crate::operation::authoring_principal_server_id()?,
+        ),
         requesting_device_id: DeviceId::new(requesting_device_id.trim().to_owned())?,
         trust_domain: TypedTrustDomainId::new(trust_domain.trim().to_owned())?,
         expected_recovery_policy_ref: match expected_recovery_policy_ref {

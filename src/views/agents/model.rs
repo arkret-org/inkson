@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 
 pub fn build_agent_provision_event_draft(
     controller_full_id: &DidFullId,
+    controller_principal_server_id: &DidCoreId,
     controller_realm_id: &RealmId,
     agent_id: &DidCoreId,
     principal_control_realm_id: &RealmId,
@@ -49,6 +50,7 @@ pub fn build_agent_provision_event_draft(
         HandleVisibility::Private,
         None,
         arkret_bootstrap::AgentProvisionEventDraftOptions {
+            controller_principal_server_id: controller_principal_server_id.clone(),
             created_at,
             actor_seq: 0,
             hlc,

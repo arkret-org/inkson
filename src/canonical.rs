@@ -154,6 +154,7 @@ mod tests {
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
             "actor_id": "ak:did_core:web:alice.example",
+            "principal_server_id": "ak:did_core:web:principal.example",
             "actor_seq": 1,
             "created_at": "2026-05-19T00:00:00.000Z",
             "hlc": "01970e589d21-0001-a13f9c2e",

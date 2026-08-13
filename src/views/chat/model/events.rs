@@ -1402,11 +1402,6 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // form (same event_id, body stripped). Render the tombstone marker rather
     // than the original body, even on a fresh reload where this is the only
     // copy of the message the receiver ever sees.
-    let expiry_stub_candidate = candidates
-        .iter()
-        .copied()
-        .find(|candidate| crate::disappearing::message_event_is_expiry_stub(candidate));
-    let is_expiry_stub = expiry_stub_candidate.is_some();
     let late_recovery_transition =
         crate::late_recovery::evaluate_late_recovery_transition_event(event);
     let late_recovery_rejection = late_recovery_transition
@@ -1416,10 +1411,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // encrypted send, keyed by `message:{message_id}` under the discussion
     // strand. Falls back to the decoded payload body (another member's message
     // we CAN decrypt, or a plaintext message).
-    let sidecar_body = if is_redaction_tombstone
-        || is_expiry_stub
-        || !late_recovery_transition.allows_plaintext()
-    {
+    let sidecar_body = if is_redaction_tombstone || !late_recovery_transition.allows_plaintext() {
         None
     } else {
         state_store.and_then(|store| {
@@ -1434,7 +1426,6 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // MLS snapshot secret, and extract the Content Block text. Soft-fails to
     // `None` (→ Decrypting/KeyMissing) when the snapshot/secret is unavailable.
     let decrypt_context = if !is_redaction_tombstone
-        && !is_expiry_stub
         && !body_from_sidecar
         && late_recovery_transition.allows_plaintext()
     {
@@ -1466,8 +1457,6 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     let body_was_decrypted = decrypted_body.is_some();
     let body = if is_redaction_tombstone {
         String::new()
-    } else if let Some(stub) = expiry_stub_candidate {
-        crate::disappearing::message_expiry_stub_body(stub)
     } else if late_recovery_rejection.is_some() {
         String::new()
     } else {
@@ -1505,9 +1494,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     // The reducer stamps the immutable Event `effective_scope`; selecting the
     // matching Circle snapshot above binds decryption to that scope without
     // inventing a payload field that v1 forbids.
-    let crypto_state = if is_expiry_stub {
-        MessageCryptoState::Plaintext
-    } else if late_recovery_rejection.is_some() {
+    let crypto_state = if late_recovery_rejection.is_some() {
         MessageCryptoState::LateRecoveryRejected
     } else if proof_verdict == ChatProofVerdict::Unresolved {
         // A present sender proof whose verify key is not yet resolvable from
@@ -1583,8 +1570,8 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
 /// `kanban_operations_from_events` — instead of refetching + redecrypting the
 /// whole realm on every Discussion-tab open.
 ///
-/// Canonical `ak.message.create` events (and their server-folded redaction /
-/// expiry tombstone forms, which reuse the same kind + `event_id`) are kept.
+/// Canonical `ak.message.create` events (including server-folded redaction
+/// tombstones, which reuse the same kind + `event_id`) are kept.
 /// Shared `ak.pin.*` control events are kept in the same discussion log so the
 /// pinned-message bar and reaction summary project from the same local-first
 /// source. Poll responses / moderation prompts have their own projections and

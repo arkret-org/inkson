@@ -255,6 +255,7 @@ mod tests {
             arkret_sdk::EventKind::ModerationDecision.as_str(),
             realm_scope(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:moderator.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("019f73a34c00-0000-12345678").unwrap(),
             json!({
@@ -272,6 +273,7 @@ mod tests {
             arkret_sdk::EventKind::MessageCreate.as_str(),
             realm_scope(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:moderator.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             2,
             arkret_sdk::Hlc::new("019f73a34c00-0001-12345678").unwrap(),
             json!({}),

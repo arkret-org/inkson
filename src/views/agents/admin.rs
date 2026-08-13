@@ -1090,22 +1090,22 @@ fn spawn_provision_agent(
                 return;
             }
         };
-        let controller_authority_instance = match state_store
+        let controller_authority = match state_store
             .read()
             .recovery_material_evidence()
-            .and_then(|evidence| evidence.controller_authority_instance)
+            .and_then(|evidence| evidence.controller_authority)
         {
-            Some(value) if value.validate().is_ok() && value.principal_id == controller_id => value,
+            Some(value) if value.principal_id == controller_id => value,
             Some(_) => {
                 last_op_status.set(
-                    "Create failed: the saved controller authority instance does not match the signed-in identity. Refresh identity recovery material before provisioning an Agent."
+                    "Create failed: the saved controller authority pair does not match the signed-in identity. Refresh identity recovery material before provisioning an Agent."
                         .to_owned(),
                 );
                 return;
             }
             None => {
                 last_op_status.set(
-                    "Create failed: this device has no accepted controller authority instance. Refresh identity recovery material before provisioning an Agent."
+                    "Create failed: this device has no controller authority pair. Refresh identity recovery material before provisioning an Agent."
                         .to_owned(),
                 );
                 return;
@@ -1200,7 +1200,7 @@ fn spawn_provision_agent(
             operation_id: operation_id.clone(),
             idempotency_key: idempotency_key.clone(),
             full_id: full_id.clone(),
-            controller_authority_instance,
+            controller_authority,
             slug: slug.clone(),
             requested_scope: requested_scope.clone(),
             pairing_ttl_ms: None,
@@ -1353,8 +1353,19 @@ fn spawn_provision_agent(
             }
         };
         let principal_control_realm_id = frozen_genesis.realm_id.clone();
+        let controller_principal_server_id = match crate::operation::authoring_principal_server_id()
+        {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!(
+                    "Create failed: resolve controller Principal Server: {error}"
+                ));
+                return;
+            }
+        };
         let draft = match build_agent_provision_event_draft(
             &controller_full_id,
+            &controller_principal_server_id,
             &controller_realm_id,
             &agent_id,
             &principal_control_realm_id,

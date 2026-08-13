@@ -381,7 +381,9 @@ fn inkson_accepts_server_contract_payloads() {
             "schema": arkret_wire::SchemaId::CAPABILITY_V1,
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
             "issuer": "ak:did_core:web:server.local",
-            "subject": "did:web:alice.example",
+            "issuer_principal_server_id": "ak:did_core:web:server.local",
+            "subject": "ak:did_core:web:alice.example",
+            "subject_principal_server_id": "ak:did_core:web:server.local",
             "issuer_authority_refs": [{
                 "kind": "realm_root",
                 "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
@@ -753,6 +755,9 @@ fn account_data_canonical_contact_and_realm_remark_keys_contract() {
 
 #[test]
 fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() {
+    inkson::operation::set_authoring_principal_server_id(Some(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap(),
+    ));
     fn assert_no_secret<T: serde::Serialize>(label: &str, value: &T, secret: &str) {
         let wire = serde_json::to_string(value).unwrap();
         assert!(

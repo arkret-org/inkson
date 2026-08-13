@@ -2,46 +2,6 @@ use super::sync::projection_events_from_sync_realms;
 
 const GOLDEN_REALM: &str = "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6";
 
-#[test]
-fn projection_expiry_stub_does_not_restore_authors_plaintext_sidecar() {
-    let path = std::env::temp_dir().join(format!(
-        "inkson-projection-expiry-stub-{}.json",
-        crate::operation::uuid_v7()
-    ));
-    let mut store = crate::state::LocalStateStore::with_path(path);
-    let realm = "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5";
-    let strand = "ak:strand:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5";
-    let message = "ak:message:AWZMmWc7y9r8WlGaMEq-hImiHKsg6Oztmr6RWaAmigKO";
-    store.save_private_plaintext(realm, strand, &format!("message:{message}"), "secret body");
-    let realms = std::collections::BTreeMap::from([(
-        realm.to_owned(),
-        serde_json::json!({
-            "summary": {"summary": "Demo"},
-            "timeline": {
-                "events": [{
-                    "kind": "ak.message.create",
-                    "event_id": "ak:event:AFQAR2XErrXGAnlXE6bKXYyKeXf07nWETTDROpEmLSeo",
-                    "actor_id": "ak:did_core:web:alice.example",
-                    "realm_id": realm,
-                    "strand_id": strand,
-                    "message_id": message,
-                    "expiry_stub": true,
-                    "expiry_state": "expired",
-                    "content": {"kind": "ak.content.text", "body": "[expired]"}
-                }]
-            }
-        }),
-    )]);
-
-    let events = projection_events_from_sync_realms(&realms, Some(&store), None);
-    let expired = events
-        .iter()
-        .find(|event| event.id == "ak:event:AFQAR2XErrXGAnlXE6bKXYyKeXf07nWETTDROpEmLSeo")
-        .expect("expired event");
-
-    assert_eq!(expired.body, "[expired]");
-}
-
 fn golden_realm_id() -> arkret_sdk::RealmId {
     arkret_sdk::RealmId::new(GOLDEN_REALM).unwrap()
 }
@@ -63,6 +23,7 @@ fn golden_event(
             realm_id: golden_realm_id(),
         },
         golden_actor(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         actor_seq,
         arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         payload,
@@ -178,8 +139,7 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
                     "decryption_state": "decryption_failed",
                     "late_recovery": {
                         "receiver_visible_at_t0": true,
-                        "source_rechecked_current_share_policy": false,
-                        "event_expired": false
+                        "source_rechecked_current_share_policy": false
                     },
                     "content": {"encrypted_content": true}
                 }]
@@ -215,8 +175,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
                     "original_received_at": "2026-05-20T00:00:00.000Z",
                     "late_recovery": {
                         "receiver_visible_at_t0": true,
-                        "source_rechecked_current_share_policy": true,
-                        "event_expired": false
+                        "source_rechecked_current_share_policy": true
                     },
                     "payload": {
                         "realm_id": realm,

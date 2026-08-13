@@ -1002,6 +1002,7 @@ fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
 
 fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
     event.proofs.iter().find_map(|proof| {
+        let proof = proof.as_producer()?;
         let controller = proof.verification_method.as_str().split_once('#')?.0;
         let full_id = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
         (arkret_sdk::project_full_id_to_core_id(&full_id)
@@ -2225,6 +2226,7 @@ mod tests {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             7,
             arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2416,6 +2418,7 @@ mod tests {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
             crate::mls_api_helpers::principal_core_id(EXCHANGE_AGENT).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2432,19 +2435,22 @@ mod tests {
         };
         event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
         let event_digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
-        event.proofs.push(arkret_sdk::Proof {
-            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-            verification_method: arkret_sdk::DidUrl::new(format!(
-                "{EXCHANGE_AGENT}#ak:device:01964137-0000-7000-8000-000000000002"
-            ))
-            .unwrap(),
-            event_digest,
-            created_at: event.created_at,
-            domain: None,
-            audience: None,
-            proof_purpose: None,
-            jws: "fixture..signature".to_owned(),
-        });
+        event.proofs.push(
+            arkret_sdk::Proof {
+                kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+                verification_method: arkret_sdk::DidUrl::new(format!(
+                    "{EXCHANGE_AGENT}#ak:device:01964137-0000-7000-8000-000000000002"
+                ))
+                .unwrap(),
+                event_digest,
+                created_at: event.created_at,
+                domain: None,
+                audience: None,
+                proof_purpose: None,
+                jws: "fixture..signature".to_owned(),
+            }
+            .into(),
+        );
         store.append_raw_operation(
             EXCHANGE_RESPONSE_EVENT.to_owned(),
             Some(session.source_realm_id.clone()),
@@ -2557,6 +2563,7 @@ mod tests {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -2623,6 +2630,7 @@ mod tests {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             7,
             arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
             serde_json::json!({

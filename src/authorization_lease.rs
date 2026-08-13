@@ -819,6 +819,7 @@ mod tests {
             "ak.member.state",
             scope(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("000000000000-0000-00000000").unwrap(),
             serde_json::json!({}),

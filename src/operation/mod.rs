@@ -11,12 +11,13 @@
 //! wire in any form.
 
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{OnceLock, RwLock};
 
 pub use arkret_sdk::events::kinds::EventKind;
 pub use arkret_sdk::{
     Audience as EventProofAudience, CriticalExtension, Event, EventRef as SemanticRef,
     EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate, PredicateOp,
-    ProjectedCellWrite, ProjectionEffect, Proof as EventProof, ScopeRef, SealBasis,
+    ProducerEventProof as EventProof, ProjectedCellWrite, ProjectionEffect, ScopeRef, SealBasis,
 };
 use serde_json::Value;
 
@@ -122,6 +123,32 @@ impl ProofMode {
 const DEFAULT_PROOF_MODE: ProofMode = ProofMode::Production;
 
 static PROOF_MODE: AtomicU8 = AtomicU8::new(0xFF);
+static AUTHORING_PRINCIPAL_SERVER_ID: OnceLock<RwLock<Option<arkret_sdk::DidCoreId>>> =
+    OnceLock::new();
+
+pub fn set_authoring_principal_server_id(principal_server_id: Option<arkret_sdk::DidCoreId>) {
+    let slot = AUTHORING_PRINCIPAL_SERVER_ID.get_or_init(|| RwLock::new(None));
+    *slot
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = principal_server_id;
+}
+
+pub(crate) fn authoring_principal_server_id() -> anyhow::Result<arkret_sdk::DidCoreId> {
+    if let Some(principal_server_id) = AUTHORING_PRINCIPAL_SERVER_ID.get().and_then(|slot| {
+        slot.read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }) {
+        return Ok(principal_server_id);
+    }
+    #[cfg(test)]
+    {
+        return arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example")
+            .map_err(anyhow::Error::msg);
+    }
+    #[cfg(not(test))]
+    anyhow::bail!("no authoring Principal Server is selected")
+}
 
 /// Returns the active [`ProofMode`]. Defaults to [`ProofMode::Production`]
 /// (fail-closed) until the signer bootstrap installs a real signer.
@@ -177,9 +204,10 @@ impl TypedOperationBuilder {
             };
             let actor_id = crate::mls_api_helpers::principal_core_id(&actor.into())
                 .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
+            let principal_server_id = authoring_principal_server_id()?;
             let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
                 .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
-            arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)
+            arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, principal_server_id, payload)
                 .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))?
                 .author(1, hlc, crate::clock::now_utc_millis())
                 .map_err(|err| anyhow::anyhow!("typed Event authoring failed: {err}"))
@@ -421,7 +449,9 @@ impl EventExt for Event {
         let digest = arkret_sdk::Hash::new(digest)
             .map_err(|err| anyhow::anyhow!("event digest is not a SDK Hash: {err}"))?;
         for proof in &mut self.proofs {
-            proof.event_digest = digest.clone();
+            if let arkret_sdk::EventProof::Producer(proof) = proof {
+                proof.event_digest = digest.clone();
+            }
         }
         Ok(())
     }
@@ -451,7 +481,8 @@ impl EventExt for Event {
 
     fn require_proof(&self) -> anyhow::Result<&EventProof> {
         self.proofs
-            .first()
+            .iter()
+            .find_map(arkret_sdk::EventProof::as_producer)
             .ok_or_else(|| anyhow::anyhow!("event envelope missing proof"))
     }
 }

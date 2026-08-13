@@ -30,6 +30,10 @@ fn ensure_local_identity_generates_persists_and_round_trips() {
 fn secure_identity_store_keeps_seed_out_of_state_record() {
     let path = temp_state_path("local-identity-secure");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
+    user_store.activate();
     let id = {
         let mut store = LocalStateStore::with_path(path.clone());
         store
@@ -44,7 +48,7 @@ fn secure_identity_store_keeps_seed_out_of_state_record() {
         "state.json must not keep the identity seed",
     );
     let stored = secure
-        .get_secret(LocalStateStore::SECURE_IDENTITY_KEY)
+        .get_secret(&user_store.secret_key(LocalStateStore::SECURE_IDENTITY_KEY))
         .expect("secure read")
         .expect("identity secret");
     let record: LocalIdentityRecord = serde_json::from_str(&stored).unwrap();
@@ -97,12 +101,22 @@ fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
     let path = temp_state_path("explicit-device-reset");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let account = "did:web:alice.example";
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    );
+    user_store.activate();
     let old_signing_seed = [41_u8; 32];
     let old_grant_binding = [42_u8; 32];
     let old_device_id = "ak:device:01904100-0000-7000-8000-000000000001";
-    crate::secure_key_store::store_signing_seed_scoped(&secure, Some(account), &old_signing_seed)
+    user_store
+        .save_signing_seed(&secure, &old_signing_seed)
         .unwrap();
-    crate::secure_key_store::store_device_id_scoped(&secure, Some(account), old_device_id).unwrap();
+    user_store
+        .save_device_id(
+            &secure,
+            &arkret_sdk::DeviceId::new(old_device_id.to_owned()).unwrap(),
+        )
+        .unwrap();
     crate::secure_key_store::store_grant_binding_seed(&secure, &old_grant_binding).unwrap();
 
     let mut store = LocalStateStore::with_path(path);
@@ -125,11 +139,7 @@ fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
             .unwrap()
             .is_none()
     );
-    assert!(
-        crate::secure_key_store::load_device_id_scoped(&secure, Some(account))
-            .unwrap()
-            .is_none()
-    );
+    assert!(user_store.load_device_id(&secure).unwrap().is_none());
     assert!(
         crate::secure_key_store::load_grant_binding_seed(&secure)
             .unwrap()
@@ -138,13 +148,12 @@ fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
     assert!(secure.get_secret(&dpop_key).unwrap().is_none());
     assert!(
         secure
-            .get_secret(LocalStateStore::SECURE_IDENTITY_KEY)
+            .get_secret(&user_store.secret_key(LocalStateStore::SECURE_IDENTITY_KEY))
             .unwrap()
             .is_none()
     );
 
-    let new_signing_seed =
-        crate::secure_key_store::ensure_signing_seed_scoped(&secure, Some(account)).unwrap();
+    let new_signing_seed = user_store.ensure_signing_seed(&secure).unwrap();
     let new_local_identity = store
         .ensure_local_identity_with_secure_store(&secure)
         .unwrap();

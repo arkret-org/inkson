@@ -465,17 +465,21 @@ pub async fn verify_authorized_pairing_event(
         || payload.authorization_binding_kind
             != arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice
         || payload.device_signature != attestation.device_signature
-        || !event.proofs.iter().any(|proof| {
-            proof
-                .verification_method
-                .as_str()
-                .strip_prefix(principal.as_str())
-                .is_some_and(|suffix| suffix.starts_with('#'))
-                && !proof
+        || !event
+            .proofs
+            .iter()
+            .filter_map(arkret_sdk::EventProof::as_producer)
+            .any(|proof| {
+                proof
                     .verification_method
                     .as_str()
-                    .ends_with(attestation.device_id.as_str())
-        })
+                    .strip_prefix(principal.as_str())
+                    .is_some_and(|suffix| suffix.starts_with('#'))
+                    && !proof
+                        .verification_method
+                        .as_str()
+                        .ends_with(attestation.device_id.as_str())
+            })
     {
         anyhow::bail!("authorized pairing Event does not match the target attestation");
     }

@@ -548,6 +548,7 @@ mod tests {
                 realm_id: sdk_realm_id(),
             },
             sdk_actor_id(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             actor_seq,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             payload,

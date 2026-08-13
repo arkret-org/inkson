@@ -765,12 +765,13 @@ mod tests {
         let realm_id =
             arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap();
-        let event = arkret_wire::test_support::raw_event(
+        let mut event = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
             arkret_sdk::ScopeRef::Realm {
                 realm_id: realm_id.clone(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
             serde_json::json!({
@@ -780,6 +781,40 @@ mod tests {
             }),
         )
         .unwrap();
+        let digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
+        let producer = arkret_sdk::ProducerEventProof {
+            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(
+                "did:webvh:z6mkfixture:alice.example#device-1",
+            )
+            .unwrap(),
+            event_digest: digest.clone(),
+            created_at: event.created_at,
+            domain: None,
+            audience: None,
+            proof_purpose: None,
+            jws: "header..producer".to_owned(),
+        };
+        event.proofs.push(producer.clone().into());
+        event.proofs.push(
+            arkret_sdk::PrincipalServerAdmissionProof {
+                kind: arkret_sdk::PrincipalServerAdmissionProofKind::PrincipalServerAdmission,
+                verification_method: arkret_sdk::DidUrl::new(
+                    "did:web:principal.example#admission-1",
+                )
+                .unwrap(),
+                event_digest: digest,
+                producer_proof_digest:
+                    arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)
+                        .unwrap(),
+                producer_verification_method: producer.verification_method.clone(),
+                producer_signing_key: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
+                    .unwrap(),
+                accepted_at: event.created_at,
+                jws: "header..admission".to_owned(),
+            }
+            .into(),
+        );
         let event_id = event.event_id.clone();
         let frames = vec![
             arkret_sdk::EventsSubscribeFrame {

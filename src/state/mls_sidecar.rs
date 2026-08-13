@@ -490,52 +490,6 @@ impl LocalStateStore {
             .ok()
     }
 
-    /// Drop local plaintext retained for a disappearing message.
-    ///
-    /// This removes the author's sidecar (`message:<message_id>`) and, when the
-    /// encrypted envelope digest is known, the remote decrypt cache entry.
-    pub fn drop_disappearing_message_plaintext(
-        &mut self,
-        realm_id: &str,
-        strand_id: &str,
-        message_id: &str,
-        payload_digest: Option<&str>,
-    ) -> bool {
-        let realm_id = realm_id.trim();
-        let strand_id = strand_id.trim();
-        let message_id = message_id.trim();
-        if realm_id.is_empty() || strand_id.is_empty() || message_id.is_empty() {
-            return false;
-        }
-        self.absorb_mls_receive_overlay();
-        let field_path = if message_id.starts_with("message:") {
-            message_id.to_owned()
-        } else {
-            format!("message:{message_id}")
-        };
-        let mut changed = remove_private_plaintext_entry(
-            &mut self.cached.mls_private_plaintext,
-            realm_id,
-            strand_id,
-            &field_path,
-        );
-        if let Some(payload_digest) = payload_digest
-            .map(str::trim)
-            .filter(|payload_digest| !payload_digest.is_empty())
-        {
-            changed |= remove_decrypted_plaintext_entry(
-                &mut self.cached.mls_decrypted_plaintext,
-                realm_id,
-                payload_digest,
-            );
-        }
-        if changed {
-            let _ = self.flush();
-            self.persist_e2ee_plaintext_cache_if_ready();
-        }
-        changed
-    }
-
     /// Persist a successful decrypt: the advanced (post-decrypt) snapshot
     /// envelope AND the decrypted plaintext (cached under `payload_digest`).
     /// Both are recorded through the shared overlay and immediately flushed
@@ -1368,43 +1322,6 @@ fn mls_realm_or_circle_scope(
         }),
         None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
     }
-}
-
-fn remove_decrypted_plaintext_entry(
-    plaintexts: &mut BTreeMap<String, BTreeMap<String, String>>,
-    realm_id: &str,
-    payload_digest: &str,
-) -> bool {
-    let Some(entries) = plaintexts.get_mut(realm_id) else {
-        return false;
-    };
-    let changed = entries.remove(payload_digest).is_some();
-    if entries.is_empty() {
-        plaintexts.remove(realm_id);
-    }
-    changed
-}
-
-fn remove_private_plaintext_entry(
-    plaintexts: &mut BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
-    realm_id: &str,
-    strand_id: &str,
-    field_path: &str,
-) -> bool {
-    let Some(strands) = plaintexts.get_mut(realm_id) else {
-        return false;
-    };
-    let Some(fields) = strands.get_mut(strand_id) else {
-        return false;
-    };
-    let changed = fields.remove(field_path).is_some();
-    if fields.is_empty() {
-        strands.remove(strand_id);
-    }
-    if strands.is_empty() {
-        plaintexts.remove(realm_id);
-    }
-    changed
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
