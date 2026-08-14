@@ -317,6 +317,7 @@ pub async fn standard_initial_submission(
     let managed_genesis = is_managed_agent_pcr_genesis(event);
     if event.seal_basis.is_some() || managed_genesis {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {
+            ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal => None,
             ProposalAuthorityRoute::LocalPrincipal(local) => {
                 let signer = crate::event_signer::active_signer().ok_or_else(|| {
                     anyhow::anyhow!("PCR Control Proposal Ack requires an active device signer")
@@ -356,13 +357,14 @@ pub async fn delayed_initial_submission(
     let managed_genesis = is_managed_agent_pcr_genesis(event);
     if event.seal_basis.is_some() || managed_genesis {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {
+            ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal => None,
             ProposalAuthorityRoute::LocalPrincipal(local) => {
                 let signer = crate::event_signer::active_signer().ok_or_else(|| {
                     anyhow::anyhow!("PCR Control Proposal Ack requires an active device signer")
                 })?;
-                local.issue_authority_ack(event, &signer)?
+                Some(local.issue_authority_ack(event, &signer)?)
             }
-            ProposalAuthorityRoute::PrincipalServerAdmission => {
+            ProposalAuthorityRoute::PrincipalServerAdmission => Some(
                 http.issue_control_proposal_ack(&arkret_wire::ControlProposalAckIssueRequest {
                     event: event.clone(),
                     authorization_lease: submission
@@ -373,14 +375,16 @@ pub async fn delayed_initial_submission(
                 })
                 .await
                 .map_err(anyhow::Error::from)?
-                .authority_ack
-            }
+                .authority_ack,
+            ),
         };
-        submission.control_proposal_ack = Some(
-            arkret_wire::ControlProposalAck::from_authority_acks_protocol_bounds(vec![
-                authority_ack,
-            ])?,
-        );
+        if let Some(authority_ack) = authority_ack {
+            submission.control_proposal_ack = Some(
+                arkret_wire::ControlProposalAck::from_authority_acks_protocol_bounds(vec![
+                    authority_ack,
+                ])?,
+            );
+        }
     }
     submission
         .validate_structural_in_context(if managed_genesis {
@@ -401,6 +405,10 @@ pub async fn delayed_initial_submission(
 /// built from accepted authority evidence, so a future policy or signer-binding
 /// change has exactly one site to update.
 pub(crate) enum ProposalAuthorityRoute {
+    /// The current device authored a human principal's own PCR Control Move.
+    /// The accepted successor Seal is the sole authority decision, so the
+    /// submission must omit a second Control Proposal Ack.
+    AuthorityAuthoredSelfPrincipal,
     /// The already-authenticated receiving Principal Server performs the
     /// atomic admission check (or issues the delayed-publication Ack) from its
     /// accepted state. This branch performs no DID/PCR resolution in Inkson.
@@ -491,6 +499,10 @@ pub(crate) fn is_managed_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
 /// managed branch needs accepted Realm history.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProposalAuthorityRouteKind {
+    /// A pre-join membership proposal is intentionally unable to read Realm
+    /// history. The receiving Principal Server validates its candidate basis
+    /// and pending invite/application state directly.
+    PreJoinPrincipalServerAdmission,
     /// An ordinary Realm is admitted by the already-authenticated receiving
     /// Principal Server. This is not a human current-DID/PCR lookup.
     PrincipalServerAdmission,
@@ -505,6 +517,20 @@ pub(crate) enum ProposalAuthorityRouteKind {
 fn classify_proposal_authority_route(
     event: &arkret_sdk::Event,
 ) -> anyhow::Result<ProposalAuthorityRouteKind> {
+    let pre_join_membership_proposal = event.kind == arkret_sdk::EventKind::InviteAccept
+        || (event.kind == arkret_sdk::EventKind::MemberState
+            && serde_json::to_value(&event.payload)
+                .ok()
+                .and_then(|payload| {
+                    payload
+                        .get("membership")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                })
+                .is_some_and(|membership| matches!(membership.as_str(), "join" | "knock")));
+    if pre_join_membership_proposal {
+        return Ok(ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission);
+    }
     // The managed-delegation shape is checked first: it names both a different
     // executor and the Agent's `#managed-controller` delegation, so it can only
     // ever be satisfied by a managed Agent PCR write. Deciding it before the
@@ -524,8 +550,22 @@ async fn resolve_proposal_authority_route(
     event: &arkret_sdk::Event,
 ) -> anyhow::Result<ProposalAuthorityRoute> {
     match classify_proposal_authority_route(event)? {
-        ProposalAuthorityRouteKind::PrincipalServerAdmission => {
+        ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission => {
             Ok(ProposalAuthorityRoute::PrincipalServerAdmission)
+        }
+        ProposalAuthorityRouteKind::PrincipalServerAdmission => {
+            let accepted = http
+                .events_read_all_pages(event.realm_id.as_str())
+                .await
+                .map_err(anyhow::Error::from)?;
+            let accepted_events = crate::models::require_complete_event_rows(
+                &accepted.events,
+                "proposal authority route resolution",
+            )?;
+            match self_principal_pcr_authority_set_ref_from_events(event, &accepted_events) {
+                Ok(_) => Ok(ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal),
+                Err(_) => Ok(ProposalAuthorityRoute::PrincipalServerAdmission),
+            }
         }
         ProposalAuthorityRouteKind::ManagedAgentPcr => {
             // The single-Event managed PCR genesis is a caller-proven closed
@@ -578,14 +618,8 @@ async fn resolve_proposal_authority_route(
                 &accepted.events,
                 "self principal PCR authority resolution",
             )?;
-            let authority_set_ref =
-                self_principal_pcr_authority_set_ref_from_events(event, &accepted_events)?;
-            Ok(ProposalAuthorityRoute::LocalPrincipal(
-                LocalPrincipalAuthority {
-                    authority_set_ref,
-                    signer_actor_id: event.actor_id.clone(),
-                },
-            ))
+            self_principal_pcr_authority_set_ref_from_events(event, &accepted_events)?;
+            Ok(ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal)
         }
     }
 }
@@ -611,7 +645,7 @@ fn self_principal_pcr_authority_set_ref_from_events(
     )
     .map_err(|error| anyhow::anyhow!("decode self PCR genesis: {error}"))?;
     if payload.object.purpose != arkret_sdk::RealmPurpose::PrincipalControl {
-        anyhow::bail!("Agent provision Event is not in a principal-control Realm");
+        anyhow::bail!("Event is not in a principal-control Realm");
     }
     let arkret_sdk::NotaryValue::SingleDid { actor_id, .. } = &payload.object.notary else {
         anyhow::bail!("self principal PCR genesis does not use a single-DID notary");
@@ -914,6 +948,27 @@ mod tests {
         assert_eq!(
             classify_proposal_authority_route(&self_executed).unwrap(),
             ProposalAuthorityRouteKind::PrincipalServerAdmission
+        );
+
+        let mut invite_accept = event();
+        invite_accept.kind = arkret_sdk::EventKind::InviteAccept;
+        invite_accept.payload = serde_json::from_value(serde_json::json!({
+            "invite_ref": "ak:invite:01904100-0000-7000-8000-aaaaaaaaaaaa"
+        }))
+        .unwrap();
+        assert_eq!(
+            classify_proposal_authority_route(&invite_accept).unwrap(),
+            ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission,
+            "an invitee must not need membership-gated Realm history to submit acceptance"
+        );
+
+        let mut knock = event();
+        knock.payload =
+            serde_json::from_value(serde_json::json!({ "membership": "knock" })).unwrap();
+        assert_eq!(
+            classify_proposal_authority_route(&knock).unwrap(),
+            ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission,
+            "a knock applicant must not need membership-gated Realm history"
         );
     }
 

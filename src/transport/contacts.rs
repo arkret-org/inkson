@@ -5,6 +5,87 @@ use arkret_sdk::contact_operations::{
 };
 use arkret_sdk::{IdempotencyKey, ProtocolOperationId, ReservationHandle};
 
+pub(crate) struct PrincipalSuccessorSealContext {
+    actor_id: arkret_sdk::DidCoreId,
+    control_realm: arkret_sdk::RealmId,
+    predecessor: arkret_sdk::RealmSealFrontierView,
+}
+
+pub(crate) async fn prepare_principal_successor_seal(
+    http: &arkret_sdk::http_client::Client,
+    contact_event: &arkret_sdk::Event,
+) -> anyhow::Result<PrincipalSuccessorSealContext> {
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device signer is required for principal commit"))?;
+    let principal = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
+    let actor_id = arkret_sdk::project_full_id_to_core_id(&principal)?;
+    if contact_event.actor_id != actor_id {
+        anyhow::bail!("prepared principal Event actor does not match the active signer");
+    }
+    let control_realm = contact_event.realm_id.clone();
+    let selector = arkret_sdk::EventsFrontierSelector::RealmSeal {
+        realm_id: control_realm.clone(),
+    };
+    let state = http.events_frontier(&selector).await?;
+    let arkret_sdk::EventsFrontierView::RealmSeal(predecessor) = state.frontier else {
+        anyhow::bail!("principal control frontier did not return a Realm Seal view");
+    };
+    if predecessor.realm_id != control_realm {
+        anyhow::bail!("principal control frontier returned a different Realm");
+    }
+    Ok(PrincipalSuccessorSealContext {
+        actor_id,
+        control_realm,
+        predecessor,
+    })
+}
+
+pub(crate) async fn submit_principal_successor_seal(
+    http: &arkret_sdk::http_client::Client,
+    context: PrincipalSuccessorSealContext,
+    principal_event: &arkret_sdk::Event,
+) -> anyhow::Result<()> {
+    let accepted_rows = http
+        .events_read_all_pages(context.control_realm.as_str())
+        .await?
+        .events;
+    let mut accepted = crate::models::require_complete_event_rows(
+        &accepted_rows,
+        "principal successor Seal construction",
+    )?
+    .into_iter()
+    .filter(|event| event.actor_id == context.actor_id)
+    .collect::<Vec<_>>();
+    accepted.sort_by_key(|event| event.actor_seq);
+    if accepted.last().map(|event| &event.event_id) != Some(&principal_event.event_id) {
+        anyhow::bail!("accepted principal Event is not the actor frontier");
+    }
+
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device signer is required for principal Seal"))?;
+    let device_id = signer
+        .device_id()
+        .ok_or_else(|| anyhow::anyhow!("principal Seal signer requires a bound device_id"))?;
+    let hlc = crate::signing_stamp::issue_protocol_hlc(
+        context.actor_id.as_str(),
+        device_id,
+        context.control_realm.as_str(),
+    )?;
+    let seal = signer
+        .sign_self_principal_linear_successor_seal(&accepted, &context.predecessor, hlc)
+        .map_err(|error| anyhow::anyhow!("sign principal successor Seal: {error}"))?;
+    let principal_digest = arkret_sdk::Hash::new(principal_event.event_digest()?)?;
+    let outcome = http.events_submit_seal(&seal).await?;
+    if !outcome
+        .accepted_event_digests
+        .iter()
+        .any(|digest| digest == &principal_digest)
+    {
+        anyhow::bail!("Principal Server did not seal the accepted principal Event");
+    }
+    Ok(())
+}
+
 fn contact_scope(scope: &str) -> anyhow::Result<ContactScope> {
     match scope.trim() {
         "invite" => Ok(ContactScope::Invite),
@@ -111,23 +192,29 @@ impl crate::transport::TransportClient {
                 .filter(|message| !message.is_empty())
                 .map(ToOwned::to_owned),
         });
+        let http = self.sdk_http_client()?;
         let (prepared_operation_id, reservation_handle, event_draft) =
-            prepared_contact_request(self.sdk_http_client()?.contacts_request(&prepare).await?)?;
+            prepared_contact_request(http.contacts_request(&prepare).await?)?;
         if prepared_operation_id != operation_id {
             anyhow::bail!("Contact prepare changed operation_id");
         }
         let signed_event = sign_prepared_contact_event(&event_draft)?;
+        let seal_context = prepare_principal_successor_seal(&http, &signed_event).await?;
         let commit = ContactOperationRequestBody::Commit(ContactCommitRequestBody {
             phase: ContactCommitPhase::Commit,
             operation_id,
             idempotency_key,
             reservation_handle,
-            signed_event,
+            signed_event: signed_event.clone(),
             control_proposal_ack: None,
         });
-        self.sdk_http_client()?
+        let outcome = http
             .contacts_request(&commit)
             .await
-            .map_err(anyhow::Error::from)
+            .map_err(anyhow::Error::from)?;
+        if matches!(outcome, ContactOperationOutcome::Accepted { .. }) {
+            submit_principal_successor_seal(&http, seal_context, &signed_event).await?;
+        }
+        Ok(outcome)
     }
 }

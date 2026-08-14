@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use arkret_sdk::EventPayloadExt as _;
 use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
     ClaimedProfileEntry, CompatSurfaceEntry, ContactAgentProjection as ContactAgentRow,
@@ -237,7 +238,17 @@ impl AccountSyncStep {
             .iter()
             .map(|update| {
                 serde_json::to_value(&update.entry)
-                    .map(|value| (update.realm_id.as_str().to_owned(), value))
+                    .map(|mut value| {
+                        project_default_strand_from_sdk_events(
+                            &mut value,
+                            update
+                                .entry
+                                .state
+                                .iter()
+                                .flat_map(|state| state.events.iter()),
+                        );
+                        (update.realm_id.as_str().to_owned(), value)
+                    })
                     .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
             })
             .collect::<arkret_sdk::Result<BTreeMap<_, _>>>()?;
@@ -263,6 +274,32 @@ impl AccountSyncStep {
             .find(|(id, _)| id.as_str() == realm_id)
             .is_some_and(|(_, entry)| entry.state_at_window_start.is_some())
     }
+}
+
+pub(crate) fn project_default_strand_from_sdk_events<'a>(
+    projection: &mut Value,
+    events: impl IntoIterator<Item = &'a arkret_sdk::Event>,
+) -> bool {
+    let latest = events.into_iter().filter_map(|event| {
+        if event.kind != arkret_sdk::EventKind::RealmSetDefaultStrand {
+            return None;
+        }
+        event
+            .typed_payload::<arkret_wire::event_spec::RealmSetDefaultStrand>()
+            .ok()
+            .map(|payload| payload.strand_id.to_string())
+    });
+    let Some(strand_id) = latest.last() else {
+        return false;
+    };
+    let Some(object) = projection.as_object_mut() else {
+        return false;
+    };
+    if object.get("default_strand_id").and_then(Value::as_str) == Some(strand_id.as_str()) {
+        return false;
+    }
+    object.insert("default_strand_id".to_owned(), Value::String(strand_id));
+    true
 }
 
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays

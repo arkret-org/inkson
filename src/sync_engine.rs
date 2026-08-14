@@ -2594,6 +2594,26 @@ pub(crate) fn ingest_membership_events(
     changed
 }
 
+pub(crate) fn ingest_default_strand_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[garth::ClientEvent],
+) -> usize {
+    let sdk_events = events.iter().filter_map(|event| match event {
+        garth::ClientEvent::Message(message) => Some(&message.event),
+        garth::ClientEvent::Event(event) => Some(event),
+        _ => None,
+    });
+    let Some(mut projection) = store.load().realm_tree_projections.get(realm_id).cloned() else {
+        return 0;
+    };
+    if !crate::models::project_default_strand_from_sdk_events(&mut projection, sdk_events) {
+        return 0;
+    }
+    store.save_realm_tree_projection(realm_id.to_owned(), projection);
+    1
+}
+
 fn ingest_member_identity_events_from_projection(
     store: &mut LocalStateStore,
     realm_id: &str,
@@ -3575,6 +3595,38 @@ mod tests {
         assert_eq!(
             state.raw_operations[1].payload["body"]["invite_id"],
             "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
+        );
+    }
+
+    #[test]
+    fn default_strand_event_updates_realm_projection_idempotently() {
+        let realm_id = sdk_realm_id().to_string();
+        let strand_id = "ak:strand:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610";
+        let event = sdk_event(
+            arkret_sdk::EventKind::RealmSetDefaultStrand.as_str(),
+            json!({
+                "realm_id": realm_id,
+                "strand_id": strand_id,
+            }),
+        );
+        let batch = vec![garth::ClientEvent::Event(event)];
+        let mut store = temp_store("default-strand-event");
+        store.save_realm_tree_projection(
+            sdk_realm_id().to_string(),
+            json!({"state": {"events": []}}),
+        );
+
+        assert_eq!(
+            ingest_default_strand_events(&mut store, sdk_realm_id().as_str(), &batch),
+            1
+        );
+        assert_eq!(
+            store.load().realm_tree_projections[sdk_realm_id().as_str()]["default_strand_id"],
+            strand_id
+        );
+        assert_eq!(
+            ingest_default_strand_events(&mut store, sdk_realm_id().as_str(), &batch),
+            0
         );
     }
 

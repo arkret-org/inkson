@@ -598,8 +598,15 @@ pub(crate) fn grant_matches_full_principal(
     let Ok(expected_core_id) = arkret_sdk::project_full_id_to_core_id(principal_id) else {
         return false;
     };
+    grant_matches_principal_core_id(grant, &expected_core_id)
+}
+
+pub(crate) fn grant_matches_principal_core_id(
+    grant: &PersistedSessionGrant,
+    principal_id: &arkret_sdk::DidCoreId,
+) -> bool {
     persisted_grant_principal_core_id(grant)
-        .is_ok_and(|grant_core_id| grant_core_id == expected_core_id)
+        .is_ok_and(|grant_core_id| grant_core_id == *principal_id)
 }
 
 pub(crate) fn sdk_base_url_from_gate_account_base(gate_account_base: &str) -> anyhow::Result<Url> {
@@ -827,6 +834,7 @@ mod tests {
         let grant = test_persisted_grant(core_id.as_str());
 
         assert!(grant_matches_full_principal(&grant, &full_id));
+        assert!(grant_matches_principal_core_id(&grant, &core_id));
         assert_ne!(grant.principal_id, full_id.as_str());
     }
 

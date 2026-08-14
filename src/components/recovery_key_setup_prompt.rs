@@ -69,6 +69,7 @@ pub fn RecoveryKeySetupPrompt(
     let mut confirmation_input = use_signal(String::new);
     let mut auto_generate_started = use_signal(|| false);
     let mut device_unauthorized = use_signal(|| false);
+    let mut publishing = use_signal(|| false);
     let navigator = use_navigator();
 
     use_effect(move || {
@@ -79,6 +80,7 @@ pub fn RecoveryKeySetupPrompt(
             status.set(String::new());
             copied.set(false);
             device_unauthorized.set(false);
+            publishing.set(false);
             return;
         }
         if auto_generate_started()
@@ -107,6 +109,7 @@ pub fn RecoveryKeySetupPrompt(
     let confirmation_now = confirmation_input();
     let current_status = status();
     let is_device_unauthorized = device_unauthorized();
+    let is_publishing = publishing();
     let generation_failed = !is_device_unauthorized
         && generated_now.trim().is_empty()
         && (current_status.contains("failed") || current_status.contains("could not be saved"));
@@ -289,6 +292,7 @@ pub fn RecoveryKeySetupPrompt(
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "recovery-key-setup-regenerate",
+                            disabled: is_publishing,
                             onclick: move |_| {
                                 auto_generate_started.set(true);
                                 status.set("Generating a replacement Recovery Key...".to_owned());
@@ -306,10 +310,13 @@ pub fn RecoveryKeySetupPrompt(
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "recovery-key-setup-saved",
-                            disabled: confirmation_now.trim().is_empty(),
+                            disabled: confirmation_now.trim().is_empty() || is_publishing,
                             onclick: {
                                 let saved_recovery_key = generated_now.clone();
                                 move |_| {
+                                    if publishing() {
+                                        return;
+                                    }
                                     match recovery_key_confirmation_diff(
                                         &saved_recovery_key,
                                         &confirmation_input(),
@@ -342,6 +349,7 @@ pub fn RecoveryKeySetupPrompt(
                                         "Cold custody confirmed. Publishing the recovery policy and first encrypted backup…"
                                             .to_owned(),
                                     );
+                                    publishing.set(true);
                                     let accepted_key = saved_recovery_key.clone();
                                     let accepted_actor = actor.clone();
                                     let on_outcome = EventHandler::new(
@@ -354,7 +362,8 @@ pub fn RecoveryKeySetupPrompt(
                                                         &accepted_actor,
                                                         &accepted_key,
                                                     )
-                                                else {
+                                                    else {
+                                                    publishing.set(false);
                                                     status.set(
                                                         "Recovery material was accepted, but public local metadata could not be saved."
                                                             .to_owned(),
@@ -377,9 +386,12 @@ pub fn RecoveryKeySetupPrompt(
                                                 open.set(false);
                                             }
                                             RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
+                                                publishing.set(false);
                                                 device_unauthorized.set(true);
                                             }
-                                            RecoveryKeyBackupOutcome::Transient => {}
+                                            RecoveryKeyBackupOutcome::Transient => {
+                                                publishing.set(false);
+                                            }
                                         },
                                     );
                                     crate::views::recovery::upload_recovery_key_account_backup(

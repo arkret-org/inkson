@@ -3,9 +3,28 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-pub(crate) fn principal_core_id(principal_full_id: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    let full_id = arkret_sdk::DidFullId::new(principal_full_id.trim().to_owned())?;
+pub(crate) fn principal_core_id(principal_id: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
+    let principal_id = principal_id.trim();
+    if let Ok(core_id) = arkret_sdk::DidCoreId::new(principal_id.to_owned()) {
+        return Ok(core_id);
+    }
+    let full_id = arkret_sdk::DidFullId::new(principal_id.to_owned())?;
     arkret_sdk::project_full_id_to_core_id(&full_id).map_err(anyhow::Error::msg)
+}
+
+#[cfg(test)]
+mod principal_id_tests {
+    use super::*;
+
+    #[test]
+    fn principal_core_id_accepts_stable_and_resolvable_forms() {
+        let core = "ak:did_core:web:alice.example";
+        assert_eq!(principal_core_id(core).unwrap().as_str(), core);
+        assert_eq!(
+            principal_core_id("did:web:alice.example").unwrap().as_str(),
+            core
+        );
+    }
 }
 pub(crate) fn sign_keypackage_upload_batch_with_signer(
     signer: &crate::event_signer::InksonEventSigner,

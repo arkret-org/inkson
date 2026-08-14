@@ -15,6 +15,19 @@ pub struct InviteeResolution {
     pub introduction_evidence_digest: String,
 }
 
+impl InviteeResolution {
+    fn invite_address(&self) -> arkret_sdk::InviteAddress {
+        arkret_sdk::InviteAddress {
+            subject_id: arkret_sdk::DidCoreId::new(self.did.clone())
+                .expect("resolved invitee DID remains valid"),
+            recipient_service_id: self.invite_delivery_target.recipient_service_id.clone(),
+            service_resolution: self.invite_delivery_target.service_resolution.clone(),
+            route_assistance: None,
+            recipient_service_kind: self.invite_delivery_target.recipient_service_kind.clone(),
+        }
+    }
+}
+
 pub(crate) struct ContactRequestAddressing {
     pub(crate) target: arkret_sdk::DidCoreId,
     pub(crate) introduction_evidence: arkret_sdk::ContactIntroductionEvidence,
@@ -245,6 +258,42 @@ fn resolved_at(resolved: &ResolveHandleView) -> Option<chrono::DateTime<chrono::
 
 impl crate::transport::TransportClient {
     // ── Identity & Directory ────────────────────────────────────────
+
+    pub(crate) async fn dispatch_accepted_invite(
+        &self,
+        accepted_event_id: &str,
+        invitee: &InviteeResolution,
+    ) -> anyhow::Result<arkret_sdk::InviteDeliveryOutcome> {
+        let event_id = arkret_sdk::EventId::new(accepted_event_id.to_owned())
+            .map_err(|error| anyhow::anyhow!("accepted invite event id is invalid: {error}"))?;
+        let resolved = self
+            .sdk_http_client()?
+            .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+                event_ids: vec![event_id.clone()],
+                event_digests: Vec::new(),
+                seal_refs: Vec::new(),
+                include_payload: Some(true),
+            })
+            .await?;
+        let event = resolved
+            .events
+            .into_iter()
+            .find(|event| event.event_id == event_id)
+            .ok_or_else(|| anyhow::anyhow!("accepted invite Event was not resolvable"))?;
+        let delivery = arkret_sdk::InviteDeliveryRequestBodyBody::new(
+            event,
+            invitee.invite_address(),
+            invitee.introduction_evidence.clone(),
+            accepted_event_id,
+        );
+        delivery
+            .validate_minimal()
+            .map_err(|error| anyhow::anyhow!("invite delivery request is invalid: {error}"))?;
+        self.sdk_http_client()?
+            .post("/_arkret/self/invites/dispatch", &delivery)
+            .await
+            .map_err(Into::into)
+    }
 
     async fn resolve_handle_with_context(
         &self,

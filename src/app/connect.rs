@@ -392,17 +392,20 @@ async fn current_event_signer_matches_directory(
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
     };
-    let principal_id = arkret_sdk::DidFullId::new(actor.to_owned())?;
-    let signer = crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device)
-        .map_err(|error| anyhow::anyhow!("bind event signer to principal device: {error}"))?
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor)?;
+    let signer = crate::event_signer::bind_active_signer_device_id(device)
+        .map_err(|error| anyhow::anyhow!("bind event signer device: {error}"))?
         .unwrap_or(signer);
+    let signer_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != actor_id {
+        return Ok(false);
+    }
     let Some(public_key) = signer.public_key_multibase() else {
         return Ok(false);
     };
     let outcome =
         crate::transport::keys::query_keys(&principal_api.sdk_http_client()?, actor, device)
             .await?;
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor)?;
     let device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let expected_key = format!("did:key:{public_key}");
     let signer_matches = outcome
@@ -848,18 +851,18 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     personal_handles_status.set("Not published".to_owned());
                 }
                 let grant_device = {
+                    let canonical_actor_id =
+                        crate::mls_api_helpers::principal_core_id(&canonical_actor).ok();
                     let store = state_store.read();
                     store
                         .session_grant()
                         .filter(|grant| {
-                            arkret_sdk::DidFullId::new(canonical_actor.clone()).is_ok_and(
-                                |principal_id| {
-                                    crate::identity::session_refresh::grant_matches_full_principal(
-                                        grant,
-                                        &principal_id,
-                                    )
-                                },
-                            ) && crate::identity::session_refresh::grant_matches_principal_server(
+                            canonical_actor_id.as_ref().is_some_and(|principal_id| {
+                                crate::identity::session_refresh::grant_matches_principal_core_id(
+                                    grant,
+                                    principal_id,
+                                )
+                            }) && crate::identity::session_refresh::grant_matches_principal_server(
                                 grant, &base,
                             ) && crate::config::is_valid_device_id(&grant.device_id)
                         })
@@ -879,9 +882,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 }
                 {
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    match arkret_sdk::DidFullId::new(canonical_actor.clone())
-                        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-                    {
+                    match crate::mls_api_helpers::principal_core_id(&canonical_actor) {
                         Ok(core_id) => {
                             let user_store = crate::secure_key_store::UserLocalStore::new(core_id);
                             user_store.activate();

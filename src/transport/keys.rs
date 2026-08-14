@@ -26,7 +26,7 @@ pub async fn query_keys(
     actor: &str,
     device_id: &str,
 ) -> anyhow::Result<KeysQueryOutcome> {
-    let actor = arkret_sdk::DidFullId::new(actor)
+    let actor = crate::mls_api_helpers::principal_core_id(actor)
         .map_err(|err| anyhow::anyhow!("invalid actor DID `{actor}`: {err}"))?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;

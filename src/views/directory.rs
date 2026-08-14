@@ -20,6 +20,27 @@ enum DirectoryTab {
     Handles,
 }
 
+fn contact_operation_status(
+    outcome: &arkret_sdk::contact_operations::ContactOperationOutcome,
+) -> &'static str {
+    use arkret_sdk::contact_operations::{ContactAcceptedOutcome, ContactOperationOutcome};
+
+    match outcome {
+        ContactOperationOutcome::Accepted {
+            outcome: ContactAcceptedOutcome::Request { .. },
+        } => "request pending",
+        ContactOperationOutcome::Accepted {
+            outcome: ContactAcceptedOutcome::Response { .. },
+        } => "respond accepted",
+        ContactOperationOutcome::Accepted {
+            outcome: ContactAcceptedOutcome::Reject { .. },
+        } => "respond rejected",
+        ContactOperationOutcome::Accepted { .. } => "contact updated",
+        ContactOperationOutcome::Prepared { .. } => "contact awaiting signature",
+        ContactOperationOutcome::Failed { .. } => "contact operation failed",
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct PaginationState {
     realms_cursor: Option<String>,
@@ -276,7 +297,11 @@ pub fn DirectoryPanel(
                         placeholder: "Requester DID",
                         oninput: move |event: FormEvent| contact_requester_did.set(event.value())
                     }
-                    div { class: "muted", "{contact_state}" }
+                    div {
+                        class: "muted",
+                        "data-testid": "contact-operation-status",
+                        "{contact_state}"
+                    }
                 }
                 div { class: "actions",
                     Button {
@@ -294,7 +319,8 @@ pub fn DirectoryPanel(
                                     })
                                     .await
                                     {
-                                        Ok(contact) => contact_state.set(format!("request {contact:?}")),
+                                        Ok(contact) => contact_state
+                                            .set(contact_operation_status(&contact).to_owned()),
                                         Err(err) => contact_state
                                             .set(format!("request: {}", err.display())),
                                     }
@@ -1311,9 +1337,49 @@ fn value_vec(value: &Value, key: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use arkret_sdk::contact_operations::{
+        ContactAcceptedOutcome, ContactOperationOutcome, RequestAcceptanceReceipt,
+        RequestAcceptanceReceiptCore,
+    };
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn accepted_contact_request_renders_pending_without_debug_receipt() {
+        let core: RequestAcceptanceReceiptCore = serde_json::from_value(json!({
+            "holder": {"kind": "human", "principal_id": "ak:did_core:web:alice.example"},
+            "peer": {"kind": "human", "principal_id": "ak:did_core:web:bob.example"},
+            "slot_version": 1,
+            "request_event_ref": "ak:event:AffHQLS6LHEezp3Czebm6JrWc0UdDt4xsoYf_l2OnrHI",
+            "request_digest": "sha256:f7c740b4ba2c711ece9dc2cde6e6e89ad673451d0ede31b2861ffe5d8e9eb1c8",
+            "source_checkpoint": "sha256:04597468570b5436fdcfe18337daf5bbf2515b148e37dc629cdeea1e63057e85",
+            "accepted_at": "2026-08-14T00:00:00.000Z",
+            "issuer": "ak:did_core:web:service.example"
+        }))
+        .unwrap();
+        let receipt: RequestAcceptanceReceipt = serde_json::from_value(json!({
+            "core": core,
+            "receipt_digest": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
+            "signature": {
+                "verification_method": "did:web:service.example#receipt",
+                "created_at": "2026-08-14T00:00:00.000Z",
+                "jws": "fixture"
+            }
+        }))
+        .unwrap();
+        let outcome = ContactOperationOutcome::Accepted {
+            outcome: ContactAcceptedOutcome::Request {
+                operation_id: arkret_sdk::ProtocolOperationId::new(
+                    "ak:operation:contact.request.01904100-0000-7000-8000-57d7d85564c5",
+                )
+                .unwrap(),
+                request_acceptance_receipt: receipt,
+            },
+        };
+
+        assert_eq!(contact_operation_status(&outcome), "request pending");
+    }
 
     #[test]
     fn actor_preview_maps_canonical_actor_id_to_rendered_did() {

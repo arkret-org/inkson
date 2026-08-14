@@ -113,6 +113,20 @@ pub async fn verify_recovery_material_evidence(
     api: &TransportClient,
     evidence: &crate::state::RecoveryMaterialEvidence,
 ) -> anyhow::Result<()> {
+    verify_recovery_authority_evidence(api, evidence).await?;
+    let policy = serde_json::to_value(api.get_recovery_policy().await?)?;
+    match first_backup_gate_status_from_payloads(true, &policy) {
+        FirstBackupGateStatus::Satisfied => Ok(()),
+        FirstBackupGateStatus::Blocked(reason) => {
+            anyhow::bail!("durable recovery-material evidence is incomplete: {reason:?}")
+        }
+    }
+}
+
+pub async fn verify_recovery_authority_evidence(
+    api: &TransportClient,
+    evidence: &crate::state::RecoveryMaterialEvidence,
+) -> anyhow::Result<()> {
     evidence.pcr_genesis_unit.validate_ordered_envelopes()?;
     if evidence.pcr_genesis_unit.create().actor_id
         != arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
@@ -160,13 +174,7 @@ pub async fn verify_recovery_material_evidence(
     {
         anyhow::bail!("server no longer resolves the durable PCR bootstrap evidence exactly");
     }
-    let policy = serde_json::to_value(api.get_recovery_policy().await?)?;
-    match first_backup_gate_status_from_payloads(true, &policy) {
-        FirstBackupGateStatus::Satisfied => Ok(()),
-        FirstBackupGateStatus::Blocked(reason) => {
-            anyhow::bail!("durable recovery-material evidence is incomplete: {reason:?}")
-        }
-    }
+    Ok(())
 }
 
 pub fn account_recovery_state_from_payloads(
@@ -501,6 +509,7 @@ async fn publish_recovery_policy(
     principal_control_realm_id: &arkret_sdk::RealmId,
     policy_value: Value,
 ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
+    let principal_core_id = crate::mls_api_helpers::principal_core_id(principal_id)?;
     let policy: RecoveryPolicy = serde_json::from_value(policy_value)?;
     policy.validate()?;
     let recovery_payload = arkret_sdk::RecoveryPolicySetPayload {
@@ -517,7 +526,7 @@ async fn publish_recovery_policy(
     };
     let event = crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::PolicySet>(
         principal_control_realm_id.to_string(),
-        principal_id,
+        principal_core_id.as_str(),
         payload,
     )
     .build_sdk_event("inkson-recovery-policy")?;
@@ -549,7 +558,13 @@ async fn publish_recovery_policy(
                     && attempt + 1 < FRONTIER_RETRY_ATTEMPTS =>
             {
                 if !successor_seal_submitted {
-                    submit_first_recovery_policy_seal(api, principal_id, device_id, &event).await?;
+                    submit_first_recovery_policy_seal(
+                        api,
+                        principal_core_id.as_str(),
+                        device_id,
+                        &event,
+                    )
+                    .await?;
                     successor_seal_submitted = true;
                 }
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
@@ -635,7 +650,8 @@ fn validate_active_policy_key_material(
     principal_id: &str,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<DidUrl> {
-    if summary.principal_id.as_str() != principal_id.trim() {
+    let requested_principal_core = crate::mls_api_helpers::principal_core_id(principal_id)?;
+    if summary.principal_id != requested_principal_core {
         anyhow::bail!(
             "active recovery policy principal `{}` does not match requested principal `{}`",
             summary.principal_id,

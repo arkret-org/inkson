@@ -213,9 +213,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     let user_store = if account_scope.is_empty() {
                         None
                     } else {
-                        match arkret_sdk::DidFullId::new(account_scope.clone())
-                            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-                        {
+                        match crate::mls_api_helpers::principal_core_id(&account_scope) {
                             Ok(core_id) => {
                                 Some(crate::secure_key_store::UserLocalStore::new(core_id))
                             }

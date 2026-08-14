@@ -49,7 +49,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        &["did:web:bob.example".to_owned()],
+        &["ak:did_core:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
         None,
@@ -218,6 +218,15 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         json!(["realm_policy"])
     );
     assert_eq!(events[8].payload["membership"], "join");
+    assert_eq!(events[8].preconditions.len(), 1);
+    assert_eq!(
+        events[8].preconditions[0].cell.as_str(),
+        "ak:cell:ak.component.member.state.v1:ak:did_core:web:alice.example"
+    );
+    assert_eq!(
+        events[8].preconditions[0].predicate.value,
+        Some(serde_json::Value::Null)
+    );
     assert!(events.iter().all(|event| {
         event
             .payload

@@ -314,10 +314,10 @@ pub(super) fn inject_test_session_grant(
     } else {
         account_did
     };
-    if arkret_sdk::DidFullId::new(account_did.to_owned()).is_err() {
+    if crate::mls_api_helpers::principal_core_id(account_did).is_err() {
         tracing::warn!(
             principal_id = %account_did,
-            "test session injection skipped: principal_id is not a valid DID"
+            "test session injection skipped: principal_id is not a valid DidCoreId"
         );
         return None;
     }
@@ -380,6 +380,29 @@ pub(super) fn inject_test_session_grant(
                 tracing::warn!(
                     ?error,
                     "test session injection: invalid pending principal registration"
+                );
+                return None;
+            }
+        }
+    }
+    if let Some(value) = parsed.get("recovery_material_evidence").cloned() {
+        match serde_json::from_value::<crate::state::RecoveryMaterialEvidence>(value) {
+            Ok(evidence) => {
+                if let Err(error) = state_store
+                    .write()
+                    .set_recovery_material_evidence(Some(evidence))
+                {
+                    tracing::warn!(
+                        ?error,
+                        "test session injection: recovery material evidence persist failed"
+                    );
+                    return None;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "test session injection: invalid recovery material evidence"
                 );
                 return None;
             }
@@ -476,12 +499,44 @@ pub(super) fn inject_test_session_grant(
         );
         return None;
     }
-    let principal_id = match arkret_sdk::DidFullId::new(account_did.to_owned()) {
-        Ok(principal_id) => principal_id,
+    let principal_id = match parsed
+        .get("principal_full_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| arkret_sdk::DidFullId::new(value.to_owned()))
+    {
+        Some(Ok(principal_id)) => principal_id,
+        Some(Err(error)) => {
+            tracing::warn!(
+                ?error,
+                "test session injection: principal_full_id is invalid"
+            );
+            return None;
+        }
+        None => match arkret_sdk::DidFullId::new(account_did.to_owned()) {
+            Ok(principal_id) => principal_id,
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "test session injection: principal_full_id is missing"
+                );
+                return None;
+            }
+        },
+    };
+    let principal_core_id = match arkret_sdk::project_full_id_to_core_id(&principal_id) {
+        Ok(principal_core_id) if principal_core_id.as_str() == account_did => principal_core_id,
+        Ok(_) => {
+            tracing::warn!(
+                "test session injection: principal_full_id does not project to principal_id"
+            );
+            return None;
+        }
         Err(error) => {
             tracing::warn!(
                 ?error,
-                "test session injection: principal signer binding failed"
+                "test session injection: principal core projection failed"
             );
             return None;
         }
@@ -495,16 +550,6 @@ pub(super) fn inject_test_session_grant(
         );
         return None;
     }
-    let principal_core_id = match arkret_sdk::project_full_id_to_core_id(&principal_id) {
-        Ok(principal_core_id) => principal_core_id,
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                "test session injection: principal core projection failed"
-            );
-            return None;
-        }
-    };
 
     let now = chrono::Utc::now();
     let grant = PersistedSessionGrant {

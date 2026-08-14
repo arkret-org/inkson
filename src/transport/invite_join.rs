@@ -39,11 +39,17 @@ impl crate::transport::TransportClient {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         else {
-            return self.event_submitter()?.submit_sdk_event(event).await;
+            return self
+                .event_submitter()?
+                .submit_sdk_event_via_join_candidate(event, &candidate.encryption_profile)
+                .await;
         };
         let endpoint_url = validate_server_url(endpoint)?;
         if endpoint_url == *self.base_url() {
-            return self.event_submitter()?.submit_sdk_event(event).await;
+            return self
+                .event_submitter()?
+                .submit_sdk_event_via_join_candidate(event, &candidate.encryption_profile)
+                .await;
         }
         reject_unauthenticated_remote_candidate()?;
         unreachable!("remote candidate rejection always fails closed")
@@ -91,8 +97,8 @@ fn stamp_invite_join_seal_basis(
     if event.seal_ref.is_some() {
         anyhow::bail!("invite join Control Move must use seal_basis, not seal_ref");
     }
-    if candidate.seal_basis.leaves.is_empty() {
-        anyhow::bail!("resolve_realm join candidate seal_basis has no leaves");
+    if candidate.seal_basis.leaves.len() != 1 {
+        anyhow::bail!("resolve_realm join candidate seal_basis must have exactly one leaf");
     }
     event.seal_basis = Some(candidate.seal_basis.clone());
     Ok(())

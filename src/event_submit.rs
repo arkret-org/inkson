@@ -1355,8 +1355,12 @@ impl EventSubmitter {
     async fn ensure_recovery_material_ready(
         &self,
         event: &arkret_sdk::Event,
+        join_encryption_profile: Option<&arkret_sdk::EncryptionProfile>,
     ) -> anyhow::Result<()> {
-        if !self.event_enters_post_bootstrap_e2ee_realm(event).await? {
+        if !self
+            .event_enters_post_bootstrap_e2ee_realm(event, join_encryption_profile)
+            .await?
+        {
             return Ok(());
         }
         let accepted_principal_control_seal = recovery_gate_cache_key(event).is_some_and(|key| {
@@ -1384,6 +1388,7 @@ impl EventSubmitter {
     async fn event_enters_post_bootstrap_e2ee_realm(
         &self,
         event: &arkret_sdk::Event,
+        join_encryption_profile: Option<&arkret_sdk::EncryptionProfile>,
     ) -> anyhow::Result<bool> {
         fn is_e2ee_create(event: &arkret_sdk::Event) -> bool {
             event.kind == arkret_sdk::EventKind::RealmCreate
@@ -1413,6 +1418,9 @@ impl EventSubmitter {
                 && event.payload.get("membership").and_then(Value::as_str) == Some("join"));
         if !is_join {
             return Ok(false);
+        }
+        if let Some(profile) = join_encryption_profile {
+            return Ok(matches!(profile, arkret_sdk::EncryptionProfile::MlsRfc9420));
         }
         let history = self
             .http
@@ -1714,6 +1722,17 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("decode Realm genesis digest suite: {error}"))?
             .object
             .digest_algorithm
+        } else if event.kind == arkret_sdk::EventKind::InviteAccept {
+            let leaf = event
+                .seal_basis
+                .as_ref()
+                .and_then(|basis| (basis.leaves.len() == 1).then(|| &basis.leaves[0]))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "pre-join invite accept requires a single-leaf candidate seal_basis"
+                    )
+                })?;
+            crate::event_signer::digest_suite_from_trusted_seal_id(leaf)?
         } else {
             let frontier = self
                 .events_frontier_realm_seal_view(event.realm_id.as_str())
@@ -1808,7 +1827,7 @@ impl EventSubmitter {
         &self,
         signed: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.ensure_recovery_material_ready(signed).await?;
+        self.ensure_recovery_material_ready(signed, None).await?;
         self.post_signed_sdk_event(signed, uuid_v7()).await
     }
 
@@ -1817,7 +1836,18 @@ impl EventSubmitter {
         &self,
         event: &arkret_sdk::Event,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.submit_sdk_event_queued(event, None, None).await
+        self.submit_sdk_event_queued(event, None, None, None).await
+    }
+
+    /// Submit a pre-join Event using the profile bound into the resolved join
+    /// candidate. The invitee cannot read membership-gated Realm history.
+    pub(crate) async fn submit_sdk_event_via_join_candidate(
+        &self,
+        event: &arkret_sdk::Event,
+        encryption_profile: &arkret_sdk::EncryptionProfile,
+    ) -> anyhow::Result<SubmitEventResult> {
+        self.submit_sdk_event_queued(event, None, None, Some(encryption_profile))
+            .await
     }
 
     pub(crate) async fn submit_mls_event_with_snapshot(
@@ -1834,6 +1864,7 @@ impl EventSubmitter {
                 snapshot: snapshot.into_queued(),
             }),
             Some(state_store),
+            None,
         )
         .await
     }
@@ -1843,9 +1874,11 @@ impl EventSubmitter {
         event: &arkret_sdk::Event,
         post_accept: Option<PostAcceptAction>,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
+        join_encryption_profile: Option<&arkret_sdk::EncryptionProfile>,
     ) -> anyhow::Result<SubmitEventResult> {
         let _single_writer = outbound_submit_lock().lock().await;
-        self.ensure_recovery_material_ready(event).await?;
+        self.ensure_recovery_material_ready(event, join_encryption_profile)
+            .await?;
         let mut intent = event.clone();
         intent.actor_seq = 0;
         intent.prev_refs.clear();
@@ -1964,7 +1997,7 @@ impl EventSubmitter {
             anyhow::bail!("MLS admission requires at least one Welcome");
         }
         let _single_writer = outbound_submit_lock().lock().await;
-        self.ensure_recovery_material_ready(&commit).await?;
+        self.ensure_recovery_material_ready(&commit, None).await?;
         // Only the Commit may be authored before finality. Welcome intents are
         // persisted unsigned and become exact signed Events after an accepted
         // or duplicate Commit response.
@@ -2533,6 +2566,17 @@ impl EventSubmitter {
         if !event.proofs.is_empty() {
             return Ok(());
         }
+        // This is the invitee's first Event in the Realm-scoped actor chain.
+        // A pre-join principal cannot query the membership-gated actor
+        // frontier; v1 defines the first chain position as seq=0 with no
+        // predecessors. The receiver still rejects an incorrect claim if an
+        // accepted pre-join chain already exists.
+        if event.kind == arkret_sdk::EventKind::InviteAccept && event.seal_basis.is_some() {
+            apply_actor_chain_basis_to_sdk_event(event, 0, &[]);
+            let stamp = crate::signing_stamp::issue_event_stamp(event).await?;
+            event.hlc = Some(stamp.hlc);
+            return Ok(());
+        }
         let actor_id = event.actor_id.as_str().to_owned();
         let realm_id = event.realm_id.as_str();
         match self.events_frontier_actor(&actor_id, realm_id).await {
@@ -2566,7 +2610,8 @@ impl EventSubmitter {
         let first_event = sdk_events
             .first()
             .ok_or_else(|| anyhow::anyhow!("events.submit batch must not be empty"))?;
-        self.ensure_recovery_material_ready(first_event).await?;
+        self.ensure_recovery_material_ready(first_event, None)
+            .await?;
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
         // body is one of the three spec-defined `ak.self.events.command.submit`
@@ -3069,7 +3114,7 @@ fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool 
 ///
 /// `ak.realm.create` is the only registered writer of
 /// `ak.component.realm.authority_root.v1` in v1, and its registered
-/// `value_projection` derives `controller_id` from `payload.object.created_by`.
+/// `value_projection` derives `controller_id` from the envelope `actor_id`.
 /// Both members are create-locked, so a resolved value never changes and is
 /// cached per process. (`ak.realm.owner.transfer` will move the controller in
 /// a later protocol phase; admission re-validates the claim against the
@@ -3106,7 +3151,7 @@ fn realm_create_authority_from_events(
             return None;
         }
         let object = event.payload.get("object")?;
-        let controller_id = object.get("created_by")?.as_str()?.trim();
+        let controller_id = event.actor_id.as_str().trim();
         if controller_id.is_empty() {
             return None;
         }
@@ -3461,8 +3506,8 @@ mod tests {
             Value::String("attempt-two".to_owned()),
         );
 
-        let first = EventIntent::from_event(first);
-        let second = EventIntent::from_event(second);
+        let first = EventIntent::from_event(first).unwrap();
+        let second = EventIntent::from_event(second).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.digest().unwrap(), second.digest().unwrap());
     }
@@ -3475,8 +3520,8 @@ mod tests {
             .payload
             .insert("state".to_owned(), Value::String("away".to_owned()));
 
-        let first = EventIntent::from_event(first);
-        let second = EventIntent::from_event(second);
+        let first = EventIntent::from_event(first).unwrap();
+        let second = EventIntent::from_event(second).unwrap();
         assert_ne!(first, second);
         assert_ne!(first.digest().unwrap(), second.digest().unwrap());
     }
@@ -3494,7 +3539,7 @@ mod tests {
         .unwrap()
         .build_sdk_event("inkson")
         .unwrap();
-        let unsigned_intent = EventIntent::from_event(event.clone());
+        let unsigned_intent = EventIntent::from_event(event.clone()).unwrap();
         let signer = crate::event_signer::build_ed25519_device_signer(
             [42_u8; 32],
             "did:web:alice.example",
@@ -3516,7 +3561,10 @@ mod tests {
 
         let mut authored_attempt = frozen.intent.to_unauthored_event();
         attach_capability_grant_payload_proof_with_signer(&mut authored_attempt, &signer).unwrap();
-        assert_eq!(EventIntent::from_event(authored_attempt), frozen.intent);
+        assert_eq!(
+            EventIntent::from_event(authored_attempt).unwrap(),
+            frozen.intent
+        );
     }
 
     #[test]
@@ -3763,7 +3811,7 @@ mod tests {
             "proofs": []
         }))
         .unwrap();
-        let mut object = json!({ "created_by": created_by });
+        let mut object = json!({});
         if let Some(digest) = registry_digest {
             object["capability_action_registry_digest"] = json!(digest);
         }
@@ -3848,6 +3896,7 @@ mod tests {
         assert!(realm_owner_covers_event_kind("ak.strand.create"));
         assert!(realm_owner_covers_event_kind("ak.space.create"));
         assert!(realm_owner_covers_event_kind("ak.mls.genesis"));
+        assert!(realm_owner_covers_event_kind("ak.message.create"));
         assert!(!realm_owner_covers_event_kind("ak.realm.create"));
         assert!(!realm_owner_covers_event_kind("ak.not.a.kind"));
     }
@@ -4107,7 +4156,7 @@ mod tests {
             credential_epoch: None,
         });
 
-        let reconstructed = EventIntent::from_event(authored);
+        let reconstructed = EventIntent::from_event(authored).unwrap();
         if reconstructed != queued.intent {
             let left = serde_json::to_value(&reconstructed).unwrap();
             let right = serde_json::to_value(&queued.intent).unwrap();

@@ -1,9 +1,30 @@
 //! Custody-confirmed Recovery Key publication and first-backup flow.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use dioxus::prelude::*;
 
 use crate::state::LocalStateStore;
 use crate::transport::auth::with_authed_api;
+
+static RECOVERY_KEY_PUBLICATION_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+struct RecoveryKeyPublicationGuard;
+
+impl RecoveryKeyPublicationGuard {
+    fn acquire() -> Option<Self> {
+        RECOVERY_KEY_PUBLICATION_IN_FLIGHT
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for RecoveryKeyPublicationGuard {
+    fn drop(&mut self) {
+        RECOVERY_KEY_PUBLICATION_IN_FLIGHT.store(false, Ordering::Release);
+    }
+}
 
 /// After the caller has displayed the words and verified the offline copy,
 /// publish the active recovery policy, then wrap the account MLS secret for
@@ -38,6 +59,9 @@ pub(crate) fn upload_recovery_key_account_backup(
     on_server_configured: Option<EventHandler<()>>,
     on_outcome: Option<EventHandler<RecoveryKeyBackupOutcome>>,
 ) {
+    let Some(publication_guard) = RecoveryKeyPublicationGuard::acquire() else {
+        return;
+    };
     let Some(recovery_secret) = crate::recovery_crypto::normalize_recovery_key_input(&recovery_key)
     else {
         return;
@@ -57,25 +81,35 @@ pub(crate) fn upload_recovery_key_account_backup(
     } else {
         Some(state_store.read().private_plaintext_snapshot_json())
     };
+    let recovery_material_evidence = state_store.read().recovery_material_evidence();
     let needs_mls_backup_signal = crate::components::try_needs_mls_backup_signal();
     status.set(
         "Cold custody confirmed — publishing recovery policy and encrypted recovery material…"
             .to_owned(),
     );
     spawn(async move {
+        let _publication_guard = publication_guard;
         let actor_for_sidecar = actor.clone();
         let device_for_sidecar = device.clone();
         let base_for_sidecar = base.clone();
         let session_for_sidecar = session.clone();
         let mut state_store = state_store;
         let result = with_authed_api(&base, session, |api| async move {
-            let actor_did = arkret_sdk::DidFullId::new(actor.clone())?;
-            let http = api.sdk_http_client()?;
-            let principal_control_realm_id =
-                crate::identity::principal_control::resolve_accepted(&http, &actor_did).await?;
+            let evidence = recovery_material_evidence.ok_or_else(|| {
+                anyhow::anyhow!("frozen PCR authority evidence is required for recovery setup")
+            })?;
+            let actor_id = crate::mls_api_helpers::principal_core_id(&actor)?;
+            if arkret_sdk::project_full_id_to_core_id(&evidence.principal_id)? != actor_id
+                || evidence.device_id.as_str() != device
+            {
+                anyhow::bail!("recovery authority evidence does not match the active session");
+            }
+            crate::recovery_strand::verify_recovery_authority_evidence(&api, &evidence).await?;
+            let principal_control_realm_id = evidence.principal_control_realm_id;
+            let recovery_principal_id = evidence.principal_id;
             crate::recovery_strand::ensure_recovery_policy(
                 &api,
-                &actor,
+                recovery_principal_id.as_str(),
                 &device,
                 &principal_control_realm_id,
                 &recovery_secret,

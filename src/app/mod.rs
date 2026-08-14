@@ -268,9 +268,7 @@ fn AppBootstrap() -> Element {
             let scope = boot_seed_scope.trim();
             if scope.is_empty() {
                 crate::secure_key_store::set_active_device_seed_scope(None);
-            } else if let Ok(full_id) = arkret_sdk::DidFullId::new(scope.to_owned())
-                && let Ok(core_id) = arkret_sdk::project_full_id_to_core_id(&full_id)
-            {
+            } else if let Ok(core_id) = crate::mls_api_helpers::principal_core_id(scope) {
                 crate::secure_key_store::UserLocalStore::new(core_id).activate();
             } else {
                 tracing::error!(principal = %scope, "persisted account principal is invalid; user local store not activated");

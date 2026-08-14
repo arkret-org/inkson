@@ -546,9 +546,30 @@ pub async fn fetch_mls_restore_payload(
         .list_key_backups()
         .await
         .map_err(|err| anyhow!("list key backups: {err}"))?;
+    let needs_active_series = backups
+        .backups
+        .iter()
+        .fold(
+            std::collections::BTreeMap::<
+                &'static str,
+                std::collections::BTreeSet<arkret_sdk::BackupSeriesId>,
+            >::new(),
+            |mut kinds, backup| {
+                kinds
+                    .entry(backup.backup_kind.as_str())
+                    .or_default()
+                    .insert(backup.series_id.clone());
+                kinds
+            },
+        )
+        .values()
+        .any(|series| series.len() > 1);
     let mut payload = serde_json::to_value(&backups)?;
-    payload["active_series"] =
-        Value::Array(fetch_authoritative_active_series(api, actor_id).await?);
+    payload["active_series"] = if needs_active_series {
+        Value::Array(fetch_authoritative_active_series(api, actor_id).await?)
+    } else {
+        Value::Array(Vec::new())
+    };
     Ok(payload)
 }
 
@@ -603,7 +624,7 @@ async fn fetch_authoritative_active_series(
     api: &crate::transport::TransportClient,
     actor_id: &str,
 ) -> Result<Vec<Value>> {
-    let actor = arkret_sdk::DidFullId::new(actor_id.to_owned())
+    let actor = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|error| anyhow!("invalid backup actor_id: {error}"))?;
     let http = api.http();
     let realm_id = crate::identity::principal_control::resolve_accepted(http, &actor).await?;
@@ -678,9 +699,7 @@ async fn fetch_authoritative_active_series(
             serde_json::to_value(&event.payload)?,
         )
         .map_err(|error| anyhow!("accepted active-series Event is invalid: {error}"))?;
-        let actor_core =
-            arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&actor)?);
-        if record.actor_id != actor_core || event.actor_id != actor_core {
+        if record.actor_id != actor || event.actor_id != actor {
             return Err(anyhow!(
                 "accepted active-series Event actor does not match its principal control realm"
             ));

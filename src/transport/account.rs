@@ -203,6 +203,10 @@ pub async fn update_profile(
     let (signed, _) = submitter.prepare_sdk_event_for_submit(&event).await?;
     let profile_event =
         crate::authorization_lease::standard_initial_submission(submitter.http(), &signed).await?;
+    let mut successor_seal = Some(
+        crate::transport::contacts::prepare_principal_successor_seal(submitter.http(), &signed)
+            .await?,
+    );
     let body = arkret_models_collaboration::account_lifecycle::AccountUpdateProfileRequestBody {
         profile_event,
     };
@@ -211,11 +215,34 @@ pub async fn update_profile(
         &authority_evidence.principal_control_realm_id,
         accepted_basis.as_ref(),
     )?;
-    submitter
-        .http()
-        .account_update_profile(&body)
-        .await
-        .map_err(anyhow::Error::from)
+    const FRONTIER_RETRY_ATTEMPTS: usize = 120;
+    for attempt in 0..FRONTIER_RETRY_ATTEMPTS {
+        match submitter.http().account_update_profile(&body).await {
+            Ok(outcome) => return Ok(outcome),
+            Err(error) => {
+                let error = anyhow::Error::from(error);
+                if profile_frontier_pending(&error) && attempt + 1 < FRONTIER_RETRY_ATTEMPTS {
+                    if let Some(context) = successor_seal.take() {
+                        crate::transport::contacts::submit_principal_successor_seal(
+                            submitter.http(),
+                            context,
+                            &signed,
+                        )
+                        .await?;
+                    }
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+    }
+    unreachable!("bounded account profile retry loop always returns")
+}
+
+fn profile_frontier_pending(error: &anyhow::Error) -> bool {
+    crate::api_error::api_error_status_and_envelope(error)
+        .is_some_and(|(_, envelope)| envelope.code() == "frontier_unavailable")
 }
 
 pub async fn respond_contact(
@@ -239,13 +266,14 @@ pub async fn respond_contact_with_service(
     action: &str,
     _requester_service_id: Option<&str>,
 ) -> anyhow::Result<()> {
+    let requester_core_id = crate::mls_api_helpers::principal_core_id(requester)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
         .contacts
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::PendingIncoming
-                && crate::models::contact_peer_id(row).as_str() == requester.trim()
+                && crate::models::contact_peer_id(row) == requester_core_id
         })
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -265,13 +293,14 @@ pub async fn respond_contact_with_request_id_and_service(
     action: &str,
     requester_service_id: Option<&str>,
 ) -> anyhow::Result<()> {
+    let requester_core_id = crate::mls_api_helpers::principal_core_id(requester)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
         .contacts
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::PendingIncoming
-                && crate::models::contact_peer_id(row).as_str() == requester.trim()
+                && crate::models::contact_peer_id(row) == requester_core_id
                 && row.request_event_ref.as_ref().is_some_and(|event_ref| {
                     event_ref.as_str() == request_event_ref.trim()
                 })
@@ -335,16 +364,27 @@ async fn submit_contact_response(
         if returned_operation_id != operation_id {
             anyhow::bail!("Contact accept prepare changed operation_id");
         }
+        let signed_event = crate::transport::contacts::sign_prepared_contact_event(&event_draft)?;
+        let seal_context =
+            crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event)
+                .await?;
         let commit = ContactAcceptRequestBody::Commit(ContactCommitRequestBody {
             phase: ContactCommitPhase::Commit,
             operation_id,
             idempotency_key,
             reservation_handle,
-            signed_event: crate::transport::contacts::sign_prepared_contact_event(&event_draft)?,
+            signed_event: signed_event.clone(),
             control_proposal_ack: None,
         });
         match http.contacts_respond(&commit).await? {
-            ContactOperationOutcome::Accepted { .. } => Ok(()),
+            ContactOperationOutcome::Accepted { .. } => {
+                crate::transport::contacts::submit_principal_successor_seal(
+                    http,
+                    seal_context,
+                    &signed_event,
+                )
+                .await
+            }
             ContactOperationOutcome::Failed { outcome } => {
                 anyhow::bail!("Contact accept commit failed: {:?}", outcome.reason)
             }
@@ -378,19 +418,30 @@ async fn submit_contact_response(
         if returned_operation_id != operation_id {
             anyhow::bail!("Contact reject prepare changed operation_id");
         }
+        let signed_event = crate::transport::contacts::sign_prepared_contact_event(&event_draft)?;
+        let seal_context =
+            crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event)
+                .await?;
         let commit = ContactRejectRequestBody::Commit(ContactCommitRequestBody {
             phase: ContactCommitPhase::Commit,
             operation_id,
             idempotency_key,
             reservation_handle,
-            signed_event: crate::transport::contacts::sign_prepared_contact_event(&event_draft)?,
+            signed_event: signed_event.clone(),
             control_proposal_ack: None,
         });
         match http
             .post::<_, ContactOperationOutcome>("/_arkret/self/contacts/reject", &commit)
             .await?
         {
-            ContactOperationOutcome::Accepted { .. } => Ok(()),
+            ContactOperationOutcome::Accepted { .. } => {
+                crate::transport::contacts::submit_principal_successor_seal(
+                    http,
+                    seal_context,
+                    &signed_event,
+                )
+                .await
+            }
             ContactOperationOutcome::Failed { outcome } => {
                 anyhow::bail!("Contact reject commit failed: {:?}", outcome.reason)
             }
@@ -1029,8 +1080,8 @@ pub(crate) fn primary_handle_from_viewer(
 /// `block_peer` is true the protocol additionally records a block so the
 /// peer can no longer re-request; this is the block path (U5).
 ///
-/// Protocol contract: `contacts/tombstone` body carries `contact` and an
-/// optional `block_peer: true`.
+/// Protocol contract: the prepare request binds `block_peer`; the service
+/// applies that holder-private policy side effect with the Contact commit.
 pub async fn tombstone_contact(
     http: &arkret_sdk::http_client::Client,
     peer: &str,
@@ -1041,11 +1092,6 @@ pub async fn tombstone_contact(
         ContactPreparedOutcome, ContactTombstonePrepareRequestBody, ContactTombstoneRequestBody,
     };
 
-    if block_peer {
-        anyhow::bail!(
-            "Contact block requires a separate holder-private blocklist CAS; refusing to tombstone only half of the requested action"
-        );
-    }
     let contacts = http.contacts_list().await?;
     let row = contacts
         .contacts
@@ -1074,6 +1120,7 @@ pub async fn tombstone_contact(
         contact_round_id: next.contact_round_id,
         version: next.version,
         predecessor_event_ref: next.predecessor_event_ref,
+        block_peer,
     });
     let prepared = http.contacts_tombstone(&prepare).await?;
     let (returned_operation_id, reservation_handle, event_draft) = match prepared {
@@ -1094,16 +1141,26 @@ pub async fn tombstone_contact(
     if returned_operation_id != operation_id {
         anyhow::bail!("Contact tombstone prepare changed operation_id");
     }
+    let signed_event = crate::transport::contacts::sign_prepared_contact_event(&event_draft)?;
+    let seal_context =
+        crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event).await?;
     let commit = ContactTombstoneRequestBody::Commit(ContactCommitRequestBody {
         phase: ContactCommitPhase::Commit,
         operation_id,
         idempotency_key,
         reservation_handle,
-        signed_event: crate::transport::contacts::sign_prepared_contact_event(&event_draft)?,
+        signed_event: signed_event.clone(),
         control_proposal_ack: None,
     });
     match http.contacts_tombstone(&commit).await? {
-        ContactOperationOutcome::Accepted { .. } => Ok(()),
+        ContactOperationOutcome::Accepted { .. } => {
+            crate::transport::contacts::submit_principal_successor_seal(
+                http,
+                seal_context,
+                &signed_event,
+            )
+            .await
+        }
         ContactOperationOutcome::Failed { outcome } => {
             anyhow::bail!("Contact tombstone commit failed: {:?}", outcome.reason)
         }

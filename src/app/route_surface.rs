@@ -131,6 +131,10 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         _ => None,
     };
     let active_default_strand_id = {
+        // Subscribe this route surface before reading the durable projection.
+        // Without this read, a newly accepted default-Strand event updates the
+        // store but cannot replace the temporary unavailable notice.
+        let _realm_projection_epoch = realm_live_epoch();
         let state_store = SessionContext::get().state_store;
         state_store
             .read()

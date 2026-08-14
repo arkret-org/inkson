@@ -4149,6 +4149,18 @@ pub fn RealmMembersPanel(
                                                             Err(err) => Err(err),
                                                         } {
                                                             Ok(submitted) => {
+                                                                if let Err(error) = api
+                                                                    .dispatch_accepted_invite(
+                                                                        &submitted.event_id,
+                                                                        &invitee,
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    status_msg.set(format!(
+                                                                        "invite fact accepted but private delivery failed: {error}"
+                                                                    ));
+                                                                    return;
+                                                                }
                                                                 frontier_state.set(submitted.event_id.clone());
                                                                 {
                                                                     let mut store = state_store.write();

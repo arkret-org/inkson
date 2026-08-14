@@ -77,11 +77,11 @@ fn parse_realm_bootstrap_member(input: &str) -> anyhow::Result<RealmBootstrapMem
     if trimmed.is_empty() {
         return Err(anyhow::anyhow!("seed member is empty"));
     }
-    if trimmed.starts_with("did:") {
+    if arkret_sdk::DidCoreId::new(trimmed.to_owned()).is_ok() {
         return Ok(RealmBootstrapMember::from_did(trimmed));
     }
     Err(anyhow::anyhow!(
-        "seed member must be a DID; handle bootstrap requires a Directory-resolved invite address"
+        "seed member must be a did_core_id; handle bootstrap requires a Directory-resolved invite address"
     ))
 }
 
@@ -278,8 +278,20 @@ pub fn build_realm_bootstrap_events(
         &arkret_sdk::DidFullId::new(notary_did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
     )?);
-    let service_origin = url::Url::parse(notary_service_origin)
+    let mut service_origin = url::Url::parse(notary_service_origin)
         .map_err(|err| anyhow::anyhow!("invalid creator service origin: {err}"))?;
+    if service_origin.scheme() == "http"
+        && service_origin.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        })
+    {
+        service_origin
+            .set_scheme("https")
+            .map_err(|()| anyhow::anyhow!("cannot normalize loopback creator service origin"))?;
+    }
     if service_origin.scheme() != "https"
         || service_origin.host_str().is_none()
         || !service_origin.username().is_empty()
@@ -325,7 +337,7 @@ pub fn build_realm_bootstrap_events(
         realm_id,
         actor_id,
         actor_id,
-        Some("join"),
+        None,
         "join",
         "creator_delivery_binding",
         Some(creator_delivery_binding),
@@ -1668,6 +1680,21 @@ mod notary_derivation_tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn realm_bootstrap_members_require_stable_core_ids() {
+        let members = parse_realm_bootstrap_members(&[
+            " ak:did_core:web:alice.example ".to_owned(),
+            "ak:did_core:web:alice.example".to_owned(),
+        ])
+        .expect("canonical did_core_id seed members are accepted");
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].actor_id, "ak:did_core:web:alice.example");
+
+        let error = parse_realm_bootstrap_members(&["did:web:alice.example".to_owned()])
+            .expect_err("full DID values are not stable Realm member identities");
+        assert!(error.to_string().contains("did_core_id"));
+    }
 
     fn agent_resolution() -> arkret_sdk::ResolutionCommitment {
         arkret_sdk::ResolutionCommitment {
