@@ -1,5 +1,7 @@
 //! §2.9 E2EE reaction sealing and routing-tag derivation.
 
+use arkret_wire::event_kind_str;
+
 use super::{
     MlsRuntimeError, PreparedMlsCommit, assert_minimal_metadata_aad, load_device_snapshot_secret,
     should_force_epoch_advance,
@@ -190,7 +192,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     let aad_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: aad_realm_id,
     };
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.reaction.add")
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, event_kind_str::REACTION_ADD)
         .map_err(|err| MlsRuntimeError::Serialize(format!("invalid AAD scope: {err}")))?;
     let encrypted_payload = group
         .encrypt_payload_with_aad(REACTION_ENCRYPTED_CONTENT_TYPE, Some(aad), &plaintext)

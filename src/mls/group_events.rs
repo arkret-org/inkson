@@ -30,19 +30,6 @@ pub(crate) fn mls_sha256_hash_from_ref(value: &str) -> Option<String> {
     None
 }
 
-/// First non-empty trimmed string at `path` under `value`.
-fn json_path_string(value: &Value, path: &[&str]) -> Option<String> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment)?;
-    }
-    current
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
 pub(crate) fn mls_base_epoch_ref_for_scope(
     state_store: &LocalStateStore,
     realm_id: &str,
@@ -57,55 +44,29 @@ pub(crate) fn mls_base_epoch_ref_for_scope(
 
 /// Whether `actor_id` is the creator (authority-root controller) of
 /// `realm_id` according to local state. Single predicate for every creator
-/// MLS bootstrap gate. Two projected sources are accepted, in order: explicit
-/// creator fields on the security projection (legacy shapes), and the
-/// `created_by` of the locally projected accepted `ak.realm.create` — the
-/// same create-locked fact the authority-root authorization claim uses;
-/// post-P1 realm projections carry no `owner` mirror, so the event-log source
-/// is the authoritative one.
+/// MLS bootstrap gate.
+///
+/// The only source is the `created_by` of the locally projected accepted
+/// `ak.realm.create` — the same create-locked fact the authority-root
+/// authorization claim uses. The Realm sync entry itself carries no creator
+/// mirror: it deserializes into the closed `RealmSyncEntry`
+/// (`joined/invited_member_count` + `heroes` under `summary`, and no `object`
+/// / `realm` / `metadata` container at all), so probing it for `owner` /
+/// `created_by` / `creator` could never match.
 pub(crate) fn projected_realm_creator_matches_actor(
     realm_tree_projections: &std::collections::BTreeMap<String, Value>,
-    projection: &Value,
     realm_id: &str,
     actor_id: &str,
 ) -> bool {
     let Ok(actor_core_id) = crate::mls_api_helpers::principal_core_id(actor_id) else {
         return false;
     };
-    projection_creator_matches_actor(projection, actor_core_id.as_str())
-        || crate::security_state::realm_authority_root_controller_for_realm(
-            realm_tree_projections,
-            realm_id,
-        )
-        .as_deref()
-            == Some(actor_core_id.as_str())
-}
-
-pub(crate) fn projection_creator_matches_actor(projection: &Value, actor_core_id: &str) -> bool {
-    let actor = actor_core_id.trim();
-    if actor.is_empty() {
-        return false;
-    }
-    for source in [
-        projection,
-        projection.get("summary").unwrap_or(&Value::Null),
-        projection.get("object").unwrap_or(&Value::Null),
-        projection.get("realm").unwrap_or(&Value::Null),
-        projection.get("metadata").unwrap_or(&Value::Null),
-    ] {
-        for key in [
-            "owner",
-            "created_by",
-            "created_by_principal",
-            "creator",
-            "creator_did",
-        ] {
-            if json_path_string(source, &[key]).as_deref() == Some(actor) {
-                return true;
-            }
-        }
-    }
-    false
+    crate::security_state::realm_authority_root_controller_for_realm(
+        realm_tree_projections,
+        realm_id,
+    )
+    .as_deref()
+        == Some(actor_core_id.as_str())
 }
 
 pub(crate) fn circle_effective_scope(
@@ -151,23 +112,15 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
         );
         return Ok(None);
     }
-    if !projected_realm_creator_matches_actor(
-        &state.realm_tree_projections,
-        projection,
-        realm_id,
-        actor_id,
-    ) {
+    if !projected_realm_creator_matches_actor(&state.realm_tree_projections, realm_id, actor_id) {
         tracing::warn!(
             realm = %realm_id,
             actor = %actor_id,
-            projection_owner = ?projection.get("owner"),
-            summary_owner = ?projection.pointer("/summary/owner"),
-            created_by = ?projection.get("created_by"),
             projected_create_controller = ?crate::security_state::realm_authority_root_controller_for_realm(
                 &state.realm_tree_projections,
                 realm_id,
             ),
-            "creator MLS bootstrap declined: neither projection fields nor the projected ak.realm.create name the actor as creator",
+            "creator MLS bootstrap declined: the projected ak.realm.create does not name the actor as creator",
         );
         return Ok(None);
     }

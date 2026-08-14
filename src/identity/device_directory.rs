@@ -5,6 +5,7 @@ use std::sync::{LazyLock, RwLock};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
 use arkret_sdk::{DidDocument, DidFullId};
+use arkret_wire::event_kind_str;
 
 use crate::transport::TransportClient;
 
@@ -341,7 +342,10 @@ pub fn verify_persistent_envelope_proofs(
 pub fn is_device_frontier_event_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "ak.device.authorize" | "ak.device.revoke" | "ak.device.reanchor" | "ak.device.list_update"
+        event_kind_str::DEVICE_AUTHORIZE
+            | event_kind_str::DEVICE_REVOKE
+            | event_kind_str::DEVICE_REANCHOR
+            | event_kind_str::DEVICE_LIST_UPDATE
     )
 }
 

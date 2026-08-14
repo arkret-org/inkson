@@ -7,6 +7,8 @@
 //! parent `impl LocalStateStore` block and `local_state_tests.rs`; the glob
 //! re-export keeps `super::*` resolution unchanged.
 
+use arkret_wire::SchemaId;
+
 use super::*;
 
 pub(crate) fn to_device_message_dedup_key(message: &Value) -> String {
@@ -337,8 +339,8 @@ pub(crate) fn snapshot_item_encrypted_payload(
         .get("schema")
         .or_else(|| item.object.get("type"))
         .and_then(Value::as_str);
-    let is_envelope = item.kind == "ak.schema.encrypted_envelope.v1"
-        || schema == Some("ak.schema.encrypted_envelope.v1");
+    let is_envelope = item.kind == SchemaId::ENCRYPTED_ENVELOPE_V1
+        || schema == Some(SchemaId::ENCRYPTED_ENVELOPE_V1);
     if !is_envelope {
         return None;
     }

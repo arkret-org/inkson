@@ -21,6 +21,7 @@
 //! `// TODO(moderation-appeal-blob-upload)` markers below for deferred pieces.
 
 use arkret_sdk::AppealDecision;
+use arkret_wire::event_kind_str;
 use chrono::Utc;
 use dioxus::prelude::*;
 
@@ -146,7 +147,7 @@ pub fn AppealEntrypoint(
             "aria-label": "Appeal this moderation decision",
             div { class: "event-head",
                 span { "Appeal this moderation decision" }
-                span { class: "badge", "ak.moderation.appeal.submit" }
+                span { class: "badge", {event_kind_str::MODERATION_APPEAL_SUBMIT} }
             }
             div {
                 class: "muted",

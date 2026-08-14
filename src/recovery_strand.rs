@@ -17,7 +17,7 @@ use arkret_models_crypto::{
     RecoverySessionProofSubmitRequestBody, UnsignedRecoveryPolicy, UnsignedRecoveryPolicyBody,
 };
 use arkret_sdk::{DeviceId, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
-use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole};
+use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole, event_kind_str};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::SigningKey;
@@ -365,7 +365,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
                 rule_id: "principal_signing".to_owned(),
                 proof_kind: RecoveryProofKind::PrincipalSigning,
                 issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
-                allowed_actions: vec!["ak.device.reanchor".to_owned()],
+                allowed_actions: vec![event_kind_str::DEVICE_REANCHOR.to_owned()],
                 issuers: vec![AuthoritySetIssuer {
                     verification_method: principal_signing_ref,
                 }],
@@ -375,7 +375,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
                 rule_id: "recovery_unlock".to_owned(),
                 proof_kind: RecoveryProofKind::RecoveryUnlock,
                 issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
-                allowed_actions: vec!["ak.device.reanchor".to_owned()],
+                allowed_actions: vec![event_kind_str::DEVICE_REANCHOR.to_owned()],
                 issuers: vec![AuthoritySetIssuer {
                     verification_method: recovery_proof_ref.clone(),
                 }],

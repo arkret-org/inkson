@@ -1,5 +1,7 @@
 //! Drag/drop command controller for optimistic board moves and retries.
 
+use arkret_wire::event_kind_str;
+
 use super::*;
 // Imports the drag-and-drop helpers relied on while they lived in the
 // monolithic `kanban/mod.rs`; re-added here after the structural split since
@@ -247,7 +249,7 @@ pub(super) fn submit_kanban_move(
             return;
         }
     };
-    let envelope = if kind == "ak.strand.create" {
+    let envelope = if kind == event_kind_str::STRAND_CREATE {
         let Some(board_space_id) = value.get("board_space_id").and_then(Value::as_str) else {
             board_status.set("cannot create card: missing board_space_id".to_owned());
             return;
@@ -316,7 +318,7 @@ pub(super) fn submit_kanban_move(
         }
     };
     let mut value = value;
-    if kind == "ak.strand.create"
+    if kind == event_kind_str::STRAND_CREATE
         && let Some(effect) = value.as_object_mut()
     {
         effect.insert("strand_id".to_owned(), Value::String(subject.clone()));
@@ -327,7 +329,7 @@ pub(super) fn submit_kanban_move(
         .and_then(Value::as_str)
         .map(|board_space_id| strand_position_cell_id(board_space_id, &subject))
         .unwrap_or_else(|| format!("ak:cell:ak.component.strand.position.v1:{subject}"));
-    let effect_summary = if kind == "ak.strand.create" {
+    let effect_summary = if kind == event_kind_str::STRAND_CREATE {
         serde_json::to_string(&event.payload).unwrap_or_else(|_| "{}".to_owned())
     } else {
         serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
@@ -519,9 +521,9 @@ pub(super) fn dispatch_strand_position_move(
         rank: new_rank.clone(),
     };
     let kind = if dragged.from_column_id == target_column_id {
-        "ak.strand.reorder"
+        event_kind_str::STRAND_REORDER
     } else {
-        "ak.strand.move"
+        event_kind_str::STRAND_MOVE
     };
     submit_strand_position_cas_move(
         base_url,
@@ -1266,9 +1268,9 @@ pub(super) fn rebase_strand_position_after_conflict(
         // classifiers. Anything else falls through to ak.strand.move
         // because that's the spec wire shape for drag operations.
         let kind_static: &'static str = match kind.as_str() {
-            "ak.strand.reorder" => "ak.strand.reorder",
-            "ak.strand.move" => "ak.strand.move",
-            _ => "ak.strand.move",
+            event_kind_str::STRAND_REORDER => event_kind_str::STRAND_REORDER,
+            event_kind_str::STRAND_MOVE => event_kind_str::STRAND_MOVE,
+            _ => event_kind_str::STRAND_MOVE,
         };
         submit_strand_position_cas_move_with_attempt(
             base_url,

@@ -1,3 +1,5 @@
+use arkret_wire::{AccountDataKey, CapabilityActionId};
+
 use super::*;
 
 thread_local! {
@@ -454,7 +456,11 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                 role: "menuitem",
                                                 "data-testid": "message-shared-pin-button",
                                                 "data-source": "shared-event",
-                                                "data-permission": if is_pinned { "ak.pin.remove" } else { "ak.pin.add" },
+                                                "data-permission": if is_pinned {
+                                                    CapabilityActionId::PIN_REMOVE
+                                                } else {
+                                                    CapabilityActionId::PIN_ADD
+                                                },
                                                 onclick: {
                                                     let context = command_context.clone();
                                                     let realm_id = realm_for_pin.clone();
@@ -482,7 +488,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                 disabled: is_saved_private,
                                                 "data-testid": "message-private-save-button",
                                                 "data-source": "private-account-data",
-                                                "data-account-data-prefix": "ak.saved.v1",
+                                                "data-account-data-prefix": AccountDataKey::SAVED_V1,
                                                 onclick: {
                                                     let private_save_action = private_save_action.clone();
                                                     move |_| (*private_save_action)()
@@ -564,7 +570,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         class: "message-private-saved-indicator",
                                         "data-testid": "message-private-saved-indicator",
                                         "data-source": "private-account-data",
-                                        "data-account-data-prefix": "ak.saved.v1",
+                                        "data-account-data-prefix": AccountDataKey::SAVED_V1,
                                         "data-target-ref": "{message_target_ref}",
                                         title: crate::i18n::tr("message.private_saved"),
                                         UiIcon { name: "check" }

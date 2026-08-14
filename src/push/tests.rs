@@ -67,7 +67,7 @@ fn builds_unregister_request_from_existing_state() {
 #[test]
 fn summarizes_push_bridge_contract() {
     let summary = summarize_push_gateway_bridge(&PushBridgeDescribeOutcome {
-        contract: "ak.push.bridge.describe".to_owned(),
+        contract: "ak.push.bridge.v1".to_owned(),
         version: "2026-05-03".to_owned(),
         api_base_path: "/_arkret/edge/push".to_owned(),
         gateway: Default::default(),
@@ -87,7 +87,7 @@ fn summarizes_push_bridge_contract() {
         spec_version: None,
     });
 
-    assert!(summary.contains("ak.push.bridge.describe"));
+    assert!(summary.contains("ak.push.bridge.v1"));
     assert!(summary.contains("/_arkret/edge/push/notify"));
     assert!(summary.contains("e2ee_blind_wakeup"));
 }
@@ -195,7 +195,7 @@ fn apns_provider_returns_bridged_host_token() {
 #[test]
 fn vapid_extractor_returns_none_when_webpush_not_advertised() {
     let mut describe = PushBridgeDescribeOutcome::default();
-    describe.contract = "ak.push.bridge.describe.v1".to_owned();
+    describe.contract = "ak.push.bridge.v1".to_owned();
     describe.version = "2026-05-09".to_owned();
     describe.gateway.supported_profiles = vec!["fcm".to_owned(), "apns".to_owned()];
     assert!(vapid_public_key_from_describe(&describe).is_none());

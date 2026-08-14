@@ -1,4 +1,5 @@
 pub use arkret_sdk::MentionNode;
+use arkret_wire::{SchemaId, ServiceOperationId};
 use dioxus::prelude::*;
 // Single source in yoface (YGN-ARCH-01 step 3: the projection layer needs
 // this label formatter without importing a views module). Re-exported so all
@@ -351,11 +352,11 @@ pub fn WhyThisHandlePanel(
         div { class: "why-this-handle", "data-testid": "why-this-handle-panel",
             div { class: "why-this-handle-head",
                 strong { "Why am I seeing this handle?" }
-                span { class: "muted", "ak.find.directory.read.list_handles_for_subject" }
+                span { class: "muted", {ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT} }
             }
             div { class: "muted",
                 "Handles are not authoritative roster fields — they come from signed "
-                code { "ak.schema.handle_claim.v1" }
+                code { {SchemaId::HANDLE_CLAIM_V1} }
                 " evidence. This shows the claims visible to you and the §3.2.1 primary handle."
             }
             Button {

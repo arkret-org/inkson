@@ -1,4 +1,5 @@
 use arkret_sdk::push_rule_core::WatchLevel;
+use arkret_wire::event_kind_str;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
@@ -1165,7 +1166,7 @@ async fn submit_source_routed_sidecar_message(
             Some(source_realm_id.to_owned()),
             json!({
                 "event_id": event_id.clone(),
-                "kind": "ak.message.create",
+                "kind": event_kind_str::MESSAGE_CREATE,
                 "actor_id": controller_id,
                 "strand_id": attached_source_strand_id,
                 "message_id": message_id,
@@ -2503,7 +2504,7 @@ pub fn ChatPanel(
                                                                     Some(realm.clone()),
                                                                     json!({
                                                                         "strand_id": strand_id,
-                                                                        "kind": "ak.strand.create",
+                                                                        "kind": event_kind_str::STRAND_CREATE,
                                                                         "title": title,
                                                                         "category": category,
                                                                         "summary": channel_topic,

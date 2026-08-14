@@ -9,6 +9,8 @@
 //! Both kinds are already in the SDK event-kind registry; this module provides
 //! typed builders so call sites don't hand-roll the body shape.
 
+use arkret_wire::ProfileId;
+
 use crate::operation::TypedOperationBuilder;
 
 /// Spec-aligned audit policy mode for a Realm.
@@ -26,8 +28,8 @@ pub enum AuditPolicy {
 impl AuditPolicy {
     pub fn profile_id(self) -> &'static str {
         match self {
-            Self::Attested => "ak.profile.attested_audit.e2ee.v1",
-            Self::Disclosed => "ak.profile.disclosed_audit.e2ee.v1",
+            Self::Attested => ProfileId::ATTESTED_AUDIT_E2EE_V1,
+            Self::Disclosed => ProfileId::DISCLOSED_AUDIT_E2EE_V1,
         }
     }
 }

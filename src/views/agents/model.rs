@@ -15,9 +15,9 @@ use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
-    AgentSigningKeyBinding, DidCoreId, DidFullId, DidUrl, Event, GrantConstraint,
-    GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
-    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId,
+    AgentSigningKeyBinding, CapabilityActionId, DidCoreId, DidFullId, DidUrl, Event,
+    GrantConstraint, GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash,
+    KeyState, NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId, ServiceOperationId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -172,15 +172,21 @@ impl AgentGrantPreset {
     /// are emitted so soland never fail-closes on an unknown action.
     pub fn actions(self) -> &'static [&'static str] {
         match self {
-            Self::Read => &["ak.event.read"],
-            Self::Draft => &["ak.agent.draft.propose", "ak.agent.action_request"],
-            Self::ReplyAsAgent => &["ak.message.create", "ak.reaction.add"],
-            Self::ActOnBehalf => &["ak.message.create"],
+            Self::Read => &[CapabilityActionId::EVENT_READ],
+            Self::Draft => &[
+                CapabilityActionId::AGENT_DRAFT_PROPOSE,
+                CapabilityActionId::AGENT_ACTION_REQUEST,
+            ],
+            Self::ReplyAsAgent => &[
+                CapabilityActionId::MESSAGE_CREATE,
+                CapabilityActionId::REACTION_ADD,
+            ],
+            Self::ActOnBehalf => &[CapabilityActionId::MESSAGE_CREATE],
             Self::Organizer => &[
-                "ak.strand.create",
-                "ak.strand.update",
-                "ak.relation.create",
-                "ak.message.create",
+                CapabilityActionId::STRAND_CREATE,
+                CapabilityActionId::STRAND_UPDATE,
+                CapabilityActionId::RELATION_CREATE,
+                CapabilityActionId::MESSAGE_CREATE,
             ],
         }
     }
@@ -247,27 +253,27 @@ impl AgentServiceScopePreset {
 
     pub fn actions(self) -> &'static [&'static str] {
         match self {
-            Self::SubscribeEvents => &["ak.self.events.stream.subscribe"],
-            Self::ScanCatchUp => &["ak.self.events.read.scan"],
+            Self::SubscribeEvents => &[ServiceOperationId::SELF_EVENTS_STREAM_SUBSCRIBE],
+            Self::ScanCatchUp => &[ServiceOperationId::SELF_EVENTS_READ_SCAN],
             Self::SubmitEvents => &[
-                "ak.self.events.read.frontier",
-                "ak.self.authorization_leases.command.issue",
-                "ak.self.events.command.submit",
+                ServiceOperationId::SELF_EVENTS_READ_FRONTIER,
+                ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE,
+                ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT,
             ],
             Self::SecureMessaging => &[
-                "ak.self.keys.keypackages.upload.create",
-                "ak.self.keys.keypackages.command.consume",
+                ServiceOperationId::SELF_KEYS_KEYPACKAGES_UPLOAD_CREATE,
+                ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME,
                 // Standard KeyPackage lifecycle is upload|claim|consume|revoke
                 // (device-lifecycle §9). The runtime revokes its own published
                 // pool on unbind/replacement, and the requested_scope ceiling
                 // is immutable after provisioning (key-management §4.5), so
                 // revoke must be part of the default ceiling from day one.
-                "ak.self.keys.keypackages.command.revoke",
-                "ak.self.device_messages.read.list",
-                "ak.self.device_messages.command.ack",
-                "ak.self.signal.command.send",
+                ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_REVOKE,
+                ServiceOperationId::SELF_DEVICE_MESSAGES_READ_LIST,
+                ServiceOperationId::SELF_DEVICE_MESSAGES_COMMAND_ACK,
+                ServiceOperationId::SELF_SIGNAL_COMMAND_SEND,
             ],
-            Self::ResolveResources => &["ak.self.events.resource.get"],
+            Self::ResolveResources => &[ServiceOperationId::SELF_EVENTS_RESOURCE_GET],
         }
     }
 }
@@ -355,7 +361,7 @@ pub fn requested_scope_for_presets(
             GrantConstraintEffect::RequireReview,
         );
         constraint.constraint_subkind = Some(GrantConstraintSubkind::Accountability);
-        constraint.applies_to_actions = vec!["ak.message.create".to_owned()];
+        constraint.applies_to_actions = vec![CapabilityActionId::MESSAGE_CREATE.to_owned()];
         constraint.controller_approval_required = Some(true);
         vec![constraint]
     } else {
@@ -518,7 +524,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
         requested_scope,
         requested_scope_digest,
         verifier_service_id,
-        audience: NonEmptyString::new("ak.gate.account.command.pair_agent_key")
+        audience: NonEmptyString::new(ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY)
             .map_err(anyhow::Error::msg)?,
         challenge: NonEmptyString::new(pairing_request_id.as_str().to_owned())
             .map_err(anyhow::Error::msg)?,

@@ -25,6 +25,7 @@
 //!   SDK-level OpenMLS calls above).
 use std::collections::BTreeMap;
 
+use arkret_wire::event_kind_str;
 use serde::{Deserialize, Serialize};
 
 /// A single revocation step. Each variant maps to one canonical event kind;
@@ -70,12 +71,12 @@ impl DeviceRevokeStep {
     pub fn canonical_event_kind(&self) -> Option<&'static str> {
         match self {
             Self::LocalRevoke => None,
-            Self::DeviceRevoked => Some("ak.device.revoke"),
+            Self::DeviceRevoked => Some(event_kind_str::DEVICE_REVOKE),
             Self::SecurityRotationTransaction => None,
-            Self::MlsProposeRemove { .. } => Some("ak.mls.proposal"),
-            Self::MlsCommit { .. } => Some("ak.mls.commit"),
-            Self::MlsWelcome { .. } => Some("ak.mls.welcome"),
-            Self::InvalidateKeyPackages => Some("ak.mls.keypackage"),
+            Self::MlsProposeRemove { .. } => Some(event_kind_str::MLS_PROPOSAL),
+            Self::MlsCommit { .. } => Some(event_kind_str::MLS_COMMIT),
+            Self::MlsWelcome { .. } => Some(event_kind_str::MLS_WELCOME),
+            Self::InvalidateKeyPackages => Some(event_kind_str::MLS_KEYPACKAGE),
             Self::UnregisterPushToken => None,
         }
     }

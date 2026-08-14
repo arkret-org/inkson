@@ -12,6 +12,7 @@ use std::time::Duration;
 #[cfg(test)]
 use arkret_sdk::ErrorEnvelope;
 use arkret_sdk::events::{CbaEffectPlane, cba_cell_family_plane};
+use arkret_wire::{CapabilityActionId, event_kind_str};
 use garth::outbound::BoxOutboundFuture;
 use garth::{
     MlsAdmissionStage, OutboundEngine, OutboundEngineOutcome, OutboundGenerationFenceDecision,
@@ -1416,8 +1417,8 @@ impl EventSubmitter {
         if event.kind == arkret_sdk::EventKind::RealmCreate {
             return Ok(is_e2ee_create(event));
         }
-        let is_join = event.kind.as_str() == "ak.invite.accept"
-            || (event.kind.as_str() == "ak.member.state"
+        let is_join = event.kind.as_str() == event_kind_str::INVITE_ACCEPT
+            || (event.kind.as_str() == event_kind_str::MEMBER_STATE
                 && event.payload.get("membership").and_then(Value::as_str) == Some("join"));
         if !is_join {
             return Ok(false);
@@ -1891,7 +1892,7 @@ impl EventSubmitter {
         // view. `accept_realm_invite` therefore resolves and stamps the
         // current join-candidate basis before enqueueing; preserve that basis
         // while all ordinary member-authored events continue to re-author it.
-        if intent.kind.as_str() != "ak.invite.accept" {
+        if intent.kind.as_str() != event_kind_str::INVITE_ACCEPT {
             intent.seal_basis = None;
         }
         intent.auth_context = None;
@@ -3176,7 +3177,7 @@ fn realm_create_authority_from_events(
 /// operational coverage). A root claim on a kind outside this set would turn
 /// the ordinary grant search into a hard `capability_denied` at admission.
 fn realm_owner_covers_event_kind(kind: &str) -> bool {
-    arkret_schema::capability_action("ak.realm.owner")
+    arkret_schema::capability_action(CapabilityActionId::REALM_OWNER)
         .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))
 }
 

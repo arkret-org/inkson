@@ -1,3 +1,5 @@
+use arkret_wire::event_kind_str;
+
 use super::*;
 
 pub(crate) fn default_discussion_strand_id(realm_body: &Value) -> Option<String> {
@@ -253,10 +255,9 @@ pub(crate) fn discussion_channel_for_strand(strand_id: &str) -> Option<ChannelEn
 
 pub(crate) fn channel_from_strand_event(_realm_id: &str, event: &Value) -> Option<ChannelEntity> {
     let candidates = message_candidates(event);
-    if !candidates
-        .iter()
-        .any(|candidate| value_string_at(candidate, &["kind", "type"]) == Some("ak.strand.create"))
-    {
+    if !candidates.iter().any(|candidate| {
+        value_string_at(candidate, &["kind", "type"]) == Some(event_kind_str::STRAND_CREATE)
+    }) {
         return None;
     }
     if !strand_create_has_discussion_track(&candidates)

@@ -15,6 +15,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use arkret_wire::event_kind_str;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -729,7 +730,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .and_then(Value::as_array)
         .is_some_and(|messages| {
             messages.iter().any(|message| {
-                message.get("kind").and_then(Value::as_str) == Some("ak.mls.welcome")
+                message.get("kind").and_then(Value::as_str) == Some(event_kind_str::MLS_WELCOME)
             })
         });
     if has_welcome {

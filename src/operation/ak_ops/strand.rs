@@ -1,5 +1,6 @@
 //! Strand lifecycle / tracks / watch / position builders.
 
+use arkret_wire::event_kind_str;
 use serde_json::{Value, json};
 
 use super::{
@@ -268,7 +269,7 @@ pub fn strand_position_cas_update(
     // effect_space as the destination target_space_id and carries the
     // optional from_space_id / expected_position CAS hints.
     match kind {
-        "ak.strand.reorder" => {
+        event_kind_str::STRAND_REORDER => {
             let payload = strand_reorder_payload(
                 board_space_id,
                 strand_id,

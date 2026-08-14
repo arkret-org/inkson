@@ -1,5 +1,7 @@
 use std::future::Future;
 
+use arkret_wire::AccountDataKey;
+
 use super::*;
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
 
@@ -1331,7 +1333,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // differs from the local cached value
                                 // we update the UI Signal +
                                 // LocalConfigStore synchronously.
-                                if account_data_key == "ak.client.ui_state" {
+                                if account_data_key == AccountDataKey::CLIENT_UI_STATE {
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
                                         account_data_key,
@@ -1412,7 +1414,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if account_data_key == "ak.presence.visibility" {
+                                if account_data_key == AccountDataKey::PRESENCE_VISIBILITY {
                                     let Some(visibility) =
                                         crate::account_data::decrypt_account_data_entry(
                                             &account_did(),
@@ -1437,7 +1439,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // preference (profiles-presence.md §3.6).
                                 // Decrypt the standard holder-private envelope
                                 // before applying it to local state.
-                                if account_data_key == "ak.presence.preference" {
+                                if account_data_key == AccountDataKey::PRESENCE_PREFERENCE {
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
                                         account_data_key,
@@ -1453,7 +1455,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if account_data_key == "ak.dnd_schedule" {
+                                if account_data_key == AccountDataKey::DND_SCHEDULE {
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),
                                         account_data_key,
@@ -1468,7 +1470,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     continue;
                                 }
-                                if account_data_key == "ak.account.blocklist" {
+                                if account_data_key == AccountDataKey::ACCOUNT_BLOCKLIST {
                                     blocklist_snapshot_seen = true;
                                     match crate::account_data::decrypt_account_data_entry(
                                         &account_did(),

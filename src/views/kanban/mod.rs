@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use arkret_wire::event_kind_str;
 use dioxus::prelude::{Asset, AssetOptions, asset, manganis, *};
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
@@ -2202,7 +2203,7 @@ pub fn KanbanPanel(
                                                     realm.clone(),
                                                     actor.clone(),
                                                     None,
-                                                    "ak.strand.create",
+                                                    event_kind_str::STRAND_CREATE,
                                                     value,
                                                     selected_scope_security_encrypted,
                                                     state_store,

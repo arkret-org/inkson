@@ -5,6 +5,7 @@ use arkret_models_collaboration::governance::agent_participation::ParticipationN
 use arkret_models_collaboration::governance::agent_participation::{
     AgentParticipationEntry, ParticipationBits, ParticipationScope,
 };
+use arkret_wire::{CapabilityActionId, event_kind_str};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::{Value, json};
@@ -552,10 +553,12 @@ fn local_terminal_invite_ids_for_realm(
         .filter_map(|record| {
             let payload = &record.payload;
             match raw_operation_payload_kind(payload).as_deref() {
-                Some("ak.invite.accept") if raw_operation_is_accepted_fact(payload) => {
+                Some(event_kind_str::INVITE_ACCEPT) if raw_operation_is_accepted_fact(payload) => {
                     raw_operation_invite_ref(payload)
                 }
-                Some("ak.invite.cancel" | "ak.invite.revoke") => raw_operation_invite_ref(payload),
+                Some(event_kind_str::INVITE_CANCEL | event_kind_str::INVITE_REVOKE) => {
+                    raw_operation_invite_ref(payload)
+                }
                 _ => None,
             }
         })
@@ -738,7 +741,7 @@ fn local_pending_invite_profile_from_raw_operation(
         return None;
     }
     let payload = &record.payload;
-    if raw_operation_payload_kind(payload).as_deref() != Some("ak.invite.create") {
+    if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_CREATE) {
         return None;
     }
     let state = trimmed_string(payload.get("state").or_else(|| payload.get("status")))
@@ -869,7 +872,7 @@ fn local_invitee_by_invite_id_for_realm(
             continue;
         }
         let payload = &record.payload;
-        if raw_operation_payload_kind(payload).as_deref() != Some("ak.invite.create") {
+        if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_CREATE) {
             continue;
         }
         let Some(invite_id) = raw_operation_invite_ref(payload) else {
@@ -896,7 +899,7 @@ fn local_membership_profile_from_raw_operation(
         return None;
     }
     match raw_operation_payload_kind(payload).as_deref()? {
-        "ak.member.state" => {
+        event_kind_str::MEMBER_STATE => {
             let actor_id = raw_member_actor_id(payload)?;
             let membership = raw_member_membership(payload)?;
             let mut profile = MemberProfile::bare(actor_id);
@@ -904,7 +907,7 @@ fn local_membership_profile_from_raw_operation(
             profile.invite_id = raw_operation_invite_ref(payload);
             Some(profile)
         }
-        "ak.invite.accept" => {
+        event_kind_str::INVITE_ACCEPT => {
             let invite_id = raw_operation_invite_ref(payload);
             let actor_id = raw_member_actor_id(payload).or_else(|| {
                 invite_id
@@ -1467,9 +1470,9 @@ fn PendingInviteRow(
                                                 Some(realm.clone()),
                                                 json!({
                                                     "kind": if is_direct {
-                                                        "ak.invite.cancel"
+                                                        event_kind_str::INVITE_CANCEL
                                                     } else {
-                                                        "ak.invite.revoke"
+                                                        event_kind_str::INVITE_REVOKE
                                                     },
                                                     "invite_id": invite_id.clone(),
                                                     "invitee": direct_invitee.clone(),
@@ -1936,7 +1939,7 @@ fn history_share_source_authorization_ref_from_events(events: &[Value]) -> Optio
             .get("kind")
             .or_else(|| event.get("event_kind"))
             .and_then(Value::as_str)?;
-        if kind != "ak.realm.history_sharing_policy"
+        if kind != event_kind_str::REALM_HISTORY_SHARING_POLICY
             || !history_share_policy_allows_verified_member_device(event)
         {
             return None;
@@ -1983,7 +1986,7 @@ fn realm_key_share_capability_ref_from_events(events: &[Value], actor_id: &str) 
             || !actions.iter().any(|action| {
                 action
                     .as_str()
-                    .is_some_and(|action| action == "ak.realm_key.share")
+                    .is_some_and(|action| action == CapabilityActionId::REALM_KEY_SHARE)
             })
         {
             return None;
@@ -2444,8 +2447,10 @@ fn provider_candidates_from_inbox(
             .unwrap_or_default();
         let is_history_bearing = matches!(
             kind,
-            "ak.mls.welcome" | "ak.mls.commit" | "ak.realm_key.share"
-        ) || kind == arkret_sdk::EventKind::RealmKeyShare.as_str();
+            event_kind_str::MLS_WELCOME
+                | event_kind_str::MLS_COMMIT
+                | event_kind_str::REALM_KEY_SHARE
+        );
         if !is_history_bearing {
             continue;
         }
@@ -3455,7 +3460,7 @@ pub fn RealmMembersPanel(
                         crate::transport::realm_read::authz_check(
                             &api.sdk_http_client()?,
                             &actor,
-                            "ak.invite.create",
+                            CapabilityActionId::INVITE_CREATE,
                             &realm,
                         )
                         .await
@@ -3465,7 +3470,7 @@ pub fn RealmMembersPanel(
                         crate::transport::realm_read::authz_check(
                             &api.sdk_http_client()?,
                             &actor,
-                            "ak.invite.cancel",
+                            CapabilityActionId::INVITE_CANCEL,
                             &realm,
                         )
                         .await
@@ -3475,7 +3480,7 @@ pub fn RealmMembersPanel(
                         crate::transport::realm_read::authz_check(
                             &api.sdk_http_client()?,
                             &actor,
-                            "ak.invite.revoke",
+                            CapabilityActionId::INVITE_REVOKE,
                             &realm,
                         )
                         .await
@@ -3493,7 +3498,7 @@ pub fn RealmMembersPanel(
                         crate::transport::realm_read::authz_check(
                             &api.sdk_http_client()?,
                             &actor,
-                            "ak.realm.admin",
+                            CapabilityActionId::REALM_ADMIN,
                             &realm,
                         )
                         .await
@@ -3993,7 +3998,7 @@ pub fn RealmMembersPanel(
                                                                             event_id.clone(),
                                                                             Some(realm.clone()),
                                                                             json!({
-                                                                                "kind": "ak.invite.create",
+                                                                                "kind": event_kind_str::INVITE_CREATE,
                                                                                 "invite_id": invite_id,
                                                                                 "invitee": did,
                                                                                 "state": "pending",
@@ -4168,7 +4173,7 @@ pub fn RealmMembersPanel(
                                                                         op_id.clone(),
                                                                         Some(realm.clone()),
                                                                         json!({
-                                                                            "kind": "ak.invite.create",
+                                                                            "kind": event_kind_str::INVITE_CREATE,
                                                                             "invite_id": invite_id,
                                                                             "invitee": invitee_did.clone(),
                                                                             "invitee_label": invitee_label.clone(),

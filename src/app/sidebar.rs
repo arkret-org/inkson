@@ -1,3 +1,5 @@
+use arkret_wire::CapabilityActionId;
+
 use super::*;
 
 pub(super) fn pinned_realm_ids_from_store(store: &LocalStateStore) -> BTreeSet<String> {
@@ -378,7 +380,7 @@ pub(super) fn ensure_sidebar_row_perms(
                     crate::transport::realm_read::authz_check(
                         &api.sdk_http_client()?,
                         &actor,
-                        "ak.invite.create",
+                        CapabilityActionId::INVITE_CREATE,
                         &realm_id,
                     )
                     .await
@@ -388,7 +390,7 @@ pub(super) fn ensure_sidebar_row_perms(
                     crate::transport::realm_read::authz_check(
                         &api.sdk_http_client()?,
                         &actor,
-                        "ak.realm.profile",
+                        CapabilityActionId::REALM_PROFILE,
                         &realm_id,
                     )
                     .await

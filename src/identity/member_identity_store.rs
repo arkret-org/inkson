@@ -31,6 +31,7 @@ use arkret_sdk::{
     MemberIdentitySignatureAlgorithm, MemberIdentityUpdatePayload, RealmId,
     effective_identity_events,
 };
+use arkret_wire::event_kind_str;
 use serde_json::Value;
 
 /// Per-actor key on the store. `(realm_id, actor_id)` — the segment
@@ -92,7 +93,7 @@ impl MemberIdentityStore {
                 continue;
             };
             let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
-            if kind != "ak.member.identity.update" {
+            if kind != event_kind_str::MEMBER_IDENTITY_UPDATE {
                 continue;
             }
             let Some(payload_value) = event.get("payload") else {

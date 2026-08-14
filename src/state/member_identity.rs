@@ -1,3 +1,5 @@
+use arkret_wire::event_kind_str;
+
 use super::*;
 
 impl LocalStateStore {
@@ -31,7 +33,7 @@ impl LocalStateStore {
                 continue;
             };
             let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
-            if kind != "ak.member.identity.update" {
+            if kind != event_kind_str::MEMBER_IDENTITY_UPDATE {
                 continue;
             }
             let already = bucket.iter().any(|existing| {

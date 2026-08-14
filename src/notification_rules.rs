@@ -1,5 +1,6 @@
 //! Decryption adapter for actor-private notification account data.
 
+use arkret_wire::AccountDataKey;
 pub use chime::{
     DndPeriod, DndSchedule, DndSettings, NotificationDecision, NotificationEvalContext,
     NotificationSound, PushCondition, PushRule, PushRulesConfig, PushRulesRejection, WatchLevel,
@@ -11,7 +12,7 @@ pub fn push_rules_from_account_data(
     actor_id: &str,
     entries: &[arkret_sdk::Event],
 ) -> Option<PushRulesConfig> {
-    let value = encrypted_account_data_content(actor_id, entries, "ak.push_rules")?;
+    let value = encrypted_account_data_content(actor_id, entries, AccountDataKey::PUSH_RULES)?;
     match parse_push_rules(&value) {
         Ok(config) => Some(config),
         // A rejected rule set is not "no rules": evaluation must fall back to
@@ -37,7 +38,7 @@ pub fn dnd_settings_from_account_data(
     actor_id: &str,
     entries: &[arkret_sdk::Event],
 ) -> Option<DndSettings> {
-    encrypted_account_data_content(actor_id, entries, "ak.dnd_schedule")
+    encrypted_account_data_content(actor_id, entries, AccountDataKey::DND_SCHEDULE)
         .and_then(|value| parse_dnd_settings(&value))
 }
 

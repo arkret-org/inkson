@@ -1,3 +1,5 @@
+use arkret_wire::ServiceOperationId;
+
 use crate::models::{RealmJoinCandidate, ResolveRealmOutcome};
 use crate::operation::trim_realm_id;
 
@@ -25,7 +27,7 @@ pub(crate) fn select_join_candidate(
             candidate
                 .operations
                 .iter()
-                .any(|op| op == "ak.self.events.command.submit")
+                .any(|op| op == ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT)
         })
         .filter(|candidate| candidate.join_methods.contains(&join_method))
         .filter(|candidate| join_candidate_is_current(candidate))

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Read};
 
 use anyhow::{Context, Result, bail};
+use arkret_wire::{SchemaId, event_kind_str};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -81,7 +82,7 @@ fn range_completeness(input: Value) -> Result<Value> {
     let digest_algorithm = input
         .events
         .iter()
-        .find(|event| event.kind.as_str() == "ak.realm.create")
+        .find(|event| event.kind.as_str() == event_kind_str::REALM_CREATE)
         .and_then(|event| {
             event
                 .payload
@@ -112,7 +113,7 @@ fn range_completeness(input: Value) -> Result<Value> {
         EventId::new("ak:event:AQsJJ-0WQT9HoqD7KlOdlGMGOsuB_Ncu1svH5gbe3KL4".to_owned())?;
     let mut payload = arkret_sdk::RangeCompletenessAttestation {
         attestation_id: "ak:attestation:019fbeef-0000-7000-8000-000000000001".to_owned(),
-        schema: "ak.schema.range_completeness_attestation.v1".to_owned(),
+        schema: SchemaId::RANGE_COMPLETENESS_ATTESTATION_V1.to_owned(),
         issuer: issuer.clone(),
         issuer_role: "events_api".to_owned(),
         realm_id: input.realm_id.clone(),

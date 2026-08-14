@@ -6,6 +6,7 @@
 //! behavior change): consumed by `sync_engine::ingest_message_events` and the
 //! chat view model (which re-exports these helpers).
 
+use arkret_wire::event_kind_str;
 use serde_json::Value;
 
 use crate::state::RawOperationRecord;
@@ -68,25 +69,25 @@ fn discussion_event_kind(value: &Value) -> Option<&str> {
 }
 
 pub(crate) fn message_kind_is_create(value: &Value) -> bool {
-    discussion_event_kind(value) == Some("ak.message.create")
+    discussion_event_kind(value) == Some(event_kind_str::MESSAGE_CREATE)
 }
 
 pub(crate) fn message_kind_is_revise(value: &Value) -> bool {
-    discussion_event_kind(value) == Some("ak.message.revise")
+    discussion_event_kind(value) == Some(event_kind_str::MESSAGE_REVISE)
 }
 
 fn discussion_kind_is_raw_operation(kind: &str) -> bool {
     matches!(
         kind,
-        "ak.message.create"
-            | "ak.message.revise"
-            | "ak.message.redact"
-            | "ak.agent.sidecar.exchange.control"
-            | "ak.reaction.add"
-            | "ak.reaction.remove"
-            | "ak.pin.add"
-            | "ak.pin.remove"
-            | "ak.pin.reorder"
+        event_kind_str::MESSAGE_CREATE
+            | event_kind_str::MESSAGE_REVISE
+            | event_kind_str::MESSAGE_REDACT
+            | event_kind_str::AGENT_SIDECAR_EXCHANGE_CONTROL
+            | event_kind_str::REACTION_ADD
+            | event_kind_str::REACTION_REMOVE
+            | event_kind_str::PIN_ADD
+            | event_kind_str::PIN_REMOVE
+            | event_kind_str::PIN_REORDER
     )
 }
 

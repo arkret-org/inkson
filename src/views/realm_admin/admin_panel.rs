@@ -1,3 +1,4 @@
+use arkret_wire::{CapabilityActionId, CellFamilyId, event_kind_str};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
@@ -44,7 +45,7 @@ pub fn RealmAdminPanel(
     let mut status_msg = use_signal(String::new);
     // Capability grant/revoke Move-strand inputs (see capability-grant-card)
     let mut cap_grant_id = use_signal(String::new);
-    let mut cap_tag = use_signal(|| "ak.message.create".to_owned());
+    let mut cap_tag = use_signal(|| CapabilityActionId::MESSAGE_CREATE.to_owned());
     let mut cap_subject = use_signal(String::new);
     let mut cap_revoke_reason = use_signal(|| "rotation policy".to_owned());
     let mut archive_confirm_open = use_signal(|| false);
@@ -157,8 +158,8 @@ pub fn RealmAdminPanel(
         RealmTreeNodeKind::Space => "Space",
     };
     let metadata_event_kind = match metadata_subject.kind {
-        RealmTreeNodeKind::Realm => "ak.realm.profile",
-        RealmTreeNodeKind::Space => "ak.space.update",
+        RealmTreeNodeKind::Realm => event_kind_str::REALM_PROFILE,
+        RealmTreeNodeKind::Space => event_kind_str::SPACE_UPDATE,
     };
     let alert_count = usize::from(realm_paused)
         + usize::from(realm_pending_mls_binding)
@@ -480,7 +481,7 @@ pub fn RealmAdminPanel(
                 div { class: "event", "data-testid": "mls-epoch-widget",
                     div { class: "event-head",
                         span { "MLS epoch" }
-                        span { "ak.component.mls.epoch.v1" }
+                        span { {CellFamilyId::MLS_EPOCH_V1} }
                     }
                     div { class: "muted",
                         "Read-only view of the most recent MLS epoch published in the cell map."
@@ -1437,7 +1438,7 @@ pub fn RealmAdminPanel(
             div { class: "event", "data-testid": "realm-admin-grant-card",
                 div { class: "event-head",
                     span { {crate::i18n::tr("realm_admin.admin_grant_title")} }
-                    span { class: "badge", "ak.realm.admin" }
+                    span { class: "badge", {CapabilityActionId::REALM_ADMIN} }
                 }
                 div { class: "muted",
                     {crate::i18n::tr("realm_admin.admin_grant_hint")}

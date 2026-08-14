@@ -24,6 +24,8 @@
 //! [`overlay_local_card_assignment_records`]) so we do not duplicate the
 //! private-field decrypt logic.
 
+use arkret_wire::event_kind_str;
+
 use super::*;
 
 /// Causally-ordered view of the operations: by `received_at` (HLC-free fallback)
@@ -271,7 +273,7 @@ pub(crate) fn strand_views_from_ops(
             continue;
         };
         match kind.as_str() {
-            "ak.strand.create" => {
+            event_kind_str::STRAND_CREATE => {
                 if let Some(view) = strand_view_from_create_op(record) {
                     if !by_id.contains_key(&view.strand_id) {
                         order.push(view.strand_id.clone());
@@ -279,28 +281,28 @@ pub(crate) fn strand_views_from_ops(
                     by_id.insert(view.strand_id.clone(), view);
                 }
             }
-            "ak.strand.move" => {
+            event_kind_str::STRAND_MOVE => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_move_to_view(view, record);
                 }
             }
-            "ak.strand.reorder" => {
+            event_kind_str::STRAND_REORDER => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_reorder_to_view(view, record);
                 }
             }
-            "ak.strand.archive" => {
+            event_kind_str::STRAND_ARCHIVE => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ProjectionObjectState::Archived;
                 }
             }
-            "ak.strand.restore" => {
+            event_kind_str::STRAND_RESTORE => {
                 if let Some(id) = op_strand_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
@@ -362,21 +364,21 @@ pub(crate) fn space_container_views_from_ops(
             continue;
         };
         match kind.as_str() {
-            "ak.space.update" => {
+            event_kind_str::SPACE_UPDATE => {
                 if let Some(id) = op_space_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_space_update_to_view(view, record);
                 }
             }
-            "ak.space.archive" => {
+            event_kind_str::SPACE_ARCHIVE => {
                 if let Some(id) = op_space_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ProjectionSpaceState::Archived;
                 }
             }
-            "ak.space.restore" => {
+            event_kind_str::SPACE_RESTORE => {
                 if let Some(id) = op_space_target_id(record)
                     && let Some(view) = by_id.get_mut(&id)
                 {

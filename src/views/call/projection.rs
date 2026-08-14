@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use arkret_wire::event_kind_str;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -150,7 +151,9 @@ pub(super) fn media_service_selection(
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind != "ak.realm.media_service" || record.realm_id.as_deref() != Some(realm_id) {
+        if kind != event_kind_str::REALM_MEDIA_SERVICE
+            || record.realm_id.as_deref() != Some(realm_id)
+        {
             continue;
         }
         let body = operation_body(&record.payload);
@@ -181,11 +184,16 @@ pub(super) fn media_governance_evidence(
     realm_id: &str,
     media_plaintext_ui_confirmed: bool,
 ) -> Option<MediaGovernanceEvidence> {
-    let media_service_payload = latest_body_for_kind(state, realm_id, "ak.realm.media_service")?;
-    let policy_bundle_payload = latest_body_for_kind(state, realm_id, "ak.realm.policy_bundle");
-    let plaintext_visible_services_payload =
-        latest_body_for_kind(state, realm_id, "ak.realm.plaintext_visible_services")
-            .and_then(|body| serde_json::from_value(body).ok());
+    let media_service_payload =
+        latest_body_for_kind(state, realm_id, event_kind_str::REALM_MEDIA_SERVICE)?;
+    let policy_bundle_payload =
+        latest_body_for_kind(state, realm_id, event_kind_str::REALM_POLICY_BUNDLE);
+    let plaintext_visible_services_payload = latest_body_for_kind(
+        state,
+        realm_id,
+        event_kind_str::REALM_PLAINTEXT_VISIBLE_SERVICES,
+    )
+    .and_then(|body| serde_json::from_value(body).ok());
     let governance_binding = state
         .raw_operations
         .iter()
@@ -197,7 +205,10 @@ pub(super) fn media_governance_evidence(
                 .get("kind")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if !matches!(kind, "ak.mls.commit" | "ak.mls.genesis") {
+            if !matches!(
+                kind,
+                event_kind_str::MLS_COMMIT | event_kind_str::MLS_GENESIS
+            ) {
                 return None;
             }
             operation_body(&record.payload)
@@ -218,7 +229,7 @@ pub(super) fn media_service_decrypts_enabled(
     state: &crate::state::ClientLocalState,
     realm_id: &str,
 ) -> bool {
-    latest_body_for_kind(state, realm_id, "ak.realm.policy_bundle")
+    latest_body_for_kind(state, realm_id, event_kind_str::REALM_POLICY_BUNDLE)
         .as_ref()
         .and_then(|body| {
             body.get("media_service_decrypts")
@@ -298,7 +309,7 @@ fn call_roster_participants<'a>(
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        if kind != "ak.call.state" || record.realm_id.as_deref() != Some(realm_id) {
+        if kind != event_kind_str::CALL_STATE || record.realm_id.as_deref() != Some(realm_id) {
             continue;
         }
         let body = operation_body(&record.payload);

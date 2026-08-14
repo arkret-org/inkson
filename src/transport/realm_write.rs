@@ -9,6 +9,7 @@
 //! on `TransportClient` because its cross-endpoint join routing needs the
 //! facade's base-url / credential / sync-token state.
 
+use arkret_wire::CapabilityActionId;
 use serde_json::{Value, json};
 
 use crate::event_builders::{
@@ -987,7 +988,7 @@ pub async fn grant_realm_admin(
         realm_id,
         actor_id,
         subject,
-        &["ak.realm.admin"],
+        &[CapabilityActionId::REALM_ADMIN],
         None,
         Value::Null,
     )?

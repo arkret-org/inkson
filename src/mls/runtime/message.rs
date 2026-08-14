@@ -1,6 +1,8 @@
 //! Welcome application, application-payload encrypt / decrypt, and the SEC-08
 //! minimal-metadata AAD policy enforcement.
 
+use arkret_wire::event_kind_str;
+
 use super::{
     MlsRuntimeError, load_device_snapshot_secret, load_mls_key_package_identity_state,
     load_or_create_account_mls_secret, should_force_epoch_advance,
@@ -1063,7 +1065,7 @@ fn collect_welcome_message_entries(value: &serde_json::Value) -> Vec<WelcomeMess
             .get("kind")
             .or_else(|| entry.get("type"))
             .and_then(|t| t.as_str())
-            == Some("ak.mls.welcome")
+            == Some(event_kind_str::MLS_WELCOME)
             && let Some(content) = entry.get("content")
         {
             welcomes.push(WelcomeMessageEntry {
@@ -1137,7 +1139,7 @@ pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: 
         .get("kind")
         .or_else(|| message.get("type"))
         .and_then(|t| t.as_str())
-        != Some("ak.mls.welcome")
+        != Some(event_kind_str::MLS_WELCOME)
     {
         return false;
     }
@@ -1820,9 +1822,10 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     let aad_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: aad_realm_id,
     };
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.strand.update").map_err(
-        |error| MlsRuntimeError::Serialize(format!("invalid scope for encrypted AAD: {error:?}")),
-    )?;
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, event_kind_str::STRAND_UPDATE)
+        .map_err(|error| {
+        MlsRuntimeError::Serialize(format!("invalid scope for encrypted AAD: {error:?}"))
+    })?;
     encrypt_values_with_device_snapshot_for_effective_scope(
         state_store,
         secure_store,

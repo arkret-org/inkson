@@ -55,7 +55,6 @@ pub(crate) fn creator_mls_bootstrap_pending(
     if !crate::security_state::realm_projection_is_encrypted(projection)
         || !crate::mls::group_events::projected_realm_creator_matches_actor(
             &state.realm_tree_projections,
-            projection,
             realm_id,
             actor_id,
         )

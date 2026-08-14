@@ -1,3 +1,5 @@
+use arkret_wire::event_kind_str;
+
 use super::*;
 #[cfg(test)]
 pub(crate) use crate::state::projection::message_ops::message_operations_from_events;
@@ -107,7 +109,7 @@ pub(crate) fn local_redaction_tombstone_for_message(
 ) -> Value {
     let actor_id = principal_core_key(&message.sender).unwrap_or_default();
     let mut event = json!({
-        "kind": "ak.message.create",
+        "kind": event_kind_str::MESSAGE_CREATE,
         "event_id": message.id.clone(),
         "realm_id": message.realm_id.clone(),
         "strand_id": message.strand_id.clone(),
@@ -154,7 +156,7 @@ fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedaction
             &["kind", "event_kind", "type", "op_type", "event_type"],
         )
     })?;
-    if kind != "ak.message.redact" && kind != "ak.redaction" {
+    if kind != event_kind_str::MESSAGE_REDACT && kind != event_kind_str::REDACTION {
         return None;
     }
     let payload = redaction_payload_candidate(event);
@@ -364,8 +366,8 @@ fn reaction_marker_from_event(event: &Value) -> Option<ReactionMarker> {
         )
     })?;
     let active = match kind {
-        "ak.reaction.add" => true,
-        "ak.reaction.remove" => false,
+        event_kind_str::REACTION_ADD => true,
+        event_kind_str::REACTION_REMOVE => false,
         _ => return None,
     };
     let target_ref = first_string_in_candidates(
@@ -1727,7 +1729,10 @@ pub(crate) fn apply_shared_pin_event(
     else {
         return;
     };
-    if !matches!(kind, "ak.pin.add" | "ak.pin.remove" | "ak.pin.reorder") {
+    if !matches!(
+        kind,
+        event_kind_str::PIN_ADD | event_kind_str::PIN_REMOVE | event_kind_str::PIN_REORDER
+    ) {
         return;
     }
     let payload = event
@@ -1754,7 +1759,7 @@ pub(crate) fn apply_shared_pin_event(
         return;
     };
     match kind {
-        "ak.pin.add" => {
+        event_kind_str::PIN_ADD => {
             let rank = payload
                 .get("rank")
                 .and_then(Value::as_str)
@@ -1769,10 +1774,10 @@ pub(crate) fn apply_shared_pin_event(
                 pins.push(SharedMessagePin::new(&scope, target_ref.to_owned(), rank));
             }
         }
-        "ak.pin.remove" => {
+        event_kind_str::PIN_REMOVE => {
             pins.retain(|pin| !(pin.matches_scope(&scope) && pin.target_ref == target_ref));
         }
-        "ak.pin.reorder" => {
+        event_kind_str::PIN_REORDER => {
             if let Some(rank) = payload.get("rank").and_then(Value::as_str)
                 && let Some(existing) = pins
                     .iter_mut()

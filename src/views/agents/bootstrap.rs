@@ -8,7 +8,7 @@ use arkret_models_collaboration::events_payloads::key_backup::{
     ControllerBackupTrustAnchor, resolve_controller_backup_trust_anchor,
 };
 use arkret_models_crypto::{BackupKind, ManagedFrontierRef, ManagedPrincipalBinding};
-use arkret_wire::{BackupSeriesId, Base64UrlString};
+use arkret_wire::{BackupSeriesId, Base64UrlString, event_kind_str};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
@@ -146,7 +146,7 @@ async fn current_mls_history_active_series(
     let mut current = None::<arkret_sdk::KeyBackupActiveSeriesHead>;
     for event in accepted_events
         .iter()
-        .filter(|event| event.kind.as_str() == "ak.key_backup.active_series")
+        .filter(|event| event.kind.as_str() == event_kind_str::KEY_BACKUP_ACTIVE_SERIES)
     {
         let record = serde_json::from_value::<arkret_sdk::KeyBackupActiveSeries>(
             serde_json::to_value(&event.payload)?,

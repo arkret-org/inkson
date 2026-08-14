@@ -1,3 +1,5 @@
+use arkret_wire::event_kind_str;
+
 use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -164,7 +166,7 @@ pub(crate) fn raw_operation_kind_matches(payload: &Value, expected: &str) -> boo
 }
 
 pub(crate) fn raw_operation_strand_update_target_id(payload: &Value) -> Option<String> {
-    if !raw_operation_kind_matches(payload, "ak.strand.update")
+    if !raw_operation_kind_matches(payload, event_kind_str::STRAND_UPDATE)
         || !raw_operation_allows_overlay(payload)
     {
         return None;
@@ -204,7 +206,8 @@ pub(crate) fn local_space_create_state_for_target(
     projected_space_container_ids: &BTreeSet<String>,
     target_id: &str,
 ) -> Option<CardState> {
-    let state = local_operation_state_for_target(raw_operations, "ak.space.create", target_id)?;
+    let state =
+        local_operation_state_for_target(raw_operations, event_kind_str::SPACE_CREATE, target_id)?;
     if projected_space_container_ids.contains(target_id) {
         Some(CardState::Synced)
     } else {
@@ -264,9 +267,9 @@ pub(crate) fn overlay_local_card_assignment_records(
         .iter()
         .filter(|record| raw_operation_allows_overlay(&record.payload))
     {
-        if raw_operation_kind_matches(&record.payload, "ak.relation.create") {
+        if raw_operation_kind_matches(&record.payload, event_kind_str::RELATION_CREATE) {
             overlay_local_assignment_create(&mut columns, &record.payload);
-        } else if raw_operation_kind_matches(&record.payload, "ak.relation.tombstone") {
+        } else if raw_operation_kind_matches(&record.payload, event_kind_str::RELATION_TOMBSTONE) {
             overlay_local_assignment_tombstone(&mut columns, &record.payload);
         }
     }
@@ -706,7 +709,7 @@ pub(crate) fn local_card_create_from_raw_operation(
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "ak.strand.create" {
+    if kind != event_kind_str::STRAND_CREATE {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {
@@ -761,7 +764,7 @@ pub(crate) fn local_space_create_from_raw_operation(
     let payload = &record.payload;
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
-    if kind != "ak.space.create" {
+    if kind != event_kind_str::SPACE_CREATE {
         return None;
     }
     if !raw_operation_allows_overlay(payload) {

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
 use arkret_sdk::EventPayloadExt as _;
+use arkret_wire::event_kind_str;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::Verifier as _;
@@ -639,7 +640,7 @@ async fn fetch_authoritative_active_series(
     )?;
     let mut active_events = accepted_events
         .iter()
-        .filter(|event| event.kind.as_str() == "ak.key_backup.active_series")
+        .filter(|event| event.kind.as_str() == event_kind_str::KEY_BACKUP_ACTIVE_SERIES)
         .collect::<Vec<_>>();
     if active_events.is_empty() {
         return Ok(Vec::new());
@@ -730,7 +731,7 @@ async fn verify_active_series_range_completeness(
 
     let digest_algorithm = accepted_events
         .iter()
-        .find(|event| event.kind.as_str() == "ak.realm.create")
+        .find(|event| event.kind.as_str() == event_kind_str::REALM_CREATE)
         .and_then(|event| {
             event
                 .payload

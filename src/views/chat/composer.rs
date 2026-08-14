@@ -1,3 +1,5 @@
+use arkret_wire::event_kind_str;
+
 use super::*;
 
 #[derive(Clone, PartialEq)]
@@ -1455,7 +1457,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     Some(realm_for_record),
                                                     json!({
                                                         "event_id": resp.event_id.clone(),
-                                                        "kind": "ak.message.create",
+                                                        "kind": event_kind_str::MESSAGE_CREATE,
                                                         "actor_id": actor_for_store,
                                                         "body": body_for_store,
                                                         "strand_id": strand_id_for_store,
@@ -2161,7 +2163,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             Some(realm_for_record.clone()),
                                             json!({
                                                 "event_id": resp_event_id.clone(),
-                                                "kind": "ak.message.create",
+                                                "kind": event_kind_str::MESSAGE_CREATE,
                                                 "actor_id": actor_for_record.clone(),
                                                 "strand_id": strand_id_for_record.clone(),
                                                 "message_id": message_id_for_record.clone(),

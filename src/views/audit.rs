@@ -8,6 +8,7 @@
 //! Writing new audit events is owned by the SDK / reducer path; this view
 //! does not emit anything.
 
+use arkret_wire::event_kind_str;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -32,7 +33,10 @@ fn extract_string(value: &Value, key: &str) -> Option<String> {
 
 fn classify_audit_row(operation_id: &str, body: &Value) -> Option<AuditRow> {
     let kind = extract_string(body, "kind")?;
-    if !matches!(kind.as_str(), "ak.audit.accessed" | "ak.audit.ryw_receipt") {
+    if !matches!(
+        kind.as_str(),
+        event_kind_str::AUDIT_ACCESSED | event_kind_str::AUDIT_RYW_RECEIPT
+    ) {
         return None;
     }
     Some(AuditRow {
@@ -56,11 +60,11 @@ pub fn AuditPanel() -> Element {
         .collect();
     let attested_count = rows
         .iter()
-        .filter(|row| row.kind == "ak.audit.accessed")
+        .filter(|row| row.kind == event_kind_str::AUDIT_ACCESSED)
         .count();
     let receipt_count = rows
         .iter()
-        .filter(|row| row.kind == "ak.audit.ryw_receipt")
+        .filter(|row| row.kind == event_kind_str::AUDIT_RYW_RECEIPT)
         .count();
 
     rsx! {

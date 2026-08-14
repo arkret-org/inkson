@@ -1,3 +1,4 @@
+use arkret_wire::event_kind_str;
 use serde_json::Value;
 use yoface::utils::text::short_protocol_id;
 
@@ -104,7 +105,7 @@ pub fn projection_events_from_sync_realms(
                     crate::late_recovery::LateRecoveryAuditAccessConversion::NotLateRecovery => {}
                 }
             }
-            if event.get("kind").and_then(Value::as_str) != Some("ak.message.create") {
+            if event.get("kind").and_then(Value::as_str) != Some(event_kind_str::MESSAGE_CREATE) {
                 continue;
             }
             let event_id = event

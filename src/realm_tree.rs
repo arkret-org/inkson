@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use arkret_wire::{SchemaId, event_kind_str};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -283,7 +284,7 @@ pub(crate) fn realm_projection_history_visibility(body: &Value) -> Option<String
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some("ak.realm.history_visibility")
+                == Some(event_kind_str::REALM_HISTORY_VISIBILITY)
         })
         .find_map(|event| {
             normalized_history_visibility(event.pointer("/payload/value"))
@@ -336,7 +337,7 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some("ak.realm.policy_bundle")
+                == Some(event_kind_str::REALM_POLICY_BUNDLE)
         })
         .find_map(|event| {
             non_empty_string(event.pointer("/payload/value/content_scheme"))
@@ -538,7 +539,7 @@ pub(crate) fn extract_parent_space_id(space_id: &str, body: &Value) -> Option<St
             .get("kind")
             .or_else(|| event.get("type"))
             .and_then(Value::as_str)?;
-        if kind != "ak.space.parent" {
+        if kind != event_kind_str::SPACE_PARENT {
             return None;
         }
         for container in [
@@ -910,8 +911,8 @@ pub(crate) fn projection_tree_node_kind(id: &str, body: &Value) -> RealmTreeNode
         .and_then(Value::as_str)
         .or_else(|| body.get("schema").and_then(Value::as_str))
     {
-        Some("space") | Some("ak.schema.space.v1") => RealmTreeNodeKind::Space,
-        Some("realm") | Some("ak.schema.realm.v1") => RealmTreeNodeKind::Realm,
+        Some("space") | Some(SchemaId::SPACE_V1) => RealmTreeNodeKind::Space,
+        Some("realm") | Some(SchemaId::REALM_V1) => RealmTreeNodeKind::Realm,
         _ if id.starts_with("ak:space:") => RealmTreeNodeKind::Space,
         _ if id.starts_with("ak:realm:") => RealmTreeNodeKind::Realm,
         _ => RealmTreeNodeKind::Realm,
@@ -988,7 +989,7 @@ pub(crate) fn projection_looks_like_strand(body: &Value) -> bool {
         || body.get("tracks").is_some()
         || matches!(
             body.get("kind").and_then(Value::as_str),
-            Some("ak.strand.create" | "discussion" | "strand")
+            Some(event_kind_str::STRAND_CREATE | "discussion" | "strand")
         )
         || matches!(
             body.get("summary")

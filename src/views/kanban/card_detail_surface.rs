@@ -1,3 +1,5 @@
+use arkret_wire::event_kind_str;
+
 use super::*;
 
 #[derive(Clone, PartialEq)]
@@ -601,9 +603,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 StrandLifecycleState::Archived
                                                             };
                                                             let action = if target == StrandLifecycleState::Archived {
-                                                                "ak.strand.archive"
+                                                                event_kind_str::STRAND_ARCHIVE
                                                             } else {
-                                                                "ak.strand.restore"
+                                                                event_kind_str::STRAND_RESTORE
                                                             };
                                                             let label = if target == StrandLifecycleState::Archived {
                                                                 crate::i18n::tr("kanban.archive_action")

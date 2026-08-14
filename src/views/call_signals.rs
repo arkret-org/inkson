@@ -17,6 +17,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use arkret_wire::CapabilityActionId;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -288,7 +289,7 @@ async fn moderator_signal_authorized(
         crate::transport::realm_read::authz_check_resource(
             &api.sdk_http_client()?,
             &decoded.sender_actor,
-            "ak.call.moderate",
+            CapabilityActionId::CALL_MODERATE,
             Some(arkret_sdk::WireResourceSelector::realm(
                 arkret_sdk::RealmId::new(decoded.realm_id.clone())?,
             )),

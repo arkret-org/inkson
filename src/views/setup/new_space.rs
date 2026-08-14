@@ -1,6 +1,7 @@
 //! `ak.space.create` form + Space lifecycle actions section component.
 
 use arkret_sdk::events::EventKind;
+use arkret_wire::SchemaId;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -133,7 +134,7 @@ pub(super) fn NewSpaceSection(
                     .and_then(|kind| kind.as_str())
                     .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
                 {
-                    Some("space") | Some("ak.schema.space.v1") => "space",
+                    Some("space") | Some(SchemaId::SPACE_V1) => "space",
                     _ => "realm",
                 };
                 if kind == "realm" {
@@ -192,7 +193,7 @@ pub(super) fn NewSpaceSection(
             .and_then(|kind| kind.as_str())
             .or_else(|| body.get("schema").and_then(|schema| schema.as_str()))
         {
-            Some("space") | Some("ak.schema.space.v1") => "space",
+            Some("space") | Some(SchemaId::SPACE_V1) => "space",
             _ => "realm",
         }
     };

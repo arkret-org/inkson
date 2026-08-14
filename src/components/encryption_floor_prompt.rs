@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use arkret_wire::SchemaId;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -161,7 +162,7 @@ fn projection_has_explicit_low_encryption_floor(value: &Value) -> bool {
 fn projection_is_realm(id: &str, body: &Value) -> bool {
     id.starts_with("ak:realm:")
         || string_field(body, &["__kind"]).as_deref() == Some("realm")
-        || string_field(body, &["schema"]).as_deref() == Some("ak.schema.realm.v1")
+        || string_field(body, &["schema"]).as_deref() == Some(SchemaId::REALM_V1)
 }
 
 fn projection_string_field(value: &Value, keys: &[&str]) -> Option<String> {

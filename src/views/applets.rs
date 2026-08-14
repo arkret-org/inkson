@@ -32,7 +32,7 @@ use arkret_models_integration::{
     AppletActorPolicy, AppletApprovalRequest, AppletBotMembership, AppletGhostActorMode,
     AppletInstallPlan, AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletPackage,
 };
-use arkret_wire::{AppletRevokeMode, ScopeRef};
+use arkret_wire::{AppletRevokeMode, ScopeRef, event_kind_str};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::Value;
@@ -359,7 +359,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "ak.applet.registration")
+                .map(|k| k == event_kind_str::APPLET_REGISTRATION)
                 .unwrap_or(false)
         })
         .cloned()
@@ -370,7 +370,7 @@ pub fn AppletsPanel(
             r.payload
                 .get("kind")
                 .and_then(Value::as_str)
-                .map(|k| k == "ak.applet.bridge_error")
+                .map(|k| k == event_kind_str::APPLET_BRIDGE_ERROR)
                 .unwrap_or(false)
         })
         .cloned()

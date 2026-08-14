@@ -21,6 +21,7 @@
 //! local raw-operation log, exactly like [`crate::views::applets`] does for the
 //! applet registry — soland's projection feed fans out the same wire kinds.
 
+use arkret_wire::event_kind_str;
 use dioxus::prelude::*;
 use serde_json::Value;
 
@@ -104,7 +105,7 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
 
     for payload in raw_ops {
         match payload_kind(payload) {
-            Some("ak.moderation.decision") => {
+            Some(event_kind_str::MODERATION_DECISION) => {
                 // Cell subject is the moderated `target_ref`; the decision is
                 // referenced by its sealed Event id (top-level `event_id` once
                 // synced). Latest-wins by target_ref.
@@ -120,14 +121,14 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
                     );
                 }
             }
-            Some("ak.moderation.decision.lift") => {
+            Some(event_kind_str::MODERATION_DECISION_LIFT) => {
                 // The lift names the moderated `target_ref` (same cell subject),
                 // so drop the standing decision keyed by it.
                 if let Some(target_ref) = body_str(payload, "target_ref") {
                     decisions.remove(&target_ref);
                 }
             }
-            Some("ak.moderation.appeal.submit") => {
+            Some(event_kind_str::MODERATION_APPEAL_SUBMIT) => {
                 if let Some(appeal_id) = body_str(payload, "appeal_id") {
                     appeals.insert(
                         appeal_id.clone(),
@@ -140,14 +141,15 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
                     );
                 }
             }
-            Some("ak.moderation.appeal.review") => {
+            Some(event_kind_str::MODERATION_APPEAL_REVIEW) => {
                 if let Some(appeal_id) = body_str(payload, "appeal_id")
                     && let Some(appeal) = appeals.get_mut(&appeal_id)
                 {
                     appeal.state = "under_review".to_owned();
                 }
             }
-            Some("ak.moderation.appeal.decision") | Some("ak.moderation.appeal.close") => {
+            Some(event_kind_str::MODERATION_APPEAL_DECISION)
+            | Some(event_kind_str::MODERATION_APPEAL_CLOSE) => {
                 if let Some(appeal_id) = body_str(payload, "appeal_id") {
                     appeals.remove(&appeal_id);
                 }
@@ -198,7 +200,7 @@ pub fn ModerationWorkbench(
             div { class: "event", "data-testid": "moderation-decide-form",
                 div { class: "event-head",
                     span { "Seal moderation decision" }
-                    span { class: "badge", title: "ak.moderation.decision", "Decision" }
+                    span { class: "badge", title: event_kind_str::MODERATION_DECISION, "Decision" }
                 }
                 div { class: "muted",
                     "content-moderation.md §4 — a sealed decision over a target_ref. hard_deny / soft_deny / quarantine / require_review change cross-peer visibility."

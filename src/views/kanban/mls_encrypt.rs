@@ -1,3 +1,4 @@
+use arkret_wire::event_kind_str;
 use serde_json::{Value, json};
 
 use super::model::*;
@@ -244,7 +245,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         )?
     };
     let envelope_aad =
-        arkret_sdk::EncryptedEnvelopeAad::hidden(&effective_scope, "ak.strand.update")
+        arkret_sdk::EncryptedEnvelopeAad::hidden(&effective_scope, event_kind_str::STRAND_UPDATE)
             .map_err(|error| format!("invalid scope for encrypted AAD: {error:?}"))?;
     let (
         schedule_hash,

@@ -1,3 +1,5 @@
+use arkret_wire::event_kind_str;
+
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
 
@@ -326,7 +328,7 @@ pub async fn submit_circle_scope_rotate_draft(
     let accepted_commit_ref = draft
         .events
         .iter()
-        .find(|event| event.kind.as_str() == "ak.mls.commit")
+        .find(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
         .map(|event| event.event_id.clone())
         .ok_or_else(|| anyhow::anyhow!("Circle scope rotate has no MLS commit Event"))?;
     state_store

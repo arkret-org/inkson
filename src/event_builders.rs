@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use arkret_wire::SchemaId;
 use serde_json::Value;
 
 use crate::operation::{
@@ -545,7 +546,7 @@ fn build_realm_create_event_from_object(
         realm_body,
     )
     .preconditions(preconditions)
-    .requirements(event_requirements_with_schema("ak.schema.realm_genesis.v1"))
+    .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -623,7 +624,7 @@ pub fn build_managed_agent_pcr_create_event(
     .executed_by(controller_id)
     .authorization_ref(controller_authorization_ref)
     .preconditions(vec![head_eq_precondition(&cell, Value::Null)?])
-    .requirements(event_requirements_with_schema("ak.schema.realm_genesis.v1"))
+    .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
     .created_at(created_at)
     .build_sdk_event("inkson")
 }
@@ -678,7 +679,7 @@ pub fn build_direct_conversation_founding_events(
         create_payload,
     )
     .preconditions(vec![head_eq_precondition(&create_cell, Value::Null)?])
-    .requirements(event_requirements_with_schema("ak.schema.realm_genesis.v1"))
+    .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
     .created_at(created_at)
     .build_sdk_event("inkson")?;
 
@@ -996,7 +997,7 @@ pub fn build_space_create_event(
     TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceCreate>(
         realm_id, actor_id, space_body,
     )
-    .requirements(event_requirements_with_schema("ak.schema.space.v1"))
+    .requirements(event_requirements_with_schema(SchemaId::SPACE_V1))
     .created_at(created_at)
     .build_sdk_event("inkson")
 }

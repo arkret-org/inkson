@@ -42,6 +42,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use arkret_sdk::EventPayloadExt as _;
+use arkret_wire::{AccountDataKey, event_kind_str};
 use garth::{
     AccountCommitOutcome, AccountPostCommitHook, AccountPostCommitOutcome, AccountStepCommitter,
     AccountStepHandlers, AccountStreamStep, RunOptions, SyncLoopControl, TransportProvider,
@@ -1115,7 +1116,7 @@ async fn run_circle_scope_rotate_pass(
                     let commit_event_id = draft
                         .events
                         .iter()
-                        .find(|event| event.kind.as_str() == "ak.mls.commit")
+                        .find(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
                         .map(|event| event.event_id.clone())
                         .ok_or_else(|| {
                             anyhow::anyhow!("Realm scope rotate has no MLS commit Event")
@@ -1310,7 +1311,7 @@ async fn run_circle_scope_rotate_pass(
             let events = draft.events;
             let commit_event_id = match events
                 .iter()
-                .find(|event| event.kind.as_str() == "ak.mls.commit")
+                .find(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
                 .map(|event| event.event_id.clone())
             {
                 Some(event_id) => event_id,
@@ -2200,7 +2201,7 @@ fn to_device_batch_safe_for_ingest_ack(messages: &[arkret_sdk::DeviceMessageEnve
             .ok()
             .and_then(|value| value.get("kind").and_then(Value::as_str).map(str::to_owned))
             .as_deref()
-            == Some("ak.mls.welcome")
+            == Some(event_kind_str::MLS_WELCOME)
     })
 }
 
@@ -2243,7 +2244,7 @@ fn response_revokes_local_device(
             let Some(payload) = event.get("payload") else {
                 return false;
             };
-            kind == "ak.device.revoke"
+            kind == event_kind_str::DEVICE_REVOKE
                 && payload.get("principal_id").and_then(Value::as_str)
                     == Some(account_core_id.as_str())
                 && payload.get("device_id").and_then(Value::as_str) == Some(device_id)
@@ -2321,14 +2322,14 @@ fn discussion_state_event_is_ingestable(event: &Value) -> bool {
     matches!(
         discussion_state_control_event_kind(event),
         Some(
-            "ak.message.create"
-                | "ak.message.revise"
-                | "ak.message.redact"
-                | "ak.reaction.add"
-                | "ak.reaction.remove"
-                | "ak.pin.add"
-                | "ak.pin.remove"
-                | "ak.pin.reorder"
+            event_kind_str::MESSAGE_CREATE
+                | event_kind_str::MESSAGE_REVISE
+                | event_kind_str::MESSAGE_REDACT
+                | event_kind_str::REACTION_ADD
+                | event_kind_str::REACTION_REMOVE
+                | event_kind_str::PIN_ADD
+                | event_kind_str::PIN_REMOVE
+                | event_kind_str::PIN_REORDER
         )
     )
 }
@@ -2435,18 +2436,6 @@ pub(crate) fn ingest_kanban_events(
         }
     }
     changed
-}
-
-fn sync_event_string(value: Option<&Value>, path: &[&str]) -> Option<String> {
-    let mut current = value?;
-    for segment in path {
-        current = current.get(*segment)?;
-    }
-    current
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 #[derive(Clone, Debug)]
@@ -2829,7 +2818,7 @@ pub(crate) fn apply_account_data_entries(
             }
         }
         // ak.client.ui_state — theme + avatar pointer.
-        if account_data_key == "ak.client.ui_state" {
+        if account_data_key == AccountDataKey::CLIENT_UI_STATE {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
                 account_data_key,
@@ -2862,7 +2851,7 @@ pub(crate) fn apply_account_data_entries(
             continue;
         }
         // ak.account.blocklist — personal block list.
-        if account_data_key == "ak.presence.visibility" {
+        if account_data_key == AccountDataKey::PRESENCE_VISIBILITY {
             let Some(visibility) = crate::account_data::decrypt_account_data_entry(
                 account_did,
                 account_data_key,
@@ -2884,7 +2873,7 @@ pub(crate) fn apply_account_data_entries(
         // ak.presence.preference — manual presence preference
         // (profiles-presence.md §3.6). The server stores only the standard
         // account-data AEAD envelope; decrypt before applying it locally.
-        if account_data_key == "ak.presence.preference" {
+        if account_data_key == AccountDataKey::PRESENCE_PREFERENCE {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
                 account_data_key,
@@ -2899,7 +2888,7 @@ pub(crate) fn apply_account_data_entries(
             }
             continue;
         }
-        if account_data_key == "ak.dnd_schedule" {
+        if account_data_key == AccountDataKey::DND_SCHEDULE {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
                 account_data_key,
@@ -2914,7 +2903,7 @@ pub(crate) fn apply_account_data_entries(
             }
             continue;
         }
-        if account_data_key == "ak.account.blocklist" {
+        if account_data_key == AccountDataKey::ACCOUNT_BLOCKLIST {
             match crate::account_data::decrypt_account_data_entry(
                 account_did,
                 account_data_key,

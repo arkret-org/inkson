@@ -31,6 +31,7 @@
 //! - `GET /_arkret/self/account/viewer` — implemented (soland)
 //! - `POST /_arkret/gate/account/device-pair` — spec-level device pairing.
 
+use arkret_wire::event_kind_str;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 use dioxus_router::hooks::use_route;
@@ -806,7 +807,7 @@ fn render_revoke_modal(
                 div { class: "modal-body workflow-form device-revoke-modal-body",
                     p {
                         "This will write "
-                        code { "ak.device.revoke" }
+                        code { {event_kind_str::DEVICE_REVOKE} }
                         " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone."
                     }
                     p { class: "muted", "data-testid": "device-revoke-threat-note",

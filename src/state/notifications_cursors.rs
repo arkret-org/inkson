@@ -1,3 +1,5 @@
+use arkret_wire::SchemaId;
+
 use super::*;
 
 impl LocalStateStore {
@@ -68,7 +70,7 @@ impl LocalStateStore {
         let marker = ReadMarkerRecord {
             body: ReadMarkerBody {
                 id: new_read_cursor_id(),
-                schema: "ak.schema.read_cursor.v1".to_owned(),
+                schema: SchemaId::READ_CURSOR_V1.to_owned(),
                 realm_id: realm_id.clone(),
                 read_scope: read_scope.clone(),
                 position,
@@ -88,7 +90,7 @@ impl LocalStateStore {
         let marker = ReadMarkerRecord {
             body: ReadMarkerBody {
                 id: new_read_cursor_id(),
-                schema: "ak.schema.read_cursor.v1".to_owned(),
+                schema: SchemaId::READ_CURSOR_V1.to_owned(),
                 realm_id: outcome.realm_id.to_string(),
                 read_scope: outcome.read_scope,
                 position: outcome.position,
@@ -184,7 +186,7 @@ impl LocalStateStore {
                     .and_then(Value::as_str)
                     .map(str::to_owned)
                     .unwrap_or_else(new_read_cursor_id),
-                schema: "ak.schema.read_cursor.v1".to_owned(),
+                schema: SchemaId::READ_CURSOR_V1.to_owned(),
                 realm_id: realm_id.to_owned(),
                 read_scope: read_scope.clone(),
                 position,

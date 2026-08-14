@@ -1,3 +1,5 @@
+use arkret_wire::event_kind_str;
+
 use super::*;
 
 #[derive(Clone, PartialEq)]
@@ -875,7 +877,7 @@ impl ChatController {
                         Some(message.realm_id.clone()),
                         json!({
                             "event_id": submitted.event_id.clone(),
-                            "kind": "ak.message.create",
+                            "kind": event_kind_str::MESSAGE_CREATE,
                             "actor_id": actor,
                             "body": message.body,
                             "strand_id": message.strand_id,
