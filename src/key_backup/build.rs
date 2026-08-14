@@ -97,7 +97,7 @@ pub fn build_passphrase_kdf_backup_successor_body(
     secret: &[u8],
     item: &KeyBackupContentItem,
     frontier_digest: &arkret_sdk::Hash,
-    device_generation_ref: arkret_sdk::NonEmptyString,
+    device_generation_ref: u64,
 ) -> anyhow::Result<KeyBackup> {
     let envelope = arkret_crypto::backup::build_key_backup_successor_envelope(
         arkret_sdk::BackupId::new(backup_id.to_owned())?,

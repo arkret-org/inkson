@@ -48,8 +48,7 @@ fn backup_frontier_ref() -> arkret_sdk::KeyBackupFrontierRef {
     arkret_sdk::KeyBackupFrontierRef {
         frontier_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
         seal_ref: Some(format!("ak:seal:sha256:{}", "b".repeat(64))),
-        device_generation_ref: arkret_sdk::NonEmptyString::new("device-generation-1".to_owned())
-            .unwrap(),
+        device_generation_ref: 1,
     }
 }
 
@@ -1433,7 +1432,7 @@ fn restore_brings_back_the_sidecar_into_the_store() {
             extra: Default::default(),
         }],
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        arkret_sdk::NonEmptyString::new("fixture_generation:1").unwrap(),
+        1,
     )
     .unwrap();
     let sidecar_body = sign_wire_envelope(key_backup_wire(&sidecar_body));

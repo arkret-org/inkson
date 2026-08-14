@@ -67,17 +67,10 @@ pub(crate) async fn prepare_root_anchored_recovery(
         anyhow::bail!("recovery session is not the verified root-anchored snapshot");
     }
 
-    let previous_generation = verified_session
-        .current_device_generation_ref
-        .as_str()
-        .to_owned();
-    let current_root_generation = did_webvh_version_sequence(&previous_generation)?;
-    let root_material =
-        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
-            recovery_words,
-            "",
-            current_root_generation,
-        )?;
+    let previous_device_generation = verified_session.current_device_generation_ref;
+    let result_device_generation = previous_device_generation
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("device generation exhausted"))?;
     let backup_material =
         arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
             recovery_words,
@@ -95,10 +88,21 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .entries
         .last()
         .ok_or_else(|| anyhow::anyhow!("principal DID history is empty"))?;
+    let previous_did_version = previous_entry
+        .get("versionId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("DID history head omits versionId"))?;
+    let current_root_generation = did_webvh_version_sequence(previous_did_version)?;
+    let root_material =
+        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+            recovery_words,
+            "",
+            current_root_generation,
+        )?;
     if previous_entry
         .get("versionId")
         .and_then(serde_json::Value::as_str)
-        != Some(previous_generation.as_str())
+        != Some(previous_did_version)
         || verified_session.registry_head
             != Hash::new(arkret_sdk::canonical::canonical_sha256(previous_entry)?)?
     {
@@ -134,7 +138,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
             state: &document_state,
         },
     )?;
-    if rotation.previous_version_id != previous_generation {
+    if rotation.previous_version_id != previous_did_version {
         anyhow::bail!("prepared DID rotation does not immediately follow the recovery snapshot");
     }
 
@@ -194,8 +198,8 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let digest_suite = arkret_sdk::canonical::DigestSuite::Sha256;
     let reanchor_payload = exact_device_reanchor_payload(
         &verified_session,
-        current_root_generation,
-        did_webvh_version_sequence(&rotation.version_id)?,
+        previous_device_generation,
+        result_device_generation,
         device_authorize_payload_digest(&serde_json::to_value(&authorize_payload)?, digest_suite)?,
     )?;
 
@@ -301,8 +305,8 @@ pub(crate) async fn prepare_root_anchored_recovery(
             &verified_session,
         )?)?,
         proof_digest: proof_summary.proof_digest.clone(),
-        previous_model_generation_ref: previous_generation,
-        result_model_generation_ref: rotation.version_id,
+        previous_model_generation_ref: previous_device_generation,
+        result_model_generation_ref: result_device_generation,
         did_publication,
         reanchor_unit: PreparedEventUnit::new(
             coordinator_service_id,

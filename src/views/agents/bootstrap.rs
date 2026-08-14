@@ -474,10 +474,7 @@ fn build_managed_pcr_backup_body(
         Some(arkret_sdk::KeyBackupFrontierRef {
             frontier_digest: envelope_frontier.frontier_digest.clone(),
             seal_ref: Some(envelope_frontier.seal_ref.clone()),
-            device_generation_ref: arkret_sdk::NonEmptyString::new(
-                trust_anchor.generation_ref.as_str().to_owned(),
-            )
-            .map_err(anyhow::Error::msg)?,
+            device_generation_ref: trust_anchor.generation_ref,
         }),
     )
 }
@@ -1475,7 +1472,7 @@ mod tests {
                 "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e".to_owned(),
             )
             .unwrap(),
-            generation_ref: arkret_sdk::NonEmptyString::new("did-version-1".to_owned()).unwrap(),
+            generation_ref: 1,
         }
     }
 

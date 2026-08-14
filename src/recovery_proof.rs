@@ -20,8 +20,6 @@ use serde_json::Value;
 /// session JSON (the `ak.schema.recovery_session.v1` create/get response).
 pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Value> {
     let state: arkret_sdk::RecoverySessionState = serde_json::from_value(session.clone())?;
-    let model_generation_ref =
-        arkret_sdk::RecoveryModelGenerationRef::new(state.current_device_generation_ref.clone())?;
     let transcript = arkret_sdk::PrincipalSigningTranscript {
         schema: "ak.identity.recovery_proof.v1".to_owned(),
         kind: arkret_sdk::RecoveryProofKind::PrincipalSigning,
@@ -32,7 +30,7 @@ pub fn principal_signing_proof_transcript(session: &Value) -> anyhow::Result<Val
         policy_version: state.policy_version,
         recovery_session_id: state.recovery_session_id,
         identity_model: state.identity_model,
-        model_generation_ref,
+        model_generation_ref: state.current_device_generation_ref,
         publication_authority_context_digest: state.publication_authority_context_digest,
         challenge: state.challenge,
         expires_at: state.expires_at,
