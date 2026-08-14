@@ -335,7 +335,7 @@ pub fn prepare_genesis_draft(
         hpke_key,
         device_signer,
     )?;
-    let initial = arkret_sdk::InitialSessionGrantRequest {
+    let initial = arkret_sdk::InitialSessionGrantIntent {
         device_id: arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
         session_public_key: dpop.canonical_session_public_jwk()?,
         audience,

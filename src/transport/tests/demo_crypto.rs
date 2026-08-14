@@ -13,7 +13,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
             crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001").unwrap(),
         ),
-        key_package: "AAAA".to_owned(),
+        keypackage: "AAAA".to_owned(),
         keypackage_ref: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
         cipher_suites: vec!["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned()],
         capabilities: Vec::new(),
@@ -63,5 +63,5 @@ fn mls_key_package_upload_entry_carries_digest_and_ref() {
         record.keypackage_ref.as_str()
     );
     assert_eq!(entry.keypackage_ref, record.keypackage_ref.as_str());
-    assert_eq!(entry.key_package.as_str(), record.key_package.as_str());
+    assert_eq!(entry.keypackage.as_str(), record.keypackage.as_str());
 }

@@ -187,22 +187,22 @@ pub fn moderation_appeal_decision(
     realm_id: &str,
     actor: &str,
     appeal_id: &str,
-    verdict: &str,
+    decision: &str,
     reason_text_ref: &str,
     modify_decision_ref: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
-    let verdict = match verdict {
-        "uphold" => arkret_sdk::AppealVerdict::Uphold,
-        "overturn" => arkret_sdk::AppealVerdict::Overturn,
-        "modify" => arkret_sdk::AppealVerdict::Modify,
-        other => anyhow::bail!("invalid moderation appeal verdict {other:?}"),
+    let decision = match decision {
+        "uphold" => arkret_sdk::AppealDecision::Uphold,
+        "overturn" => arkret_sdk::AppealDecision::Overturn,
+        "modify" => arkret_sdk::AppealDecision::Modify,
+        other => anyhow::bail!("invalid moderation appeal decision {other:?}"),
     };
     let payload = arkret_sdk::AppealDecisionPayload {
         appeal_id: arkret_sdk::TypedAppealId::new(appeal_id.to_owned())?,
         realm_id: arkret_sdk::RealmId::new(realm.clone())?,
         reviewer: did_id(actor)?,
-        verdict,
+        decision,
         reason_text_ref: reason_text_ref.to_owned(),
         modify_decision_ref: modify_decision_ref
             .map(|event_id| arkret_sdk::EventId::new(event_id.to_owned()))

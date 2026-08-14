@@ -38,10 +38,10 @@ pub(crate) enum RecoveryKeyBackupOutcome {
     /// metadata and clear the already-confirmed plaintext from memory.
     Established,
     /// The server refused because this session device is not an authorized,
-    /// verified key-management device (`device_not_authorized`). The generated
+    /// verified key-management device (`device_unauthorized`). The generated
     /// key remains only in the caller's in-memory custody-confirmation surface;
     /// it is never persisted or uploaded.
-    DeviceNotAuthorized,
+    DeviceUnauthorized,
     /// A transient failure (network / 5xx / not-yet-authenticated). Nothing was
     /// established; the caller may retry without having leaked or persisted a
     /// divergent key.
@@ -208,7 +208,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                 }
                 if let Some(handler) = on_outcome {
                     handler.call(if device_unauthorized {
-                        RecoveryKeyBackupOutcome::DeviceNotAuthorized
+                        RecoveryKeyBackupOutcome::DeviceUnauthorized
                     } else {
                         RecoveryKeyBackupOutcome::Transient
                     });

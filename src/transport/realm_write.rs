@@ -1075,7 +1075,7 @@ pub async fn appeal_decide(
     realm_id: &str,
     actor_id: &str,
     appeal_id: &str,
-    verdict: &str,
+    decision: &str,
     reason_text_ref: &str,
     modify_decision_ref: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
@@ -1083,7 +1083,7 @@ pub async fn appeal_decide(
         realm_id,
         actor_id,
         appeal_id,
-        verdict,
+        decision,
         reason_text_ref,
         modify_decision_ref,
     )?

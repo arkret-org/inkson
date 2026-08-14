@@ -747,7 +747,7 @@ mod tests {
             device_id: Some(device_id),
             agent_id: None,
             agent_verification_method: None,
-            key_package: record.key_package.clone(),
+            keypackage: record.keypackage.clone(),
             capabilities: record.capabilities.clone(),
             capabilities_digest: record.keypackage_ref.clone(),
             device_authorize_event_id: Some(

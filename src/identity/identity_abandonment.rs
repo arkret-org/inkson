@@ -42,10 +42,10 @@ pub fn has_fresh_confirmation_handoff(
     _handoff: &PendingAccountHandoff,
     pending: &PendingIdentityAbandonment,
 ) -> bool {
-    let ready = !pending.requires_fresh_authentication;
+    let ready = !pending.fresh_authentication_required;
     tracing::debug!(
         challenge_request_id = %pending.challenge.request_id,
-        server_requires_fresh_authentication = pending.requires_fresh_authentication,
+        server_requires_fresh_authentication = pending.fresh_authentication_required,
         challenge_expired = pending.challenge.expires_at <= chrono::Utc::now(),
         "evaluated identity-abandonment confirmation readiness"
     );
@@ -113,7 +113,7 @@ pub async fn issue_challenge(
     );
     Ok(PendingIdentityAbandonment {
         challenge,
-        requires_fresh_authentication: true,
+        fresh_authentication_required: true,
     })
 }
 
@@ -135,10 +135,10 @@ pub async fn confirm(
     tracing::info!(
         handoff_request_id = %handoff.request_id,
         challenge_request_id = %pending.challenge.request_id,
-        server_requires_fresh_authentication = pending.requires_fresh_authentication,
+        server_requires_fresh_authentication = pending.fresh_authentication_required,
         "using Account Authority abandonment freshness decision"
     );
-    if pending.requires_fresh_authentication {
+    if pending.fresh_authentication_required {
         anyhow::bail!("identity abandonment confirmation requires a fresh account handoff");
     }
     if pending.challenge.expires_at <= chrono::Utc::now() {

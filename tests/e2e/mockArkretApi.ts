@@ -1531,7 +1531,7 @@ export async function mockArkretApi(
         {
           ok: false,
           error: {
-            code: "invalid_param",
+            code: "param_invalid",
             message: "frontier selector is required",
           },
         },
@@ -3467,7 +3467,7 @@ export async function mockArkretApi(
           route,
           {
             ok: false,
-            error: { code: "invalid_param", message: "slug is required" },
+            error: { code: "param_invalid", message: "slug is required" },
           },
           400,
         );
@@ -3506,7 +3506,7 @@ export async function mockArkretApi(
           {
             ok: false,
             error: {
-              code: "invalid_param",
+              code: "param_invalid",
               message: "phase must be prepare or commit",
             },
           },
@@ -3619,7 +3619,7 @@ export async function mockArkretApi(
           {
             ok: false,
             error: {
-              code: "invalid_param",
+              code: "param_invalid",
               message:
                 "lifecycle_event does not match the delegated Agent transition",
             },

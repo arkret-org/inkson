@@ -79,9 +79,9 @@ pub fn is_authenticated_session_unavailable_error(error: &anyhow::Error) -> bool
 /// codes that reduce to "this device cannot establish a new account
 /// Recovery Key root":
 ///
-/// - `device_not_authorized` — soland's `ensure_key_backup_writer_device_authorized` gate
-///   (unverified / unpaired device writing the account Recovery Key backup).
-/// - `recovery_policy_device_not_authorized` — the recovery-policy genesis path falls back to the
+/// - `device_unauthorized` — soland's `ensure_key_backup_writer_device_authorized` gate (unverified
+///   / unpaired device writing the account Recovery Key backup).
+/// - `recovery_policy_device_unauthorized` — the recovery-policy genesis path falls back to the
 ///   projected device row's `device_public_key`; a session device that was never enrolled (no
 ///   `ak.device.authorize`) has no key there.
 /// Recovery setup MUST treat both as fail-closed: a device that cannot pass
@@ -92,7 +92,7 @@ pub fn is_device_not_authorized_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         matches!(
             envelope.code(),
-            "device_not_authorized" | "recovery_policy_device_not_authorized"
+            "device_unauthorized" | "recovery_policy_device_unauthorized"
         )
     })
 }
@@ -180,7 +180,7 @@ fn terminal_session_grant_refresh_code(code: &str) -> bool {
         arkret_sdk::error::ErrorCode::GRANT_ALREADY_CONSUMED,
         arkret_sdk::error::ErrorCode::SESSION_GRANT_NOT_FOUND,
         arkret_sdk::error::ErrorCode::SESSION_LOGGED_OUT,
-        arkret_sdk::error::ErrorCode::INVALID_SIGNATURE,
+        arkret_sdk::error::ErrorCode::SIGNATURE_INVALID,
         arkret_sdk::error::ErrorCode::DID_PROOF_REQUIRED,
         arkret_sdk::error::ErrorCode::AUTHORIZED_GRANT_REVOKED,
     ]
@@ -264,7 +264,7 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
 pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         let code = envelope.code();
-        // `invalid_param` only counts when the message mentions the
+        // `param_invalid` only counts when the message mentions the
         // cursor — soland uses it for generic schema rejections too.
         let cursor_message = envelope.message().to_lowercase().contains("cursor");
         matches!(
@@ -273,7 +273,7 @@ pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
                 || code == arkret_sdk::error::ErrorCode::CURSOR_INTEGRITY_INVALID
                 || code == arkret_sdk::error::ErrorCode::CURSOR_UNRECOGNIZED
         ) || (cursor_message
-            && matches!(code, code if code == arkret_sdk::ErrorCode::INVALID_PARAM || code == arkret_sdk::ErrorCode::CURSOR_INVALID))
+            && matches!(code, code if code == arkret_sdk::ErrorCode::PARAM_INVALID || code == arkret_sdk::ErrorCode::CURSOR_INVALID))
     })
 }
 

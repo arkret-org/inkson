@@ -124,7 +124,7 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
     Ok(arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: claim.keypackage_ref.as_str().to_owned(),
         endpoint,
-        key_package: claim.key_package.clone(),
+        keypackage: claim.keypackage.clone(),
         keypackage_ref: claim.keypackage_digest.clone(),
         cipher_suites: Vec::new(),
         capabilities: claim.capabilities.clone(),
@@ -231,7 +231,7 @@ mod tests {
             device_id: Some(device_id),
             agent_id: None,
             agent_verification_method: None,
-            key_package: record.key_package.clone(),
+            keypackage: record.keypackage.clone(),
             capabilities: record.capabilities.clone(),
             capabilities_digest: record.keypackage_ref.clone(),
             device_authorize_event_id: Some(

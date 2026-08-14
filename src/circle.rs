@@ -379,7 +379,7 @@ mod tests {
             CircleErrorKind::from_error_code("circle_encryption_profile_create_locked"),
             Some(CircleErrorKind::EncryptionProfileCreateLocked)
         );
-        assert_eq!(CircleErrorKind::from_error_code("invalid_param"), None);
+        assert_eq!(CircleErrorKind::from_error_code("param_invalid"), None);
     }
 
     #[test]

@@ -418,7 +418,7 @@ pub fn RecoveryPanel(
                                                             .to_owned(),
                                                     );
                                                 }
-                                                RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
+                                                RecoveryKeyBackupOutcome::DeviceUnauthorized => {
                                                     enroll_phase.set(
                                                         EnrollPhase::CustodyConfirmation,
                                                     );

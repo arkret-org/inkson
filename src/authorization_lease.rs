@@ -175,7 +175,7 @@ pub async fn acquire_for_events(
     if events.is_empty() {
         anyhow::bail!("authorization lease issuance requires at least one Event");
     }
-    let request = arkret_wire::AuthorizationLeaseIssueRequest {
+    let request = arkret_wire::AuthorizationLeaseIssueRequestBody {
         events: events.to_vec(),
         intents: Vec::new(),
     };
@@ -227,7 +227,7 @@ pub async fn acquire_for_intent(
     http: &arkret_sdk::http_client::Client,
     intent: arkret_wire::AuthorizationLeaseIssueIntent,
 ) -> anyhow::Result<AuthorizationLease> {
-    let request = arkret_wire::AuthorizationLeaseIssueRequest {
+    let request = arkret_wire::AuthorizationLeaseIssueRequestBody {
         events: Vec::new(),
         intents: vec![intent.clone()],
     };

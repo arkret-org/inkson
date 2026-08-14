@@ -937,9 +937,9 @@ fn decoder_handles_all_envelope_shapes() {
     // 2. Direct canonical envelope.
     let plain = decode_arkret_error(
         StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"invalid_param","message":"bad did"},"request_id":"ak:request:server-contract-direct"}"#,
+        br#"{"ok":false,"error":{"code":"param_invalid","message":"bad did"},"request_id":"ak:request:server-contract-direct"}"#,
     );
-    assert_eq!(plain.code(), "invalid_param");
+    assert_eq!(plain.code(), "param_invalid");
 
     // 3. Garbage / non-JSON: synthesised fallback.
     let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");

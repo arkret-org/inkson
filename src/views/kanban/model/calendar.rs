@@ -1119,7 +1119,7 @@ fn classify_rsvp_head(
             arkret_sdk::RsvpResponseClass::Resolved,
         ),
         (None, Some(_)) => (None, arkret_sdk::RsvpResponseClass::EncryptedUnresolved),
-        _ => (None, arkret_sdk::RsvpResponseClass::InvalidResponse),
+        _ => (None, arkret_sdk::RsvpResponseClass::ResponseInvalid),
     };
     let basis_class = arkret_sdk::CalendarRsvpHead::classify_basis(
         &entry.schedule_basis_refs,

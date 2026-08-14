@@ -20,7 +20,7 @@
 //! scope and lives in `realm_admin.rs` once wired. See
 //! `// TODO(moderation-appeal-blob-upload)` markers below for deferred pieces.
 
-use arkret_sdk::AppealVerdict;
+use arkret_sdk::AppealDecision;
 use chrono::Utc;
 use dioxus::prelude::*;
 
@@ -42,7 +42,7 @@ pub enum AppealState {
     None,
     Submitted,
     UnderReview,
-    Decided { verdict: AppealVerdict },
+    Decided { decision: AppealDecision },
     Closed,
 }
 

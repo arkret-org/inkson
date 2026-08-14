@@ -32,9 +32,9 @@ fn decodes_bare_arkret_error_envelope() {
 fn decodes_plain_error_envelope_and_falls_back() {
     let decoded = decode_arkret_error(
         StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid did"},"request_id":"ak:request:test"}"#,
+        br#"{"ok":false,"error":{"code":"param_invalid","message":"invalid did"},"request_id":"ak:request:test"}"#,
     );
-    assert_eq!(decoded.code(), "invalid_param");
+    assert_eq!(decoded.code(), "param_invalid");
 
     // The SDK's ErrorEnvelope::new strips the `ak.error.` prefix in
     // `canonical_error_code` and we depend on that canonicalization so
@@ -93,7 +93,7 @@ fn sdk_api_errors_use_same_classifiers() {
 
     let invalid_cursor = sdk_api_error(
         StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"invalid_param","message":"invalid cursor"},"request_id":"ak:request:test"}"#,
+        br#"{"ok":false,"error":{"code":"param_invalid","message":"invalid cursor"},"request_id":"ak:request:test"}"#,
     );
     assert!(is_invalid_cursor_error(&invalid_cursor));
 
@@ -130,15 +130,15 @@ fn recognizes_device_not_authorized_errors() {
     // unverified / unauthorized session device. Recovery setup keys its
     // fail-closed routing on this, so the classifier must match it and
     // nothing else.
-    let device_not_authorized: anyhow::Error = TransportClientError {
+    let device_unauthorized: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
         error: decode_arkret_error(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"device_not_authorized","message":"key backup write requires the authenticated session device to be verified"},"request_id":"ak:request:test"}"#,
+            br#"{"ok":false,"error":{"code":"device_unauthorized","message":"key backup write requires the authenticated session device to be verified"},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();
-    assert!(is_device_not_authorized_error(&device_not_authorized));
+    assert!(is_device_not_authorized_error(&device_unauthorized));
 
     // The recovery-policy genesis path emits its own code when the session
     // device was never enrolled (no projected `device_public_key`). It must
@@ -148,7 +148,7 @@ fn recognizes_device_not_authorized_errors() {
         status: StatusCode::CONFLICT,
         error: decode_arkret_error(
             StatusCode::CONFLICT,
-            br#"{"ok":false,"error":{"code":"recovery_policy_device_not_authorized","message":"recovery policy genesis requires an authorized device for did:webvh:..."},"request_id":"ak:request:test"}"#,
+            br#"{"ok":false,"error":{"code":"recovery_policy_device_unauthorized","message":"recovery policy genesis requires an authorized device for did:webvh:..."},"request_id":"ak:request:test"}"#,
         ),
     }
     .into();

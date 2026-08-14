@@ -2395,7 +2395,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
     assert_eq!(
         prompts[0].state,
         AppealState::Decided {
-            verdict: arkret_sdk::AppealVerdict::Uphold,
+            decision: arkret_sdk::AppealDecision::Uphold,
         }
     );
 

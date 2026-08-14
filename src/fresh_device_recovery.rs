@@ -276,7 +276,7 @@ where
     pub fn build_completion_grant_issuance(
         &self,
         transaction_id: &TransactionId,
-        initial_session: arkret_sdk::InitialSessionGrantRequest,
+        initial_session: arkret_sdk::InitialSessionGrantIntent,
     ) -> anyhow::Result<IssueRecoveryCompletionGrantRequest> {
         let local = self
             .engine

@@ -9,7 +9,7 @@ use arkret_sdk::signatures::agent_evidence::{
 };
 use arkret_sdk::signatures::{Ed25519DetachedJwsVerifier, PublicKeyMaterial};
 use arkret_sdk::{
-    AgentSignerEvidence, AgentSignerEvidenceQueryRequestBodyBody, AgentSignerEvidenceQuerySelector,
+    AgentSignerEvidence, AgentSignerEvidenceQueryRequestBody, AgentSignerEvidenceQuerySelector,
     DidCoreId, DidFullId, DidUrl, Hash, NonEmptyString, NotarySig, ProtocolOperationId, RealmId,
 };
 use base64::Engine as _;
@@ -123,7 +123,7 @@ pub(crate) async fn prefetch_from_realm_projections(
                     },
                 )
                 .collect();
-            let request = AgentSignerEvidenceQueryRequestBodyBody {
+            let request = AgentSignerEvidenceQueryRequestBody {
                 realm_id: realm_id.clone(),
                 queries,
             };
@@ -539,7 +539,7 @@ fn current_evidence_matches_context(
 fn signal_evidence_query(
     envelope: &arkret_wire::SignalEnvelope,
     context: &CachedAgentSignerEvidenceContext,
-) -> Option<AgentSignerEvidenceQueryRequestBodyBody> {
+) -> Option<AgentSignerEvidenceQueryRequestBody> {
     let CachedAgentSignerEvidenceContext::CurrentSignal {
         operation_id,
         request_digest,
@@ -550,7 +550,7 @@ fn signal_evidence_query(
     else {
         unreachable!("Signal evidence query requires current Signal context")
     };
-    Some(AgentSignerEvidenceQueryRequestBodyBody {
+    Some(AgentSignerEvidenceQueryRequestBody {
         realm_id: envelope.realm_id.clone(),
         queries: vec![AgentSignerEvidenceQuerySelector::CurrentAdmission {
             agent_id: envelope.sender_actor_id.clone(),

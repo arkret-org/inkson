@@ -164,7 +164,7 @@ impl MlsEndpoints<'_> {
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
             principal_id,
             device_id,
-            key_packages: vec![entry],
+            keypackages: vec![entry],
             expires_at: None,
             strand_id: None,
             mls_group_id: None,

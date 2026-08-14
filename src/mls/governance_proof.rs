@@ -99,7 +99,7 @@ pub(crate) fn proof_request(
     mls_group_id: impl Into<String>,
     previous_epoch: u64,
     next_epoch: u64,
-) -> Result<arkret_sdk::MlsGovernanceProofRequestBodyBody, String> {
+) -> Result<arkret_sdk::MlsGovernanceProofRequestBody, String> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS governance proof Realm id: {error}"))?;
     let effective_scope = match circle_id
@@ -130,12 +130,12 @@ pub(crate) fn proof_request_for_scope(
     mls_group_id: impl Into<String>,
     previous_epoch: u64,
     next_epoch: u64,
-) -> Result<arkret_sdk::MlsGovernanceProofRequestBodyBody, String> {
+) -> Result<arkret_sdk::MlsGovernanceProofRequestBody, String> {
     let realm_id = effective_scope
         .realm_id_opt()
         .cloned()
         .ok_or_else(|| "MLS governance proof rejects RealmGenesis scope".to_owned())?;
-    let request = arkret_sdk::MlsGovernanceProofRequestBodyBody {
+    let request = arkret_sdk::MlsGovernanceProofRequestBody {
         realm_id: realm_id.clone(),
         effective_scope,
         mls_group_id: mls_group_id.into(),
@@ -167,7 +167,7 @@ pub(crate) fn proof_request_for_scope(
 async fn fetch_proof_bundle<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
     let http = api
         .sdk_http_client()
@@ -231,7 +231,7 @@ async fn fetch_proof_bundle<S: GovernanceProofStateStore>(
 
 async fn fetch_proof_chunk_with_retry(
     http: &arkret_sdk::Client,
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
 ) -> Result<arkret_sdk::MlsGovernanceProofBundle, String> {
     const MAX_PROJECTION_ATTEMPTS: u32 = 8;
     for attempt in 0..MAX_PROJECTION_ATTEMPTS {
@@ -271,7 +271,7 @@ fn governance_projection_pending(error: &arkret_sdk::http_client::Error) -> bool
 pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None, None)
@@ -282,7 +282,7 @@ pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
 pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
     fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None, None)
@@ -293,7 +293,7 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
 pub(crate) async fn fetch_verify_and_cache_sidecar_proof_bundle<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
     sidecar_binding: &arkret_sdk::SidecarMlsBinding,
 ) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
@@ -312,7 +312,7 @@ pub(crate) async fn fetch_verify_and_cache_sidecar_proof_bundle<S: GovernancePro
 pub(crate) async fn fetch_verify_and_cache_expected_proof<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
     expected_binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
@@ -331,7 +331,7 @@ pub(crate) async fn fetch_verify_and_cache_expected_proof<S: GovernanceProofStat
 async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
     expected_binding: Option<&arkret_sdk::MlsGovernanceBindingPayload>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
@@ -849,7 +849,7 @@ fn delegated_device_verification_method_pair(
 }
 
 pub(crate) fn verify_proof_bundle<R>(
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
     bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     trusted_anchor: &arkret_sdk::SealId,
     resolver: &R,
@@ -975,7 +975,7 @@ where
 
 pub(crate) fn cached_verified_binding(
     state_store: &crate::state::LocalStateStore,
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     let entry = state_store
         .cached_mls_governance_proof_entry(request, chrono::Utc::now())?
@@ -994,7 +994,7 @@ pub(crate) fn cached_verified_binding(
 }
 
 fn binding_from_verified_frontier(
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
     security_frontier_digest: arkret_sdk::Hash,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
@@ -1120,7 +1120,7 @@ pub(crate) fn security_frontier_with_added_claims(
         {
             return Err("claimed KeyPackage signer does not project to principal_id".to_owned());
         }
-        let key_package = arkret_sdk::base64url_decode(record.key_package.as_bytes())
+        let key_package = arkret_sdk::base64url_decode(record.keypackage.as_bytes())
             .map_err(|error| format!("claimed KeyPackage decode failed: {error}"))?;
         let key_package_digest =
             arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&key_package))
@@ -1255,7 +1255,7 @@ pub(crate) fn seed_test_governance_proof(
 }
 
 fn verify_request_binding(
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: &arkret_sdk::MlsGovernanceProofRequestBody,
     binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<(), String> {
     request

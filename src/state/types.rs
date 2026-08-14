@@ -548,7 +548,7 @@ pub struct SnapshotSyncStatus {
 /// cache, while the typed binding and Seal ids keep lookup/invalidation exact.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedMlsGovernanceProof {
-    pub request: arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    pub request: arkret_sdk::MlsGovernanceProofRequestBody,
     pub governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     pub trusted_anchor_seal_id: arkret_sdk::SealId,
     pub accepted_seal_id: arkret_sdk::SealId,
@@ -703,7 +703,7 @@ pub struct PendingPrincipalRegistration {
     pub pcr_genesis_unit: Option<arkret_wire::PcrGenesisUnit>,
     /// First Standard grant request, bound to the durable DPoP key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub initial_session: Option<arkret_sdk::InitialSessionGrantRequest>,
+    pub initial_session: Option<arkret_sdk::InitialSessionGrantIntent>,
     /// Verified terminal PCR genesis receipt returned with the Standard grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcr_genesis_receipt: Option<arkret_sdk::EventBatchReceipt>,
@@ -726,7 +726,7 @@ pub struct PendingIdentityAbandonment {
     pub challenge: arkret_sdk::IdentityAbandonmentChallengeOutcome,
     /// Account Authority freshness decision for the current handoff. This is
     /// never inferred by comparing locally persisted bearer credentials.
-    pub requires_fresh_authentication: bool,
+    pub fresh_authentication_required: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

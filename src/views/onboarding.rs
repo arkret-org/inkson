@@ -632,7 +632,7 @@ async fn issue_recovery_completion_grant(
             (outcome, initial_session)
         }
         None => {
-            let initial_session = arkret_sdk::InitialSessionGrantRequest {
+            let initial_session = arkret_sdk::InitialSessionGrantIntent {
                 device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
                 session_public_key: holder.canonical_session_public_jwk()?,
                 audience: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,

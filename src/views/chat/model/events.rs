@@ -1861,7 +1861,7 @@ pub(crate) fn moderation_appeal_prompts_from_events(
                     && let Some(prompt) = decisions.get_mut(decision_ref)
                 {
                     prompt.state = AppealState::Decided {
-                        verdict: payload.verdict,
+                        decision: payload.decision,
                     };
                 }
             }

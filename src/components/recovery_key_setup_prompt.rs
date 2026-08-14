@@ -385,7 +385,7 @@ pub fn RecoveryKeySetupPrompt(
                                                 confirmation_input.set(String::new());
                                                 open.set(false);
                                             }
-                                            RecoveryKeyBackupOutcome::DeviceNotAuthorized => {
+                                            RecoveryKeyBackupOutcome::DeviceUnauthorized => {
                                                 publishing.set(false);
                                                 device_unauthorized.set(true);
                                             }

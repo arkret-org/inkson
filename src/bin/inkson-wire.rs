@@ -12,7 +12,7 @@ struct CanonicalInput {
 
 #[derive(Debug, Deserialize)]
 struct MlsGovernanceProofInput {
-    request: arkret_sdk::MlsGovernanceProofRequestBodyBody,
+    request: arkret_sdk::MlsGovernanceProofRequestBody,
     events: Vec<arkret_sdk::Event>,
     seals: Vec<arkret_sdk::Seal>,
 }

@@ -113,10 +113,10 @@ fn reconcile_snapshot(
         arkret_sdk::AccountOnboardingGoal::CompleteIdentity => None,
         arkret_sdk::AccountOnboardingGoal::AbandonProvisionalIdentity {
             challenge,
-            requires_fresh_authentication,
+            fresh_authentication_required,
         } => Some(PendingIdentityAbandonment {
             challenge,
-            requires_fresh_authentication,
+            fresh_authentication_required,
         }),
     };
     Ok(handoff)
@@ -155,7 +155,7 @@ pub fn persist_reconciled_handoff(
         if let Some(pending) = handoff.identity_abandonment.as_ref() {
             stored_artifacts
                 .push(arkret_sdk::IdentityCreationLocalArtifactKind::AbandonmentChallenge);
-            if !pending.requires_fresh_authentication {
+            if !pending.fresh_authentication_required {
                 stored_artifacts
                     .push(arkret_sdk::IdentityCreationLocalArtifactKind::FreshAccountHandoff);
             }

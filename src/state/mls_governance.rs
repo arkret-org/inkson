@@ -4,9 +4,7 @@ const MLS_GOVERNANCE_PROOF_CACHE_MAX: usize = 16;
 const MLS_GOVERNANCE_ACQUISITION_CACHE_MAX: usize = 2;
 const MLS_GOVERNANCE_PROOF_CACHE_TTL_MINUTES: i64 = 5;
 
-fn proof_cache_key(
-    request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
-) -> Result<String, String> {
+fn proof_cache_key(request: &arkret_sdk::MlsGovernanceProofRequestBody) -> Result<String, String> {
     request
         .proof_request_digest()
         .map(|digest| digest.to_string())
@@ -16,7 +14,7 @@ fn proof_cache_key(
 impl LocalStateStore {
     pub fn cached_mls_governance_acquisition(
         &self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+        request: &arkret_sdk::MlsGovernanceProofRequestBody,
     ) -> Result<Vec<arkret_sdk::MlsGovernanceProofBundle>, String> {
         let key = proof_cache_key(request)?;
         let state = self.load();
@@ -45,7 +43,7 @@ impl LocalStateStore {
 
     pub fn persist_mls_governance_acquisition_chunk(
         &mut self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+        request: &arkret_sdk::MlsGovernanceProofRequestBody,
         chunk: &arkret_sdk::MlsGovernanceProofBundle,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
@@ -93,7 +91,7 @@ impl LocalStateStore {
 
     pub fn clear_mls_governance_acquisition(
         &mut self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+        request: &arkret_sdk::MlsGovernanceProofRequestBody,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
         let key = proof_cache_key(request)?;
@@ -139,7 +137,7 @@ impl LocalStateStore {
 
     pub fn cache_verified_mls_governance_proof(
         &mut self,
-        request: arkret_sdk::MlsGovernanceProofRequestBodyBody,
+        request: arkret_sdk::MlsGovernanceProofRequestBody,
         governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
         bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
     ) -> Result<(), String> {
@@ -181,7 +179,7 @@ impl LocalStateStore {
 
     pub fn cached_mls_governance_proof(
         &self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+        request: &arkret_sdk::MlsGovernanceProofRequestBody,
         now: DateTime<Utc>,
     ) -> Result<Option<arkret_sdk::MaterializedMlsGovernanceProofBundle>, String> {
         let Some(entry) = self.cached_mls_governance_proof_entry(request, now)? else {
@@ -194,7 +192,7 @@ impl LocalStateStore {
 
     pub fn cached_mls_governance_proof_entry(
         &self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBodyBody,
+        request: &arkret_sdk::MlsGovernanceProofRequestBody,
         now: DateTime<Utc>,
     ) -> Result<Option<CachedMlsGovernanceProof>, String> {
         let key = proof_cache_key(request)?;

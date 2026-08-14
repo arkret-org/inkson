@@ -280,7 +280,7 @@ impl crate::transport::TransportClient {
             .into_iter()
             .find(|event| event.event_id == event_id)
             .ok_or_else(|| anyhow::anyhow!("accepted invite Event was not resolvable"))?;
-        let delivery = arkret_sdk::InviteDeliveryRequestBodyBody::new(
+        let delivery = arkret_sdk::InviteDeliveryRequestBody::new(
             event,
             invitee.invite_address(),
             invitee.introduction_evidence.clone(),
