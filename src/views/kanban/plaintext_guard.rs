@@ -3,14 +3,6 @@ use serde_json::Value;
 
 use super::model::*;
 
-pub(super) fn value_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(*segment)?;
-    }
-    Some(current)
-}
-
 pub(super) fn value_is_plaintext_private_content(value: &Value) -> bool {
     match value {
         Value::Null => false,

@@ -849,6 +849,10 @@ pub(crate) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<C
 /// device secret, payload that doesn't decrypt) so the caller leaves the
 /// message in the `Decrypting`/`KeyMissing` state instead of presenting an
 /// undecrypted body.
+///
+/// Fixture-only: the render path now decrypts through the shared sync engine,
+/// so the only remaining consumer is the chat decrypt contract test.
+#[cfg(test)]
 pub(crate) fn decrypt_chat_encrypted_content(
     state_store: &LocalStateStore,
     realm_id: &str,

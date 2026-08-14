@@ -1908,13 +1908,6 @@ pub fn push_sidecar_display_mode(
 mod tests {
     use super::*;
 
-    fn test_backing_circle() -> arkret_sdk::CircleId {
-        arkret_sdk::CircleId::new(
-            "ak:circle:AYFj5K39RXBwjK8TOgxqIJc1qYXFsRP1mT4e_hTeV-_a".to_owned(),
-        )
-        .unwrap()
-    }
-
     fn session(
         pending: Vec<arkret_sdk::PendingSidecarAccessReconciliationItem>,
     ) -> HostedSidecarState {

@@ -13,9 +13,8 @@ use garth::outbound::BoxOutboundFuture;
 #[cfg(target_arch = "wasm32")]
 const BROWSER_OUTBOUND_STORAGE_PREFIX: &str = "inkson.outbound.v1::";
 
-/// Only the browser fallback store compacts in place; the host build keeps it
-/// for the unit test that pins the pruning contract.
-#[cfg(any(target_arch = "wasm32", test))]
+/// Only the browser fallback store compacts in place.
+#[cfg(target_arch = "wasm32")]
 fn compact_snapshot_json(
     raw: &str,
     cutoff: chrono::DateTime<chrono::Utc>,
@@ -107,14 +106,6 @@ impl InksonOutboundStore {
                 storage_key: format!("{BROWSER_OUTBOUND_STORAGE_PREFIX}{scope}"),
             })
         }
-    }
-
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    fn open_at(path: impl Into<std::path::PathBuf>) -> arkret_sdk::Result<Self> {
-        Ok(Self {
-            inner: garth::FileStore::open(path)
-                .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?,
-        })
     }
 }
 
