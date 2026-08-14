@@ -212,7 +212,7 @@ fn resolve_principal_authoring_generation_from_keys(
             Ok(PrincipalGenerationResolution::Active(AuthoringGeneration {
                 authority_model: AuthoringAuthorityModel::AcceptedDevice,
                 authority_principal_id: principal_id.to_owned(),
-                generation_ref: generation.current_device_generation_ref.as_str().to_owned(),
+                generation_ref: generation.current_device_generation_ref.to_string(),
             }))
         }
         None => Ok(PrincipalGenerationResolution::Quarantine(

@@ -50,7 +50,7 @@ pub fn is_mls_keypackage_not_found_error(error: &anyhow::Error) -> bool {
 /// often a reverse-proxy hiccup, a clock skew, or a server-side temp deny
 /// — not a permanently dead token.
 pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
-    if is_terminal_session_grant_error(error) {
+    if is_terminal_session_grant_error(error) || is_device_revoked_error(error) {
         return true;
     }
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
@@ -63,6 +63,31 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
                 || code == arkret_sdk::error::ErrorCode::UNAUTHENTICATED
                 || code == arkret_sdk::error::ErrorCode::SOFT_LOGGED_OUT
         )
+    })
+}
+
+/// True only for the durable accepted-but-not-sealed device revocation gate.
+///
+/// This state is deliberately non-terminal for local client material: the
+/// client must retain recovery, session, KeyPackage and to-device state while
+/// the proposal can still be signed-rejected. Callers may surface or retry the
+/// blocked operation, but must not route this predicate through logout cleanup.
+pub fn is_device_revocation_pending_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        status == StatusCode::CONFLICT
+            && envelope.code() == arkret_sdk::error::ErrorCode::DEVICE_REVOCATION_PENDING
+    })
+}
+
+/// True only when the server reports the exact device generation as revoked.
+///
+/// Unlike `device_revocation_pending`, this is terminal for that generation's
+/// SessionGrant and authorizes generation-scoped cleanup by callers that own
+/// the corresponding binding.
+pub fn is_device_revoked_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        status == StatusCode::CONFLICT
+            && envelope.code() == arkret_sdk::error::ErrorCode::DEVICE_REVOKED
     })
 }
 
@@ -158,6 +183,9 @@ pub fn is_terminal_session_grant_error(error: &anyhow::Error) -> bool {
 /// expiry handling at the call site: only a structured refresh-specific
 /// envelope is allowed to clear the persisted grant.
 pub fn is_terminal_session_grant_refresh_error(error: &anyhow::Error) -> bool {
+    if is_device_revoked_error(error) {
+        return true;
+    }
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         terminal_session_grant_refresh_code(envelope.code())
             || is_terminal_session_grant_api_error(status, envelope)

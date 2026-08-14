@@ -2378,7 +2378,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
                 "appeal_id": "ak:appeal:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 "realm_id": realm_id,
                 "reviewer": "ak:did_core:web:reviewer.example",
-                "verdict": "uphold",
+                "decision": "uphold",
                 "reason_text_ref": "ak:text:decision-reason",
                 "decided_at": "2026-07-19T00:00:02.000Z"
             }

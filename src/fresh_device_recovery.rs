@@ -128,14 +128,8 @@ pub fn sign_terminal_receipt_continue(
             trust_domain: observation.trust_domain,
             new_device_id: binding.replacement_device_id.clone(),
             identity_model: arkret_sdk::RecoveryIdentityModel::RootAnchored,
-            previous_model_generation_ref: arkret_models_crypto::RecoveryModelGenerationRef::new(
-                arkret_sdk::NonEmptyString::new(plan.previous_model_generation_ref.clone())
-                    .map_err(anyhow::Error::msg)?,
-            )?,
-            result_model_generation_ref: arkret_models_crypto::RecoveryModelGenerationRef::new(
-                arkret_sdk::NonEmptyString::new(plan.result_model_generation_ref.clone())
-                    .map_err(anyhow::Error::msg)?,
-            )?,
+            previous_model_generation_ref: plan.previous_model_generation_ref,
+            result_model_generation_ref: plan.result_model_generation_ref,
             authorization_event_id: binding.authorize_event_id.clone(),
             device_list_update_event_id: None,
             reanchor_event_id: Some(binding.reanchor_event_id.clone()),

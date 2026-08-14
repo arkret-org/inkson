@@ -183,6 +183,42 @@ mod tests {
         assert_eq!(display_with_reason_detail(&error), error.to_string());
     }
 
+    fn sdk_api_error(status: u16, code: &str) -> anyhow::Error {
+        anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status,
+            error: Box::new(ErrorEnvelope::new(code, code)),
+        })
+    }
+
+    #[test]
+    fn revocation_pending_is_typed_and_never_terminal() {
+        let error = sdk_api_error(409, arkret_sdk::error::ErrorCode::DEVICE_REVOCATION_PENDING);
+
+        assert!(is_device_revocation_pending_error(&error));
+        assert!(!is_device_revoked_error(&error));
+        assert!(!is_auth_expired_error(&error));
+        assert!(!is_terminal_session_grant_refresh_error(&error));
+    }
+
+    #[test]
+    fn sealed_device_revocation_is_terminal_for_session_refresh() {
+        let error = sdk_api_error(409, arkret_sdk::error::ErrorCode::DEVICE_REVOKED);
+
+        assert!(is_device_revoked_error(&error));
+        assert!(!is_device_revocation_pending_error(&error));
+        assert!(is_auth_expired_error(&error));
+        assert!(is_terminal_session_grant_refresh_error(&error));
+    }
+
+    #[test]
+    fn revocation_classifiers_require_registered_conflict_status() {
+        let pending = sdk_api_error(503, arkret_sdk::error::ErrorCode::DEVICE_REVOCATION_PENDING);
+        let revoked = sdk_api_error(403, arkret_sdk::error::ErrorCode::DEVICE_REVOKED);
+
+        assert!(!is_device_revocation_pending_error(&pending));
+        assert!(!is_device_revoked_error(&revoked));
+    }
+
     #[test]
     fn mls_stale_classifier_accepts_canonical_typed_reason() {
         let envelope = ErrorEnvelope::new(

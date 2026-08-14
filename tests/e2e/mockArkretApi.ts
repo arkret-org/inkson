@@ -2875,6 +2875,63 @@ export async function mockArkretApi(
       return json(route, response);
     }
 
+    // invite-addressing.md §7 — before dispatching private invite delivery the
+    // client MUST read the accepted Event back through
+    // `ak.self.events.read.resolve` (`QUERY /_arkret/self/events/resolve`)
+    // rather than re-authoring an equivalent one, because only the server's own
+    // view is guaranteed byte-identical to the persisted canonical bytes. The
+    // mock therefore serves back exactly what it accepted on POST
+    // /_arkret/self/events.
+    if (
+      url.pathname === "/_arkret/self/events/resolve" &&
+      route.request().method() === "QUERY"
+    ) {
+      const requestBody = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const requested = Array.isArray(requestBody.event_ids)
+        ? requestBody.event_ids.filter(
+            (eventId): eventId is string => typeof eventId === "string",
+          )
+        : [];
+      const resolved = projectionEvents.filter((event) =>
+        requested.includes(String(event.event_id)),
+      );
+      const found = new Set(resolved.map((event) => String(event.event_id)));
+      return json(route, {
+        events: resolved,
+        missing: requested.filter((eventId) => !found.has(eventId)),
+      });
+    }
+
+    // invite-addressing.md §7 — `ak.self.invites.command.dispatch`. The client
+    // hands raw `introduction_evidence` plus the accepted Event to its OWN
+    // Principal Server; it never signs federation material and never calls the
+    // peer surface. The response is the closed `invite_delivery_outcome`: §5.1
+    // keeps the low-trust tier opaque (`deferred`, no `disclosed_outcome`) and
+    // only lets the high-trust tier disclose `delivered | blocked`.
+    if (
+      url.pathname === "/_arkret/self/invites/dispatch" &&
+      route.request().method() === "POST"
+    ) {
+      const requestBody = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const evidence = (requestBody.introduction_evidence ?? {}) as {
+        kind?: string;
+      };
+      const highTrust = ["locator_ref", "consent_grant", "shared_realm"].includes(
+        evidence.kind ?? "",
+      );
+      return json(route, {
+        status: highTrust ? "accepted" : "deferred",
+        ...(highTrust ? { disclosed_outcome: "delivered" } : {}),
+        received_at: "2026-06-13T00:00:00.000Z",
+      });
+    }
+
     // NB: no `/_arkret/self/snapshot/head` route. The mock's describe does
     // not advertise `ak.self.snapshot.read.manifest_head`, so the client falls back to
     // event replay before issuing the request. The current wire shape is the
@@ -3094,7 +3151,7 @@ export async function mockArkretApi(
       });
     }
 
-    // U4 — invite_receive_policy ("谁可以邀请我"). Spec invite-addressing.md
+    // U4 — invite_receive_policy ("who may invite me"). Spec invite-addressing.md
     // §5: GET/SET carry the bare `arkret_sdk::InviteReceivePolicy` (required
     // `schema` + `subject_id`, typed enums, trust lists) — no `ok` wrapper.
     if (
