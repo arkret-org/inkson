@@ -2685,7 +2685,7 @@ export async function mockArkretApi(
         recipient_service_id: "did:web:server.local",
         recipient_service_kind: "principal_server",
         binding_source: "explicit",
-        delivery_modes: ["events", "sync", "to_device", "push", "key_packages"],
+        delivery_modes: ["events", "sync", "to_device", "push", "keypackages"],
       };
       return json(route, {
         did: "did:web:alice.example",
