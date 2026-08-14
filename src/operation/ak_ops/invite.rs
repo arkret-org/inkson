@@ -75,6 +75,21 @@ pub fn invite_cancel(
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
+    let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteCancel>(
+            realm_id, actor, payload,
+        )
+        .target_ref(invite_id_ref),
+    )
+}
+
+fn invite_cancel_payload(
+    invite_id: &str,
+    invitee: &str,
+    target_state: &str,
+    reason: Option<&str>,
+) -> anyhow::Result<(arkret_sdk::InviteCancelPayload, String)> {
     if !matches!(target_state, "rejected" | "revoked") {
         anyhow::bail!(
             "ak.invite.cancel target_state must be rejected or revoked, got {target_state:?}"
@@ -94,9 +109,25 @@ pub fn invite_cancel(
     if let Some(reason) = reason {
         payload = payload.with_reason(reason);
     }
+    Ok((payload, invite_id_ref))
+}
+
+pub fn invite_cancel_for_principal_server(
+    realm_id: &str,
+    actor: &str,
+    principal_server_id: arkret_sdk::DidCoreId,
+    invite_id: &str,
+    invitee: &str,
+    target_state: &str,
+    reason: Option<&str>,
+) -> anyhow::Result<TypedOperationBuilder> {
+    let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
     Ok(
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteCancel>(
-            realm_id, actor, payload,
+        TypedOperationBuilder::new_for_principal_server::<arkret_sdk::event_spec::InviteCancel>(
+            realm_id,
+            actor,
+            principal_server_id,
+            payload,
         )
         .target_ref(invite_id_ref),
     )

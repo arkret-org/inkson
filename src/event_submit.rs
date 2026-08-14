@@ -854,10 +854,13 @@ fn pending_chat_message_ids_from_snapshot(
                     .and_then(serde_json::Value::as_str)
                     == Some(strand_id)
         })
-        .map(|queued| {
-            arkret_sdk::MessageId::from_event_id(&queued.intent.event_id)
-                .as_str()
-                .to_owned()
+        .filter_map(|queued| {
+            queued
+                .intent
+                .payload
+                .get("message_id")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
         })
         .collect()
 }

@@ -383,10 +383,10 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        // Seed invitees are validated as authoritative DIDs here, but their
+        // Seed invitees are validated as canonical Core DIDs here, but their
         // directed `ak.invite.create` events are deliberately submitted only
         // after this genesis unit is accepted.
-        &["did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example".to_owned()],
+        &["ak:did_core:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
         None,
@@ -578,7 +578,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        &["did:web:bob.example".to_owned()],
+        &["ak:did_core:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
         None,

@@ -66,6 +66,14 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
     })
 }
 
+/// True when local authenticated-request construction cannot obtain the
+/// active session or its Principal Server-scoped session grant.
+pub fn is_authenticated_session_unavailable_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("no session grant is available")
+        || message.contains("missing authenticated session")
+}
+
 /// True when the server rejected the request because the authenticated
 /// session device is not authorized for the operation. Matches three wire
 /// codes that reduce to "this device cannot establish a new account

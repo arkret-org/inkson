@@ -1177,11 +1177,7 @@ pub(super) fn RealmsSection(
                                                 }
                                                 Err(error) => {
                                                     let error_text = error.to_string();
-                                                    let message = if error_text.contains(
-                                                        "no session grant is available",
-                                                    ) || error_text.contains(
-                                                        "missing authenticated session",
-                                                    ) {
+                                                    let message = if crate::api_error::is_authenticated_session_unavailable_error(&error) {
                                                         strings.session_expired.clone()
                                                     } else {
                                                         BootstrapProgressStrings::fill(

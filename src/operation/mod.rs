@@ -192,6 +192,40 @@ impl TypedOperationBuilder {
     where
         K: arkret_sdk::EventSpec,
     {
+        let principal_server_id = authoring_principal_server_id();
+        let event = principal_server_id.and_then(|principal_server_id| {
+            Self::author_event::<K>(realm_id, actor, principal_server_id, payload)
+        });
+        Self {
+            event,
+            target_ref: None,
+        }
+    }
+
+    pub fn new_for_principal_server<K>(
+        realm_id: impl Into<String>,
+        actor: impl Into<String>,
+        principal_server_id: arkret_sdk::DidCoreId,
+        payload: K::Payload,
+    ) -> Self
+    where
+        K: arkret_sdk::EventSpec,
+    {
+        Self {
+            event: Self::author_event::<K>(realm_id, actor, principal_server_id, payload),
+            target_ref: None,
+        }
+    }
+
+    fn author_event<K>(
+        realm_id: impl Into<String>,
+        actor: impl Into<String>,
+        principal_server_id: arkret_sdk::DidCoreId,
+        payload: K::Payload,
+    ) -> anyhow::Result<Event>
+    where
+        K: arkret_sdk::EventSpec,
+    {
         let event = (|| {
             let realm_id = arkret_sdk::RealmId::new(trim_realm_id(&realm_id.into()))
                 .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
@@ -204,7 +238,6 @@ impl TypedOperationBuilder {
             };
             let actor_id = crate::mls_api_helpers::principal_core_id(&actor.into())
                 .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
-            let principal_server_id = authoring_principal_server_id()?;
             let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
                 .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
             arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, principal_server_id, payload)
@@ -212,10 +245,7 @@ impl TypedOperationBuilder {
                 .author(1, hlc, crate::clock::now_utc_millis())
                 .map_err(|err| anyhow::anyhow!("typed Event authoring failed: {err}"))
         })();
-        Self {
-            event,
-            target_ref: None,
-        }
+        event
     }
 
     fn map_event(mut self, update: impl FnOnce(&mut Event) -> anyhow::Result<()>) -> Self {

@@ -70,8 +70,7 @@ pub use signing_seed::{
 };
 #[cfg(test)]
 pub(crate) use signing_seed::{
-    account_scoped_device_key_for, ensure_signing_seed_scoped, load_device_id_scoped,
-    load_signing_seed_scoped, store_device_id_scoped, store_signing_seed_scoped,
+    account_scoped_device_key_for, load_signing_seed_scoped, store_signing_seed_scoped,
 };
 
 #[cfg(target_arch = "wasm32")]

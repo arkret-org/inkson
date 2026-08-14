@@ -303,6 +303,7 @@ fn inkson_accepts_server_contract_payloads() {
             "endpoint": "http://server",
             "operations": ["ak.self.events.command.submit"],
             "join_methods": ["invite_accept", "member_join"],
+            "encryption_profile": "mls_rfc9420",
             "priority": 0,
             "source": "directory_ingest",
             "seal_basis": {

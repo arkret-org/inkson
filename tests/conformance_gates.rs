@@ -241,6 +241,7 @@ const TEST_SPACE_ID: &str = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mr
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "did:web:server.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
+const TEST_INVITEE_CORE_ID: &str = "ak:did_core:web:bob.example";
 const TEST_ANCHOR_REF: &str =
     "ak:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const TEST_ROOT_HASH: &str =
@@ -634,7 +635,7 @@ fn build_member_state_event_matches_event_schema() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        &[TEST_INVITEE_DID.to_owned()],
+        &[TEST_INVITEE_CORE_ID.to_owned()],
         &[],
         None,
         None,

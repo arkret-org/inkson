@@ -120,7 +120,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
         "single_did",
         "sha256",
         "ak:trust_domain:server.example",
-        &["did:web:bob.example".to_owned()],
+        &["ak:did_core:web:bob.example".to_owned()],
         &["did:web:server.example".to_owned()],
         None,
         None,
