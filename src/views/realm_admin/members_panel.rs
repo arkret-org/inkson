@@ -1595,15 +1595,12 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             Some(&group_id),
         )
         .await?;
-    let failures = claim_outcome.failures;
     let claim_receipt = arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(claim_outcome.claim_receipt);
-    let claim = claim_outcome.claims.into_iter().next().ok_or_else(|| {
-        let reason = failures
-            .first()
-            .map(|failure| format!("{failure:?}"))
-            .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
-        anyhow::anyhow!("{reason}")
-    })?;
+    let claim = claim_outcome
+        .claims
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("KeyPackage claim succeeded without a claim record"))?;
     // Refresh after the claim as well: membership/policy may have advanced
     // while the remote claim request was in flight.
     ensure_mls_governance_proof_for_next_commit(
@@ -3083,14 +3080,10 @@ pub(crate) async fn submit_mls_admission_for_invitees(
                 Some(&group_id),
             )
             .await?;
-        let failures = claim_outcome.failures;
-        let claim = claim_outcome.claims.into_iter().next().ok_or_else(|| {
-            let reason = failures
-                .first()
-                .map(|failure| format!("{failure:?}"))
-                .unwrap_or_else(|| "no MLS KeyPackage was available for the invitee".to_owned());
-            anyhow::anyhow!("{reason}")
-        })?;
+        let claim =
+            claim_outcome.claims.into_iter().next().ok_or_else(|| {
+                anyhow::anyhow!("KeyPackage claim succeeded without a claim record")
+            })?;
         claims.push((
             claim,
             claim_nonce,

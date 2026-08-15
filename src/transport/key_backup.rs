@@ -109,7 +109,7 @@ impl crate::transport::TransportClient {
                 .get(&payload.actor_id)
                 .and_then(|devices| devices.get(&device_id))
                 .filter(|record| record.is_usable_in_generation(generation))
-                .and_then(|record| record.device_authorize_event_id.clone())
+                .map(|record| record.device_authorize_event_id.clone())
         } else {
             None
         };

@@ -149,11 +149,8 @@ fn accepted_device_key(
     if !record.is_usable_in_generation(Some(generation)) {
         return None;
     }
-    let key = record
-        .device_signing_key
-        .as_deref()
-        .and_then(public_key_from_directory_value)?;
-    Some((key, record.device_authorize_event_id.clone()?))
+    let key = public_key_from_directory_value(record.device_signing_key.as_str())?;
+    Some((key, record.device_authorize_event_id.clone()))
 }
 
 pub async fn resolve_device_signing_key(

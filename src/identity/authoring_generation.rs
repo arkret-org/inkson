@@ -195,16 +195,12 @@ fn resolve_principal_authoring_generation_from_keys(
                     "authoring_device_not_active".to_owned(),
                 ));
             };
-            if record.device_status != Some(arkret_models_crypto::DeviceStatus::Active) {
+            if record.device_status != arkret_models_crypto::DeviceStatus::Active {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_device_not_active".to_owned(),
                 ));
             }
-            let authorized_generation = record
-                .authorized_generation_ref
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("B-model device omits authorized_generation_ref"))?;
-            if authorized_generation != &generation.current_device_generation_ref {
+            if record.authorized_generation_ref != generation.current_device_generation_ref {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_generation_superseded".to_owned(),
                 ));

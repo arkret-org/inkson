@@ -652,7 +652,7 @@ pub fn build_managed_agent_pcr_bootstrap_events(
     Ok(events)
 }
 
-/// Build the closed three-Event Direct Conversation founding unit from the
+/// Build the closed four-Event Direct Conversation founding unit from the
 /// resolver's verbatim authoring material.  All identifiers are derived from
 /// the finalized Event bytes; no service allocation or local UUID participates.
 pub fn build_direct_conversation_founding_events(
@@ -688,10 +688,10 @@ pub fn build_direct_conversation_founding_events(
     let membership = arkret_sdk::direct_conversation_peer_membership_bootstrap(
         realm_id.clone(),
         &founder_actor,
-        [founder_actor.clone(), peer_actor],
+        [founder_actor.clone(), peer_actor.clone()],
         arkret_sdk::DeliveryStatus::Unroutable,
     )?;
-    let member_cell = format!("ak:cell:ak.component.member.state.v1:{}", peer_id.as_str());
+    let member_cell = format!("ak:cell:ak.component.member.state.v1:{peer_actor}");
     let mut member = TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
         realm_id.to_string(),
         founder_id.as_str(),
@@ -719,8 +719,31 @@ pub fn build_direct_conversation_founding_events(
     strand.prev_refs = vec![member.event_id.clone()];
     crate::operation::rederive_event_identity(&mut strand)?;
 
-    let events = vec![create, member, strand];
-    arkret_sdk::DirectConversationFoundingPlan::from_events([&events[0], &events[1], &events[2]])?;
+    let founder_membership = arkret_sdk::direct_conversation_member_join_payload(
+        create.realm_id.clone(),
+        founder_actor.clone(),
+        arkret_sdk::DeliveryStatus::Unroutable,
+    );
+    let founder_member_cell = format!("ak:cell:ak.component.member.state.v1:{founder_actor}");
+    let mut founder_member = TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
+        create.realm_id.to_string(),
+        founder_id.as_str(),
+        founder_membership,
+    )
+    .target_ref(founder_actor.as_str())
+    .preconditions(vec![head_eq_precondition(
+        &founder_member_cell,
+        Value::Null,
+    )?])
+    .created_at(created_at)
+    .build_sdk_event("inkson")?;
+    founder_member.prev_refs = vec![strand.event_id.clone()];
+    crate::operation::rederive_event_identity(&mut founder_member)?;
+
+    let events = vec![create, member, strand, founder_member];
+    arkret_sdk::DirectConversationFoundingPlan::from_events([
+        &events[0], &events[1], &events[2], &events[3],
+    ])?;
     Ok(events)
 }
 

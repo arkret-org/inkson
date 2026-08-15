@@ -452,7 +452,7 @@ async fn submit_contact_response(
     }
 }
 
-/// Verify the source-service receipt against the exact sealed request Event and
+/// Verify the source-service receipt against the exact verified request Event and
 /// the issuer key that was active when the source accepted it.  The list row is
 /// only a carrier; none of its summary fields are an authority input here.
 async fn verify_contact_request_receipt(
@@ -474,14 +474,11 @@ async fn verify_contact_request_receipt(
         .find(|event| event.event_id == receipt.core.request_event_ref)
         .ok_or_else(|| anyhow::anyhow!("Contact request receipt Event is not accepted"))?;
     let request_digest = arkret_sdk::Hash::new(request.event_digest()?)?;
-    if request_digest != receipt.core.request_digest
-        || !resolved.seals.iter().any(|seal| {
-            seal.realm_id == request.realm_id
-                && seal.delta.contains(&request_digest)
-                && seal.covered_event_digests.contains(&request_digest)
-        })
-    {
-        anyhow::bail!("Contact request receipt Event lacks its exact accepted covering Seal");
+    if request_digest != receipt.core.request_digest {
+        anyhow::bail!("Contact request receipt does not bind the exact resolved Event");
+    }
+    if !resolved.seals.is_empty() {
+        anyhow::bail!("Contact verified-mirror resolve unexpectedly disclosed a Seal");
     }
 
     let issuer_full_id = arkret_sdk::DidFullId::new(
@@ -730,7 +727,7 @@ pub async fn create_direct_conversation_from_resolve(
         next_founding_input,
     )?;
     let signed = submitter.prepare_sdk_events_batch(events).await?;
-    let events: [arkret_sdk::EventInitialSubmission; 3] = signed
+    let events: [arkret_sdk::EventInitialSubmission; 4] = signed
         .into_iter()
         .map(arkret_sdk::EventInitialSubmission::online)
         .collect::<Vec<_>>()
@@ -844,7 +841,7 @@ pub(crate) fn direct_conversation_entry_with_local_blockers(
 }
 
 /// Direct Conversation history policy is profile-fixed and exists even though
-/// the closed three-Event founding unit carries no policy Event.
+/// the closed four-Event founding unit carries no policy Event.
 pub(crate) fn direct_conversation_history_sharing_policy()
 -> anyhow::Result<arkret_sdk::HistorySharingPolicyPayloadValue> {
     arkret_policy::history_visibility::direct_conversation_realm_history_sharing_policy()

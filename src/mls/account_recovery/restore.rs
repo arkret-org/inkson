@@ -978,10 +978,7 @@ fn verify_active_series_record_signature(
         if !device.is_usable_in_generation(Some(generation)) {
             continue;
         }
-        let Some(device_signing_key) = device.device_signing_key.as_ref() else {
-            continue;
-        };
-        let did_key = device_signing_key.as_str();
+        let did_key = device.device_signing_key.as_str();
         let Some(multikey) = did_key.strip_prefix("did:key:") else {
             continue;
         };
@@ -999,8 +996,8 @@ fn verify_active_series_record_signature(
         let anchored = generation.device_generation_status
             == arkret_sdk::DeviceGenerationStatus::Active
             && generation.current_device_generation_ref == *frontier
-            && device.device_authorize_event_id.as_ref() == Some(event_id)
-            && device.authorized_generation_ref.as_ref() == Some(frontier);
+            && &device.device_authorize_event_id == event_id
+            && device.authorized_generation_ref == *frontier;
         if !anchored {
             continue;
         }

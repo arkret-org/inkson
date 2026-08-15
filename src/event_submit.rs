@@ -2712,9 +2712,9 @@ impl EventSubmitter {
             )
             .is_ok();
         let is_direct_conversation_founding = first_is_realm_create
-            && events.len() == 3
+            && events.len() == 4
             && arkret_sdk::DirectConversationFoundingPlan::from_events([
-                &events[0], &events[1], &events[2],
+                &events[0], &events[1], &events[2], &events[3],
             ])
             .is_ok();
         let is_ordinary_realm_bootstrap = if first_is_realm_create
@@ -2817,7 +2817,7 @@ impl EventSubmitter {
         }
         if is_direct_conversation_founding {
             arkret_sdk::DirectConversationFoundingPlan::from_events([
-                &events[0], &events[1], &events[2],
+                &events[0], &events[1], &events[2], &events[3],
             ])
             .map_err(|error| {
                 anyhow::anyhow!("prepared Direct Conversation founding unit: {error}")
