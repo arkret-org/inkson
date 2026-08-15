@@ -1,6 +1,26 @@
 use super::*;
 
 impl LocalStateStore {
+    /// Return every canonical Realm id currently represented by the local
+    /// collaboration projection. Callers use this to execute Realm-scoped
+    /// protocol reads without inventing a cross-Realm wildcard.
+    pub fn known_realm_ids(&self) -> Vec<arkret_sdk::RealmId> {
+        let state = self.load();
+        state
+            .realm_tree_projections
+            .keys()
+            .chain(state.realm_collaboration_roles.keys())
+            .filter_map(|realm_id| {
+                arkret_sdk::RealmId::new(realm_id.clone())
+                    .ok()
+                    .map(|typed| (typed.to_string(), typed))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_iter()
+            .map(|(_, realm_id)| realm_id)
+            .collect()
+    }
+
     /// Round R2/R3 (T07) — has the Realm (security boundary, formerly Space)
     /// emitted a `ak.realm.destroy` event we've already received? The
     /// chat UI MUST gray out the send box and surface the

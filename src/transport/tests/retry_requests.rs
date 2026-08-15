@@ -6,6 +6,8 @@ use crate::ephemeral::ensure_events_submit_accepted;
 fn events_batch_response_rejects_partial_acceptance() {
     let accepted: arkret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "accepted",
+        "delivery_state": "complete",
+        "pending_delivery_count": 0,
         "rejected": []
     }))
     .unwrap();
@@ -13,6 +15,8 @@ fn events_batch_response_rejects_partial_acceptance() {
 
     let partial: arkret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "partial",
+        "delivery_state": "complete",
+        "pending_delivery_count": 0,
         "rejected": [
             {
                 "id": "ak:event:AXcPfjVv4gB4YXMmxykws6YCG5IZrhBAAzc4-yYUDIY4",

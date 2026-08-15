@@ -98,15 +98,41 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
         if tok.trim().is_empty() || did.trim().is_empty() {
             return;
         }
+        let subject = match crate::mls_api_helpers::principal_core_id(&did) {
+            Ok(value) => value,
+            Err(error) => {
+                status.set(format!("Failed to load capabilities: {error}"));
+                return;
+            }
+        };
+        let principal_server_id = match crate::operation::authoring_principal_server_id() {
+            Ok(value) => value,
+            Err(error) => {
+                status.set(format!("Failed to load capabilities: {error}"));
+                return;
+            }
+        };
+        let realm_ids = state_store.read().known_realm_ids();
         spawn(async move {
             match with_authed_sdk_client(&base, tok, |http| async move {
-                crate::transport::realm_read::effective_grants(&http, &did).await
+                let mut grants = Vec::new();
+                for realm_id in realm_ids {
+                    let response = crate::transport::realm_read::effective_grants(
+                        &http,
+                        &realm_id,
+                        &subject,
+                        &principal_server_id,
+                    )
+                    .await?;
+                    grants.extend(response.grants);
+                }
+                Ok::<_, anyhow::Error>(grants)
             })
             .await
             {
-                Ok(resp) => {
+                Ok(grants) => {
                     let decoded: Vec<CapabilityRow> =
-                        resp.grants.iter().map(decode_capability_row).collect();
+                        grants.iter().map(decode_capability_row).collect();
                     status.set(format!("Loaded {} capabilities", decoded.len()));
                     rows.set(decoded);
                 }
