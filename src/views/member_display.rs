@@ -463,6 +463,7 @@ mod petname_tests {
             bidirectional_scopes: Vec::new(),
             effective_scopes: None,
             peer_service_id: None,
+            continuity_evidence: None,
             direct_conversation: None,
             agents: Vec::new(),
         }

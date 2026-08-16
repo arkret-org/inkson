@@ -4313,6 +4313,7 @@ dependencies = [
  "arkret-models-identity",
  "arkret-models-integration",
  "arkret-policy",
+ "arkret-retry",
  "arkret-schema",
  "arkret-signatures",
  "arkret-wire",

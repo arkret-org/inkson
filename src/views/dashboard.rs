@@ -850,6 +850,7 @@ mod tests {
                 bidirectional_scopes: Vec::new(),
                 effective_scopes: Some(Vec::new()),
                 peer_service_id: None,
+                continuity_evidence: None,
                 direct_conversation: direct_ready.then(|| arkret_sdk::DirectConversationSummary {
                     realm_id: arkret_sdk::RealmId::new(
                         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),

@@ -1187,6 +1187,7 @@ fn PendingAccountIdentityCreation(
                                         &base,
                                         config_store,
                                         state_store,
+                                        status,
                                     )
                                     .await
                                 }
@@ -1431,6 +1432,7 @@ async fn create_and_bind_identity(
     base_url: &str,
     config_store: Signal<crate::config::LocalConfigStore>,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    mut status: Signal<String>,
 ) -> anyhow::Result<(String, String, String)> {
     let pending_device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
@@ -1551,6 +1553,12 @@ async fn create_and_bind_identity(
                 recovery_key,
                 &dpop,
                 state_store,
+                |delay| {
+                    let seconds = delay.as_millis().div_ceil(1_000).max(1);
+                    status.set(format!(
+                        "The Account Authority asked this device to wait {seconds} seconds. Retrying automatically…"
+                    ));
+                },
             )
             .await
             {

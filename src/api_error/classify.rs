@@ -276,8 +276,10 @@ pub fn actor_seq_cas_conflict_details(
 /// Returns `Some(retry_after_ms)` on match (with 0 when the server
 /// omitted the hint), `None` otherwise.
 pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
-    let (_, envelope) = api_error_status_and_envelope(error)?;
-    if envelope.code() != arkret_sdk::error::ErrorCode::RATE_LIMITED {
+    let (status, envelope) = api_error_status_and_envelope(error)?;
+    if status != StatusCode::TOO_MANY_REQUESTS
+        || envelope.code() != arkret_sdk::error::ErrorCode::RATE_LIMITED
+    {
         return None;
     }
     Some(envelope.retry_after_ms().unwrap_or(0))

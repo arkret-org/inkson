@@ -1,8 +1,10 @@
 //! Durable, client-authored identity creation with atomic PCR genesis.
 
+use std::time::Duration;
+
 use anyhow::{Context as _, anyhow};
 use arkret_sdk::EventPayloadExt as _;
-use chrono::{Timelike as _, Utc};
+use chrono::{DateTime, Timelike as _, Utc};
 use dioxus::prelude::WritableExt as _;
 use url::Url;
 
@@ -365,6 +367,7 @@ pub async fn complete_account_handoff_binding(
     recovery_key: &str,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
     mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    mut on_challenge_rate_limit: impl FnMut(Duration),
 ) -> anyhow::Result<IdentityBindingCompletion> {
     let expected_account_subject = handoff
         .account_subject
@@ -418,6 +421,7 @@ pub async fn complete_account_handoff_binding(
             dpop.sdk_account_handoff_auth(account_handoff_grant),
         ))
         .build()?;
+    let challenge_retry_deadline = std::cmp::min(handoff.expires_at, lease.expires_at);
 
     let register_request = if let Some(prepared) =
         crate::identity::account_auth::load_prepared_identity_creation_request(
@@ -443,9 +447,13 @@ pub async fn complete_account_handoff_binding(
         }
         prepared
     } else {
-        let challenge = account_client
-            .auth_issue_identity_binding_challenge(&challenge_request)
-            .await?;
+        let challenge = issue_identity_binding_challenge_with_retry(
+            &account_client,
+            &challenge_request,
+            challenge_retry_deadline,
+            &mut on_challenge_rate_limit,
+        )
+        .await?;
         let request = garth::identity_creation_register_request(
             &challenge,
             expected_account_subject,
@@ -485,9 +493,13 @@ pub async fn complete_account_handoff_binding(
                 &unit,
                 &initial,
             )?;
-            let challenge = account_client
-                .auth_issue_identity_binding_challenge(&renewed_challenge_request)
-                .await?;
+            let challenge = issue_identity_binding_challenge_with_retry(
+                &account_client,
+                &renewed_challenge_request,
+                challenge_retry_deadline,
+                &mut on_challenge_rate_limit,
+            )
+            .await?;
             let request = garth::identity_creation_register_request(
                 &challenge,
                 expected_account_subject,
@@ -558,6 +570,83 @@ pub async fn complete_account_handoff_binding(
         session_private_key_pem,
         dpop_device_key,
     })
+}
+
+const IDENTITY_BINDING_CHALLENGE_RETRY_GUARD: Duration = Duration::from_millis(250);
+const IDENTITY_BINDING_CHALLENGE_DEADLINE_GUARD: Duration = Duration::from_secs(1);
+
+async fn issue_identity_binding_challenge_with_retry(
+    account_client: &arkret_sdk::http_client::Client,
+    request: &arkret_sdk::IdentityBindingChallengeRequestBody,
+    retry_deadline: DateTime<Utc>,
+    on_rate_limit: &mut impl FnMut(Duration),
+) -> anyhow::Result<arkret_sdk::IdentityBindingChallengeOutcome> {
+    let started_at = Utc::now();
+    let retry_window_deadline = started_at
+        + chrono::Duration::from_std(arkret_retry::SPEC_RETRY_WINDOW)
+            .unwrap_or_else(|_| chrono::Duration::minutes(5));
+    let retry_deadline = std::cmp::min(retry_deadline, retry_window_deadline);
+    let mut schedule = arkret_retry::RetrySchedule::arkret_default().with_jitter(
+        arkret_retry::SPEC_JITTER_RATIO,
+        retry_jitter_seed(&request.request_id),
+    );
+
+    loop {
+        match account_client
+            .auth_issue_identity_binding_challenge(request)
+            .await
+        {
+            Ok(challenge) => return Ok(challenge),
+            Err(error) => {
+                let error = anyhow::Error::new(error);
+                if schedule.exhausted() {
+                    return Err(error);
+                }
+                let Some(retry_after_ms) = crate::api_error::rate_limited_retry_after(&error)
+                else {
+                    return Err(error);
+                };
+                let advertised_delay =
+                    (retry_after_ms > 0).then(|| Duration::from_millis(retry_after_ms));
+                let delay = schedule
+                    .next_delay_with_hint(advertised_delay)
+                    .saturating_add(IDENTITY_BINDING_CHALLENGE_RETRY_GUARD);
+                let Some(delay) = bounded_identity_binding_challenge_retry_delay(
+                    delay,
+                    Utc::now(),
+                    retry_deadline,
+                ) else {
+                    return Err(error);
+                };
+                tracing::info!(
+                    retry_after_ms = delay.as_millis(),
+                    retry = schedule.retries(),
+                    request_id = %request.request_id,
+                    "identity-binding challenge was rate limited; waiting before exact retry"
+                );
+                on_rate_limit(delay);
+                crate::runtime_helpers::sleep_for(delay).await;
+            }
+        }
+    }
+}
+
+fn retry_jitter_seed(request_id: &arkret_sdk::RequestId) -> u64 {
+    request_id
+        .to_string()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            hash.wrapping_mul(0x0000_0100_0000_01b3) ^ u64::from(byte)
+        })
+}
+
+fn bounded_identity_binding_challenge_retry_delay(
+    delay: Duration,
+    now: DateTime<Utc>,
+    retry_deadline: DateTime<Utc>,
+) -> Option<Duration> {
+    let usable_for = (retry_deadline - now).to_std().ok()?;
+    (delay.saturating_add(IDENTITY_BINDING_CHALLENGE_DEADLINE_GUARD) < usable_for).then_some(delay)
 }
 
 async fn verify_registration_terminal_evidence(
@@ -653,6 +742,56 @@ mod tests {
                 arkret_sdk::InitialSessionGrantOperation::EventsReadScan,
             ]
         );
+    }
+
+    #[test]
+    fn identity_binding_challenge_retry_obeys_server_window_and_deadline_guards() {
+        let now = DateTime::parse_from_rfc3339("2026-08-17T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let deadline = now + chrono::Duration::minutes(15);
+
+        assert_eq!(
+            bounded_identity_binding_challenge_retry_delay(
+                Duration::from_millis(59_978),
+                now,
+                deadline,
+            ),
+            Some(Duration::from_millis(59_978))
+        );
+    }
+
+    #[test]
+    fn identity_binding_challenge_retry_does_not_outlive_lease_or_handoff() {
+        let now = DateTime::parse_from_rfc3339("2026-08-17T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        assert_eq!(
+            bounded_identity_binding_challenge_retry_delay(
+                Duration::from_millis(59_978),
+                now,
+                now + chrono::Duration::seconds(60),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn identity_binding_challenge_retry_uses_the_shared_bounded_schedule() {
+        let mut schedule = arkret_retry::RetrySchedule::arkret_default()
+            .with_jitter(0.0, retry_jitter_seed(&arkret_sdk::RequestId::new_v7_at(0)));
+
+        assert_eq!(schedule.next_delay(), Duration::from_secs(1));
+        assert_eq!(schedule.next_delay(), Duration::from_secs(2));
+        assert_eq!(
+            schedule.next_delay_with_hint(Some(Duration::from_secs(60))),
+            Duration::from_secs(60)
+        );
+        assert!(!schedule.exhausted());
+        schedule.next_delay();
+        schedule.next_delay();
+        assert!(schedule.exhausted());
     }
 
     fn handoff(device_id: &str, fence: u64) -> PendingAccountHandoff {
