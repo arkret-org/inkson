@@ -276,7 +276,7 @@ pub fn GlobalSearchPanel(
             div { class: "event",
                 div { class: "event-head",
                     span { {tr("search.title")} }
-                    span { class: "muted", title: "ak.index.search", "Search index" }
+                    span { class: "muted", "Search index" }
                 }
                 form {
                     onsubmit: move |evt| {

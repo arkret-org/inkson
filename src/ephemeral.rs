@@ -7,6 +7,32 @@
 
 use serde::Serialize;
 
+#[derive(Debug, thiserror::Error)]
+#[error("events submit was not fully accepted: status={status:?}, rejected={rejected:?}")]
+struct EventsSubmitRejectedError {
+    status: arkret_sdk::EventsSubmitStatus,
+    rejected: Vec<arkret_sdk::EventsSubmitRejectedRow>,
+}
+
+/// Match a reducer refusal from the typed per-Event rejection rows. Diagnostic
+/// prose is deliberately ignored: changing a message must never change client
+/// control flow.
+pub(crate) fn events_submit_rejected_for_reason(
+    error: &anyhow::Error,
+    reason: &arkret_sdk::ReasonCode,
+) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<EventsSubmitRejectedError>()
+            .is_some_and(|rejection| {
+                rejection
+                    .rejected
+                    .iter()
+                    .any(|row| &row.reason_code == reason)
+            })
+    })
+}
+
 pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
     kind: &str,
     payload: &T,
@@ -39,26 +65,35 @@ pub(crate) fn ensure_events_submit_accepted(
         return Ok(());
     }
 
-    let details = response
-        .rejected
-        .iter()
-        .map(|item| {
-            let id = item.id.as_str();
-            let reason = item.reason_code.as_str();
-            let detail = item.detail.as_deref().unwrap_or("");
-            if detail.is_empty() {
-                format!("{id}:{reason}")
-            } else {
-                format!("{id}:{reason}:{detail}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    let status = match response.status {
-        arkret_sdk::EventsSubmitStatus::Accepted => "accepted",
-        arkret_sdk::EventsSubmitStatus::Duplicate => "duplicate",
-        arkret_sdk::EventsSubmitStatus::Partial => "partial",
-        arkret_sdk::EventsSubmitStatus::HistoricalOnly => "historical_only",
-    };
-    anyhow::bail!("events submit was not fully accepted: status={status}, rejected=[{details}]");
+    Err(EventsSubmitRejectedError {
+        status: response.status,
+        rejected: response.rejected.clone(),
+    }
+    .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EventsSubmitRejectedError, events_submit_rejected_for_reason};
+
+    #[test]
+    fn reducer_control_flow_reads_typed_reason_and_ignores_diagnostic_prose() {
+        let reason = arkret_sdk::ReasonCode::DependencyMissing;
+        let typed = anyhow::Error::new(EventsSubmitRejectedError {
+            status: arkret_sdk::EventsSubmitStatus::Partial,
+            rejected: vec![arkret_sdk::EventsSubmitRejectedRow {
+                index: Some(0),
+                id: "ak:event:test".to_owned(),
+                reason_code: reason.clone(),
+                detail: Some("arbitrary diagnostic".to_owned()),
+                missing_event_ids: Vec::new(),
+                missing_seal_refs: Vec::new(),
+                missing_event_digests: Vec::new(),
+            }],
+        });
+        assert!(events_submit_rejected_for_reason(&typed, &reason));
+
+        let prose_only = anyhow::anyhow!("dependency_missing");
+        assert!(!events_submit_rejected_for_reason(&prose_only, &reason));
+    }
 }

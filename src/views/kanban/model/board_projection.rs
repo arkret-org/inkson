@@ -740,7 +740,7 @@ mod tests {
         }
     }
 
-    /// The local `ak.strand.create` op (from `submit_kanban_move`) carries the
+    /// The local `ak.strand.create` op (from `submit_kanban_card_create`) carries the
     /// canonical create body (`body.object.metadata.fields.*`) PLUS a top-level
     /// `effect`; folding it must surface the card immediately (optimistic).
     #[test]

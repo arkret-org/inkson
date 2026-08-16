@@ -24,6 +24,7 @@ const CONFIG_STORAGE_KEY: &str = "inkson.config.v1";
 const PROFILES_STORAGE_KEY: &str = "inkson.profiles.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClientConfig {
     pub server_url: String,
     pub principal_servers: Vec<String>,
@@ -155,6 +156,7 @@ pub fn principal_server_options_for(
 /// up the rotation atomically without the previous per-subsystem
 /// peek pattern.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AccountProfile {
     /// Stable, opaque id (UUIDv7 prefixed `ak:profile:`). NOT derived
     /// from the account_did — DIDs can rotate via inception-upgrade,
@@ -205,6 +207,7 @@ impl AccountProfile {
 /// Multi-profile config. Persisted under `PROFILES_STORAGE_KEY` on
 /// wasm and `app_data_dir()/profiles.json` on native.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MultiProfileConfig {
     /// `profile_id` of the profile currently driving the UI.
     /// `None` means "no profile yet — show onboarding".
@@ -1262,6 +1265,32 @@ mod tests {
                 .session_credential,
             "sx_profile_credential"
         );
+    }
+
+    #[test]
+    fn persisted_client_config_rejects_unknown_security_fields() {
+        let mut value = serde_json::to_value(ClientConfig::from_fields(
+            "https://arkret.example",
+            "did:web:alice.example",
+            "ak:device:01964137-0000-7000-8000-00000000000f",
+            "",
+        ))
+        .unwrap();
+        value.as_object_mut().unwrap().insert(
+            "session_token".to_owned(),
+            serde_json::json!("shadow-token"),
+        );
+        assert!(serde_json::from_value::<ClientConfig>(value).is_err());
+    }
+
+    #[test]
+    fn persisted_profile_set_rejects_unknown_top_level_fields() {
+        let value = serde_json::json!({
+            "active_profile_id": null,
+            "profiles": [],
+            "active_account": "did:web:shadow.example"
+        });
+        assert!(serde_json::from_value::<MultiProfileConfig>(value).is_err());
     }
 
     fn temp_config_path(name: &str) -> PathBuf {

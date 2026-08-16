@@ -668,24 +668,23 @@ test.describe("feature coverage placeholders", () => {
   // ---- WebRTC call ----
   // UI surface: call
   // spec: crypto-media/webrtc-signaling.md
-  test("call: SFU mode never enters plaintext path; recording requires explicit grant", async ({
+  test("call: host without authenticated route adapter exposes no media actions", async ({
     page,
   }) => {
-    // inkson ships the call SIGNALING surface
-    // (`ak.call.signal` / `ak.call.state` / `ak.call.recording.start`)
-    // but the WebRTC media stack is renderer-provided and hidden from
-    // the default local 1.0 UI until `experimental-webrtc` is enabled.
+    // The core media client rejects an empty verified_media_routes set. Until
+    // this host can produce authenticated Garth route evaluations, the route
+    // must be an honest unavailable state rather than a clickable path that
+    // is guaranteed to fail during token exchange.
     await page.goto("/call", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
-    await expect(page.getByTestId("call-panel")).toBeVisible({
+    await expect(page.getByTestId("call-route-unavailable")).toBeVisible({
       timeout: 60_000,
     });
-    await expect(page.getByTestId("call-signal-count")).toBeVisible();
-    await expect(page.getByTestId("deferred-feature-gate")).toHaveCount(0);
-    await expect(page.getByTestId("call-start-voice-button")).toBeAttached();
-    await expect(page.getByTestId("call-start-group-button")).toBeAttached();
+    await expect(page.getByTestId("call-panel")).toHaveCount(0);
+    await expect(page.getByTestId("call-start-voice-button")).toHaveCount(0);
+    await expect(page.getByTestId("call-start-group-button")).toHaveCount(0);
   });
 
   // ---- Push gateway masking ----

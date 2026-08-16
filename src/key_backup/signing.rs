@@ -141,7 +141,7 @@ pub fn build_key_backup_unlock_proof(
         }
 
         let local_digest = crate::canonical::canonical_sha256(&LocalUnlockProofDigest {
-            record_type: "ak.key_backup.local_unlock_proof.v1",
+            record_type: "org.arkret.inkson.key_backup.local_unlock_proof.v1",
             principal_id,
             requesting_device_id,
             backup_id: &backup.backup_id,

@@ -1223,7 +1223,7 @@ export async function mockArkretApi(
           "ak.open.invite_locator.read.resolve",
           "ak.self.signal.command.send",
         ],
-        supported_schema_profiles: ["ak.schema.core.v1"],
+        supported_schema_profiles: ["ak.schema.event.v1"],
         supported_reducer_profiles: ["ak.reducer.core.v1"],
         supported_bindings: [{ kind: "http_json" }],
         auth_metadata: {
@@ -2947,7 +2947,7 @@ export async function mockArkretApi(
         registry_mode: "development_local",
         supported_receipts: ["local"],
         protocol_version: "1.0",
-        profiles: ["ak.identity.local-dev.v1"],
+        profiles: [],
       });
     }
 

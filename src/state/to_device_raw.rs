@@ -3,6 +3,249 @@ use arkret_wire::event_kind_str;
 use super::*;
 
 impl LocalStateStore {
+    fn set_client_cursor_cached(
+        &mut self,
+        scope: &garth::CursorScope,
+        cursor: Option<String>,
+    ) -> arkret_sdk::Result<()> {
+        match scope {
+            garth::CursorScope::Account { .. } => self.cached.sync_cursor = cursor,
+            garth::CursorScope::RealmEvents { realm_id, .. } => match cursor {
+                Some(cursor) => {
+                    self.cached
+                        .realm_events_cursors
+                        .insert(realm_id.to_string(), cursor);
+                }
+                None => {
+                    self.cached.realm_events_cursors.remove(realm_id.as_str());
+                }
+            },
+            garth::CursorScope::RealmEventsScan {
+                service_id,
+                realm_id,
+                order,
+            } => {
+                let key = realm_scan_cursor_key(service_id.as_ref(), realm_id, order.as_deref());
+                match cursor {
+                    Some(cursor) => {
+                        self.cached.realm_scan_cursors.insert(key, cursor);
+                    }
+                    None => {
+                        self.cached.realm_scan_cursors.remove(&key);
+                    }
+                }
+            }
+            garth::CursorScope::DeviceMessages {
+                service_id,
+                actor_id,
+                device_id,
+            } => {
+                let key = crate::client_core::device_message_cursor_key(
+                    service_id.as_ref(),
+                    actor_id,
+                    device_id,
+                )?;
+                match cursor {
+                    Some(cursor) => {
+                        self.cached.device_message_cursors.insert(key, cursor);
+                    }
+                    None => {
+                        self.cached.device_message_cursors.remove(&key);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn commit_client_delivery(
+        &mut self,
+        scope: garth::CursorScope,
+        cursor: Option<String>,
+        events: Vec<garth::ClientEvent>,
+    ) -> arkret_sdk::Result<Option<garth::DeliveryId>> {
+        self.ensure_cached_loaded();
+        if !events.is_empty()
+            && self.cached.client_core_pending_deliveries.len() >= garth::MAX_PENDING_DELIVERIES
+        {
+            return Err(arkret_sdk::Error::Protocol(
+                "durable inbox capacity reached; acknowledge pending deliveries before polling"
+                    .to_owned(),
+            ));
+        }
+        let previous = self.cached.clone();
+        self.set_client_cursor_cached(&scope, cursor.clone())?;
+        let delivery_id = if events.is_empty() {
+            None
+        } else {
+            self.cached.client_core_next_delivery_id = self
+                .cached
+                .client_core_next_delivery_id
+                .checked_add(1)
+                .ok_or_else(|| arkret_sdk::Error::Protocol("delivery id overflow".to_owned()))?;
+            let id = garth::DeliveryId::new(self.cached.client_core_next_delivery_id);
+            self.cached.client_core_pending_deliveries.push_back(
+                crate::state::types::StoredClientDelivery {
+                    id: id.get(),
+                    scope,
+                    cursor,
+                    events: serde_json::to_value(events)?,
+                    attempts: 0,
+                    next_attempt_at_ms: None,
+                    error_class: None,
+                    last_error: None,
+                },
+            );
+            Some(id)
+        };
+        if let Err(error) = self.flush() {
+            self.cached = previous;
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "persist durable inbox commit: {error}"
+            )));
+        }
+        Ok(delivery_id)
+    }
+
+    pub(crate) fn pending_client_deliveries(
+        &self,
+        limit: usize,
+    ) -> arkret_sdk::Result<Vec<garth::PendingDelivery>> {
+        self.load()
+            .client_core_pending_deliveries
+            .iter()
+            .take(limit.clamp(1, garth::MAX_PENDING_READ))
+            .map(|delivery| {
+                Ok(garth::PendingDelivery {
+                    id: garth::DeliveryId::new(delivery.id),
+                    scope: delivery.scope.clone(),
+                    cursor: delivery.cursor.clone(),
+                    events: serde_json::from_value(delivery.events.clone())?,
+                    attempts: delivery.attempts,
+                    next_attempt_at_ms: delivery.next_attempt_at_ms,
+                    error_class: delivery.error_class,
+                    last_error: delivery.last_error.clone(),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn client_delivery_snapshot(
+        &self,
+        id: garth::DeliveryId,
+    ) -> Option<crate::state::types::StoredClientDelivery> {
+        self.load()
+            .client_core_pending_deliveries
+            .into_iter()
+            .find(|delivery| delivery.id == id.get())
+    }
+
+    pub(crate) fn restore_client_delivery(
+        &mut self,
+        delivery: crate::state::types::StoredClientDelivery,
+    ) -> arkret_sdk::Result<()> {
+        self.ensure_cached_loaded();
+        if let Some(current) = self
+            .cached
+            .client_core_pending_deliveries
+            .iter_mut()
+            .find(|current| current.id == delivery.id)
+        {
+            *current = delivery;
+        } else {
+            self.cached
+                .client_core_pending_deliveries
+                .push_back(delivery);
+            self.cached
+                .client_core_pending_deliveries
+                .make_contiguous()
+                .sort_by_key(|delivery| delivery.id);
+        }
+        self.flush().map_err(|error| {
+            arkret_sdk::Error::Protocol(format!("restore durable inbox delivery: {error}"))
+        })
+    }
+
+    pub(crate) fn rollback_client_delivery_commit(
+        &mut self,
+        scope: &garth::CursorScope,
+        previous_cursor: Option<String>,
+        delivery_id: Option<garth::DeliveryId>,
+    ) -> arkret_sdk::Result<()> {
+        self.ensure_cached_loaded();
+        self.set_client_cursor_cached(scope, previous_cursor)?;
+        if let Some(delivery_id) = delivery_id {
+            self.cached
+                .client_core_pending_deliveries
+                .retain(|delivery| delivery.id != delivery_id.get());
+        }
+        self.flush().map_err(|error| {
+            arkret_sdk::Error::Protocol(format!("rollback durable inbox commit: {error}"))
+        })
+    }
+
+    pub(crate) fn ack_client_delivery(
+        &mut self,
+        id: garth::DeliveryId,
+    ) -> arkret_sdk::Result<bool> {
+        self.ensure_cached_loaded();
+        let previous = self.cached.clone();
+        let before = self.cached.client_core_pending_deliveries.len();
+        self.cached
+            .client_core_pending_deliveries
+            .retain(|delivery| delivery.id != id.get());
+        if self.cached.client_core_pending_deliveries.len() == before {
+            return Ok(false);
+        }
+        if let Err(error) = self.flush() {
+            self.cached = previous;
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "persist durable inbox acknowledgement: {error}"
+            )));
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn retry_client_delivery(
+        &mut self,
+        id: garth::DeliveryId,
+        next_attempt_at_ms: Option<i64>,
+        error_class: garth::DeliveryErrorClass,
+        mut error: String,
+    ) -> arkret_sdk::Result<bool> {
+        self.ensure_cached_loaded();
+        let previous = self.cached.clone();
+        let Some(delivery) = self
+            .cached
+            .client_core_pending_deliveries
+            .iter_mut()
+            .find(|delivery| delivery.id == id.get())
+        else {
+            return Ok(false);
+        };
+        delivery.attempts = delivery
+            .attempts
+            .checked_add(1)
+            .ok_or_else(|| arkret_sdk::Error::Protocol("delivery attempts overflow".to_owned()))?;
+        delivery.next_attempt_at_ms = next_attempt_at_ms;
+        delivery.error_class = Some(error_class);
+        if error.len() > garth::MAX_DELIVERY_ERROR_BYTES {
+            let mut end = garth::MAX_DELIVERY_ERROR_BYTES;
+            while !error.is_char_boundary(end) {
+                end -= 1;
+            }
+            error.truncate(end);
+        }
+        delivery.last_error = Some(error);
+        if let Err(error) = self.flush() {
+            self.cached = previous;
+            return Err(arkret_sdk::Error::Protocol(format!(
+                "persist durable inbox retry: {error}"
+            )));
+        }
+        Ok(true)
+    }
+
     pub fn load_client_cursor(
         &self,
         scope: &garth::CursorScope,
@@ -667,6 +910,10 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
         "synthesis_entry_id",
         "synthesis_revision_body",
         "encrypted_payload_local",
+        // The accepted invite authoring path pins this from its typed delivery
+        // target. Realm Event projections intentionally do not repeat the
+        // private service route, so preserve it for deferred MLS claim retry.
+        "recipient_service_id",
     ] {
         if incoming_object.get(key).is_none_or(|value| value.is_null())
             && let Some(value) = existing_object.get(key).filter(|value| !value.is_null())
@@ -683,4 +930,83 @@ fn raw_payload_is_redaction_tombstone(payload: &Value) -> bool {
         || payload
             .get("payload")
             .is_some_and(raw_payload_is_redaction_tombstone)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod durable_inbox_tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use arkret_models_collaboration::sync_frames::account_sync::{
+        NotificationDelta, NotificationDeltaAction,
+    };
+
+    use super::LocalStateStore;
+
+    fn temp_path() -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("inkson-realm-inbox-{nonce}.json"))
+    }
+
+    #[test]
+    fn realm_cursor_and_delivery_survive_restart_until_ack() {
+        let path = temp_path();
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let scope = garth::CursorScope::RealmEvents {
+            service_id: None,
+            realm_id,
+        };
+        let event = garth::ClientEvent::Notification(NotificationDelta {
+            id: arkret_sdk::NotificationId::new(
+                "ak:notification:01964137-0000-7000-8000-000000000012",
+            )
+            .unwrap(),
+            notification_kind: arkret_sdk::NotificationKind::Agent,
+            action: NotificationDeltaAction::Remove,
+            data: None,
+        });
+
+        let delivery_id = LocalStateStore::with_path(&path)
+            .commit_client_delivery(
+                scope.clone(),
+                Some("ak:cursor:realm-committed".to_owned()),
+                vec![event],
+            )
+            .unwrap()
+            .unwrap();
+
+        let mut restarted = LocalStateStore::with_path(&path);
+        assert_eq!(
+            restarted.load_client_cursor(&scope).unwrap().as_deref(),
+            Some("ak:cursor:realm-committed")
+        );
+        let pending = restarted.pending_client_deliveries(10).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, delivery_id);
+        restarted
+            .retry_client_delivery(
+                delivery_id,
+                Some(42),
+                garth::DeliveryErrorClass::Processing,
+                "projection failed".to_owned(),
+            )
+            .unwrap();
+
+        let mut after_retry = LocalStateStore::with_path(&path);
+        let pending = after_retry.pending_client_deliveries(10).unwrap();
+        assert_eq!(pending[0].attempts, 1);
+        assert_eq!(pending[0].next_attempt_at_ms, Some(42));
+        assert!(after_retry.ack_client_delivery(delivery_id).unwrap());
+        assert!(
+            LocalStateStore::with_path(&path)
+                .pending_client_deliveries(10)
+                .unwrap()
+                .is_empty()
+        );
+        let _ = std::fs::remove_file(path);
+    }
 }

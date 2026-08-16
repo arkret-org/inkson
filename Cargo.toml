@@ -135,6 +135,7 @@ chime = {workspace = true,features = ["http"]}
 chrono = {workspace = true,features = ["serde"]}
 dioxus-primitives = {workspace = true,default-features = false}
 dioxus-router = {workspace = true}
+futures-util = {workspace = true}
 # C3: shared Arkret frontend component crate. The former `src/ui/`
 # css-module wrappers now live in yoface, which re-exports
 # `dioxus_primitives` and `dioxus_icons`; inkson imports
@@ -175,7 +176,6 @@ chrono = {workspace = true}
 fs2 = "0.4.3"
 # `ak.profile.binding.websocket.v1` native socket. garth owns the protocol;
 # tungstenite only reassembles messages and enforces the byte ceiling.
-futures-util = {workspace = true}
 tokio-tungstenite = {workspace = true,features = ["rustls-tls-webpki-roots"]}
 # T5.2 (2026-05-20): `signer` feature enabled so `event_signer` can pull
 # in `arkret_sdk::signatures::Ed25519DetachedJwsSigner` for the
@@ -240,6 +240,7 @@ tokio = {workspace = true,features = ["macros", "rt", "sync", "time"]}
 tracing-wasm = {workspace = true}
 wasm-bindgen = {workspace = true}
 wasm-bindgen-futures = {workspace = true}
+send_wrapper = "0.6.0"
 web-sys = {workspace = true,features = [
     "Storage",
     "StorageEvent",

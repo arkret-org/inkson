@@ -167,6 +167,10 @@ pub struct LocalStateStore {
     /// the overlay data mutex so the short data-access sections never nest
     /// inside it in both orders (no deadlock).
     mls_decrypt_serial: Arc<Mutex<()>>,
+    /// Runtime-only unified Sidecar projection. Its inputs come exclusively
+    /// from decrypted Account Data and deterministic accepted private-history
+    /// folds; persisted caches remain rebuildable accelerators.
+    sidecar_projection_fold: garth::projection::SidecarProjectionFold,
     pending_projection_commands: std::collections::VecDeque<LocalProjectionCommand>,
     #[cfg(not(target_arch = "wasm32"))]
     path: PathBuf,
@@ -288,6 +292,7 @@ impl Default for LocalStateStore {
             persist_health: Arc::new(Mutex::new(None)),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
+            sidecar_projection_fold: garth::projection::SidecarProjectionFold::default(),
             pending_projection_commands: std::collections::VecDeque::new(),
             #[cfg(not(target_arch = "wasm32"))]
             path: default_state_path(),
@@ -304,6 +309,39 @@ fn member_handle_cache_key(subject_id: &str, realm_id: Option<&str>) -> String {
 }
 
 impl LocalStateStore {
+    pub(crate) fn apply_sidecar_view_state(
+        &mut self,
+        view_state: arkret_sdk::AgentSidecarViewState,
+    ) -> bool {
+        self.sidecar_projection_fold.apply_view_state(view_state)
+    }
+
+    pub(crate) fn sidecar_view_state(
+        &self,
+        controller_id: &str,
+        realm_id: &arkret_sdk::RealmId,
+        strand_id: &arkret_sdk::StrandId,
+    ) -> Option<arkret_sdk::AgentSidecarViewState> {
+        self.sidecar_projection_fold
+            .view_state(controller_id, realm_id, strand_id)
+            .cloned()
+    }
+
+    pub(crate) fn apply_sidecar_exchange_projection(
+        &mut self,
+        projection: arkret_sdk::AgentSidecarExchangeProjection,
+    ) -> arkret_sdk::Result<()> {
+        self.sidecar_projection_fold
+            .apply_folded_exchange(projection)
+            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
+    }
+
+    pub(crate) fn sidecar_projection_fold_snapshot(
+        &self,
+    ) -> garth::projection::SidecarProjectionFold {
+        self.sidecar_projection_fold.clone()
+    }
+
     const SECURE_IDENTITY_KEY: &'static str = "identity.local.primary.v1";
 
     pub(crate) const SECURE_DPOP_DEVICE_KEY: &'static str = "auth.dpop.device_key.v1";
@@ -569,6 +607,7 @@ impl LocalStateStore {
             persist_health: Arc::new(Mutex::new(None)),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
+            sidecar_projection_fold: garth::projection::SidecarProjectionFold::default(),
             pending_projection_commands: std::collections::VecDeque::new(),
             path: path.into(),
         }

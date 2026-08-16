@@ -1245,7 +1245,12 @@ pub(crate) async fn bootstrap_provisioned_agent(
             Ok(_) => state_store
                 .write()
                 .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &genesis.event_id),
-            Err(error) if error.to_string().contains("mls_genesis_already_exists") => {
+            Err(error)
+                if crate::ephemeral::events_submit_rejected_for_reason(
+                    &error,
+                    &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
+                ) =>
+            {
                 let event_id = submitter
                     .find_mls_genesis_event_id(realm_id)
                     .await?

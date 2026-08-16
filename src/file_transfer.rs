@@ -23,8 +23,9 @@ use crate::transport::TransportClient;
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_KIND: &str = "file_transfer";
-pub const FILE_TRANSFER_RECORD_ENVELOPE_SCHEME: &str = "ak.file_transfer.account_data_envelope.v1";
-pub const FILE_TRANSFER_BLOB_SCHEME: &str = "ak.file_transfer.encrypted_blob.v1";
+pub const FILE_TRANSFER_RECORD_ENVELOPE_SCHEME: &str =
+    "org.arkret.inkson.file_transfer.account_data_envelope.v1";
+pub const FILE_TRANSFER_BLOB_SCHEME: &str = arkret_sdk::BLOB_SCHEME_WHOLE_FILE_AEAD_V1;
 pub const FILE_TRANSFER_RETENTION_DAYS: i64 = 7;
 pub const FILE_TRANSFER_KEY_HPKE_INFO: &[u8] = b"arkret-file-transfer-key-hpke-x25519-v1";
 

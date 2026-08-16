@@ -146,7 +146,7 @@ impl LocalStateStore {
             .get("kind")
             .or_else(|| message.get("type"))
             .and_then(Value::as_str)
-            != Some("ak.read_cursor.update")
+            != Some(arkret_wire::ActorPrivateUpdateKind::READ_CURSOR_UPDATE)
         {
             return false;
         }

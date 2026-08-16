@@ -134,7 +134,7 @@ pub fn open_passphrase_kdf_backup_body(
 /// ChaCha20-Poly1305 (96-bit nonce). The `encryption.hpke_suite` selector is
 /// written explicitly so `aead.name` is unambiguously consistent with the
 /// selected suite per `hpke-suite-registry.json` registry rules.
-pub const HPKE_AEAD_PROFILE: &str = "ak.aead.chacha20_poly1305.v1";
+pub const HPKE_AEAD_PROFILE: &str = arkret_wire::AeadProfileId::CHACHA20_POLY1305_V1;
 
 /// `info` transcript bound into the HPKE context (key-management.md §7.5.2):
 /// canonical_json of the envelope identity tuple. Both sealer and opener

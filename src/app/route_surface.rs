@@ -484,6 +484,21 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         video,
                         incoming,
                     } => {
+                        if !crate::views::call::media_route_adapter_available() {
+                            return rsx! {
+                                div {
+                                    class: "timeline",
+                                    "data-testid": "call-route-unavailable",
+                                    div { class: "event error-banner",
+                                        div { class: "event-head", span { "Calls unavailable" } }
+                                        div {
+                                            class: "entity-title",
+                                            "This host cannot verify media-service routes yet. No token exchange was attempted."
+                                        }
+                                    }
+                                }
+                            };
+                        }
                         let call_realm_id = if realm_id.trim().is_empty() {
                             active_realm_id.clone()
                         } else {

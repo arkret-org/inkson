@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_wire::event_kind_str;
 use dioxus::prelude::{Asset, AssetOptions, asset, manganis, *};
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::{use_navigator, use_route};
@@ -2184,27 +2183,24 @@ pub fn KanbanPanel(
                                                     None,
                                                 )
                                                 .unwrap_or_else(|_| "U".to_owned());
-                                                // The new card`ak.strand.createely: `submit_kanban_move`
+                                                // The create command appends an `ak.strand.create`
                                                 // appends the `ak.strand.create` op (write_state queued),
                                                 // which the `columns` memo folds via `strand_views_from_ops`.
                                                 // No `strand_id` here: the card Strand is named by
-                                                // its own create Event, so `submit_kanban_move`
+                                                // its own create Event, so the command boundary
                                                 // fills the subject in once the envelope exists.
-                                                let value = json!({
-                                                    "board_space_id": board_space_id,
-                                                    "list_space_id": col_id,
-                                                    "title": title,
-                                                    "rank": rank,
-                                                    "strand_kind": "card",
-                                                });
-                                                submit_kanban_move(
+                                                let command = KanbanCardCreateCommand {
+                                                    board_space_id,
+                                                    list_space_id: col_id.clone(),
+                                                    title,
+                                                    rank,
+                                                };
+                                                submit_kanban_card_create(
                                                     base.clone(),
                                                     token,
                                                     realm.clone(),
                                                     actor.clone(),
-                                                    None,
-                                                    event_kind_str::STRAND_CREATE,
-                                                    value,
+                                                    command,
                                                     selected_scope_security_encrypted,
                                                     state_store,
                                                     write_records,

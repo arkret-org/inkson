@@ -212,7 +212,11 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             // already-accepted Event id: encrypted writes bind their
             // `group_state_ref` to it, so merely setting the emitted flag would
             // strand them without a resolvable group state.
-            Err(error) if error.to_string().contains("mls_genesis_already_exists") => submitter
+            Err(error)
+                if crate::ephemeral::events_submit_rejected_for_reason(
+                    &error,
+                    &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
+                ) => submitter
                 .find_mls_genesis_event_id(realm_id)
                 .await
                 .and_then(|event_id| {

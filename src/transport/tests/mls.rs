@@ -58,19 +58,45 @@ fn keypackage_claim_request_carries_required_capabilities() {
         ),
     );
     let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+    let requester_device_id = "ak:device:0196419b-0000-7000-8000-000000000002";
+    let requester_device_authorize_event_id =
+        arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc").unwrap();
     let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
         "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "did:web:bob.example",
-        "ak:did_core:web:arkret.example",
+        requester_device_id,
+        &requester_device_authorize_event_id,
+        "ak:did_core:web:source.example",
+        "ak:did_core:web:destination.example",
         "AAAAAAAAAAAAAAAAAAAAAA",
         Some("ak:device:0196419b-0000-7000-8000-000000000001"),
-        Some("mls-group-1"),
+        "mls-group-1",
     )
     .expect("claim request builds");
 
-    let expected = mls_api_helpers::mls_keypackage_claim_required_capabilities();
+    let expected = mls_api_helpers::mls_keypackage_claim_required_capabilities().unwrap();
     assert_eq!(body.required_capabilities, expected);
+    assert_eq!(
+        body.service_binding.destination_service_id.as_str(),
+        "ak:did_core:web:destination.example"
+    );
+    match &body.requester_authorization {
+        arkret_sdk::PeerKeyPackageRequesterAuthorization::Device {
+            requester_device_id: actual_device_id,
+            device_authorize_event_id,
+            ..
+        } => {
+            assert_eq!(actual_device_id.as_str(), requester_device_id);
+            assert_eq!(
+                device_authorize_event_id,
+                &requester_device_authorize_event_id
+            );
+        }
+        arkret_sdk::PeerKeyPackageRequesterAuthorization::NativeAgent { .. } => {
+            panic!("human caller must author device authorization")
+        }
+    }
 
     let wire = serde_json::to_value(&body).expect("claim request serializes");
     assert_eq!(

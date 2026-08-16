@@ -112,7 +112,7 @@ fn inkson_accepts_server_contract_payloads() {
         "trust_domain": "ak:trust_domain:server.local",
         "service_kind": "principal_server",
         "protocol_version": "1.0",
-        "supported_profiles": ["ak.schema.core.v1"],
+        "supported_profiles": ["ak.profile.core_event_store.v1"],
         "supported_features": [
             "account.subscribe",
             "sync.backfill",
@@ -143,7 +143,7 @@ fn inkson_accepts_server_contract_payloads() {
         ],
         "supported_bindings": [{"kind": "http_json", "base_url": "/_arkret"}],
         "supported_reducer_profiles": ["ak.reducer.core.v1"],
-        "supported_schema_profiles": ["ak.schema.core.v1"],
+        "supported_schema_profiles": ["ak.schema.event.v1"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory", "max_limit": 100},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
@@ -174,7 +174,7 @@ fn inkson_accepts_server_contract_payloads() {
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
         "protocol_version": "1.0",
-        "profiles": ["ak.identity.local-dev.v1"]
+        "profiles": []
     }))
     .unwrap();
     assert_eq!(identity.registry_mode, "development_local");

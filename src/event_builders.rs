@@ -1028,7 +1028,7 @@ pub fn build_space_create_event(
 /// Build a Space lifecycle event (`ak.space.archive` /
 /// `ak.space.restore` / `ak.space.tombstone`) per spec
 /// realm-and-space.md §3.4. All three write the new `state` value
-/// into the `ak.component.space.state.v1` cell on the home Realm via
+/// into the registered Space lifecycle cell on the home Realm via
 /// an FSM transition.
 pub fn build_space_lifecycle_event(
     space_id: &str,
@@ -1071,7 +1071,7 @@ pub fn build_space_lifecycle_event(
         effective_at: None,
     };
     let created_at = event_timestamp();
-    let cell = space_cell("ak.component.space.state.v1", space_id);
+    let cell = space_cell(arkret_wire::CellFamilyId::SPACE_LIFECYCLE_V1, space_id);
     let preconditions = vec![head_eq_precondition(
         &cell,
         Value::String(prior_state.to_owned()),
@@ -1519,7 +1519,7 @@ fn space_cell(cell_family: &str, space_id: &str) -> String {
 }
 
 /// Wire name of the device verification transcript this module signs.
-pub const DEVICE_VERIFICATION_PROOF_TYPE: &str = "ak.device.verification.proof.v1";
+pub const DEVICE_VERIFICATION_PROOF_TYPE: &str = "org.arkret.inkson.device_verification.proof.v1";
 
 /// The bytes a device signs when it confirms a SAS / key verification.
 ///

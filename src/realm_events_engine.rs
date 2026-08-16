@@ -33,8 +33,8 @@
 use std::time::Duration;
 
 use garth::{
-    Backoff, ClientEvent, ClientProjector, RunOptions, ScanCatchupOptions, SyncLoopControl,
-    TransportProvider,
+    Backoff, ClientEvent, ClientProjector, DurableInboxStore, RunOptions, ScanCatchupOptions,
+    SyncLoopControl, TransportProvider,
 };
 
 use crate::config::MultiProfileConfig;
@@ -127,6 +127,106 @@ impl ClientProjector for RealmIngestProjector {
             }
         }
         Ok(())
+    }
+}
+
+fn expand_delivery_events(events: Vec<ClientEvent>) -> garth::Result<Vec<ClientEvent>> {
+    let decoder = garth::InboundDecoder::new();
+    let mut expanded = Vec::new();
+    for event in events {
+        match event {
+            ClientEvent::Backfill { outcome, .. } => {
+                for (index, row) in outcome.events.into_iter().enumerate() {
+                    let event = row.into_event().ok_or_else(|| {
+                        garth::Error::Protocol(format!(
+                            "Realm inbox backfill requires complete Events; row {index} is redacted or reference-locked"
+                        ))
+                    })?;
+                    expanded.push(match decoder.decode_event(event) {
+                        garth::DecodedInbound::Message(message) => ClientEvent::Message(*message),
+                        garth::DecodedInbound::Event(event) => ClientEvent::Event(*event),
+                    });
+                }
+            }
+            event => expanded.push(event),
+        }
+    }
+    Ok(expanded)
+}
+
+async fn deliver_realm_inbox(
+    provider: &RealmTransportProvider,
+    inbox: crate::client_core::InksonLocalStateStoreAdapter,
+    projector: &RealmIngestProjector,
+) {
+    while provider.is_active() {
+        let pending = match inbox.pending(64).await {
+            Ok(pending) => pending,
+            Err(error) => {
+                tracing::error!(%error, "durable Realm inbox read failed closed");
+                crate::runtime_helpers::sleep_for(BACKOFF_FLOOR).await;
+                continue;
+            }
+        };
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut handled = false;
+        for delivery in pending {
+            let delivery_realm = match &delivery.scope {
+                garth::CursorScope::RealmEvents { realm_id, .. }
+                | garth::CursorScope::RealmEventsScan { realm_id, .. } => realm_id,
+                _ => continue,
+            };
+            if delivery_realm.as_str() != provider.realm_id {
+                continue;
+            }
+            if delivery
+                .next_attempt_at_ms
+                .is_some_and(|retry_at| retry_at > now_ms)
+            {
+                continue;
+            }
+            handled = true;
+            let result = match expand_delivery_events(delivery.events) {
+                Ok(events) => projector.project(events).await,
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(()) => match inbox.ack(delivery.id).await {
+                    Ok(true) => {}
+                    Ok(false) => tracing::warn!(
+                        delivery_id = delivery.id.get(),
+                        "Realm inbox delivery disappeared before acknowledgement"
+                    ),
+                    Err(error) => tracing::error!(
+                        %error,
+                        delivery_id = delivery.id.get(),
+                        "Realm inbox acknowledgement failed; delivery remains pending"
+                    ),
+                },
+                Err(error) => {
+                    let exponent = delivery.attempts.min(6);
+                    let delay_ms = 1_000_i64.saturating_mul(1_i64 << exponent);
+                    if let Err(store_error) = inbox
+                        .retry(
+                            delivery.id,
+                            Some(now_ms.saturating_add(delay_ms)),
+                            garth::DeliveryErrorClass::Processing,
+                            error.to_string(),
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            error = %store_error,
+                            delivery_id = delivery.id.get(),
+                            "Realm inbox retry state failed closed"
+                        );
+                    }
+                }
+            }
+        }
+        if !handled {
+            crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+        }
     }
 }
 
@@ -227,10 +327,9 @@ pub async fn run_realm_events_engine(
             if let Err(error) = ctx
                 .client_runtime
                 .subscription_engine()
-                .bootstrap_realm_history(
+                .bootstrap_realm_history_to_inbox(
                     &bootstrap_transport,
                     realm_id_typed.clone(),
-                    &projector,
                     ScanCatchupOptions::default(),
                 )
                 .await
@@ -250,22 +349,26 @@ pub async fn run_realm_events_engine(
                 continue;
             }
         }
-        let result = ctx
-            .client_runtime
-            .client()
-            .run_realm(
-                &provider,
-                realm_id_typed.clone(),
-                &projector,
-                &SyncLoopControl::new(),
-                RunOptions {
-                    beat: Duration::from_millis(250),
-                    min_backoff: BACKOFF_FLOOR,
-                    max_backoff: BACKOFF_CEILING,
-                    jitter_ratio: 0.2,
-                },
-            )
-            .await;
+        let client = ctx.client_runtime.client();
+        let inbox = ctx.client_runtime.inbox_store();
+        let control = SyncLoopControl::new();
+        let runner = client.run_realm_to_inbox(
+            &provider,
+            realm_id_typed.clone(),
+            &control,
+            RunOptions {
+                beat: Duration::from_millis(250),
+                min_backoff: BACKOFF_FLOOR,
+                max_backoff: BACKOFF_CEILING,
+                jitter_ratio: 0.2,
+            },
+        );
+        let worker = deliver_realm_inbox(&provider, inbox, &projector);
+        futures_util::pin_mut!(runner, worker);
+        let result = match futures_util::future::select(runner, worker).await {
+            futures_util::future::Either::Left((result, _)) => result,
+            futures_util::future::Either::Right(((), _)) => break,
+        };
         let Some(retry_delay) = crate::runtime_helpers::next_reconnect_delay(
             provider.is_active(),
             &mut restart_backoff,

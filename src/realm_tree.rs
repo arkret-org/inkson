@@ -585,20 +585,23 @@ pub(crate) fn extract_child_space_ids(space_id: &str, body: &Value) -> Vec<Strin
             .get("kind")
             .or_else(|| event.get("type"))
             .and_then(Value::as_str);
-        if kind != Some("ak.space.child") {
+        if kind != Some(arkret_sdk::EventKind::SpaceParent.as_str()) {
             continue;
         }
-        for container in [
-            event.get("payload").unwrap_or(&Value::Null),
-            event.get("content").unwrap_or(&Value::Null),
-            event,
-        ] {
-            if let Some(child) = string_field(
-                container,
-                &["child_space_id", "child_id", "child", "space_id"],
-            ) {
-                children.push(child);
-            }
+        let payload = event
+            .get("payload")
+            .or_else(|| event.get("content"))
+            .and_then(|payload| {
+                serde_json::from_value::<arkret_sdk::SpaceParentPayload>(payload.clone()).ok()
+            });
+        if let Some(payload) = payload
+            && payload
+                .parent_space_id
+                .as_ref()
+                .map(arkret_sdk::SpaceId::as_str)
+                == Some(space_id)
+        {
+            children.push(payload.space_id.to_string());
         }
     }
 

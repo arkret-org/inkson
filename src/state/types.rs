@@ -839,6 +839,18 @@ pub struct CachedAgentSignerEvidence {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct StoredClientDelivery {
+    pub id: u64,
+    pub scope: garth::CursorScope,
+    pub cursor: Option<garth::OpaqueCursor>,
+    pub events: serde_json::Value,
+    pub attempts: u32,
+    pub next_attempt_at_ms: Option<i64>,
+    pub error_class: Option<garth::DeliveryErrorClass>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
     /// Crash-safe requester-side Direct Conversation replacement repairs,
@@ -864,6 +876,13 @@ pub struct ClientLocalState {
     /// cursor slot. Keys include service, realm, and order.
     #[serde(default)]
     pub realm_scan_cursors: BTreeMap<String, String>,
+    /// Crash-safe client-core deliveries. A Realm cursor and the batch it
+    /// admits are committed in one local-state write; the UI projector acks
+    /// only after its own durable fold succeeds.
+    #[serde(default)]
+    pub(crate) client_core_pending_deliveries: VecDeque<StoredClientDelivery>,
+    #[serde(default)]
+    pub client_core_next_delivery_id: u64,
     #[serde(default)]
     pub device_message_cursors: BTreeMap<String, String>,
     #[serde(default)]
@@ -1405,6 +1424,8 @@ impl Default for ClientLocalState {
             key_backup_active_series_highest_seen: BTreeMap::new(),
             realm_events_cursors: BTreeMap::new(),
             realm_scan_cursors: BTreeMap::new(),
+            client_core_pending_deliveries: VecDeque::new(),
+            client_core_next_delivery_id: 0,
             device_message_cursors: BTreeMap::new(),
             client_core_seen_event_ids: VecDeque::new(),
             raw_operations: Vec::new(),

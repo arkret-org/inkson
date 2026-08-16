@@ -111,7 +111,7 @@ pub(crate) fn prepare_rotation_backup_material(
 
     let commitment = Hash::new(arkret_sdk::canonical::sha256_digest(
         &arkret_sdk::canonical::canonical_json_bytes(&serde_json::json!({
-            "domain": "ak.account_mls_secret_commitment.v1",
+            "domain": "org.arkret.inkson.account_mls_secret_commitment.v1",
             "secret": rotation.new_secret,
         }))?,
     ))?;
@@ -415,7 +415,8 @@ async fn drive_security_rotation(
                 scope_ref: arkret_sdk::ScopeRef::Realm {
                     realm_id: control_realm.clone(),
                 },
-                action: "ak.keys.backup_series.erase".to_owned(),
+                action: arkret_sdk::CapabilityActionId::SELF_KEYS_BACKUP_SERIES_COMMAND_ERASE
+                    .to_owned(),
                 authorization_rule_id: "realm_admission".to_owned(),
                 risk_tier: RiskTier::High,
                 basis_ref: LeaseBasisRef::Seal(erase_frontier.seal_id),

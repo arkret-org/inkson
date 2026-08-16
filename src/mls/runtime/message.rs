@@ -1084,29 +1084,19 @@ fn welcome_consume_candidate(
 ) -> Option<WelcomeConsumeCandidate> {
     let payload =
         serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(entry.content.clone()).ok()?;
-    let (strand_id, repair_target_keypackage_ref) = match &payload.claim_receipt {
-        arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(receipt) => (
-            receipt.request.strand_id.as_ref().map(ToString::to_string),
-            None,
-        ),
-        arkret_sdk::MlsWelcomeClaimReceipt::PeerClaim(receipt) => {
-            let repair_target = if receipt.request.claim_purpose
-                == arkret_sdk::PeerKeyPackageClaimPurpose::DirectConversationRepair
-            {
-                let target = receipt.request.target_keypackage_ref.as_ref()?;
-                if target.as_str() != payload.keypackage_ref.as_str() {
-                    return None;
-                }
-                Some(target.as_str().to_owned())
-            } else {
-                None
-            };
-            (
-                receipt.request.strand_id.as_ref().map(ToString::to_string),
-                repair_target,
-            )
+    let receipt = &payload.claim_receipt;
+    let repair_target_keypackage_ref = if receipt.request.claim_purpose
+        == arkret_sdk::PeerKeyPackageClaimPurpose::DirectConversationRepair
+    {
+        let target = receipt.request.target_keypackage_ref.as_ref()?;
+        if target.as_str() != payload.keypackage_ref.as_str() {
+            return None;
         }
+        Some(target.as_str().to_owned())
+    } else {
+        None
     };
+    let strand_id = receipt.request.strand_id.as_ref().map(ToString::to_string);
     Some(WelcomeConsumeCandidate {
         key_package_id: entry.key_package_id.clone()?,
         claim_id: payload.claim_id.as_str().to_owned(),

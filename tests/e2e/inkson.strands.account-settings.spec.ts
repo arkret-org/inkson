@@ -783,8 +783,6 @@ test("diagnostic and preview surfaces stay behind clear user-facing states", asy
   await expect(page.getByTestId("directory-three-axes-banner")).not.toHaveAttribute("open", "");
 
   await page.goto("/call", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("call-panel")).toBeVisible();
-  await expect(page.getByTestId("deferred-feature-gate")).toHaveCount(0);
-  await expect(page.getByTestId("call-start-voice-button")).toBeAttached();
-  await expect(page.getByTestId("call-start-group-button")).toBeAttached();
+  await expect(page.getByTestId("call-route-unavailable")).toBeVisible();
+  await expect(page.getByTestId("call-panel")).toHaveCount(0);
 });

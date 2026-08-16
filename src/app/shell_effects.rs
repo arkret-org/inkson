@@ -219,6 +219,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     let call_signal_hub = use_context::<crate::views::call_signals::CallSignalHub>();
     let mut last_incoming_nav = use_signal(|| Option::<String>::None);
     use_effect(move || match call_signal_hub.incoming_call.read().clone() {
+        Some(_) if !crate::views::call::media_route_adapter_available() => {}
         Some(info) if last_incoming_nav.read().as_deref() != Some(info.call_id.as_str()) => {
             last_incoming_nav.set(Some(info.call_id.clone()));
             navigator.push(Route::Call {

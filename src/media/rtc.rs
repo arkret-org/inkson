@@ -26,8 +26,8 @@ pub use arkret_crypto::sframe::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use arkret_crypto::sframe::{FrameKeyContext, MlsExporterSource, derive_frame_key};
 use arkret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
-    CallMediaTokenExchangeRequestBody, DeviceId, DidCoreId, MediaIceConfigRequestBody,
-    MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
+    CallMediaTokenExchangeRequestBody, DeviceId, DidCoreId, MediaBackendKind, MediaBackendToken,
+    MediaIceConfigRequestBody, MediaIceMode, MlsGovernanceBindingPayload, PlaintextDataClassKind,
     PlaintextVisibleServicesPayload, RealmId, resolve_verification_method_key_from_document,
 };
 use arkret_signatures::media::{
@@ -639,13 +639,27 @@ pub async fn join_call_media(
     .await
     .map_err(|err| RtcClientError::from_api_error(&err))?;
 
-    if !is_known_focus_type(&outcome.backend_kind) {
-        return Err(RtcClientError::UnknownFocusType);
-    }
-
     let now = chrono::Utc::now();
     let verification = verify_call_media_token_outcome(&token_request, &outcome, &anchors, now)
         .map_err(|err| classify_protocol_error(&err))?;
+
+    // Inkson's current RTC transports are LiveKit drivers. Consume the closed
+    // backend/token union exhaustively and fail before connecting for every
+    // backend that has no host driver; in particular, never stringify the
+    // structured Arkret-native token into an opaque credential.
+    let backend_token = match (&outcome.backend_kind, &outcome.backend_token) {
+        (MediaBackendKind::Livekit, MediaBackendToken::Opaque(token)) => token.clone(),
+        (
+            MediaBackendKind::Mediasoup
+            | MediaBackendKind::Janus
+            | MediaBackendKind::ArkretNative
+            | MediaBackendKind::MoqRelay,
+            _,
+        ) => return Err(RtcClientError::UnknownFocusType),
+        (MediaBackendKind::Livekit, MediaBackendToken::ArkretNative(_)) => {
+            return Err(RtcClientError::UnknownFocusType);
+        }
+    };
 
     // ICE config — verified against the same anchors. A focus-bound call
     // always relays through the SFU media plane.
@@ -682,10 +696,10 @@ pub async fn join_call_media(
         .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
 
     Ok(JoinedMediaSession {
-        backend_kind: outcome.backend_kind,
+        backend_kind: "livekit".to_owned(),
         focus_id: outcome.focus_id,
         connect_url: outcome.connect_url,
-        backend_token: outcome.backend_token,
+        backend_token,
         participant_binding: outcome.participant_binding,
         participant_identity: verification.participant_identity,
         ice_config,

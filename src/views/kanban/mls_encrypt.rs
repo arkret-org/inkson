@@ -631,9 +631,10 @@ pub(super) fn dispatch_card_detail_update(
                 match submitter.submit_sdk_event(&genesis_op).await {
                     Ok(_) => Ok(genesis_event_id),
                     Err(error)
-                        if error
-                            .to_string()
-                            .contains("mls_genesis_already_exists") =>
+                        if crate::ephemeral::events_submit_rejected_for_reason(
+                            &error,
+                            &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
+                        ) =>
                     {
                         submitter
                             .find_mls_genesis_event_id(&realm_for_genesis_lookup)

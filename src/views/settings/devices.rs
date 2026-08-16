@@ -172,7 +172,7 @@ fn build_pair_payload(
     let non_empty =
         |value: &str| arkret_sdk::NonEmptyString::new(value.to_owned()).map_err(anyhow::Error::msg);
     let payload = PairingApprovalPayload {
-        schema: non_empty("ak.device.pair.request.v1")?,
+        schema: non_empty(arkret_sdk::SchemaId::DEVICE_PAIRING_OPERATIONS_V1)?,
         account_did: arkret_sdk::DidFullId::new(account_did.to_owned())?,
         pairing_code: arkret_sdk::DevicePairingCode::new(pairing_code.to_owned())
             .map_err(anyhow::Error::msg)?,
@@ -1950,7 +1950,10 @@ mod tests {
         )
         .unwrap();
         let parsed: Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(parsed["schema"], "ak.device.pair.request.v1");
+        assert_eq!(
+            parsed["schema"],
+            arkret_sdk::SchemaId::DEVICE_PAIRING_OPERATIONS_V1
+        );
         assert_eq!(parsed["account_did"], "did:web:alice");
         assert_eq!(parsed["pairing_code"], "7H2K9M4Q");
         assert_eq!(parsed["new_device_pubkey"]["kid"], "device-1");

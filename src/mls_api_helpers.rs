@@ -140,10 +140,11 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
     })
 }
 
-pub(crate) fn mls_keypackage_claim_required_capabilities() -> Vec<String> {
+pub(crate) fn mls_keypackage_claim_required_capabilities()
+-> anyhow::Result<Vec<arkret_sdk::NonEmptyString>> {
     arkret_sdk::ARKRET_MLS_KEY_PACKAGE_CAPABILITIES
         .iter()
-        .map(|capability| (*capability).to_owned())
+        .map(|capability| arkret_sdk::NonEmptyString::new(*capability).map_err(anyhow::Error::msg))
         .collect()
 }
 
@@ -151,10 +152,13 @@ pub(crate) fn build_mls_keypackage_claim_request(
     target_principal_id: &str,
     intended_realm_id: &str,
     requester: &str,
-    authority_service_id: &str,
+    requester_device_id: &str,
+    requester_device_authorize_event_id: &arkret_sdk::EventId,
+    source_service_id: &str,
+    destination_service_id: &str,
     claim_nonce: &str,
     target_device_id: Option<&str>,
-    mls_group_id: Option<&str>,
+    mls_group_id: &str,
 ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
     let target_device_ids = target_device_id
         .map(str::trim)
@@ -165,44 +169,102 @@ pub(crate) fn build_mls_keypackage_claim_request(
         .collect::<Vec<_>>();
     let requester_full_id = arkret_sdk::DidFullId::new(requester.trim().to_owned())?;
     let requester = arkret_sdk::project_full_id_to_core_id(&requester_full_id)?;
-    let authority_service_id = arkret_sdk::DidCoreId::new(authority_service_id.trim().to_owned())?;
+    let requester_device_id = arkret_sdk::DeviceId::new(requester_device_id.trim().to_owned())?;
+    let source_service_id = arkret_sdk::DidCoreId::new(source_service_id.trim().to_owned())?;
+    let destination_service_id =
+        arkret_sdk::DidCoreId::new(destination_service_id.trim().to_owned())?;
     let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("KeyPackage self-claim requires an active device signer"))?;
+        .ok_or_else(|| anyhow::anyhow!("KeyPackage claim requires an active device signer"))?;
     let verification_method = signer.verification_method_for_principal(&requester_full_id)?;
-    let created_at = crate::clock::now_utc();
-    let expires_at = created_at + chrono::Duration::minutes(5);
-    let mut body = arkret_sdk::KeyPackagesClaimRequestBody {
+    let signed_at = crate::clock::now_utc();
+    let unsigned = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
+        claim_request_id: arkret_sdk::Base64UrlString::new(generate_mls_claim_nonce()?)
+            .map_err(anyhow::Error::msg)?,
         target_principal_id: principal_core_id(target_principal_id)?,
+        requester,
         intended_realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
             intended_realm_id,
         ))?,
-        requester,
-        required_capabilities: mls_keypackage_claim_required_capabilities(),
+        mls_group_id: arkret_sdk::NonEmptyString::new(mls_group_id.trim())
+            .map_err(anyhow::Error::msg)?,
+        claim_purpose: arkret_sdk::PeerKeyPackageClaimPurpose::RealmMembership,
+        required_capabilities: mls_keypackage_claim_required_capabilities()?,
         claim_nonce: arkret_wire::Base64UrlString::new(claim_nonce.trim().to_owned())
             .map_err(|error| anyhow::anyhow!(error))?,
-        expires_at,
+        expires_at: signed_at + chrono::Duration::minutes(5),
         target_device_ids,
+        target_keypackage_ref: None,
+        target_agent_id: None,
+        target_agent_verification_method: None,
+        target_agent_key_authorize_event_id: None,
         minimal_metadata_allowed: Some(true),
         timeout_ms: Some(30_000),
         strand_id: None,
-        mls_group_id: mls_group_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
-        holder_acceptance_proof: arkret_models_crypto::http_bodies::KeyPackageClaimProof {
-            kind: arkret_models_crypto::http_bodies::KeyPackageClaimProofKind::DetachedJws,
-            verification_method,
-            payload_digest: arkret_wire::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
-            created_at,
-            audience: authority_service_id,
-            proof_purpose:
-                arkret_models_crypto::http_bodies::KeyPackageClaimProofPurpose::HolderAcceptance,
-            jws: "eyJhbGciOiJFZDI1NTE5In0..AA".to_owned(),
+        pair_key: None,
+        last_resort_allowed: Some(false),
+    };
+    let service_binding = arkret_sdk::KeyPackagesClaimServiceBinding {
+        source_service_id,
+        destination_service_id,
+    };
+    let mut requester_authorization = arkret_sdk::PeerKeyPackageRequesterAuthorization::Device {
+        verification_method: verification_method.clone(),
+        requester_device_id,
+        device_authorize_event_id: requester_device_authorize_event_id.clone(),
+        signed_at,
+        signature: arkret_sdk::KeyOperationSignature {
+            kid: arkret_sdk::NonEmptyString::new(verification_method.as_str())
+                .map_err(anyhow::Error::msg)?,
+            signature_algorithm: Some(
+                arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
+            ),
+            sig: arkret_sdk::Base64UrlString::new("YQ").map_err(anyhow::Error::msg)?,
         },
     };
-    body.holder_acceptance_proof.payload_digest = body.payload_digest()?;
-    let binding = body.proof_binding_bytes()?;
-    body.holder_acceptance_proof.jws = signer.sign_detached_jws_bytes(&binding)?;
+    let signing_bytes = arkret_sdk::keypackage_claim_authorization_signing_bytes(
+        &unsigned,
+        &service_binding,
+        &requester_authorization,
+    )?;
+    let signature = arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(
+        signer.sign_raw(&signing_bytes).map_err(|error| {
+            anyhow::anyhow!("KeyPackage claim authorization sign failed: {error}")
+        })?,
+    ))
+    .map_err(anyhow::Error::msg)?;
+    match &mut requester_authorization {
+        arkret_sdk::PeerKeyPackageRequesterAuthorization::Device {
+            signature: proof, ..
+        }
+        | arkret_sdk::PeerKeyPackageRequesterAuthorization::NativeAgent {
+            signature: proof, ..
+        } => proof.sig = signature,
+    }
+    let body = arkret_sdk::KeyPackagesClaimRequestBody {
+        claim_request_id: unsigned.claim_request_id,
+        target_principal_id: unsigned.target_principal_id,
+        requester: unsigned.requester,
+        intended_realm_id: unsigned.intended_realm_id,
+        mls_group_id: unsigned.mls_group_id,
+        claim_purpose: unsigned.claim_purpose,
+        required_capabilities: unsigned.required_capabilities,
+        claim_nonce: unsigned.claim_nonce,
+        expires_at: unsigned.expires_at,
+        target_device_ids: unsigned.target_device_ids,
+        target_keypackage_ref: unsigned.target_keypackage_ref,
+        target_agent_id: unsigned.target_agent_id,
+        target_agent_verification_method: unsigned.target_agent_verification_method,
+        target_agent_key_authorize_event_id: unsigned.target_agent_key_authorize_event_id,
+        minimal_metadata_allowed: unsigned.minimal_metadata_allowed,
+        timeout_ms: unsigned.timeout_ms,
+        strand_id: unsigned.strand_id,
+        pair_key: unsigned.pair_key,
+        last_resort_allowed: unsigned.last_resort_allowed,
+        service_binding,
+        requester_authorization,
+    };
+    body.validate_shape()
+        .map_err(|error| anyhow::anyhow!("invalid KeyPackage claim request: {error}"))?;
     Ok(body)
 }
 

@@ -1664,7 +1664,7 @@ pub fn ChatPanel(
         .map(|channel| channel.strand_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
     let sidecar_exchange_projections = crate::sidecar::cached_sidecar_exchange_projections(
-        &state_store.read(),
+        &mut state_store.write(),
         &account_did,
         &selected_realm_id,
     );
@@ -2563,6 +2563,7 @@ pub fn ChatPanel(
                     div { class: "discussion-head-actions",
                         // Start a realm-scoped call. `direct_mode` strands map
                         // to a 1:1 call; group strands open an SFU conference.
+                        if crate::views::call::media_route_adapter_available() {
                         {
                             let realm_for_call = selected_realm_id.clone();
                             let realm_for_video = selected_realm_id.clone();
@@ -2609,6 +2610,7 @@ pub fn ChatPanel(
                                     UiIcon { name: "video" }
                                 }
                             }
+                        }
                         }
                         // T7.2: watch-level fast switcher. Issues a
                         // `ak.strand.watch.set` event on selection. We

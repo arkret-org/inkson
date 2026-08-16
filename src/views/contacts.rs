@@ -579,41 +579,43 @@ fn ContactRow(
                         },
                         {tr("contacts.action.message")}
                     }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "contact-call-voice-{peer}",
-                        disabled: busy(),
-                        onclick: {
-                            let peer = peer.clone();
-                            move |_| {
-                                nav.push(Route::Call {
-                                    call_id: String::new(),
-                                    peer: peer.clone(),
-                                    realm_id: String::new(),
-                                    video: "0".to_owned(),
-                                    incoming: "0".to_owned(),
-                                });
-                            }
-                        },
-                        {tr("contacts.action.call_voice")}
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        "data-testid": "contact-call-video-{peer}",
-                        disabled: busy(),
-                        onclick: {
-                            let peer = peer.clone();
-                            move |_| {
-                                nav.push(Route::Call {
-                                    call_id: String::new(),
-                                    peer: peer.clone(),
-                                    realm_id: String::new(),
-                                    video: "1".to_owned(),
-                                    incoming: "0".to_owned(),
-                                });
-                            }
-                        },
-                        {tr("contacts.action.call_video")}
+                    if crate::views::call::media_route_adapter_available() {
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "contact-call-voice-{peer}",
+                            disabled: busy(),
+                            onclick: {
+                                let peer = peer.clone();
+                                move |_| {
+                                    nav.push(Route::Call {
+                                        call_id: String::new(),
+                                        peer: peer.clone(),
+                                        realm_id: String::new(),
+                                        video: "0".to_owned(),
+                                        incoming: "0".to_owned(),
+                                    });
+                                }
+                            },
+                            {tr("contacts.action.call_voice")}
+                        }
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "contact-call-video-{peer}",
+                            disabled: busy(),
+                            onclick: {
+                                let peer = peer.clone();
+                                move |_| {
+                                    nav.push(Route::Call {
+                                        call_id: String::new(),
+                                        peer: peer.clone(),
+                                        realm_id: String::new(),
+                                        video: "1".to_owned(),
+                                        incoming: "0".to_owned(),
+                                    });
+                                }
+                            },
+                            {tr("contacts.action.call_video")}
+                        }
                     }
                     Button {
                         variant: ButtonVariant::Destructive,

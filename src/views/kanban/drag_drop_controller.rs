@@ -215,27 +215,31 @@ pub(super) fn submit_column_rename(
     );
 }
 
-/// Build + submit a Kanban event and record it in the board write queue.
-/// Card creates emit real `ak.strand.create` envelopes with an initial
-/// `ak.component.strand.position.v1` component; metadata writes go through
-/// the canonical `ak.strand.update` patch helper.
-pub(super) fn submit_kanban_move(
+/// Closed command accepted by the card-create boundary.
+///
+/// Keeping these fields typed prevents UI call sites from selecting an event
+/// kind independently of the JSON body that the builder expects.
+pub(super) struct KanbanCardCreateCommand {
+    pub board_space_id: String,
+    pub list_space_id: String,
+    pub title: String,
+    pub rank: String,
+}
+
+/// Build + submit a card-create event and record it in the board write queue.
+pub(super) fn submit_kanban_card_create(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
     actor_id: String,
-    // `subject` is the Strand the move targets, or `None` for
-    // `ak.strand.create` — a new card is named by its own create Event, so its
-    // id only exists once the envelope has been built.
-    subject: Option<String>,
-    kind: &'static str,
-    value: serde_json::Value,
+    command: KanbanCardCreateCommand,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
     mut state_store: SyncSignal<LocalStateStore>,
     mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
+    let kind = event_kind_str::STRAND_CREATE;
     let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before updating cards".to_owned());
@@ -249,43 +253,14 @@ pub(super) fn submit_kanban_move(
             return;
         }
     };
-    let envelope = if kind == event_kind_str::STRAND_CREATE {
-        let Some(board_space_id) = value.get("board_space_id").and_then(Value::as_str) else {
-            board_status.set("cannot create card: missing board_space_id".to_owned());
-            return;
-        };
-        let Some(list_space_id) = value.get("list_space_id").and_then(Value::as_str) else {
-            board_status.set("cannot create card: missing list_space_id".to_owned());
-            return;
-        };
-        let Some(title) = value.get("title").and_then(Value::as_str) else {
-            board_status.set("cannot create card: missing title".to_owned());
-            return;
-        };
-        let Some(rank) = value.get("rank").and_then(Value::as_str) else {
-            board_status.set("cannot create card: missing rank".to_owned());
-            return;
-        };
-        crate::operation::ak_ops::kanban_card_strand_create(
-            &realm_id,
-            &actor_id,
-            board_space_id,
-            list_space_id,
-            title,
-            rank,
-        )
-    } else {
-        let Some(subject) = subject.as_deref() else {
-            board_status.set(format!("cannot submit {kind}: no target Strand"));
-            return;
-        };
-        crate::operation::ak_ops::strand_position_update(
-            &realm_id,
-            &actor_id,
-            subject,
-            value.clone(),
-        )
-    };
+    let envelope = crate::operation::ak_ops::kanban_card_strand_create(
+        &realm_id,
+        &actor_id,
+        &command.board_space_id,
+        &command.list_space_id,
+        &command.title,
+        &command.rank,
+    );
     let envelope = match envelope {
         Ok(builder) => builder.build_sdk_event("inkson"),
         Err(err) => {
@@ -305,35 +280,23 @@ pub(super) fn submit_kanban_move(
         return;
     }
     let wire_kind = event.kind.as_str().to_owned();
-    // A create names its Strand by `retype(event_id)`; the builder stamped that
-    // id as the local handle. Every other kind was given its subject up front.
-    let subject = match subject {
-        Some(subject) => subject,
-        None => {
-            let Some(derived) = event.local_target_ref() else {
-                board_status.set(format!("cannot submit {kind}: no derived Strand id"));
-                return;
-            };
-            derived.to_owned()
-        }
+    // A create names its Strand by `retype(event_id)`; the builder stamped
+    // that id as the local handle.
+    let Some(subject) = event.local_target_ref().map(str::to_owned) else {
+        board_status.set(format!("cannot submit {kind}: no derived Strand id"));
+        return;
     };
-    let mut value = value;
-    if kind == event_kind_str::STRAND_CREATE
-        && let Some(effect) = value.as_object_mut()
-    {
-        effect.insert("strand_id".to_owned(), Value::String(subject.clone()));
-    }
+    let cell_id = strand_position_cell_id(&command.board_space_id, &subject);
+    let value = json!({
+        "board_space_id": command.board_space_id,
+        "list_space_id": command.list_space_id,
+        "title": command.title,
+        "rank": command.rank,
+        "strand_kind": "card",
+        "strand_id": subject,
+    });
     let op_id = sdk_event_local_operation_id(&event).to_owned();
-    let cell_id = value
-        .get("board_space_id")
-        .and_then(Value::as_str)
-        .map(|board_space_id| strand_position_cell_id(board_space_id, &subject))
-        .unwrap_or_else(|| format!("ak:cell:ak.component.strand.position.v1:{subject}"));
-    let effect_summary = if kind == event_kind_str::STRAND_CREATE {
-        serde_json::to_string(&event.payload).unwrap_or_else(|_| "{}".to_owned())
-    } else {
-        serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_owned())
-    };
+    let effect_summary = serde_json::to_string(&event.payload).unwrap_or_else(|_| "{}".to_owned());
     let record = BoardWriteRecord {
         state: CardState::Queued,
         move_id: op_id.clone(),

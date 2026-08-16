@@ -829,6 +829,32 @@ fn raw_operation_invite_ref(payload: &Value) -> Option<String> {
         .or_else(|| trimmed_string(payload.get("id")))
 }
 
+fn accepted_invite_destination_service_id(
+    store: &LocalStateStore,
+    realm_id: &str,
+    invitee_did: &str,
+) -> Option<String> {
+    store
+        .load()
+        .raw_operations
+        .iter()
+        .rev()
+        .filter(|record| raw_operation_realm_matches_exact(record, realm_id))
+        .find_map(|record| {
+            let payload = &record.payload;
+            if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_CREATE)
+                || !raw_operation_is_accepted_fact(payload)
+                || raw_invite_create_invitee(payload).as_deref() != Some(invitee_did)
+            {
+                return None;
+            }
+            let service_id = raw_operation_path_string(payload, &["recipient_service_id"])?;
+            arkret_sdk::DidCoreId::new(service_id.clone())
+                .ok()
+                .map(|_| service_id)
+        })
+}
+
 fn raw_member_actor_id(payload: &Value) -> Option<String> {
     raw_operation_path_string(payload, &["body", "actor_id"])
         .or_else(|| raw_operation_path_string(payload, &["body", "member"]))
@@ -1540,6 +1566,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     actor_id: String,
     device_id: String,
     invitee_did: String,
+    destination_service_id: Option<String>,
 ) -> anyhow::Result<Option<u64>> {
     let needs_mls_admission = {
         let store = state_store.read();
@@ -1590,12 +1617,17 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             &invitee_did,
             &realm_id,
             &actor_id,
+            &device_id,
+            destination_service_id.as_deref(),
             &claim_nonce,
             None,
-            Some(&group_id),
+            &group_id,
         )
         .await?;
-    let claim_receipt = arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(claim_outcome.claim_receipt);
+    claim_outcome
+        .validate_shape()
+        .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
+    let claim_receipt = claim_outcome.claim_receipt;
     let claim = claim_outcome
         .claims
         .into_iter()
@@ -2935,6 +2967,10 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     );
     let mut outcome = MlsAdmissionReconcileOutcome::default();
     for invitee_did in pending {
+        let destination_service_id = {
+            let store = state_store.read();
+            accepted_invite_destination_service_id(&store, &realm_id, &invitee_did)
+        };
         match submit_mls_admission_for_invitee(
             api,
             state_store,
@@ -2942,6 +2978,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             actor_id.clone(),
             device_id.clone(),
             invitee_did.clone(),
+            destination_service_id,
         )
         .await
         {
@@ -3075,20 +3112,21 @@ pub(crate) async fn submit_mls_admission_for_invitees(
                 &invitee_did,
                 &realm_id,
                 &actor_id,
+                &device_id,
+                None,
                 &claim_nonce,
                 None,
-                Some(&group_id),
+                &group_id,
             )
             .await?;
+        claim_outcome
+            .validate_shape()
+            .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
         let claim =
             claim_outcome.claims.into_iter().next().ok_or_else(|| {
                 anyhow::anyhow!("KeyPackage claim succeeded without a claim record")
             })?;
-        claims.push((
-            claim,
-            claim_nonce,
-            arkret_sdk::MlsWelcomeClaimReceipt::SelfClaim(claim_outcome.claim_receipt),
-        ));
+        claims.push((claim, claim_nonce, claim_outcome.claim_receipt));
     }
     // Refresh after the batch of claims to bind the Commit to the latest
     // accepted frontier observed after those network round trips.
@@ -3245,8 +3283,10 @@ async fn ensure_mls_genesis_frontier_for_invite(
             Ok(())
         }
         Err(err) => {
-            let text = err.to_string();
-            if text.contains("mls_genesis_already_exists") {
+            if crate::ephemeral::events_submit_rejected_for_reason(
+                &err,
+                &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
+            ) {
                 if let Some(event_id) = api
                     .event_submitter()?
                     .find_mls_genesis_event_id(realm_id)
@@ -3944,7 +3984,7 @@ pub fn RealmMembersPanel(
                                                             let mut last_mls_err = String::new();
                                                             let mut mls_ok = 0_usize;
                                                             let mut ok_invites =
-                                                                Vec::<(String, String, String)>::new();
+                                                                Vec::<(String, String, String, Option<String>)>::new();
                                                             for (did, recipient_service_id) in targets {
                                                                 match api
                                                                     .invite_contact_to_realm(
@@ -3964,6 +4004,7 @@ pub fn RealmMembersPanel(
                                                                             actor.clone(),
                                                                             device.clone(),
                                                                             did.clone(),
+                                                                            recipient_service_id.clone(),
                                                                         )
                                                                         .await
                                                                         {
@@ -3975,6 +4016,7 @@ pub fn RealmMembersPanel(
                                                                             did,
                                                                             event_id.clone(),
                                                                             invite_id,
+                                                                            recipient_service_id,
                                                                         ));
                                                                         frontier_state.set(event_id);
                                                                     }
@@ -3985,7 +4027,7 @@ pub fn RealmMembersPanel(
                                                                 let mut next_members = members.read().clone();
                                                                 {
                                                                     let mut store = state_store.write();
-                                                                    for (did, event_id, invite_id) in ok_invites {
+                                                                    for (did, event_id, invite_id, recipient_service_id) in ok_invites {
                                                                         upsert_pending_invite_profile(&mut next_members, &did, None, Some(&invite_id));
                                                                         store.append_raw_operation(
                                                                             event_id.clone(),
@@ -3996,6 +4038,7 @@ pub fn RealmMembersPanel(
                                                                                 "invitee": did,
                                                                                 "state": "pending",
                                                                                 "event_id": event_id,
+                                                                                "recipient_service_id": recipient_service_id,
                                                                             }),
                                                                         );
                                                                     }
@@ -4172,6 +4215,7 @@ pub fn RealmMembersPanel(
                                                                             "invitee_label": invitee_label.clone(),
                                                                             "state": "pending",
                                                                             "event_id": submitted.event_id,
+                                                                            "recipient_service_id": invitee.invite_delivery_target.recipient_service_id,
                                                                         }),
                                                                     );
                                                                 }
@@ -4192,6 +4236,7 @@ pub fn RealmMembersPanel(
                                                                     actor.clone(),
                                                                     device.clone(),
                                                                     invitee_did.clone(),
+                                                                    Some(invitee.invite_delivery_target.recipient_service_id.to_string()),
                                                                 )
                                                                 .await
                                                                 {
@@ -5346,10 +5391,48 @@ mod tests {
                 }
             }),
         );
-
         assert_eq!(
             joined_member_signature_for_realm(&store, realm_id),
             "ak:did_core:web:bob.example"
+        );
+    }
+
+    #[test]
+    fn accepted_invite_route_survives_for_deferred_mls_reconciliation() {
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
+        let invitee = "ak:did_core:web:bob.example";
+        let mut store = temp_store("accepted-invite-route");
+        store.append_raw_operation(
+            "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ak.invite.create",
+                "invitee": invitee,
+                "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA",
+                "recipient_service_id": "ak:did_core:web:principal.example"
+            }),
+        );
+        store.upsert_raw_operation(
+            "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ak.invite.create",
+                "invitee": invitee,
+                "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA"
+            }),
+        );
+
+        assert_eq!(
+            accepted_invite_destination_service_id(&store, realm_id, invitee).as_deref(),
+            Some("ak:did_core:web:principal.example")
+        );
+        assert!(
+            accepted_invite_destination_service_id(
+                &store,
+                "ak:realm:Ac4tyK_nwe4AYgJmR9A6pbiRrGZiDOx-i-EVWYUQabXC",
+                invitee,
+            )
+            .is_none()
         );
     }
 

@@ -170,7 +170,7 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
             "summary": {"summary": "Demo"},
             "timeline": {
                 "events": [{
-                    "kind": "ak.audit.policy_access",
+                    "kind": crate::late_recovery::INKSON_POLICY_ACCESS_AUDIT_KIND,
                     "event_id": "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
                     "original_received_at": "2026-05-20T00:00:00.000Z",
                     "late_recovery": {

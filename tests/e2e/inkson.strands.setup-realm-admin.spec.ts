@@ -193,12 +193,15 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   await expect(page.getByTestId("realm-profile")).toBeVisible();
   await page.getByTestId("realm-name-input").fill("Updated Demo Realm");
   await page.getByTestId("realm-summary-input").fill("Updated realm summary");
+  await page.getByTestId("realm-alias-input").fill("updated-demo");
   await expect(page.getByTestId("realm-avatar-blob-ref-input")).toHaveCount(0);
   await expect(page.getByTestId("realm-avatar")).toBeVisible();
   await expect(page.getByTestId("realm-avatar-upload-label")).toBeVisible();
   await expect(page.getByTestId("realm-avatar-input")).toBeHidden();
   await page.getByTestId("update-metadata-button").click();
-  await expect(page.getByTestId("realm-admin-status")).toContainText("profile updated");
+  await expect(page.getByTestId("realm-admin-status")).toContainText(
+    "profile and Realm alias updated",
+  );
 
   await gotoAndDismissRecovery(page, "/realms/ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j/settings/access");
   await expect(page.getByTestId("realm-profile")).toHaveCount(0);

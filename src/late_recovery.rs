@@ -18,7 +18,7 @@
 //!    computation.
 //!
 //! Round 4 (spec a77b995) — the banner is now sourced from the
-//! `ak.audit.policy_access` event whose `access_kind ==
+//! Inkson-local policy-access audit record whose `access_kind ==
 //! e2ee_late_recovery` carries
 //! [`late_recovery_original_event_id`](arkret_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
 //! See [`LateRecoveredEvent::from_audit_policy_access`] for the typed
@@ -28,6 +28,8 @@
 
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
+
+pub(crate) const INKSON_POLICY_ACCESS_AUDIT_KIND: &str = "org.arkret.inkson.audit.policy_access";
 
 /// One late-recovered event surfaced to message readers. Constructed from
 /// the server's `recovery.recovered_at` + the event's
@@ -183,7 +185,7 @@ pub fn evaluate_late_recovery_transition_event(event: &Value) -> LateRecoveryTra
     }
 }
 
-/// Guarded conversion for `ak.audit.policy_access` late-recovery markers.
+/// Guarded conversion for Inkson-local policy-access late-recovery markers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LateRecoveryAuditAccessConversion {
     NotLateRecovery,
@@ -192,7 +194,7 @@ pub enum LateRecoveryAuditAccessConversion {
 }
 
 /// Build the user-facing late recovery marker from a synced
-/// `ak.audit.policy_access` event only after the same late-recovery guards pass.
+/// local policy-access record only after the same late-recovery guards pass.
 pub fn late_recovered_event_from_audit_policy_access_event(
     event: &Value,
     actor_revoked_at_recovery: bool,
@@ -307,7 +309,9 @@ fn timestamp_from_contexts(value: &Value, keys: &[&str]) -> Option<DateTime<Utc>
 }
 
 fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
-    if string_from_value(event, &["kind", "type", "event_type"]) == Some("ak.audit.policy_access") {
+    if string_from_value(event, &["kind", "type", "event_type"])
+        == Some(INKSON_POLICY_ACCESS_AUDIT_KIND)
+    {
         return event
             .get("payload")
             .or_else(|| event.get("content"))
@@ -318,7 +322,7 @@ fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
             continue;
         };
         if string_from_value(candidate, &["kind", "type", "event_type"])
-            == Some("ak.audit.policy_access")
+            == Some(INKSON_POLICY_ACCESS_AUDIT_KIND)
             || string_from_value(candidate, &["access_kind"]) == Some("e2ee_late_recovery")
         {
             return Some(candidate);
@@ -356,7 +360,7 @@ impl LateRecoveredEvent {
 }
 
 impl LateRecoveredEvent {
-    /// Round 4 — construct from a `ak.audit.policy_access` payload
+    /// Round 4 — construct from an Inkson-local policy-access payload
     /// whose `access_kind` is
     /// [`AccessKind::E2EELateRecovery`](arkret_sdk::AccessKind::E2EELateRecovery).
     /// Returns `None` if the access_kind is not e2ee_late_recovery or
@@ -590,7 +594,7 @@ mod tests {
     fn audit_policy_access_conversion_is_guarded() {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let event = serde_json::json!({
-            "kind": "ak.audit.policy_access",
+            "kind": INKSON_POLICY_ACCESS_AUDIT_KIND,
             "event_id": "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
             "original_received_at": "2026-05-19T23:45:00.000Z",
             "late_recovery": {
@@ -619,7 +623,7 @@ mod tests {
         }
 
         let rejected = serde_json::json!({
-            "kind": "ak.audit.policy_access",
+            "kind": INKSON_POLICY_ACCESS_AUDIT_KIND,
             "late_recovery": {
                 "receiver_visible_at_t0": false,
                 "source_rechecked_current_share_policy": true

@@ -663,7 +663,7 @@ fn device_verification_proof_requires_signed_envelope() {
     ensure_device_verification_proof_is_signed(&proof).expect("signed proof");
     assert_eq!(
         proof["device_envelope"]["type"].as_str(),
-        Some("ak.device.verification.proof.v1")
+        Some("org.arkret.inkson.device_verification.proof.v1")
     );
     assert!(proof["signature"].get("alg").is_none());
     assert!(
@@ -710,7 +710,7 @@ fn device_verification_transcript_canonical_bytes_are_unchanged() {
     let created_at = full.device_envelope.created_at.clone();
     // Byte-for-byte the object the previous `json!` builder produced.
     let legacy_full = json!({
-        "type": "ak.device.verification.proof.v1",
+        "type": "org.arkret.inkson.device_verification.proof.v1",
         "from_actor": "did:web:alice.example",
         "from_device": "ak:device:alice",
         "target_device": "ak:device:bob",
@@ -739,7 +739,7 @@ fn device_verification_transcript_canonical_bytes_are_unchanged() {
     .unwrap();
     let created_at = minimal.device_envelope.created_at.clone();
     let legacy_minimal = json!({
-        "type": "ak.device.verification.proof.v1",
+        "type": "org.arkret.inkson.device_verification.proof.v1",
         "from_actor": "did:web:alice.example",
         "from_device": "ak:device:alice",
         "target_device": "ak:device:bob",

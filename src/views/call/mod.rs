@@ -22,5 +22,17 @@ mod projection;
 mod signaling;
 mod types;
 
+/// Whether the host can turn an accepted media-service binding into the
+/// authenticated `garth::RouteResolution` required before token exchange.
+///
+/// Inkson does not currently ship that host adapter. Keeping this explicit at
+/// the product boundary prevents call buttons and inbound-ring navigation from
+/// reaching a path that can only construct `verified_media_routes: []` and is
+/// therefore guaranteed to fail closed.
+#[must_use]
+pub const fn media_route_adapter_available() -> bool {
+    false
+}
+
 pub use panel::CallPanel;
 pub use types::{CallParticipant, CallStage, RecordingState};

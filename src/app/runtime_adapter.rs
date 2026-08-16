@@ -78,4 +78,70 @@ impl LocalStateBackend for SignalLocalStateBackend {
         signal.write().remember_client_core_event(event_id.as_str());
         Ok(())
     }
+
+    fn commit_delivery(
+        &self,
+        scope: garth::CursorScope,
+        cursor: Option<garth::OpaqueCursor>,
+        events: Vec<garth::ClientEvent>,
+    ) -> arkret_sdk::Result<Option<garth::DeliveryId>> {
+        let mut signal = self.store;
+        signal.write().commit_client_delivery(scope, cursor, events)
+    }
+
+    fn pending_deliveries(&self, limit: usize) -> arkret_sdk::Result<Vec<garth::PendingDelivery>> {
+        self.store.read().pending_client_deliveries(limit)
+    }
+
+    fn ack_delivery(&self, id: garth::DeliveryId) -> arkret_sdk::Result<bool> {
+        let mut signal = self.store;
+        signal.write().ack_client_delivery(id)
+    }
+
+    fn retry_delivery(
+        &self,
+        id: garth::DeliveryId,
+        next_attempt_at_ms: Option<i64>,
+        error_class: garth::DeliveryErrorClass,
+        error: String,
+    ) -> arkret_sdk::Result<bool> {
+        let mut signal = self.store;
+        signal
+            .write()
+            .retry_client_delivery(id, next_attempt_at_ms, error_class, error)
+    }
+
+    fn delivery_snapshot(
+        &self,
+        id: garth::DeliveryId,
+    ) -> arkret_sdk::Result<Option<crate::state::StoredClientDelivery>> {
+        Ok(self.store.read().client_delivery_snapshot(id))
+    }
+
+    fn restore_delivery(
+        &self,
+        delivery: crate::state::StoredClientDelivery,
+    ) -> arkret_sdk::Result<()> {
+        let mut signal = self.store;
+        signal.write().restore_client_delivery(delivery)
+    }
+
+    fn rollback_delivery_commit(
+        &self,
+        scope: &garth::CursorScope,
+        previous_cursor: Option<garth::OpaqueCursor>,
+        delivery_id: Option<garth::DeliveryId>,
+    ) -> arkret_sdk::Result<()> {
+        let mut signal = self.store;
+        signal
+            .write()
+            .rollback_client_delivery_commit(scope, previous_cursor, delivery_id)
+    }
+
+    fn begin_durable_flush(&self) -> arkret_sdk::Result<crate::state::LocalStatePersistBarrier> {
+        self.store
+            .read()
+            .begin_durable_flush()
+            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
+    }
 }

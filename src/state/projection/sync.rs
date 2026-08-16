@@ -67,7 +67,9 @@ pub fn projection_events_from_sync_realms(
         };
 
         for event in wire_events {
-            if event.get("kind").and_then(Value::as_str) == Some("ak.audit.policy_access") {
+            if event.get("kind").and_then(Value::as_str)
+                == Some(crate::late_recovery::INKSON_POLICY_ACCESS_AUDIT_KIND)
+            {
                 match crate::late_recovery::late_recovered_event_from_audit_policy_access_event(
                     event, false,
                 ) {

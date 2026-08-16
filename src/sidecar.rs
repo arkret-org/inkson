@@ -101,18 +101,13 @@ fn cache_sidecar_view_state(
         view_state.context_ref.realm_id.as_str(),
         view_state.context_ref.strand_id.as_str(),
     );
-    let should_replace = store
+    if let Some(current) = store
         .load_private_data(account_did, &key)
         .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())
-        .is_none_or(|current| {
-            (
-                view_state.updated_hlc.to_string(),
-                view_state.origin_device_id.to_string(),
-            ) > (
-                current.updated_hlc.to_string(),
-                current.origin_device_id.to_string(),
-            )
-        });
+    {
+        store.apply_sidecar_view_state(current);
+    }
+    let should_replace = store.apply_sidecar_view_state(view_state.clone());
     if should_replace {
         store.save_private_data(account_did, key, serde_json::to_string(view_state)?);
     }
@@ -192,6 +187,7 @@ pub(crate) fn cache_sidecar_exchange_projection(
     if projection.controller_id != account_core_id {
         anyhow::bail!("Sidecar exchange controller does not match the account holder");
     }
+    store.apply_sidecar_exchange_projection(projection.clone())?;
     let key = sidecar_exchange_fold_cache_key(
         projection.controller_id.as_str(),
         projection.sidecar_id.as_str(),
@@ -215,8 +211,14 @@ pub fn cached_sidecar_exchange_projections(
     let Ok(account_core_id) = crate::mls_api_helpers::principal_core_id(account_did) else {
         return Vec::new();
     };
+    let Ok(realm_id) = arkret_sdk::RealmId::new(source_realm_id.to_owned()) else {
+        return Vec::new();
+    };
     let prefix = format!("{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{account_core_id}:");
-    let mut projections = store
+    // Persisted entries are rebuildable restart seeds only. The actual query
+    // snapshot comes from the shared fold below, so ingest and UI cannot drift
+    // into separate timeline implementations.
+    let restart_seeds = store
         .private_data_keys()
         .into_iter()
         .filter(|key| key.starts_with(&prefix))
@@ -229,6 +231,17 @@ pub fn cached_sidecar_exchange_projections(
                 && projection.controller_id == account_core_id
                 && projection.source_track_ref.realm_id.as_str() == source_realm_id
         })
+        .collect::<Vec<_>>();
+    let mut fold = store.sidecar_projection_fold_snapshot();
+    for projection in restart_seeds {
+        if let Err(error) = fold.apply_folded_exchange(projection) {
+            tracing::warn!(%error, "persisted Sidecar exchange restart seed rejected");
+        }
+    }
+    let mut projections = fold
+        .exchanges_for_realm(&realm_id)
+        .cloned()
+        .filter(|projection| projection.controller_id == account_core_id)
         .collect::<Vec<_>>();
     projections.sort_by(|left, right| {
         (
@@ -1677,14 +1690,20 @@ pub fn cached_sidecar_display_mode(
 ) -> Option<arkret_sdk::AgentSidecarDisplayMode> {
     let controller_core_id =
         crate::mls_api_helpers::principal_core_id(&session.controller_id).ok()?;
-    let key = sidecar_view_state_cache_key(
-        controller_core_id.as_str(),
-        &session.source_realm_id,
-        &session.source_strand_id,
-    );
+    let realm_id = arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?;
+    let strand_id = arkret_sdk::StrandId::new(session.source_strand_id.clone()).ok()?;
     let view_state = store
-        .load_private_data(account_did, &key)
-        .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())?;
+        .sidecar_view_state(controller_core_id.as_str(), &realm_id, &strand_id)
+        .or_else(|| {
+            let key = sidecar_view_state_cache_key(
+                controller_core_id.as_str(),
+                &session.source_realm_id,
+                &session.source_strand_id,
+            );
+            store.load_private_data(account_did, &key).and_then(|raw| {
+                serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok()
+            })
+        })?;
     (view_state.controller_id == controller_core_id
         && view_state.sidecar_id == session.sidecar_id
         && view_state.context_ref.realm_id.as_str() == session.source_realm_id
@@ -2271,7 +2290,7 @@ mod tests {
         );
         assert!(
             cached_sidecar_exchange_projections(
-                &store,
+                &mut store,
                 EXCHANGE_ACCOUNT,
                 session.source_realm_id.as_str()
             )
@@ -2324,7 +2343,7 @@ mod tests {
             .unwrap();
         assert!(
             cached_sidecar_exchange_projections(
-                &store,
+                &mut store,
                 EXCHANGE_ACCOUNT,
                 session.source_realm_id.as_str(),
             )
@@ -2344,7 +2363,7 @@ mod tests {
         );
 
         let cached = cached_sidecar_exchange_projections(
-            &store,
+            &mut store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         );
@@ -2460,7 +2479,7 @@ mod tests {
         assert_eq!(changed, 1);
 
         let cached = cached_sidecar_exchange_projections(
-            &store,
+            &mut store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         );
@@ -2592,7 +2611,7 @@ mod tests {
         );
         assert_eq!(changed, 0, "foreign-Circle events never enter the fold");
         let cached = cached_sidecar_exchange_projections(
-            &store,
+            &mut store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         );
@@ -2659,7 +2678,7 @@ mod tests {
         );
         assert_eq!(changed, 1);
         let cached = cached_sidecar_exchange_projections(
-            &store,
+            &mut store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         );
@@ -2698,7 +2717,7 @@ mod tests {
             1
         );
         let mut cached = cached_sidecar_exchange_projections(
-            &store,
+            &mut store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         )
@@ -2735,7 +2754,7 @@ mod tests {
         assert!(outcome.backfill_required);
         assert_eq!(
             cached_sidecar_exchange_projections(
-                &store,
+                &mut store,
                 EXCHANGE_ACCOUNT,
                 session.source_realm_id.as_str(),
             )[0],

@@ -9,10 +9,13 @@ pub(super) fn value_is_plaintext_private_content(value: &Value) -> bool {
         Value::String(text) => !text.trim().is_empty(),
         Value::Array(values) => !values.is_empty(),
         Value::Object(object) => {
-            let encrypted_profile = object
-                .get("profile")
-                .and_then(Value::as_str)
-                .is_some_and(|profile| profile == "ak.profile.encrypted_envelope.v1");
+            let encrypted_profile =
+                object
+                    .get("profile")
+                    .and_then(Value::as_str)
+                    .is_some_and(|profile| {
+                        profile == "org.arkret.inkson.profile.encrypted_envelope.v1"
+                    });
             !(encrypted_profile
                 || object.contains_key("encrypted_content")
                 || object.contains_key("ciphertext"))

@@ -625,8 +625,10 @@ pub async fn repair_direct_conversation_self_rejoin(
     // and verifies the immutable exact-pair binding; the client must select
     // the registered source before the Event proof is authored.
     event.authorization_ref = Some(
-        arkret_sdk::AuthorizationRef::new("ak.authority.direct_conversation_repair.v1".to_owned())
-            .map_err(anyhow::Error::msg)?,
+        arkret_sdk::AuthorizationRef::new(
+            arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
+        )
+        .map_err(anyhow::Error::msg)?,
     );
     submitter.submit_sdk_event(&event).await
 }
@@ -672,8 +674,10 @@ pub async fn dispatch_direct_conversation_repair(
         "direct_conversation_self_rejoin",
     )?;
     rejoin.authorization_ref = Some(
-        arkret_sdk::AuthorizationRef::new("ak.authority.direct_conversation_repair.v1".to_owned())
-            .map_err(anyhow::Error::msg)?,
+        arkret_sdk::AuthorizationRef::new(
+            arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
+        )
+        .map_err(anyhow::Error::msg)?,
     );
     // Resolve every fallible/remote signing prerequisite before authoring the
     // self-rejoin. Once that Event is accepted, freezing and persisting the
@@ -868,8 +872,10 @@ pub async fn activate_direct_conversation_repair(
             payload,
         )?;
     event.authorization_ref = Some(
-        arkret_sdk::AuthorizationRef::new("ak.authority.direct_conversation_repair.v1".to_owned())
-            .map_err(anyhow::Error::msg)?,
+        arkret_sdk::AuthorizationRef::new(
+            arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
+        )
+        .map_err(anyhow::Error::msg)?,
     );
     let result = submitter.submit_sdk_event(&event).await?;
     state_store.record_direct_conversation_repair_activation(

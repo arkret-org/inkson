@@ -48,9 +48,10 @@ impl garth::AsyncSyncTransport for InksonAccountTransport {
 #[derive(Clone)]
 pub struct InksonLocalStateStoreAdapter {
     inner: Arc<dyn LocalStateBackend>,
+    inbox_serial: Arc<futures_util::lock::Mutex<()>>,
 }
 
-pub trait LocalStateBackend: Send + Sync {
+pub(crate) trait LocalStateBackend: Send + Sync {
     fn load_cursor(
         &self,
         scope: &garth::CursorScope,
@@ -63,6 +64,36 @@ pub trait LocalStateBackend: Send + Sync {
     fn clear_cursor(&self, scope: &garth::CursorScope) -> arkret_sdk::Result<()>;
     fn event_seen(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<bool>;
     fn remember_event(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<()>;
+    fn commit_delivery(
+        &self,
+        scope: garth::CursorScope,
+        cursor: Option<garth::OpaqueCursor>,
+        events: Vec<garth::ClientEvent>,
+    ) -> arkret_sdk::Result<Option<garth::DeliveryId>>;
+    fn pending_deliveries(&self, limit: usize) -> arkret_sdk::Result<Vec<garth::PendingDelivery>>;
+    fn ack_delivery(&self, id: garth::DeliveryId) -> arkret_sdk::Result<bool>;
+    fn retry_delivery(
+        &self,
+        id: garth::DeliveryId,
+        next_attempt_at_ms: Option<i64>,
+        error_class: garth::DeliveryErrorClass,
+        error: String,
+    ) -> arkret_sdk::Result<bool>;
+    fn delivery_snapshot(
+        &self,
+        id: garth::DeliveryId,
+    ) -> arkret_sdk::Result<Option<crate::state::StoredClientDelivery>>;
+    fn restore_delivery(
+        &self,
+        delivery: crate::state::StoredClientDelivery,
+    ) -> arkret_sdk::Result<()>;
+    fn rollback_delivery_commit(
+        &self,
+        scope: &garth::CursorScope,
+        previous_cursor: Option<garth::OpaqueCursor>,
+        delivery_id: Option<garth::DeliveryId>,
+    ) -> arkret_sdk::Result<()>;
+    fn begin_durable_flush(&self) -> arkret_sdk::Result<crate::state::LocalStatePersistBarrier>;
 }
 
 pub(crate) fn device_message_cursor_key(
@@ -131,6 +162,65 @@ impl LocalStateBackend for OwnedLocalStateBackend {
     fn remember_event(&self, event_id: &arkret_sdk::EventId) -> arkret_sdk::Result<()> {
         self.with_store_mut(|store| store.remember_client_core_event(event_id.as_str()))
     }
+
+    fn commit_delivery(
+        &self,
+        scope: garth::CursorScope,
+        cursor: Option<garth::OpaqueCursor>,
+        events: Vec<garth::ClientEvent>,
+    ) -> arkret_sdk::Result<Option<garth::DeliveryId>> {
+        self.with_store_mut(|store| store.commit_client_delivery(scope, cursor, events))?
+    }
+
+    fn pending_deliveries(&self, limit: usize) -> arkret_sdk::Result<Vec<garth::PendingDelivery>> {
+        self.with_store(|store| store.pending_client_deliveries(limit))?
+    }
+
+    fn ack_delivery(&self, id: garth::DeliveryId) -> arkret_sdk::Result<bool> {
+        self.with_store_mut(|store| store.ack_client_delivery(id))?
+    }
+
+    fn retry_delivery(
+        &self,
+        id: garth::DeliveryId,
+        next_attempt_at_ms: Option<i64>,
+        error_class: garth::DeliveryErrorClass,
+        error: String,
+    ) -> arkret_sdk::Result<bool> {
+        self.with_store_mut(|store| {
+            store.retry_client_delivery(id, next_attempt_at_ms, error_class, error)
+        })?
+    }
+
+    fn delivery_snapshot(
+        &self,
+        id: garth::DeliveryId,
+    ) -> arkret_sdk::Result<Option<crate::state::StoredClientDelivery>> {
+        self.with_store(|store| store.client_delivery_snapshot(id))
+    }
+
+    fn restore_delivery(
+        &self,
+        delivery: crate::state::StoredClientDelivery,
+    ) -> arkret_sdk::Result<()> {
+        self.with_store_mut(|store| store.restore_client_delivery(delivery))?
+    }
+
+    fn rollback_delivery_commit(
+        &self,
+        scope: &garth::CursorScope,
+        previous_cursor: Option<garth::OpaqueCursor>,
+        delivery_id: Option<garth::DeliveryId>,
+    ) -> arkret_sdk::Result<()> {
+        self.with_store_mut(|store| {
+            store.rollback_client_delivery_commit(scope, previous_cursor, delivery_id)
+        })?
+    }
+
+    fn begin_durable_flush(&self) -> arkret_sdk::Result<crate::state::LocalStatePersistBarrier> {
+        self.with_store(|store| store.begin_durable_flush())?
+            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
+    }
 }
 
 impl InksonLocalStateStoreAdapter {
@@ -140,10 +230,31 @@ impl InksonLocalStateStoreAdapter {
         })
     }
 
-    pub fn from_backend(backend: impl LocalStateBackend + 'static) -> Self {
+    pub(crate) fn from_backend(backend: impl LocalStateBackend + 'static) -> Self {
         Self {
             inner: Arc::new(backend),
+            inbox_serial: Arc::new(futures_util::lock::Mutex::new(())),
         }
+    }
+
+    async fn await_durable_flush(&self) -> garth::Result<()> {
+        let barrier = self
+            .inner
+            .begin_durable_flush()
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        barrier
+            .wait()
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+
+    async fn persist_rollback<T>(&self, original: garth::Error) -> garth::Result<T> {
+        self.await_durable_flush().await.map_err(|rollback| {
+            garth::Error::Protocol(format!(
+                "{original}; durable inbox rollback also failed: {rollback}"
+            ))
+        })?;
+        Err(original)
     }
 }
 
@@ -182,6 +293,102 @@ impl garth::EventCacheStore for InksonLocalStateStoreAdapter {
         self.inner
             .remember_event(&event_id)
             .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+}
+
+impl garth::DurableInboxStore for InksonLocalStateStoreAdapter {
+    async fn commit(
+        &self,
+        scope: garth::CursorScope,
+        cursor: Option<garth::OpaqueCursor>,
+        events: Vec<garth::ClientEvent>,
+    ) -> garth::Result<Option<garth::DeliveryId>> {
+        let _serial = self.inbox_serial.lock().await;
+        let previous_cursor = self
+            .inner
+            .load_cursor(&scope)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let delivery_id = self
+            .inner
+            .commit_delivery(scope.clone(), cursor, events)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let durable = self.await_durable_flush().await;
+        if let Err(error) = durable {
+            self.inner
+                .rollback_delivery_commit(&scope, previous_cursor, delivery_id)
+                .map_err(|rollback| {
+                    garth::Error::Protocol(format!(
+                        "{error}; in-memory inbox rollback also failed: {rollback}"
+                    ))
+                })?;
+            return self.persist_rollback(error).await;
+        }
+        Ok(delivery_id)
+    }
+
+    async fn pending(&self, limit: usize) -> garth::Result<Vec<garth::PendingDelivery>> {
+        let _serial = self.inbox_serial.lock().await;
+        self.inner
+            .pending_deliveries(limit)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+
+    async fn ack(&self, id: garth::DeliveryId) -> garth::Result<bool> {
+        let _serial = self.inbox_serial.lock().await;
+        let previous = self
+            .inner
+            .delivery_snapshot(id)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let removed = self
+            .inner
+            .ack_delivery(id)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        if !removed {
+            return Ok(false);
+        }
+        if let Err(error) = self.await_durable_flush().await {
+            if let Some(previous) = previous {
+                self.inner.restore_delivery(previous).map_err(|rollback| {
+                    garth::Error::Protocol(format!(
+                        "{error}; in-memory inbox acknowledgement rollback also failed: {rollback}"
+                    ))
+                })?;
+            }
+            return self.persist_rollback(error).await;
+        }
+        Ok(true)
+    }
+
+    async fn retry(
+        &self,
+        id: garth::DeliveryId,
+        next_attempt_at_ms: Option<i64>,
+        error_class: garth::DeliveryErrorClass,
+        error: String,
+    ) -> garth::Result<bool> {
+        let _serial = self.inbox_serial.lock().await;
+        let previous = self
+            .inner
+            .delivery_snapshot(id)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let updated = self
+            .inner
+            .retry_delivery(id, next_attempt_at_ms, error_class, error)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        if !updated {
+            return Ok(false);
+        }
+        if let Err(error) = self.await_durable_flush().await {
+            if let Some(previous) = previous {
+                self.inner.restore_delivery(previous).map_err(|rollback| {
+                    garth::Error::Protocol(format!(
+                        "{error}; in-memory inbox retry rollback also failed: {rollback}"
+                    ))
+                })?;
+            }
+            return self.persist_rollback(error).await;
+        }
+        Ok(true)
     }
 }
 
@@ -252,6 +459,7 @@ type InksonSubscriptionEngine = garth::SubscriptionEngine<
 #[derive(Clone)]
 pub struct InksonClientRuntime {
     client: InksonArkretClient,
+    inbox: InksonLocalStateStoreAdapter,
 }
 
 impl InksonClientRuntime {
@@ -264,7 +472,8 @@ impl InksonClientRuntime {
             // No sync-time key resolver: v1 account subscribe carries no
             // plaintext ephemeral bucket for the engine to verify. The Signal
             // rail resolves its own sender key at `accept` time.
-            client: garth::ArkretClient::new(executor, adapter.clone(), adapter),
+            client: garth::ArkretClient::new(executor, adapter.clone(), adapter.clone()),
+            inbox: adapter,
         }
     }
 
@@ -274,6 +483,10 @@ impl InksonClientRuntime {
 
     pub(crate) fn client(&self) -> InksonArkretClient {
         self.client.clone()
+    }
+
+    pub(crate) fn inbox_store(&self) -> InksonLocalStateStoreAdapter {
+        self.inbox.clone()
     }
 }
 

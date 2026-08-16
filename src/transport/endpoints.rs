@@ -193,25 +193,64 @@ impl MlsEndpoints<'_> {
         target_principal_id: &str,
         intended_realm_id: &str,
         requester: &str,
+        requester_device_id: &str,
+        destination_service_id: Option<&str>,
         claim_nonce: &str,
         target_device_id: Option<&str>,
-        mls_group_id: Option<&str>,
+        mls_group_id: &str,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
-        let authority_service_id = self.transport.describe_cached().await?.service_id.clone();
+        let destination_service_id = destination_service_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "KeyPackage claim requires the destination service DID from the accepted invite delivery binding"
+                )
+            })?;
+        let source_service_id = self.transport.describe_cached().await?.service_id.clone();
+        let requester_device_authorize_event_id =
+            crate::mls::admission::current_requester_device_authorize_event_id(
+                self.transport.http(),
+                requester_device_id,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
         let body = crate::mls_api_helpers::build_mls_keypackage_claim_request(
             target_principal_id,
             intended_realm_id,
             requester,
-            authority_service_id.as_str(),
+            requester_device_id,
+            &requester_device_authorize_event_id,
+            source_service_id.as_str(),
+            destination_service_id,
             claim_nonce,
             target_device_id,
             mls_group_id,
         )?;
-        self.transport
+        let expected_request = body.unsigned_request();
+        let expected_service_binding = body.service_binding.clone();
+        let expected_request_digest =
+            arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&body)?)?;
+        let outcome = self
+            .transport
             .http()
             .keypackages_claim(&body)
             .await
-            .map_err(anyhow::Error::from)
+            .map_err(anyhow::Error::from)?;
+        outcome
+            .validate_shape()
+            .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
+        let receipt = &outcome.claim_receipt;
+        if receipt.request != expected_request
+            || receipt.source_service_id != expected_service_binding.source_service_id
+            || receipt.destination_service_id != expected_service_binding.destination_service_id
+            || receipt.request_digest != expected_request_digest
+        {
+            anyhow::bail!(
+                "KeyPackage claim receipt does not bind the exact authorized request and service route"
+            );
+        }
+        Ok(outcome)
     }
 }
 

@@ -65,11 +65,8 @@ pub struct IndexedDbSecureKeyStore {
     cache: Arc<Mutex<HashMap<String, String>>>,
     /// Non-extractable AES-GCM CryptoKey, cloned cheaply via JsValue
     /// reference counting. Used by spawn_local persistence tasks. The
-    /// `IndexedDbSendBoundary` wrapper attests Send+Sync on wasm32
-    /// where there is exactly one thread — `JsValue` is `!Send` by
-    /// default because wasm-bindgen has to accommodate the
-    /// (currently theoretical) future where multiple wasm threads can
-    /// share JS values.
+    /// The boundary enforces same-thread access at runtime while satisfying
+    /// process-level trait-object bounds without local unsafe code.
     crypto_key: IndexedDbSendBoundary<wasm_bindgen::JsValue>,
     /// Cached `IdbDatabase` handle reused across every persistence
     /// write/delete. The connection is opened once at `new_async` time
@@ -80,15 +77,11 @@ pub struct IndexedDbSecureKeyStore {
     db: IndexedDbSendBoundary<web_sys::IdbDatabase>,
 }
 
-/// wasm32-only wrapper that asserts Send + Sync on a value that is
-/// only ever touched from the single wasm thread. The
-/// [`SecureKeyStore`] trait requires Send + Sync; wasm32 has no real
-/// thread sharing, so this is sound.
+/// wasm32-only wrapper that keeps JS handles on their creating thread.
+/// `SendWrapper` checks every dereference/drop and panics if a future
+/// multi-threaded host moves the handle across threads.
 #[derive(Clone)]
-struct IndexedDbSendBoundary<T>(std::sync::Arc<T>);
-
-unsafe impl<T> Send for IndexedDbSendBoundary<T> {}
-unsafe impl<T> Sync for IndexedDbSendBoundary<T> {}
+struct IndexedDbSendBoundary<T>(send_wrapper::SendWrapper<std::sync::Arc<T>>);
 
 impl IndexedDbSecureKeyStore {
     #[cfg(feature = "wasm-localstorage-secrets-test")]
@@ -129,8 +122,8 @@ impl IndexedDbSecureKeyStore {
             service_name: service_name.to_owned(),
             db_name,
             cache: Arc::new(Mutex::new(cache)),
-            crypto_key: IndexedDbSendBoundary(Arc::new(crypto_key)),
-            db: IndexedDbSendBoundary(Arc::new(db)),
+            crypto_key: IndexedDbSendBoundary(send_wrapper::SendWrapper::new(Arc::new(crypto_key))),
+            db: IndexedDbSendBoundary(send_wrapper::SendWrapper::new(Arc::new(db))),
         })
     }
 
