@@ -144,7 +144,7 @@ test.describe("feature coverage placeholders", () => {
     await page.getByTestId("kanban-card").first().click();
     const drawer = page.getByTestId("card-detail-modal");
     await expect(drawer).toBeVisible({ timeout: 30_000 });
-    await expect(drawer.getByTestId("card-description-panel")).toBeVisible();
+    await expect(drawer.getByTestId("card-synthesis-panel")).toBeVisible();
     await drawer.getByTestId("card-detail-tab-discussion").click();
     await expect(drawer.getByTestId("chat-panel")).toBeVisible();
     await expect(drawer.getByTestId("card-strand-tracks")).toHaveCount(0);

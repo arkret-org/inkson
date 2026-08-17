@@ -114,7 +114,12 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     let strand = "ak:strand:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
     let mut store = temp_state_store("private-strand-sidecar");
     // The writer stores the JSON-serialized patch value (a bare string).
-    store.save_private_plaintext(realm, strand, "body", "\"author body\"");
+    store.save_private_plaintext(
+        realm,
+        strand,
+        KANBAN_ENCRYPTED_CONTENT_PATH,
+        "\"author body\"",
+    );
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
@@ -130,7 +135,12 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
         "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
     });
     assert_eq!(
-        private_strand_field_text(Some(&ctx), strand, "body", Some(&envelope)),
+        private_strand_field_text(
+            Some(&ctx),
+            strand,
+            KANBAN_ENCRYPTED_CONTENT_PATH,
+            Some(&envelope)
+        ),
         "author body"
     );
     // A different strand id has no sidecar entry → falls back (blank for an
@@ -139,7 +149,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
         private_strand_field_text(
             Some(&ctx),
             "ak:strand:ATEG2QCavtpxeXB5vkEeQqzkPjtieb9NlGtUvdteawYZ",
-            "body",
+            KANBAN_ENCRYPTED_CONTENT_PATH,
             Some(&envelope)
         ),
         ""
@@ -151,7 +161,7 @@ fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let strand = "ak:strand:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
     let mut store = temp_state_store("private-strand-empty-sidecar");
-    store.save_private_plaintext(realm, strand, "synthesis", "\"\"");
+    store.save_private_plaintext(realm, strand, KANBAN_ENCRYPTED_CONTENT_PATH, "\"\"");
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
@@ -166,28 +176,44 @@ fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
     });
 
     assert_eq!(
-        private_strand_field_text(Some(&ctx), strand, "synthesis", Some(&envelope)),
+        private_strand_field_text(
+            Some(&ctx),
+            strand,
+            KANBAN_ENCRYPTED_CONTENT_PATH,
+            Some(&envelope)
+        ),
         ""
     );
     assert!(private_strand_field_locked(
         Some(&ctx),
         strand,
-        "synthesis",
+        KANBAN_ENCRYPTED_CONTENT_PATH,
         Some(&envelope)
     ));
 }
 
 #[test]
 fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
-    // X5.2 gate — simulate the writer having stored the author's body
-    // plaintext, then build a card from a projection whose body is an
-    // un-decryptable MLS envelope, with NO MLS snapshot present. The
+    // X5.2 gate — simulate the writer having stored the author's synthesis
+    // plaintext, then build a card from a projection whose `encrypted_content`
+    // is an un-decryptable MLS envelope, with NO MLS snapshot present. The
     // card must show the author's plaintext (proving the author sees
     // own content with zero decryption).
     let realm = "ak:realm:ARuquux-GRSwGPPZ0lJor6JUmVSERFPzPWlj1mjx8JCX";
     let strand = "ak:strand:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
     let mut store = temp_state_store("card-builder-sidecar");
-    store.save_private_plaintext(realm, strand, "body", "\"recovered body\"");
+    // The writer stores the JSON-serialized patch VALUE, i.e. the ContentBlock.
+    store.save_private_plaintext(
+        realm,
+        strand,
+        KANBAN_ENCRYPTED_CONTENT_PATH,
+        &serde_json::to_string(&json!({
+            "kind": "ak.content.text",
+            "format": "markdown",
+            "body": "recovered synthesis"
+        }))
+        .unwrap(),
+    );
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
@@ -200,11 +226,8 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         realm_id: realm.to_owned(),
         title: "Encrypted card".to_owned(),
         summary: Some("public summary".to_owned()),
-        body: Some(json!({
-            "scheme": "mls_rfc9420",
-            "ciphertext": "AAAA",
-            "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
-        })),
+        content: None,
+        encrypted_content: Some(test_encrypted_content_envelope(realm, "AAAA")),
         board_space_id: None,
         list_space_id: None,
         rank: Some("U".to_owned()),
@@ -221,7 +244,95 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         state: arkret_sdk::ProjectionObjectState::Active,
     };
     let card = card_from_strand_projection(&strand_view, Some(&ctx));
-    assert_eq!(card.body, "recovered body");
+    assert_eq!(card.synthesis, "recovered synthesis");
     // Sanity: there is genuinely no MLS group to decrypt from.
     assert!(store.mls_snapshot_for(realm).is_none());
+}
+
+/// E2EE locked vs unlocked on the SAME canonical path.
+///
+/// The card builder resolves the display text and the locked flag from one
+/// expression over `encrypted_content`, so the two can never disagree: with a
+/// readable local plaintext the card is unlocked and shows the text; without it
+/// the card is locked and the text stays EMPTY (never the raw envelope, never
+/// the placeholder, which the editor would otherwise re-save over ciphertext).
+#[test]
+fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
+    let realm = "ak:realm:ARuquux-GRSwGPPZ0lJor6JUmVSERFPzPWlj1mjx8JCX";
+    let strand = "ak:strand:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
+    let envelope = test_encrypted_content_envelope(realm, "AAAA");
+    let strand_view =
+        |realm: &str, strand: &str| crate::state::projection_views::StrandProjectionView {
+            strand_id: strand.to_owned(),
+            realm_id: realm.to_owned(),
+            title: "Encrypted card".to_owned(),
+            summary: Some("public summary".to_owned()),
+            content: None,
+            encrypted_content: Some(envelope.clone()),
+            board_space_id: None,
+            list_space_id: None,
+            rank: Some("U".to_owned()),
+            assigned_actor_ids: Vec::new(),
+            assigned_to_relations: Vec::new(),
+            schema_refs: Vec::new(),
+            rsvps: Vec::new(),
+            schedule_revision_heads: Vec::new(),
+            fields: Map::new(),
+            created_by: None,
+            created_at: None,
+            updated_by: None,
+            updated_at: None,
+            state: arkret_sdk::ProjectionObjectState::Active,
+        };
+
+    // Locked: an envelope with no sidecar and no group to decrypt with.
+    let locked_store = temp_state_store("encrypted-card-locked");
+    let locked_ctx = MlsDecryptCtx {
+        state_store: &locked_store,
+        realm_id: realm,
+        actor_id: "did:web:alice.example",
+        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
+        circle_id: None,
+    };
+    let locked = card_from_strand_projection(&strand_view(realm, strand), Some(&locked_ctx));
+    assert_eq!(locked.synthesis, "");
+    assert!(locked.synthesis_locked);
+    assert!(!locked.synthesis.contains(MLS_LOCKED_FIELD_PLACEHOLDER));
+    assert_eq!(locked.security_encrypted, Some(true));
+
+    // Unlocked: the same envelope, now with the author's local plaintext.
+    let mut unlocked_store = temp_state_store("encrypted-card-unlocked");
+    unlocked_store.save_private_plaintext(
+        realm,
+        strand,
+        KANBAN_ENCRYPTED_CONTENT_PATH,
+        &serde_json::to_string(&json!({
+            "kind": "ak.content.text",
+            "format": "markdown",
+            "body": "unlocked synthesis"
+        }))
+        .unwrap(),
+    );
+    let unlocked_ctx = MlsDecryptCtx {
+        state_store: &unlocked_store,
+        realm_id: realm,
+        actor_id: "did:web:alice.example",
+        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
+        circle_id: None,
+    };
+    let unlocked = card_from_strand_projection(&strand_view(realm, strand), Some(&unlocked_ctx));
+    assert_eq!(unlocked.synthesis, "unlocked synthesis");
+    assert!(!unlocked.synthesis_locked);
+
+    // A plaintext scope reads the ContentBlock straight through and is never
+    // locked, so the two branches share one canonical path.
+    let mut plaintext_view = strand_view(realm, strand);
+    plaintext_view.encrypted_content = None;
+    plaintext_view.content = Some(
+        arkret_sdk::ContentBlock::text("plaintext synthesis")
+            .with_field("format", json!("markdown")),
+    );
+    let plaintext = card_from_strand_projection(&plaintext_view, None);
+    assert_eq!(plaintext.synthesis, "plaintext synthesis");
+    assert!(!plaintext.synthesis_locked);
 }

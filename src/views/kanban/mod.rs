@@ -829,7 +829,6 @@ pub fn KanbanPanel(
         member_handle_fetching: _,
         mut card_edit_title,
         mut card_edit_description,
-        mut card_edit_body,
         mut card_edit_synthesis,
         mut card_edit_synthesis_target_id,
         mut card_detail_edit_status,
@@ -1946,7 +1945,6 @@ pub fn KanbanPanel(
                                         let draft = card_detail_draft_from_card(&c);
                                         card_edit_title.set(draft.title);
                                         card_edit_description.set(draft.description);
-                                        card_edit_body.set(draft.body);
                                         card_edit_synthesis.set(draft.synthesis);
                                         card_edit_synthesis_target_id.set(None);
                                         card_edit_labels.set(draft.labels.join(", "));
@@ -1966,7 +1964,7 @@ pub fn KanbanPanel(
                                         due_calendar_month.set(due_calendar_month_for_value(&c.due));
                                         due_edit_status.set(String::new());
                                         card_detail_actions_open.set(false);
-                                        card_detail_tab.set(CardDetailContentTab::Description);
+                                        card_detail_tab.set(CardDetailContentTab::default());
                                         card_synthesis_history_open_id.set(None);
                                         card_synthesis_selected_revision_id.set(None);
                                         selected_card.set(Some(c.clone()));
@@ -1975,7 +1973,7 @@ pub fn KanbanPanel(
                                             &selected_board_space_id(),
                                             &c.id,
                                         ));
-                                        replace_card_detail_tab_query(CardDetailContentTab::Description);
+                                        replace_card_detail_tab_query(CardDetailContentTab::default());
                                     }
                                 },
                                 div { class: "event-head board-card-title-row",

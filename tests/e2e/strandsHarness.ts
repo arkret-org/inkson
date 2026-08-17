@@ -164,7 +164,7 @@ export async function openDiscussion(page: import("@playwright/test").Page) {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
   await expect(page.getByTestId("card-detail-modal")).toBeVisible();
-  await expect(page.getByTestId("card-description-panel")).toBeVisible();
+  await expect(page.getByTestId("card-synthesis-panel")).toBeVisible();
   await page.getByTestId("card-detail-tab-discussion").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }

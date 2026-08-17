@@ -64,6 +64,9 @@ fn content_block_has_plaintext(block: &arkret_sdk::ContentBlock) -> bool {
 }
 
 fn strand_create_has_plaintext(payload: &arkret_sdk::StrandCreatePayload) -> bool {
+    // `Strand::body` is the Rust name of the canonical top-level `content`
+    // ContentBlock (`#[serde(rename = "content")]`); there is no other
+    // plaintext content slot on a Strand.
     if payload
         .object
         .body
@@ -72,17 +75,11 @@ fn strand_create_has_plaintext(payload: &arkret_sdk::StrandCreatePayload) -> boo
     {
         return true;
     }
-    let Some(metadata) = payload.object.metadata.as_ref() else {
-        return false;
-    };
-    ["body", "synthesis"].iter().any(|field| {
-        metadata
-            .fields
-            .get(*field)
-            .is_some_and(value_is_plaintext_private_content)
-    }) || metadata
-        .fields
-        .get("calendar")
+    payload
+        .object
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.fields.get("calendar"))
         .and_then(|calendar| calendar.get("location"))
         .is_some_and(value_is_plaintext_private_content)
 }
@@ -112,8 +109,8 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
 /// canonical examples: a second device needs the plaintext title/rank to
 /// render the Board/List name and order instead of falling back to
 /// `generated_board_fallback_title` (`ak:space:...`) or stale rank order. Only
-/// Strand card private content fields (body / synthesis / discussion) are E2EE
-/// — never the container scaffold. Exempting these kinds here is a hard
+/// Strand private content (`content` / `encrypted_content` and the discussion
+/// track) is E2EE — never the container scaffold. Exempting these kinds here is a hard
 /// invariant: it guarantees the plaintext-block decision can never silently
 /// drop a container create/update, regardless of what
 /// `kanban_event_carries_plaintext_private_content` matches in the future. See

@@ -22,7 +22,7 @@ BASELINES=$(cat <<'EOF'
 Cokret|0|brand rename (closed)|Cokret
 ck_ops|0|brand rename (closed)|ck_ops
 register_session_|0|I-ARCH-002 session coordinator|register_session_
-sync-cursor-dash-sentinel|3|I-ARCH-002/W3 cursor semantics|cursor == "-"
+sync-cursor-dash-sentinel|0|I-ARCH-002/W3 cursor semantics (closed)|cursor == "-"
 ArkretApi|0|I-ARCH-003 API strangler|ArkretApi
 EOF
 )

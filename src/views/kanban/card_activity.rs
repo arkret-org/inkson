@@ -246,7 +246,6 @@ pub(super) fn strand_update_activity_title(payload: &arkret_sdk::StrandPatchPayl
     };
     {
         let fields = operation_at("metadata.fields")
-            .or_else(|| operation_at("fields"))
             .and_then(|op| op.value())
             .and_then(Value::as_object);
         if let Some(fields) = fields {
@@ -260,13 +259,15 @@ pub(super) fn strand_update_activity_title(payload: &arkret_sdk::StrandPatchPayl
             }
             return "Card fields updated".to_owned();
         }
-        if operation_at("metadata.title").is_some() || operation_at("title").is_some() {
+        if operation_at("metadata.title").is_some() {
             return "Title updated".to_owned();
         }
-        if operation_at("metadata.summary").is_some() || operation_at("summary").is_some() {
+        if operation_at("metadata.summary").is_some() {
             return "Summary updated".to_owned();
         }
-        if operation_at("body").is_some() || operation_at("synthesis").is_some() {
+        if operation_at(KANBAN_CONTENT_PATH).is_some()
+            || operation_at(KANBAN_ENCRYPTED_CONTENT_PATH).is_some()
+        {
             return "Card content updated".to_owned();
         }
     }

@@ -21,9 +21,7 @@ pub(crate) fn local_created_card(
         rank,
         title,
         description,
-        body: String::new(),
         synthesis: String::new(),
-        body_locked: false,
         synthesis_locked: false,
         created_by: "inkson".to_owned(),
         created_at: String::new(),
@@ -379,7 +377,8 @@ pub(crate) struct LocalCardUpdate {
     pub(crate) strand_id: String,
     pub(crate) title: Option<Option<String>>,
     pub(crate) summary: Option<Option<String>>,
-    pub(crate) body: Option<PrivateFieldOverlay>,
+    /// Overlay for the Strand's synthesis content (`content` /
+    /// `encrypted_content`).
     pub(crate) synthesis: Option<PrivateFieldOverlay>,
     pub(crate) fields: Option<Value>,
     pub(crate) fields_replaces_all: bool,
@@ -449,20 +448,12 @@ pub(crate) fn local_card_update_from_raw_operation(
         })
     }
 
-    let title = patch
-        .get("metadata.title")
-        .or_else(|| patch.get("title"))
-        .and_then(extract_set_unset);
-    let summary = patch
-        .get("metadata.summary")
-        .or_else(|| patch.get("summary"))
-        .and_then(extract_set_unset);
-    let body_op = extract_private_for_paths(
-        patch,
-        KANBAN_BODY_PRIVATE_FIELD_PATHS,
-        decrypt_ctx,
-        &strand_id,
-    );
+    // Canonical Strand paths only. `title` / `summary` / `fields` / `body` are
+    // explicitly forbidden Strand top-level fields (`strand.schema.json`), so a
+    // patch that uses them is a schema violation the server rejects — reading
+    // them here would only resurrect the non-spec shape locally.
+    let title = patch.get("metadata.title").and_then(extract_set_unset);
+    let summary = patch.get("metadata.summary").and_then(extract_set_unset);
     let synthesis = extract_private_for_paths(
         patch,
         KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS,
@@ -471,28 +462,21 @@ pub(crate) fn local_card_update_from_raw_operation(
     );
     fn extract_direct_field_patch(patch: &Map<String, Value>, field: &str) -> Option<Value> {
         let metadata_path = format!("metadata.fields.{field}");
-        let field_path = format!("fields.{field}");
-        patch
-            .get(&metadata_path)
-            .or_else(|| patch.get(&field_path))
-            .and_then(|op| {
-                match serde_json::from_value::<arkret_wire::patch::PatchOp>(op.clone()).ok()? {
-                    op if op.op() == arkret_wire::patch::PatchOpKind::Set => op.value().cloned(),
-                    op if op.op() == arkret_wire::patch::PatchOpKind::Unset => Some(Value::Null),
-                    _ => None,
-                }
-            })
+        patch.get(&metadata_path).and_then(|op| {
+            match serde_json::from_value::<arkret_wire::patch::PatchOp>(op.clone()).ok()? {
+                op if op.op() == arkret_wire::patch::PatchOpKind::Set => op.value().cloned(),
+                op if op.op() == arkret_wire::patch::PatchOpKind::Unset => Some(Value::Null),
+                _ => None,
+            }
+        })
     }
 
-    let replacement_fields = patch
-        .get("metadata.fields")
-        .or_else(|| patch.get("fields"))
-        .and_then(|fields_op| {
-            let op: arkret_wire::patch::PatchOp = serde_json::from_value(fields_op.clone()).ok()?;
-            (op.op() == arkret_wire::patch::PatchOpKind::Set)
-                .then(|| op.value().cloned())
-                .flatten()
-        });
+    let replacement_fields = patch.get("metadata.fields").and_then(|fields_op| {
+        let op: arkret_wire::patch::PatchOp = serde_json::from_value(fields_op.clone()).ok()?;
+        (op.op() == arkret_wire::patch::PatchOpKind::Set)
+            .then(|| op.value().cloned())
+            .flatten()
+    });
     let mut direct_fields = Map::new();
     for field in [
         CALENDAR_PROFILE_FIELD,
@@ -529,7 +513,6 @@ pub(crate) fn local_card_update_from_raw_operation(
         strand_id,
         title,
         summary,
-        body: body_op,
         synthesis,
         fields,
         fields_replaces_all,
@@ -544,22 +527,6 @@ pub(crate) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
     }
     if let Some(slot) = &update.summary {
         card.description = slot.clone().unwrap_or_default();
-    }
-    if let Some(slot) = &update.body {
-        match slot {
-            PrivateFieldOverlay::Set(value) => {
-                card.body = value.clone();
-                card.body_locked = false;
-            }
-            PrivateFieldOverlay::Unset => {
-                card.body.clear();
-                card.body_locked = false;
-            }
-            PrivateFieldOverlay::Locked => {
-                card.body.clear();
-                card.body_locked = true;
-            }
-        }
     }
     if let Some(slot) = &update.synthesis {
         match slot {
@@ -832,47 +799,31 @@ pub(crate) fn json_path_string(value: Option<&Value>, path: &[&str]) -> Option<S
         .map(ToOwned::to_owned)
 }
 
-pub(crate) fn map_dotted_value<'a>(map: &'a Map<String, Value>, path: &str) -> Option<&'a Value> {
-    let mut segments = path.split('.');
-    let first = segments.next()?;
-    let mut current = map.get(first)?;
-    for segment in segments {
-        current = current.get(segment)?;
-    }
-    Some(current)
-}
-
-pub(crate) fn value_dotted_value<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    let mut current = value;
-    for segment in path.split('.') {
-        current = current.get(segment)?;
-    }
-    Some(current)
-}
-
-pub(crate) fn collection_item_private_field_value<'a>(
-    object: &'a Value,
-    paths: &[&'static str],
-) -> Option<(&'a Value, &'static str)> {
-    paths
+/// Resolve the Strand's synthesis content from a projection row, together with
+/// the canonical path it was found at (`content` or `encrypted_content`).
+///
+/// The two are mutually exclusive on a schema-valid Strand, and there is no
+/// third location: `metadata.fields.synthesis` / `tracks.<name>.body` are not
+/// Strand wire paths, so a projection that carries them exposes no content.
+///
+/// The slots hold two different SDK types, so the shared decrypt / display
+/// path is fed the canonical JSON encoding of whichever one is present.
+pub(crate) fn strand_projection_synthesis_content(
+    strand: &crate::state::projection_views::StrandProjectionView,
+) -> Option<(Value, &'static str)> {
+    KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS
         .iter()
-        .find_map(|path| value_dotted_value(object, path).map(|value| (value, *path)))
-}
-
-pub(crate) fn strand_projection_private_field_value<'a>(
-    strand: &'a crate::state::projection_views::StrandProjectionView,
-    paths: &[&'static str],
-) -> Option<(&'a Value, &'static str)> {
-    paths.iter().find_map(|path| {
-        let value = if *path == "body" {
-            strand.body.as_ref()
-        } else if let Some(field_path) = path.strip_prefix("fields.") {
-            map_dotted_value(&strand.fields, field_path)
-        } else {
-            map_dotted_value(&strand.fields, path)
-        }?;
-        Some((value, *path))
-    })
+        .find_map(|path| {
+            let value = match *path {
+                KANBAN_CONTENT_PATH => strand.content.as_ref().map(serde_json::to_value),
+                KANBAN_ENCRYPTED_CONTENT_PATH => {
+                    strand.encrypted_content.as_ref().map(serde_json::to_value)
+                }
+                _ => None,
+            }?
+            .ok()?;
+            Some((value, *path))
+        })
 }
 
 pub(crate) fn patch_op_for_private_path<'a>(

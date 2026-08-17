@@ -349,9 +349,18 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
     // the read path parses it back with `serde_json::from_str` and feeds it
     // to `strand_body_display_text`, keeping write+read symmetric. This is
     // local-only and NEVER enters the op / `append_raw_operation` payload.
+    //
+    // Key the sidecar by the path the ENCRYPTED value lands on
+    // (`content` -> `encrypted_content`), because that is the path the reader
+    // resolves the envelope at; writer and reader must agree on one token.
     for (path, plaintext_bytes) in &values {
         if let Ok(plaintext_str) = std::str::from_utf8(plaintext_bytes) {
-            state_store.save_private_plaintext(realm_id, strand_id, path, plaintext_str);
+            state_store.save_private_plaintext(
+                realm_id,
+                strand_id,
+                kanban_encrypted_patch_path(path),
+                plaintext_str,
+            );
         }
     }
     let paths = values.into_iter().map(|(path, _)| path).collect::<Vec<_>>();

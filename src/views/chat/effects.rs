@@ -442,7 +442,7 @@ pub(super) fn ChatEffects(
                 return;
             }
             let cursor = sync_cursor();
-            if cursor.trim().is_empty() || cursor == "-" {
+            if cursor.trim().is_empty() {
                 return;
             }
             // `presence_projection` is written through the reactive state-store
@@ -761,8 +761,7 @@ pub(super) fn ChatEffects(
         let device_id_for_local_timeline = device_after_initial_sync.clone();
         use_effect(move || {
             let cursor = sync_cursor();
-            let cursor = cursor.trim();
-            let account_sync_ready = !(cursor.is_empty() || cursor == "-");
+            let account_sync_ready = crate::app::account_sync_ready(&cursor);
             let live_epoch = realm_live_epoch();
             if !account_sync_ready && live_epoch == 0 {
                 return;

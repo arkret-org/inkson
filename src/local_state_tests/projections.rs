@@ -261,6 +261,60 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
     );
 }
 
+/// `authority_binding.witness_attestations[]` is a closed
+/// `{witness_id, proof}` object, and the proof commits to the SDK's canonical
+/// witness projection — a separate object family from the manifest signature.
+/// Nothing here is assembled locally.
+#[test]
+fn witness_attestations_are_built_from_the_sdk_witness_projection() {
+    let items = vec![arkret_sdk::SnapshotMaterializedItem {
+        kind: "realm".to_owned(),
+        id: "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml".to_owned(),
+        object: json!({ "title": "Witnessed Realm" }),
+        source_event_id: snapshot_event_id("0000000000a2"),
+    }];
+    let (mut manifest, _chunks) = snapshot_manifest_for_items(items);
+    // A non-witness-quorum manifest carries no attestations at all.
+    manifest.validate_witness_attestation_shape().unwrap();
+
+    manifest.authority_binding.authority_kind = arkret_sdk::SnapshotAuthorityKind::WitnessQuorum;
+    let attestations = ["did:web:witness-a.example", "did:web:witness-b.example"]
+        .into_iter()
+        .map(|did| {
+            let witness_id = crate::mls_api_helpers::principal_core_id(did).unwrap();
+            let digest = manifest.witness_attestation_digest(&witness_id).unwrap();
+            arkret_sdk::snapshot::SnapshotWitnessAttestation {
+                witness_id,
+                proof: arkret_sdk::DetachedJwsProof::ed25519(
+                    arkret_sdk::DidUrl::new(format!("{did}#witness")).unwrap(),
+                    digest,
+                    manifest.created_at,
+                    "header..signature".to_owned(),
+                ),
+            }
+        })
+        .collect();
+    manifest.authority_binding.witness_attestations = attestations;
+    manifest.validate_witness_attestation_shape().unwrap();
+
+    // The witness transcript excludes every signature, so it is not the
+    // manifest signing payload.
+    assert_ne!(
+        manifest.authority_binding.witness_attestations[0]
+            .proof
+            .payload_digest,
+        manifest.expected_signature_digest().unwrap()
+    );
+
+    // Order is a schema condition, never normalized away.
+    manifest.authority_binding.witness_attestations.reverse();
+    let error = manifest.validate_witness_attestation_shape().unwrap_err();
+    assert_eq!(
+        error.code,
+        arkret_sdk::SnapshotValidationCode::SchemaViolation
+    );
+}
+
 #[test]
 fn retain_realm_tree_projections_prunes_per_realm_caches() {
     let path = temp_state_path("retain-prunes");

@@ -230,11 +230,19 @@ pub(super) fn strand_reorder_payload(
     Ok(payload)
 }
 
+/// Decode and fully validate an outbound `ak.schema.patch.v1` map.
+///
+/// Every Strand / Space / Morph patch this client authors goes through here, so
+/// this is where the cross-object patch safety rules of
+/// `event-and-patch.md` §4.2.4 (no `unset` / `remove` on redactable content
+/// fields) and §4.2.5 (no reducer-managed paths) are enforced. The SDK owns
+/// both path lists; failing here keeps a patch a compliant reducer would reject
+/// with `patch_unset_redactable_field` / `patch_path_reducer_managed` off the
+/// wire in the first place.
 pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<arkret_sdk::Patch> {
     let patch: arkret_sdk::Patch = serde_json::from_value(patch)
-        .map_err(|err| anyhow::anyhow!("ak.strand.update patch must match ak.patch.v1: {err}"))?;
-    patch
-        .validate()
-        .map_err(|err| anyhow::anyhow!("ak.strand.update patch must match ak.patch.v1: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("patch must match ak.patch.v1: {err}"))?;
+    arkret_sdk::validate_patch_semantic_safety(&patch)
+        .map_err(|err| anyhow::anyhow!("patch must match ak.patch.v1: {err}"))?;
     Ok(patch)
 }

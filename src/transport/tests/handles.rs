@@ -5,21 +5,56 @@ use crate::directory_helpers::{
 };
 use crate::models::ResolveHandleView;
 
+/// The directory `proofs[]` element is a `PayloadProof` — it commits to
+/// `payload_digest` (the digest of the unsigned request payload), not to an
+/// `event_digest`, because a directory read is not an Event.
+fn test_payload_proof(payload_digest: arkret_sdk::Hash) -> arkret_sdk::PayloadProof {
+    arkret_sdk::PayloadProof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#key-1".to_owned())
+            .expect("test verification method is a DID URL"),
+        payload_digest,
+        created_at: chrono::DateTime::parse_from_rfc3339("2026-08-17T00:00:00Z")
+            .expect("test timestamp")
+            .with_timezone(&chrono::Utc),
+        domain: None,
+        audience: Some(arkret_sdk::Audience::Single(
+            "ak:did_core:web:directory.example".to_owned(),
+        )),
+        proof_purpose: None,
+        jws: "a..b".to_owned(),
+    }
+}
+
 #[test]
 fn resolve_handle_request_body_carries_lookup_context() {
+    let context = ResolveHandleContext {
+        intent: Some("lookup"),
+        requester: Some("did:web:alice.example"),
+        audience: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
+        realm_id: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
+        expected_did: Some("did:web:bob.example"),
+        proof_challenge: Some("ak:challenge:test"),
+        proofs: &[],
+    };
+    // `proofs[]` is excluded from the signed payload, so the digest is taken
+    // from the proof-free body and then carried on the proof.
+    let unsigned = resolve_handle_request_body("bob:local.host", context)
+        .expect("resolve_handle request body builds");
+    let payload_digest = unsigned.payload_digest().expect("payload digest");
+    let proofs = [test_payload_proof(payload_digest.clone())];
     let body = resolve_handle_request_body(
         "bob:local.host",
         ResolveHandleContext {
-            intent: Some("lookup"),
-            requester: Some("did:web:alice.example"),
-            audience: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
-            realm_id: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
-            expected_did: Some("did:web:bob.example"),
-            proof_challenge: Some("ak:challenge:test"),
-            proofs: &["proof-a", "  ", "proof-b"],
+            proofs: &proofs,
+            ..context
         },
     )
     .expect("resolve_handle request body builds");
+    // The transcript the proof signs comes from the SDK, never from a local
+    // concatenation.
+    body.proof_binding_bytes(&proofs[0])
+        .expect("SDK builds the directory proof transcript");
     let body = serde_json::to_value(body).expect("request body serializes");
 
     assert_eq!(body["handle"], "bob:local.host");
@@ -35,7 +70,12 @@ fn resolve_handle_request_body_carries_lookup_context() {
     );
     assert_eq!(body["expected_principal_id"], "ak:did_core:web:bob.example");
     assert_eq!(body["proof_challenge"], "ak:challenge:test");
-    assert_eq!(body["proofs"], json!(["proof-a", "proof-b"]));
+    assert_eq!(body["proofs"].as_array().expect("proofs array").len(), 1);
+    assert_eq!(
+        body["proofs"][0]["payload_digest"],
+        json!(payload_digest.as_str())
+    );
+    assert!(body["proofs"][0].get("event_digest").is_none());
 }
 
 #[test]

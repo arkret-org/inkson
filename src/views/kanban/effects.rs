@@ -29,7 +29,6 @@ pub(super) fn KanbanEffects(
         mut mls_sidecar_restore_key_seen,
         mut card_edit_title,
         mut card_edit_description,
-        mut card_edit_body,
         mut card_edit_synthesis,
         mut card_edit_synthesis_target_id,
         mut card_edit_labels,
@@ -157,7 +156,6 @@ pub(super) fn KanbanEffects(
                 let draft = card_detail_draft_from_card(&card);
                 card_edit_title.set(draft.title);
                 card_edit_description.set(draft.description);
-                card_edit_body.set(draft.body);
                 card_edit_synthesis.set(draft.synthesis);
                 card_edit_synthesis_target_id.set(None);
                 card_edit_labels.set(draft.labels.join(", "));
@@ -376,10 +374,7 @@ pub(super) fn KanbanEffects(
         move || {
             let initial_view = board_view_id.peek().clone();
             let initial_cursor = sync_cursor.peek().clone();
-            let initial_sync_ready = {
-                let cursor = initial_cursor.trim();
-                !(cursor.is_empty() || cursor == "-")
-            };
+            let initial_sync_ready = crate::app::account_sync_ready(&initial_cursor);
             let initial_epoch = *realm_live_epoch.peek();
             let initial_mls_unlock = {
                 let store = state_store.peek();
@@ -421,11 +416,7 @@ pub(super) fn KanbanEffects(
         // effect, but reduce it to a readiness transition before constructing
         // the refresh key. Cursor tokens are checkpoints, not render
         // revisions; re-minting the same frontier must not backfill events.
-        let account_sync_ready = {
-            let cursor = sync_cursor();
-            let cursor = cursor.trim();
-            !(cursor.is_empty() || cursor == "-")
-        };
+        let account_sync_ready = crate::app::account_sync_ready(&sync_cursor());
         // Reading `realm_live_epoch` here subscribes this effect to the per-realm
         // events engine, so fresh cross-member events trigger a reproject even
         // when the account `sync_cursor` never advanced for them.
@@ -551,7 +542,7 @@ pub(super) fn KanbanEffects(
             let Some(card) = selected_card() else {
                 return;
             };
-            if !card.body_locked && !card.synthesis_locked {
+            if !card.synthesis_locked {
                 return;
             }
             let api_token = restore_token();
@@ -576,24 +567,19 @@ pub(super) fn KanbanEffects(
                 format!("{containers_len}:{strands_len}")
             };
             let restore_key = format!(
-                "{}|{}|{}|{}|{}|{}|body={}|synthesis={}",
+                "{}|{}|{}|{}|{}|{}|synthesis={}",
                 restore_base.trim().trim_end_matches('/'),
                 restore_actor.trim(),
                 restore_device.trim(),
                 restore_realm_id.trim(),
                 card.primary_strand_id,
                 projection_shape,
-                card.body_locked,
                 card.synthesis_locked
             );
             // Wake when account bootstrap first becomes ready, but never use
             // the opaque cursor token as a data revision. Durable Realm
             // changes are represented by the explicit live epoch.
-            let account_sync_ready = {
-                let cursor = restore_sync_cursor();
-                let cursor = cursor.trim();
-                !(cursor.is_empty() || cursor == "-")
-            };
+            let account_sync_ready = crate::app::account_sync_ready(&restore_sync_cursor());
             let live_epoch = restore_realm_live_epoch();
             let restore_key = format!(
                 "{restore_key}|sync_ready={}|epoch={live_epoch}",
@@ -690,8 +676,7 @@ pub(super) fn KanbanEffects(
                             &events,
                         );
                     }
-                    let card_unlocked = selected_card()
-                        .is_some_and(|card| !card.body_locked && !card.synthesis_locked);
+                    let card_unlocked = selected_card().is_some_and(|card| !card.synthesis_locked);
                     if restored_private_plaintext || card_unlocked {
                         break;
                     }

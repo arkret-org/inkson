@@ -297,47 +297,18 @@ pub(crate) fn card_from_projection_item(
     let created_at = object_str(&["created_at", "timestamp"]);
     let updated_by = object_str(&["updated_by"]);
     let updated_at = object_str(&["updated_at", "edited_at"]);
-    // X10.2: bind the private-field value exprs once so the text + locked
-    // checks read the same source.
-    let item_body_field =
-        collection_item_private_field_value(&object, KANBAN_BODY_PRIVATE_FIELD_PATHS);
-    let item_body_value = item_body_field.map(|(value, _)| value);
-    let item_body_path = item_body_field.map(|(_, path)| path).unwrap_or("body");
-    let item_synthesis_field =
-        collection_item_private_field_value(&object, KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS);
-    let item_synthesis_value = item_synthesis_field.map(|(value, _)| value);
-    let item_synthesis_path = item_synthesis_field
-        .map(|(_, path)| path)
-        .unwrap_or("synthesis");
     KanbanCard {
         id,
         rank,
         title,
         description: object_str(&["summary", "description"]),
-        body: private_strand_field_text(
-            decrypt_ctx,
-            &primary_strand_id,
-            item_body_path,
-            item_body_value,
-        ),
-        body_locked: private_strand_field_locked(
-            decrypt_ctx,
-            &primary_strand_id,
-            item_body_path,
-            item_body_value,
-        ),
-        synthesis: private_strand_field_text(
-            decrypt_ctx,
-            &primary_strand_id,
-            item_synthesis_path,
-            item_synthesis_value,
-        ),
-        synthesis_locked: private_strand_field_locked(
-            decrypt_ctx,
-            &primary_strand_id,
-            item_synthesis_path,
-            item_synthesis_value,
-        ),
+        // The registered `projection_item.object`
+        // (`view.schema.json#/$defs/projection_item`) carries id / title /
+        // fields only — never Strand `content` or `encrypted_content`. The
+        // Strand projection read (`card_from_strand_projection`) is the single
+        // source for synthesis content; a collection row simply has none.
+        synthesis: String::new(),
+        synthesis_locked: false,
         created_by,
         created_at,
         updated_by,

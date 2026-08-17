@@ -101,30 +101,60 @@ pub(crate) const DEMO_STRAND_SUPPORT_DISCUSSION_ID: &str =
     "ak:strand:AUiTFJVo328Rc7lc2Le2mjzL_ELZ-uQUn1Fq-C1QNAbh";
 pub(crate) const DEMO_STRAND_SECURITY_REVIEW_ID: &str =
     "ak:strand:AVKDZWS92w01isZDuPKuX-DiJymAf0Qcvf0A6qz8Gy-0";
+/// Canonical Strand paths whose value carries user content and therefore MUST
+/// be encrypted before it leaves the client in an E2EE scope.
+///
+/// `strand.schema.json` puts the Strand's synthesis content at top-level
+/// `content` (a ContentBlock) and its E2EE dual at `encrypted_content`; the two
+/// are mutually exclusive. There is no `body` / `synthesis` / `fields.*` /
+/// `tracks.<name>.body` content path — those names are either explicitly
+/// forbidden top-level fields or plain schema violations, so they are neither
+/// written nor read.
 pub(crate) const KANBAN_PRIVATE_STRAND_PATCH_PATHS: &[&str] = &[
-    "body",
-    "synthesis",
     "content",
-    "attachments",
-    "fields.body",
-    "fields.synthesis",
+    "encrypted_content",
     // The schedule lives under one `calendar` namespace, so the encryptable
     // location is `metadata.fields.calendar.location`.
     "metadata.fields.calendar.location",
-    "tracks.synthesis.body",
-    "tracks.discussion.body",
 ];
-pub(crate) const KANBAN_BODY_PRIVATE_FIELD_PATHS: &[&str] = &["body", "fields.body"];
-pub(crate) const KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS: &[&str] =
-    &["synthesis", "fields.synthesis", "tracks.synthesis.body"];
+
+/// The Strand synthesis content pair, in read precedence order. Exactly one of
+/// the two can be present on a schema-valid Strand.
+pub(crate) const KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS: &[&str] = &["content", "encrypted_content"];
+
+/// Canonical plaintext path for Strand synthesis content.
+pub(crate) const KANBAN_CONTENT_PATH: &str = "content";
+
+/// Canonical E2EE path for Strand synthesis content.
+pub(crate) const KANBAN_ENCRYPTED_CONTENT_PATH: &str = "encrypted_content";
+
+/// Where a private patch value moves once it has been wrapped in an
+/// `EncryptedEnvelope`. Plaintext `content` and `encrypted_content` are
+/// mutually exclusive on the object, so the encrypted write REPLACES the path
+/// instead of writing an envelope into the ContentBlock slot (which would fail
+/// `strand.schema.json` — an envelope is not a ContentBlock). Every other
+/// private path is an open `metadata.fields` subtree and stays where it is.
+pub(crate) fn kanban_encrypted_patch_path(path: &str) -> &str {
+    if path == KANBAN_CONTENT_PATH {
+        KANBAN_ENCRYPTED_CONTENT_PATH
+    } else {
+        path
+    }
+}
+
 pub(crate) const KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE: &str =
     "application/vnd.arkret.strand.patch-value+json";
 
-/// X10.2 — shown for an encrypted private field (body/synthesis) that this
-/// device cannot read yet: no local plaintext sidecar, no suitable MLS
-/// Welcome/history material, or a fresh browser before restore. Distinguishes
-/// "encrypted, waiting for key material" from genuinely empty content so users
-/// don't read it as data loss.
+/// Inline-text ceiling for `ak.content.text` from
+/// `strand.schema.json#/$defs/content_block`: longer bodies must move to
+/// `ak.content.long_text`, which needs Blob upload the board does not have yet,
+/// so the editor refuses the write instead of emitting an invalid ContentBlock.
+pub(crate) const KANBAN_CONTENT_TEXT_MAX_CHARS: usize = 262_144;
+
+/// X10.2 — shown for encrypted Strand content this device cannot read yet: no
+/// local plaintext sidecar, no suitable MLS Welcome/history material, or a
+/// fresh browser before restore. Distinguishes "encrypted, waiting for key
+/// material" from genuinely empty content so users don't read it as data loss.
 pub(crate) const MLS_LOCKED_FIELD_PLACEHOLDER: &str =
     "🔒 Encrypted — waiting for MLS Welcome or shared history key";
 

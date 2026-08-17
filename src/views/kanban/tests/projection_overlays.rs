@@ -27,11 +27,7 @@ fn collection_projection_maps_to_kanban_columns() {
                             "kind": "strand",
                             "title": "Legal review",
                             "fields": {
-                                "summary": "ensure GDPR sign-off",
-                                "body": {
-                                    "kind": "ak.content.text",
-                                    "body": "Review processor wording before beta."
-                                }
+                                "summary": "ensure GDPR sign-off"
                             }
                         },
                         "state": {
@@ -70,7 +66,10 @@ fn collection_projection_maps_to_kanban_columns() {
     );
     assert_eq!(card.title, "Legal review");
     assert_eq!(card.description, "ensure GDPR sign-off");
-    assert_eq!(card.body, "Review processor wording before beta.");
+    // The registered `projection_item.object` has no Strand content slot, so a
+    // collection row never carries synthesis content.
+    assert_eq!(card.synthesis, "");
+    assert!(!card.synthesis_locked);
     // Locked discussion + lazy_link should populate locked_strand
     // and the cross-Space hint without leaking room contents.
     assert!(
@@ -129,8 +128,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
         "payload": {
             "target_ref": strand_id,
             "patch": {
-                "body": { "$op": "set", "value": envelope.clone() },
-                "synthesis": { "$op": "set", "value": envelope }
+                "encrypted_content": { "$op": "set", "value": envelope }
             }
         }
     })];
@@ -154,8 +152,6 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
     );
 
     let card = &cols[0].cards[0];
-    assert_eq!(card.body, "");
-    assert!(card.body_locked);
     assert_eq!(card.synthesis, "");
     assert!(card.synthesis_locked);
 }
@@ -282,10 +278,11 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         realm_id: "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned(),
         title: "Persisted card".to_owned(),
         summary: Some("Loaded from projection".to_owned()),
-        body: Some(json!({
-            "kind": "ak.content.text",
-            "body": "Projection body content"
-        })),
+        content: Some(
+            arkret_sdk::ContentBlock::text("Projection synthesis content")
+                .with_field("format", json!("markdown")),
+        ),
+        encrypted_content: None,
         board_space_id: Some(board_id.to_owned()),
         list_space_id: Some(list_id.to_owned()),
         rank: Some("U".to_owned()),
@@ -321,7 +318,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     let card = &columns[0].cards[0];
     assert_eq!(card.title, "Persisted card");
     assert_eq!(card.description, "Loaded from projection");
-    assert_eq!(card.body, "Projection body content");
+    assert_eq!(card.synthesis, "Projection synthesis content");
     assert_eq!(card.labels, vec!["demo".to_owned(), "db".to_owned()]);
     assert_eq!(card.assignee, "did:web:alice.example");
     assert_eq!(
@@ -428,7 +425,6 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
     let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
     let mut card = test_card(strand_id, "U");
     card.description = "old summary".to_owned();
-    card.body = String::new();
     card.synthesis = String::new();
     let columns = vec![KanbanColumn {
         id: "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned(),
@@ -448,8 +444,14 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
             "target_ref": strand_id,
             "patch": {
                 "metadata.summary": { "$op": "set", "value": "new summary" },
-                "fields.body": { "$op": "set", "value": "new long description" },
-                "tracks.synthesis.body": { "$op": "set", "value": "new synthesis note" },
+                "content": {
+                    "$op": "set",
+                    "value": {
+                        "kind": "ak.content.text",
+                        "format": "markdown",
+                        "body": "new synthesis note"
+                    }
+                },
                 "metadata.fields": {
                     "$op": "set",
                     "value": {
@@ -472,7 +474,6 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
 
     let card = &projected[0].cards[0];
     assert_eq!(card.description, "new summary");
-    assert_eq!(card.body, "new long description");
     assert_eq!(card.synthesis, "new synthesis note");
     assert_eq!(card.labels, vec!["remote"]);
     assert_eq!(card.due, "2026-05-30");
@@ -484,7 +485,6 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
     let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
     let mut card = test_card(strand_id, "U");
-    card.body = String::new();
     card.synthesis = String::new();
     let columns = vec![KanbanColumn {
         id: "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned(),
@@ -510,10 +510,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "payload": {
             "target_ref": strand_id,
             "patch": {
-                "body": { "$op": "set", "value": envelope.clone() },
-                "tracks.synthesis.body": { "$op": "set", "value": {
-                    "encrypted_content": envelope
-                } }
+                "encrypted_content": { "$op": "set", "value": envelope }
             }
         }
     })];
@@ -537,11 +534,108 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
     );
 
     let card = &projected[0].cards[0];
-    assert_eq!(card.body, "");
-    assert!(card.body_locked);
     assert_eq!(card.synthesis, "");
     assert!(card.synthesis_locked);
     assert_eq!(card.state, CardState::Synced);
+}
+
+/// Non-spec Strand paths are NOT a second way to spell content.
+///
+/// `strand.schema.json` forbids top-level `body` / `title` / `summary` /
+/// `fields`, and neither `metadata.fields.synthesis` nor `tracks.<name>.body`
+/// is a wire path at all. A patch that uses them is a schema violation the
+/// server rejects, so the local overlay must ignore it outright — otherwise
+/// a rejected write would still paint the board and read back as if accepted.
+#[test]
+fn non_spec_strand_patch_paths_are_ignored_by_the_local_overlay() {
+    let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+    let mut card = test_card(strand_id, "U");
+    card.title = "kept title".to_owned();
+    card.description = "kept summary".to_owned();
+    card.synthesis = "kept synthesis".to_owned();
+    card.labels = vec!["kept".to_owned()];
+    let columns = vec![KanbanColumn {
+        id: "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned(),
+        title: "Todo".to_owned(),
+        rank: "U".to_owned(),
+        cards: vec![card],
+        state: SpaceContainerLifecycleState::Active,
+    }];
+    let events = vec![json!({
+        "event_id": "ak:event:AZUYAeUiTiKHqTOGKrrTfa2xZPZj09T6IRYuDuCNc9ZQ",
+        "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f004",
+        "event_kind": "ak.strand.update",
+        "actor_id": "ak:did_core:web:alice.example",
+        "created_at": "2026-05-22T10:00:00.000Z",
+        "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+        "payload": {
+            "target_ref": strand_id,
+            "patch": {
+                "title": { "$op": "set", "value": "forbidden title" },
+                "summary": { "$op": "set", "value": "forbidden summary" },
+                "body": { "$op": "set", "value": "forbidden body" },
+                "synthesis": { "$op": "set", "value": "forbidden synthesis" },
+                "fields.body": { "$op": "set", "value": "forbidden fields body" },
+                "fields.synthesis": { "$op": "set", "value": "forbidden fields synthesis" },
+                "tracks.synthesis.body": { "$op": "set", "value": "forbidden track body" },
+                "tracks.discussion.body": { "$op": "set", "value": "forbidden discussion body" },
+                "fields": { "$op": "set", "value": { "labels": ["forbidden"] } }
+            }
+        }
+    })];
+    let events = crate::state::projection::kanban_ops::sdk_events_from_values(&events);
+    let remote_operations = strand_update_operations_from_events(&events);
+
+    let projected = overlay_card_projection_with_operations(
+        columns,
+        &LocalStateStore::default(),
+        board_id,
+        &remote_operations,
+    );
+
+    let card = &projected[0].cards[0];
+    assert_eq!(card.title, "kept title");
+    assert_eq!(card.description, "kept summary");
+    assert_eq!(card.synthesis, "kept synthesis");
+    assert!(!card.synthesis_locked);
+    assert_eq!(card.labels, vec!["kept".to_owned()]);
+}
+
+/// A projection row that only carries the retired locations exposes NO
+/// content: reading them back would resurrect the non-spec shape locally.
+#[test]
+fn non_spec_projection_paths_expose_no_strand_content() {
+    let strand = crate::state::projection_views::StrandProjectionView {
+        strand_id: "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2".to_owned(),
+        realm_id: TEST_REALM_ID.to_owned(),
+        title: "Card".to_owned(),
+        summary: None,
+        content: None,
+        encrypted_content: None,
+        board_space_id: None,
+        list_space_id: None,
+        rank: None,
+        assigned_actor_ids: Vec::new(),
+        assigned_to_relations: Vec::new(),
+        schema_refs: Vec::new(),
+        rsvps: Vec::new(),
+        schedule_revision_heads: Vec::new(),
+        fields: Map::from_iter([
+            ("body".to_owned(), json!("non-spec body")),
+            ("synthesis".to_owned(), json!("non-spec synthesis")),
+        ]),
+        created_by: None,
+        created_at: None,
+        updated_by: None,
+        updated_at: None,
+        state: arkret_sdk::ProjectionObjectState::Active,
+    };
+
+    assert!(strand_projection_synthesis_content(&strand).is_none());
+    let card = card_from_strand_projection(&strand, None);
+    assert_eq!(card.synthesis, "");
+    assert!(!card.synthesis_locked);
 }
 
 #[test]

@@ -1,7 +1,6 @@
 //! Projection view models for the self-API client.
 
 use serde::Deserialize;
-use serde_json::Value;
 
 /// Server-side Space-container projection row.
 ///
@@ -54,11 +53,17 @@ pub struct StrandProjectionView {
     pub title: String,
     #[serde(default)]
     pub summary: Option<String>,
+    /// Strand synthesis content — the canonical top-level `content`
+    /// ContentBlock (`strand.schema.json`). Mutual exclusion with
+    /// [`Self::encrypted_content`] and the binding to [`Self::state`] are
+    /// fixed by that schema and by the SDK `Strand`, so this carries the
+    /// authoritative type rather than a raw value paired with a discriminator.
     #[serde(default)]
-    /// Locally materialized profile content. Its shape is selected by
-    /// `schema_refs`, not by the independent lifecycle `state`; standard Event
-    /// payloads are decoded before they are folded into this read model.
-    pub body: Option<Value>,
+    pub content: Option<arkret_sdk::ContentBlock>,
+    /// E2EE dual of [`Self::content`]: the `encrypted_content` envelope whose
+    /// plaintext is a ContentBlock.
+    #[serde(default)]
+    pub encrypted_content: Option<arkret_sdk::EncryptedEnvelope>,
     #[serde(default)]
     pub board_space_id: Option<String>,
     #[serde(default)]
@@ -153,14 +158,14 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
             realm_id: row.realm_id.as_str().to_owned(),
             title: row.title.unwrap_or_default(),
             summary: row.summary,
-            // The SDK strand projection row carries no free-form `body` /
-            // `fields`; the server never emits them on this endpoint, so they
-            // default to empty (behavior-equivalent to the prior lenient
-            // decode against `ProjectionStrandList`). The same applies to the
-            // calendar activation axis and schedule frontier, so a card built
-            // from this row keeps RSVP authoring fail-closed until the richer
-            // projection read supplies them.
-            body: None,
+            // The SDK strand projection row carries neither Strand content nor
+            // `metadata.fields`; the server never emits them on this endpoint,
+            // so they default to empty. The same applies to the calendar
+            // activation axis and schedule frontier, so a card built from this
+            // row keeps RSVP authoring fail-closed until the richer projection
+            // read supplies them.
+            content: None,
+            encrypted_content: None,
             schema_refs: Vec::new(),
             rsvps: Vec::new(),
             schedule_revision_heads: Vec::new(),

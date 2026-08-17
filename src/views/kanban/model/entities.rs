@@ -34,22 +34,22 @@ pub(crate) struct KanbanCard {
     /// refreshes (server-side cell update), this must be re-synced.
     pub(crate) rank: String,
     pub(crate) title: String,
-    /// Strand `summary` — short one-line/paragraph overview.
+    /// Strand `metadata.summary` — the short one-line/paragraph overview. This
+    /// is the ONLY short-text description the board persists; the long-form
+    /// text lives in [`Self::synthesis`].
     pub(crate) description: String,
-    /// Strand `body` — rich long-form content shown in the Description tab.
-    pub(crate) body: String,
-    /// Strand `synthesis` — rich content shown in the Synthesis tab. Stored
-    /// on the Strand object alongside `body` so the kanban popup can edit
-    /// it inline without round-tripping through the Document/Morph view.
-    /// Canonical wire path: `object.synthesis` (with `object.tracks.synthesis.body`
-    /// honored as a back-compat fallback in projection reads).
+    /// The Strand's synthesis content, rendered as display text.
+    ///
+    /// Canonical wire home is top-level `content: ContentBlock`, or
+    /// `encrypted_content: EncryptedEnvelope` in an E2EE scope
+    /// (`strand.schema.json`). A Strand carries exactly one synthesis content
+    /// slot, so this is the board's single long-form field.
     pub(crate) synthesis: String,
-    /// X10.2 — `body`/`synthesis` are encrypted MLS envelopes this device
+    /// X10.2 — the Strand's content is an encrypted envelope this device
     /// cannot read yet (no local plaintext sidecar + can't decrypt: author's
     /// own ciphertext, or a fresh browser before MLS unlock). When true the
-    /// display layer shows a locked placeholder; `body`/`synthesis` stay
+    /// display layer shows a locked placeholder and [`Self::synthesis`] stays
     /// EMPTY so the editor never re-saves a placeholder over real ciphertext.
-    pub(crate) body_locked: bool,
     pub(crate) synthesis_locked: bool,
     pub(crate) created_by: String,
     pub(crate) created_at: String,
@@ -149,10 +149,9 @@ pub(crate) fn apply_card_assignment_projection(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CardDetailDraft {
     pub(crate) title: String,
+    /// Strand `metadata.summary`.
     pub(crate) description: String,
-    /// Strand `body` — long-form content shown in the Description tab.
-    pub(crate) body: String,
-    /// Strand `synthesis` — long-form content shown in the Synthesis tab.
+    /// Strand synthesis content (`content` / `encrypted_content`).
     pub(crate) synthesis: String,
     pub(crate) labels: Vec<String>,
     pub(crate) assignee: String,
@@ -235,10 +234,13 @@ pub(crate) enum BoardToolbarPopover {
     Queue,
 }
 
+/// Card-detail content tabs. There is no Description tab: `metadata.summary`
+/// is rendered by the always-visible Summary section, and the Strand's single
+/// synthesis `content` block is the Synthesis tab. A second persisted long-text
+/// field has no canonical home on a Strand, so the board does not model one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CardDetailContentTab {
     #[default]
-    Description,
     Synthesis,
     Discussion,
 }
@@ -257,16 +259,15 @@ pub(crate) enum CardDetailSidebarTab {
 }
 
 /// Which slice of card fields the inline edit form is currently editing.
-/// The Summary scope edits title + the short summary blurb; the
-/// Description scope edits only the long-form body shown in the
-/// Description tab. Each entry point seeds the matching scope so the
-/// form only renders the relevant editor (avoids the "edit description"
-/// CTA opening an unrelated Title + Summary editor as well).
+/// The Summary scope edits title + the short `metadata.summary` blurb; the
+/// Synthesis scope edits the Strand's canonical `content` block. Each entry
+/// point seeds the matching scope so the form only renders the relevant editor
+/// (avoids the "edit synthesis" CTA opening an unrelated Title + Summary
+/// editor as well).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CardEditScope {
     #[default]
     Summary,
-    Description,
     Synthesis,
     Calendar,
 }

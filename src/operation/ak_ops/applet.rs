@@ -54,18 +54,18 @@ pub fn applet_discovery(
 /// outside these two forms are rejected.
 pub fn parse_applet_identifier(applet_id: &str) -> Result<AppletIdentifier, String> {
     if applet_id.starts_with("did:") || applet_id.starts_with("ak:did_core:") {
-        crate::mls_api_helpers::principal_core_id(applet_id)
+        return crate::mls_api_helpers::principal_core_id(applet_id)
             .map(AppletIdentifier::Service)
-            .map_err(|e| format!("invalid applet service identity: {e}"))
-    } else if applet_id.starts_with("ak:applet:") {
-        AppletId::new(applet_id)
-            .map(AppletIdentifier::Cx)
-            .map_err(|e| format!("invalid ak:applet:<uuidv7>: {e}"))
-    } else {
-        Err(format!(
-            "applet_id {applet_id:?} is neither a DID nor ak:applet:<uuidv7>"
-        ))
+            .map_err(|e| format!("invalid applet service identity: {e}"));
     }
+    // The `AppletId` newtype — not an `ak:applet:` prefix test — decides
+    // whether the value is a canonical applet id: the prefix admits any tail,
+    // while the type enforces the registered `ak:applet:<uuidv7>` shape.
+    AppletId::new(applet_id)
+        .map(AppletIdentifier::Cx)
+        .map_err(|e| {
+            format!("applet_id {applet_id:?} is neither a DID nor ak:applet:<uuidv7>: {e}")
+        })
 }
 
 /// `ak.applet.bridge_error` — emitted by the applet bridge when a

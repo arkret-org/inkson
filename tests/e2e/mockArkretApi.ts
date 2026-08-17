@@ -1887,7 +1887,9 @@ export async function mockArkretApi(
           event.realm_id ??
           event.payload?.realm_id ??
           event.payload?.object?.realm_id ??
-          raw.match(/ak:realm:[0-9a-f-]+/)?.[0] ??
+          // `common-ids.schema.json`: a Realm id is `ak:realm:` plus a 44-char
+          // base64url token, so a lowercase-hex/dash class never matches one.
+          raw.match(/ak:realm:[A-Za-z0-9_-]{44}/)?.[0] ??
           SETUP_REALM;
         const title =
           event.payload?.object?.title ??

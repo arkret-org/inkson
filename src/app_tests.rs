@@ -1083,3 +1083,57 @@ fn merge_projection_events_keeps_existing_messages_on_summary_only_delta() {
     assert_eq!(merged[0].body, "new");
     assert_eq!(merged[1].body, "welcome");
 }
+
+/// R4 — the account cursor has exactly one "not ready yet" representation.
+///
+/// `sync/api-conventions.md` fixes the cursor wire form at
+/// `ak:cursor:<base64url(canonical_json)>`, so a placeholder token is not a
+/// protocol cursor. Boot therefore starts empty, like every reset path, and the
+/// readiness predicate is the only thing derived from the token.
+#[test]
+fn bootstrap_sync_cursor_is_empty_and_not_ready() {
+    assert_eq!(initial_sync_cursor(None), "");
+    assert!(!account_sync_ready(&initial_sync_cursor(None)));
+    assert!(!account_sync_ready("   "));
+
+    let persisted = "ak:cursor:eyJhIjoxfQ";
+    assert_eq!(initial_sync_cursor(Some(persisted.to_owned())), persisted);
+    assert!(account_sync_ready(persisted));
+}
+
+/// The bootstrap default must never reach a `wait_for` query or a cursor
+/// header, and the retired dash placeholder is not a cursor the normalizer
+/// would have accepted either.
+#[test]
+fn bootstrap_sync_cursor_never_reaches_wait_for_or_a_cursor_header() {
+    use crate::api_error::normalize_wait_for_sync_token;
+
+    assert_eq!(
+        normalize_wait_for_sync_token(&initial_sync_cursor(None)),
+        None
+    );
+    assert_eq!(normalize_wait_for_sync_token("-"), None);
+    assert!(arkret_sdk::identifiers::Cursor::new("-".to_owned()).is_err());
+    assert_eq!(
+        normalize_wait_for_sync_token("ak:cursor:eyJhIjoxfQ").as_deref(),
+        Some("ak:cursor:eyJhIjoxfQ")
+    );
+}
+
+/// Booting without a persisted cursor must not write a synthetic one back into
+/// local state: `sync_cursor` stays `None` until the server hands over a real
+/// resume checkpoint.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn bootstrap_sync_cursor_is_never_persisted() {
+    let mut store = isolated_store("bootstrap-sync-cursor");
+    assert_eq!(store.sync_cursor(), None);
+    assert_eq!(initial_sync_cursor(store.sync_cursor()), "");
+    assert_eq!(store.sync_cursor(), None);
+
+    store.save_sync_cursor("ak:cursor:eyJhIjoxfQ");
+    assert_eq!(
+        initial_sync_cursor(store.sync_cursor()),
+        "ak:cursor:eyJhIjoxfQ"
+    );
+}

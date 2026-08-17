@@ -138,6 +138,28 @@ fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
     }
 }
 
+/// Cursor the account-sync signal boots with.
+///
+/// A protocol cursor is always `ak:cursor:<base64url(canonical_json)>`
+/// (`sync/api-conventions.md`), so "no resume checkpoint yet" has exactly one
+/// representation: the empty string — the same value every reset path
+/// (`connect`, sign-out, account switch) writes. A placeholder token would be
+/// a fake cursor that readiness checks must special-case and that could be
+/// echoed into a `wait_for` query or a cursor header.
+pub(crate) fn initial_sync_cursor(persisted: Option<String>) -> String {
+    persisted.unwrap_or_default()
+}
+
+/// Whether the account stream has produced a resume checkpoint yet.
+///
+/// Readiness is the ONLY thing view code may derive from the cursor: the token
+/// is an opaque checkpoint the server may re-mint for the same frontier, so it
+/// is not a render revision. Durable content freshness comes from the per-realm
+/// live epoch instead.
+pub(crate) fn account_sync_ready(cursor: &str) -> bool {
+    !cursor.trim().is_empty()
+}
+
 // Each stylesheet below is assembled from semantic section files via `concat!`.
 // Injection order is explicit here rather than encoded in file-name prefixes.
 const STYLE: &str = concat!(
@@ -331,10 +353,7 @@ fn AppBootstrap() -> Element {
     // expired). Operation feedback now goes through the toast queue in
     // `crate::components::feedback` — never through this signal.
     let connection_status = use_signal(|| ConnectionState::Offline.label().to_owned());
-    let initial_sync_cursor = initial_local_state
-        .sync_cursor
-        .clone()
-        .unwrap_or_else(|| "-".to_owned());
+    let initial_sync_cursor = initial_sync_cursor(initial_local_state.sync_cursor.clone());
     let initial_selected_realm_id = initial_realm_tree_nodes
         .iter()
         .find(|node| node.kind == RealmTreeNodeKind::Realm)

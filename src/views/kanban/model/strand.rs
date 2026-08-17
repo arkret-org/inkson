@@ -67,8 +67,8 @@ pub(crate) fn strand_projection_security_state(
 ) -> Option<bool> {
     let mut value = Map::new();
     value.insert("fields".to_owned(), Value::Object(strand.fields.clone()));
-    if let Some(body) = strand.body.as_ref() {
-        value.insert("body".to_owned(), body.clone());
+    if let Some((content, path)) = strand_projection_synthesis_content(strand) {
+        value.insert(path.to_owned(), content);
     }
     crate::security_state::strand_projection_security_state(&Value::Object(value))
 }
@@ -167,35 +167,20 @@ pub(crate) fn card_from_strand_projection_for_actor(
                 "Managed by board".to_owned()
             }
         });
-    // X10.2: bind the private-field value exprs once so text + locked agree.
-    let strand_body_field =
-        strand_projection_private_field_value(strand, KANBAN_BODY_PRIVATE_FIELD_PATHS);
-    let strand_body_value = strand_body_field.map(|(value, _)| value);
-    let strand_body_path = strand_body_field.map(|(_, path)| path).unwrap_or("body");
-    let strand_synthesis_field =
-        strand_projection_private_field_value(strand, KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS);
-    let strand_synthesis_value = strand_synthesis_field.map(|(value, _)| value);
+    // X10.2: bind the content value + its canonical path once so the display
+    // text and the locked decision can never read different sources.
+    let strand_synthesis_field = strand_projection_synthesis_content(strand);
+    let strand_synthesis_value = strand_synthesis_field.as_ref().map(|(value, _)| value);
     let strand_synthesis_path = strand_synthesis_field
-        .map(|(_, path)| path)
-        .unwrap_or("synthesis");
+        .as_ref()
+        .map(|(_, path)| *path)
+        .unwrap_or(KANBAN_CONTENT_PATH);
     KanbanCard {
         id: strand.strand_id.clone(),
         rank: strand_projection_field_string(strand, strand.rank.as_deref(), &["rank"])
             .unwrap_or_default(),
         title: title.clone(),
         description,
-        body: private_strand_field_text(
-            decrypt_ctx,
-            &strand.strand_id,
-            strand_body_path,
-            strand_body_value,
-        ),
-        body_locked: private_strand_field_locked(
-            decrypt_ctx,
-            &strand.strand_id,
-            strand_body_path,
-            strand_body_value,
-        ),
         synthesis: private_strand_field_text(
             decrypt_ctx,
             &strand.strand_id,

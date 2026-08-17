@@ -121,9 +121,10 @@ fn strand_view_from_create_op(
     let body = op_body(record)?;
     let object = body.get("object").unwrap_or(body);
     let metadata = object.get("metadata");
-    let object_fields = metadata
-        .and_then(|metadata| metadata.get("fields"))
-        .or_else(|| object.get("fields"));
+    // Canonical location only: `strand.schema.json` forbids a top-level
+    // `fields` object, so a payload that carries one is a schema violation, not
+    // an alternative spelling to fall back on.
+    let object_fields = metadata.and_then(|metadata| metadata.get("fields"));
 
     // `local_target_ref` first: a create payload carries no `object.id` — the
     // Strand is `retype(create.event_id)`, published on the record by the
@@ -134,11 +135,12 @@ fn strand_view_from_create_op(
         .or_else(|| json_path_string(Some(body), &["strand_id"]))
         .or_else(|| json_path_string(Some(body), &["effect", "strand_id"]))?;
 
+    // Same rule for `title` / `summary`: both are forbidden as Strand top-level
+    // fields; `metadata.*` (or `encrypted_metadata`) is the only wire home.
     let metadata_str = |keys: &[&str]| -> Option<String> {
         for key in keys {
-            if let Some(value) = metadata
-                .and_then(|metadata| json_path_string(Some(metadata), &[key]))
-                .or_else(|| json_path_string(Some(object), &[key]))
+            if let Some(value) =
+                metadata.and_then(|metadata| json_path_string(Some(metadata), &[key]))
             {
                 return Some(value);
             }
@@ -168,10 +170,16 @@ fn strand_view_from_create_op(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let card_body = object_fields
-        .and_then(|fields| fields.get("body"))
-        .or_else(|| object.get("body"))
-        .cloned();
+    // Both slots decode to their authoritative SDK type here. A create payload
+    // that carries something else on them violates `strand.schema.json`, and
+    // dropping it is the fail-closed read: the card renders with no synthesis
+    // instead of forwarding an unvalidated value to the decrypt / display path.
+    let content = object
+        .get(KANBAN_CONTENT_PATH)
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ContentBlock>(value.clone()).ok());
+    let encrypted_content = object.get(KANBAN_ENCRYPTED_CONTENT_PATH).and_then(|value| {
+        serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value.clone()).ok()
+    });
 
     let created_by = json_path_string(Some(&record.payload), &["actor_id"])
         .or_else(|| json_path_string(Some(object), &["created_by"]));
@@ -188,7 +196,8 @@ fn strand_view_from_create_op(
         realm_id,
         title,
         summary,
-        body: card_body,
+        content,
+        encrypted_content,
         board_space_id,
         list_space_id,
         rank,

@@ -29,7 +29,7 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   await expect(page.getByTestId("card-detail-overlay")).toBeVisible();
   await expect(detailPopup).toHaveAttribute("role", "dialog");
   await expect(detailPopup).toContainText("Discussion");
-  await expect(detailPopup.getByTestId("card-description-panel")).toBeVisible();
+  await expect(detailPopup.getByTestId("card-synthesis-panel")).toBeVisible();
   await expect(detailPopup).not.toContainText("Primary discussion");
   await expect(detailPopup).not.toContainText("Launch discussion");
   await expect(detailPopup).not.toContainText(
@@ -54,7 +54,7 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   expect(saveButtonBox.height).toBeLessThanOrEqual(44);
   expect(cancelButtonBox.height).toBeLessThanOrEqual(44);
   await detailPopup.getByTestId("card-detail-cancel-edit-button").click();
-  await expect(detailPopup.getByTestId("card-description-panel")).toBeVisible();
+  await expect(detailPopup.getByTestId("card-synthesis-panel")).toBeVisible();
   await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
   const memberGroup = detailPopup.getByTestId("card-detail-member-group");
   const selfMention = memberGroup.getByRole("button", {
@@ -301,12 +301,12 @@ test("sidecar display mode persists across tracks and fits a narrow long-agent l
   await expect(detailPopup).toBeVisible();
   await expect(page.getByTestId("sidecar-context-strip")).toBeVisible();
 
-  await detailPopup.getByTestId("card-detail-tab-description").click();
+  await detailPopup.getByTestId("card-detail-tab-synthesis").click();
   await expect(
-    detailPopup.getByTestId("sidecar-shared-description-base"),
+    detailPopup.getByTestId("sidecar-shared-synthesis-base"),
   ).toBeVisible();
   await expect(
-    detailPopup.getByTestId("sidecar-private-description-label"),
+    detailPopup.getByTestId("sidecar-private-synthesis-label"),
   ).toBeVisible();
 
   await page.getByTestId("sidecar-mode-sidecar-only").click();
@@ -314,10 +314,10 @@ test("sidecar display mode persists across tracks and fits a narrow long-agent l
     /active/,
   );
   await expect(
-    detailPopup.getByTestId("sidecar-shared-description-base"),
+    detailPopup.getByTestId("sidecar-shared-synthesis-base"),
   ).toHaveCount(0);
   await expect(
-    detailPopup.getByTestId("sidecar-private-description-label"),
+    detailPopup.getByTestId("sidecar-private-synthesis-label"),
   ).toBeVisible();
 
   await detailPopup.getByTestId("card-detail-tab-synthesis").click();
@@ -474,7 +474,6 @@ test("sidecar preserves long-history UI state across tracks and modes with multi
   await page.waitForTimeout(300);
 
   await page.getByTestId("sidecar-mode-sidecar-only").click();
-  await detailPopup.getByTestId("card-detail-tab-description").click();
   await detailPopup.getByTestId("card-detail-tab-synthesis").click();
   await page.getByTestId("sidecar-mode-context-merged").click();
   await detailPopup.getByTestId("card-detail-tab-discussion").click();
@@ -736,8 +735,8 @@ test("card detail embeds discussion directly without discussion chrome", async (
   await expect(page.getByTestId("chat-message").last()).toContainText(
     "hello @did:web:bob.example about #ak:task:123",
   );
-  await page.getByTestId("card-detail-tab-description").click();
-  await expect(page.getByTestId("card-description-panel")).toBeVisible();
+  await page.getByTestId("card-detail-tab-synthesis").click();
+  await expect(page.getByTestId("card-synthesis-panel")).toBeVisible();
   await expect(page.getByTestId("card-discussion-panel")).toHaveCount(1);
   await expect(page.getByTestId("card-discussion-panel")).toBeHidden();
   await page.getByTestId("card-detail-tab-discussion").click();

@@ -211,3 +211,126 @@ fn account_secret_rotation_skips_undecryptable_realm_and_records_failure() {
     assert_eq!(rotation.failed_realms.len(), 1);
     assert_eq!(rotation.failed_realms[0].0, bad_realm);
 }
+
+/// D4 — the local KeyPackage publish marker is pinned at `.v1`.
+///
+/// Local key material has no parallel version axis in this project, so the
+/// marker prefix is fixed. A key written under any other prefix is not this
+/// marker and MUST NOT be read back through a fallback.
+#[test]
+fn key_package_publish_marker_key_is_pinned_at_v1() {
+    let key = mls_key_package_publish_marker_key(
+        "https://local.host",
+        "did:web:alice.example",
+        "ak:device:01904100-0000-7000-8000-000000000001",
+    )
+    .unwrap();
+
+    assert!(key.starts_with("inkson.mls_key_package.publish_marker.v1."));
+    assert!(!key.contains("publish_marker.v4"));
+    // The three scope components are distinct: a different device must not
+    // collide with this device's marker.
+    let other_device = mls_key_package_publish_marker_key(
+        "https://local.host",
+        "did:web:alice.example",
+        "ak:device:01904100-0000-7000-8000-000000000002",
+    )
+    .unwrap();
+    assert_ne!(key, other_device);
+}
+
+/// D4 — a leftover marker written under the retired `.v4` prefix cannot block
+/// this device from safely publishing a fresh KeyPackage, and the current
+/// marker stays idempotent across repeated publishes of the same KeyPackage.
+#[test]
+fn a_retired_marker_does_not_block_a_safe_key_package_republish() {
+    let store = MemorySecureKeyStore::new();
+    let server = "https://local.host";
+    let actor = "did:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+
+    // A leftover marker from the retired prefix. There is no fallback read, so
+    // the loader reports "never published" and the caller mints a new
+    // KeyPackage — the safe re-publish, not a stuck client.
+    let retired_key = mls_key_package_publish_marker_key(server, actor, device)
+        .unwrap()
+        .replace("publish_marker.v1.", "publish_marker.v4.");
+    store
+        .store_secret(&retired_key, "ak:keypackage:retired")
+        .unwrap();
+    assert_eq!(
+        load_mls_key_package_publish_marker(&store, server, actor, device).unwrap(),
+        None
+    );
+
+    // Publishing records the new marker.
+    store_mls_key_package_publish_marker(&store, server, actor, device, "ak:keypackage:fresh")
+        .unwrap();
+    assert_eq!(
+        load_mls_key_package_publish_marker(&store, server, actor, device).unwrap(),
+        Some("ak:keypackage:fresh".to_owned())
+    );
+
+    // Re-publishing the same KeyPackage is idempotent: one marker, same value.
+    store_mls_key_package_publish_marker(&store, server, actor, device, "ak:keypackage:fresh")
+        .unwrap();
+    assert_eq!(
+        load_mls_key_package_publish_marker(&store, server, actor, device).unwrap(),
+        Some("ak:keypackage:fresh".to_owned())
+    );
+
+    // The retired key is never read and never rewritten by the current marker.
+    assert_eq!(
+        store.get_secret(&retired_key).unwrap().as_deref(),
+        Some("ak:keypackage:retired")
+    );
+
+    // Clearing a stale marker (the "identity state is gone" repair path) is
+    // idempotent and leaves the loader reporting "never published" again.
+    delete_mls_key_package_publish_marker(&store, server, actor, device).unwrap();
+    delete_mls_key_package_publish_marker(&store, server, actor, device).unwrap();
+    assert_eq!(
+        load_mls_key_package_publish_marker(&store, server, actor, device).unwrap(),
+        None
+    );
+}
+
+/// D4 — the publish gate itself: with a marker AND its KeyPackage identity
+/// state present the client skips republishing; when the identity state is
+/// gone the marker is cleared so the next attempt mints a fresh KeyPackage
+/// instead of advertising one it can no longer decrypt Welcomes for.
+#[test]
+fn publish_marker_only_suppresses_republish_while_its_key_material_survives() {
+    let store = MemorySecureKeyStore::new();
+    let server = "https://local.host";
+    let actor = "did:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let key_package_id = "ak:keypackage:fresh";
+
+    store_mls_key_package_publish_marker(&store, server, actor, device, key_package_id).unwrap();
+    store_mls_key_package_identity_state(&store, actor, device, key_package_id, b"private-state")
+        .unwrap();
+    assert_eq!(
+        load_mls_key_package_publish_marker(&store, server, actor, device).unwrap(),
+        Some(key_package_id.to_owned())
+    );
+    assert!(
+        load_mls_key_package_identity_state(&store, actor, device, key_package_id)
+            .unwrap()
+            .is_some(),
+        "marker plus live identity state means the publish is already done"
+    );
+
+    delete_mls_key_package_identity_state(&store, actor, device, key_package_id).unwrap();
+    assert!(
+        load_mls_key_package_identity_state(&store, actor, device, key_package_id)
+            .unwrap()
+            .is_none()
+    );
+    delete_mls_key_package_publish_marker(&store, server, actor, device).unwrap();
+    assert_eq!(
+        load_mls_key_package_publish_marker(&store, server, actor, device).unwrap(),
+        None,
+        "a marker without key material must not suppress the next publish"
+    );
+}

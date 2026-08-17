@@ -1,8 +1,8 @@
 use super::*;
 
 /// Borrowed decrypt context threaded into the pure card builders so an
-/// encrypted realm's private patch values (`body` / `synthesis` /
-/// `description`) can be decrypted on read. All fields are cheap borrows
+/// encrypted realm's private patch values (`encrypted_content` and the
+/// encryptable `metadata.fields` leaves) can be decrypted on read. All fields are cheap borrows
 /// captured from `KanbanPanel` (`state_store.read()`, `account_did`,
 /// `device_id`, and the Realm id). `None` (the common, unencrypted
 /// case, and every test) means "render plaintext values as-is".
@@ -98,7 +98,7 @@ pub(crate) fn private_strand_display_text(
             // Encrypted but un-decryptable: return BLANK (never the raw
             // envelope, never crash). The locked state is surfaced
             // separately via `private_strand_field_locked` so the placeholder
-            // text never contaminates `card.body` / the editable draft
+            // text never contaminates `card.synthesis` / the editable draft
             // (which would let an edit overwrite the real ciphertext). See
             // X10.2.
             None => String::new(),
@@ -119,7 +119,7 @@ pub(crate) fn private_plaintext_display_text(plaintext: &str) -> String {
 /// possible (author's own ciphertext / fresh browser before MLS unlock).
 /// The display layer renders [`MLS_LOCKED_FIELD_PLACEHOLDER`] in this case so
 /// the user can tell "encrypted, unlock to view" apart from "no content" —
-/// WITHOUT putting the placeholder text into `card.body` (which the editor
+/// WITHOUT putting the placeholder text into `card.synthesis` (which the editor
 /// copies and could re-save, corrupting the real encrypted content).
 pub(crate) fn private_strand_field_locked(
     ctx: Option<&MlsDecryptCtx<'_>>,
@@ -158,7 +158,7 @@ pub(crate) fn private_strand_field_locked(
 }
 
 /// X5.2 — resolve the display text for an author-private strand field
-/// (`body` / `synthesis`) with a 3-tier precedence:
+/// (canonically `encrypted_content`) with a 3-tier precedence:
 ///
 /// 1. **Local plaintext sidecar** (`save_private_plaintext`) — the author's own content, the ONLY
 ///    source the author can ever see for their own encrypted fields (OpenMLS refuses to decrypt the
@@ -169,9 +169,9 @@ pub(crate) fn private_strand_field_locked(
 ///    other leaves synced in, which we *can* decrypt.
 /// 3. **Blank** — encrypted-but-unreadable; never leaks the raw envelope.
 ///
-/// `field_path` MUST match the token the writer stored under (the patch
-/// key from `collect_encryptable_private_patch_values`: `"body"` /
-/// `"synthesis"`).
+/// `field_path` MUST match the token the writer stored under — the ENCRYPTED
+/// patch key (`kanban_encrypted_patch_path`), i.e. `"encrypted_content"` for
+/// Strand synthesis content.
 pub(crate) fn private_strand_field_text(
     ctx: Option<&MlsDecryptCtx<'_>>,
     strand_id: &str,

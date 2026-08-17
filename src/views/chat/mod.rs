@@ -2042,11 +2042,7 @@ pub fn ChatPanel(
     // opaque resume checkpoint and can be re-minted for typing/receipts/calls;
     // reduce it to the one useful transition (bootstrap is ready) and use the
     // Realm epoch for subsequent durable invalidation.
-    let account_sync_ready = {
-        let cursor = sync_cursor();
-        let cursor = cursor.trim();
-        !(cursor.is_empty() || cursor == "-")
-    };
+    let account_sync_ready = crate::app::account_sync_ready(&sync_cursor());
     let agent_participation_sync_key = format!(
         "{}|{}|{}|{}|{}|{}",
         selected_realm_id,

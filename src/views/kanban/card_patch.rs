@@ -6,6 +6,28 @@ use super::{
     value_is_plaintext_private_content,
 };
 
+/// Build the `content` patch op for the Strand's synthesis text.
+///
+/// The value is always a ContentBlock — `strand.schema.json` types top-level
+/// `content` as `content_block`, so a bare string is a schema violation.
+/// Clearing the text writes an empty-bodied block rather than `$op: unset`:
+/// `content` is a registered redactable content-carrier slot
+/// (`redactable-field-registry.json`), and `event-and-patch.md` §4.2.4 makes an
+/// empty-bodied `set` its non-terminal clear path while reserving slot absence
+/// for `ak.redaction`. Its E2EE dual `encrypted_content` is registered as the
+/// paired slot, so the plaintext and encrypted branches behave identically.
+fn strand_content_patch_value(text: &str) -> Result<Value, String> {
+    if text.chars().count() > KANBAN_CONTENT_TEXT_MAX_CHARS {
+        return Err(format!(
+            "card content exceeds the {KANBAN_CONTENT_TEXT_MAX_CHARS} character inline limit for ak.content.text"
+        ));
+    }
+    let block = arkret_sdk::ContentBlock::text(text).with_field("format", json!("markdown"));
+    let value = serde_json::to_value(&block)
+        .map_err(|err| format!("cannot serialize card content block: {err}"))?;
+    Ok(json!({ "$op": "set", "value": value }))
+}
+
 pub(super) fn card_detail_update_patch(
     current: &KanbanCard,
     draft: &CardDetailDraft,
@@ -29,6 +51,11 @@ pub(super) fn card_detail_update_patch(
         );
     }
 
+    // `metadata.summary` has no empty representation: `strand.schema.json`
+    // types it as the `short_text` string profile, whose `minLength` is 1. It is
+    // not a redactable content slot either — `redactable-field-registry.json`
+    // registers only `content` / `encrypted_content` — so `event-and-patch.md`
+    // §4.2.4 makes `$op: unset` its one legal non-terminal clear path.
     let description = draft.description.trim();
     if current.description.trim() != description {
         let op = if description.is_empty() {
@@ -39,24 +66,12 @@ pub(super) fn card_detail_update_patch(
         patch.insert("metadata.summary".to_owned(), op);
     }
 
-    let body = draft.body.trim();
-    if current.body.trim() != body {
-        let op = if body.is_empty() {
-            json!({ "$op": "unset" })
-        } else {
-            json!({ "$op": "set", "value": body })
-        };
-        patch.insert("body".to_owned(), op);
-    }
-
     let synthesis = draft.synthesis.trim();
     if current.synthesis.trim() != synthesis {
-        let op = if synthesis.is_empty() {
-            json!({ "$op": "unset" })
-        } else {
-            json!({ "$op": "set", "value": synthesis })
-        };
-        patch.insert("synthesis".to_owned(), op);
+        patch.insert(
+            KANBAN_CONTENT_PATH.to_owned(),
+            strand_content_patch_value(synthesis)?,
+        );
     }
 
     if current.labels != draft.labels {
@@ -106,7 +121,6 @@ pub(super) fn card_detail_activity_summary(
     }
     if current.title.trim() != draft.title.trim()
         || current.description.trim() != draft.description.trim()
-        || current.body.trim() != draft.body.trim()
         || current.synthesis.trim() != draft.synthesis.trim()
     {
         return "Card details updated".to_owned();
@@ -117,7 +131,6 @@ pub(super) fn card_detail_activity_summary(
 pub(super) fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.title = draft.title.trim().to_owned();
     card.description = draft.description.trim().to_owned();
-    card.body = draft.body.trim().to_owned();
     card.synthesis = draft.synthesis.trim().to_owned();
     card.labels = draft.labels.clone();
     card.assignee = display_optional_card_field(&draft.assignee);
@@ -165,6 +178,11 @@ pub(super) fn collect_encryptable_private_patch_values(
     Ok(values)
 }
 
+/// Swap each collected plaintext patch value for its `EncryptedEnvelope`.
+///
+/// `content` additionally MOVES to `encrypted_content`: the two are mutually
+/// exclusive on the object and an envelope is not a ContentBlock, so leaving
+/// the envelope under `content` would be a `strand.schema.json` violation.
 pub(super) fn replace_private_patch_values(
     patch: &mut Value,
     paths: &[String],
@@ -177,14 +195,15 @@ pub(super) fn replace_private_patch_values(
         return Ok(());
     };
     for (path, encrypted_value) in paths.iter().zip(encrypted_values) {
-        let Some(patch_value) = object.get_mut(path) else {
+        let Some(mut patch_value) = object.remove(path) else {
             return Err(format!("internal: missing private patch path {path}"));
         };
         if let Some(value) = patch_value.get_mut("value") {
             *value = encrypted_value;
         } else {
-            *patch_value = encrypted_value;
+            patch_value = encrypted_value;
         }
+        object.insert(kanban_encrypted_patch_path(path).to_owned(), patch_value);
     }
     Ok(())
 }

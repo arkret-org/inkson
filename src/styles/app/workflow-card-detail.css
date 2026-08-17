@@ -133,8 +133,8 @@
 }
 .card-detail-section:hover .card-detail-edit-action,
 .card-detail-section:focus-within .card-detail-edit-action,
-.card-detail-description-panel:hover .card-detail-edit-action,
-.card-detail-description-panel:focus-within .card-detail-edit-action {
+.card-detail-synthesis-panel:hover .card-detail-edit-action,
+.card-detail-synthesis-panel:focus-within .card-detail-edit-action {
   opacity: 1;
 }
 .card-detail-description {
@@ -265,16 +265,9 @@
   cursor: default;
   opacity: 0.72;
 }
-.card-detail-description-panel,
 .card-detail-synthesis-panel,
 .card-detail-discussion-panel {
   min-height: 0;
-}
-.card-detail-description-panel {
-  display: grid;
-  align-content: start;
-  align-items: start;
-  gap: 8px;
 }
 .card-detail-synthesis-panel {
   display: flex;

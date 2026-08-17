@@ -576,6 +576,7 @@ pub fn RealmAdminPanel(
                                     let subject_id = selected_realm_id.clone();
                                     let subject_kind = metadata_subject.kind;
                                     let home_realm_id = metadata_subject.home_realm_id.clone();
+                                    let stored_summary = metadata_subject.summary.trim().to_owned();
                                     let actor_account_did = account_did.clone();
                                     move |_| {
                                         let base = base.clone();
@@ -594,11 +595,17 @@ pub fn RealmAdminPanel(
                                             );
                                             return;
                                         }
+                                        // The SDK `BlobRef` newtype is the gate:
+                                        // an `ak:blob:` prefix test admits values
+                                        // `common-ids.schema.json` rejects, and the
+                                        // publish path already re-validates through the
+                                        // same type.
                                         if !avatar_blob_ref.is_empty()
-                                            && !avatar_blob_ref.starts_with("ak:blob:")
+                                            && arkret_sdk::BlobRef::new(avatar_blob_ref.clone())
+                                                .is_err()
                                         {
                                             status_msg.set(
-                                                "profile update failed: avatar_blob_ref must be a ak:blob:* reference".to_owned(),
+                                                "profile update failed: avatar_blob_ref must be a canonical blob reference".to_owned(),
                                             );
                                             return;
                                         }
@@ -614,14 +621,23 @@ pub fn RealmAdminPanel(
                                         }
                                         let mut patch = serde_json::Map::new();
                                         patch.insert("title".to_owned(), json!(title));
-                                        patch.insert(
-                                            "summary".to_owned(),
-                                            if summary.is_empty() {
-                                                json!({ "$op": "unset" })
-                                            } else {
-                                                json!(summary)
-                                            },
-                                        );
+                                        // `summary` is an ordinary optional member, not a
+                                        // redactable content-carrier slot: only `content` /
+                                        // `encrypted_content` are registered in
+                                        // `redactable-field-registry.json`, so
+                                        // `event-and-patch.md` §4.2.4 makes `$op: unset` the
+                                        // non-terminal clear path here, exactly as for
+                                        // `avatar_blob_ref` below. A Realm profile is a full
+                                        // restatement of the singleton `ak.realm.profile` facet,
+                                        // where the same op reads as "no summary".
+                                        if !summary.is_empty() {
+                                            patch.insert("summary".to_owned(), json!(summary));
+                                        } else if !stored_summary.is_empty() {
+                                            patch.insert(
+                                                "summary".to_owned(),
+                                                json!({ "$op": "unset" }),
+                                            );
+                                        }
                                         patch.insert(
                                             "avatar_blob_ref".to_owned(),
                                             if avatar_blob_ref.is_empty() {

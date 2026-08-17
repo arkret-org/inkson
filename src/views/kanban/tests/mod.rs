@@ -126,6 +126,47 @@ pub(super) fn creator_realm_projection(
     })
 }
 
+/// Canonical `encrypted_content` envelope fixture.
+///
+/// `StrandProjectionView.encrypted_content` carries the SDK
+/// `EncryptedEnvelope`, so the fixtures build the whole
+/// `encrypted-envelope.schema.json` object (AAD, visibility axis, key ref and
+/// both digests) instead of a three-key stand-in.
+pub(super) fn test_encrypted_content_envelope(
+    realm_id: &str,
+    ciphertext: &str,
+) -> arkret_sdk::EncryptedEnvelope {
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).expect("fixture realm id"),
+    };
+    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&scope, "ak.strand.update")
+        .expect("hidden AAD for the fixture scope");
+    let payload = arkret_sdk::EncryptedPayload {
+        scheme: arkret_wire::EncryptedPayloadScheme::MlsRfc9420,
+        group_id: arkret_sdk::base64url_encode(&[7u8; 32]),
+        epoch: 1,
+        content_type: KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE.to_owned(),
+        ciphertext: ciphertext.to_owned(),
+        aad: Some(aad.clone()),
+        purpose: None,
+        aead_profile: None,
+        payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "ab".repeat(32)))
+            .expect("fixture payload digest"),
+        key_ref: Some(arkret_sdk::KeyRefObject::mls_rfc9420(
+            arkret_sdk::base64url_encode(&[7u8; 32]),
+            1,
+        )),
+    };
+    arkret_sdk::mls::encrypted_envelope_from_payload(
+        &payload,
+        aad,
+        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+        arkret_sdk::AadVisibilityCeiling::from_declared(None),
+        format!("sha256:{}", "cd".repeat(32)),
+    )
+    .expect("canonical encrypted_content envelope")
+}
+
 /// Helper for `relocate_card` tests — builds a KanbanCard with the
 /// supplied id and rank, defaulting the rest of the demo fields.
 pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
@@ -134,9 +175,7 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         rank: rank.to_owned(),
         title: "test".to_owned(),
         description: String::new(),
-        body: String::new(),
         synthesis: String::new(),
-        body_locked: false,
         synthesis_locked: false,
         created_by: String::new(),
         created_at: String::new(),

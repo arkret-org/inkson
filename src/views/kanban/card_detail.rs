@@ -167,7 +167,6 @@ pub(super) fn reset_card_detail_edit(
     current: &KanbanCard,
     mut card_edit_title: Signal<String>,
     mut card_edit_description: Signal<String>,
-    mut card_edit_body: Signal<String>,
     mut card_edit_synthesis: Signal<String>,
     mut card_edit_synthesis_target_id: Signal<Option<String>>,
     mut card_edit_labels: Signal<String>,
@@ -182,7 +181,6 @@ pub(super) fn reset_card_detail_edit(
     let draft = card_detail_draft_from_card(current);
     card_edit_title.set(draft.title);
     card_edit_description.set(draft.description);
-    card_edit_body.set(draft.body);
     card_edit_synthesis.set(draft.synthesis);
     card_edit_synthesis_target_id.set(None);
     card_edit_labels.set(draft.labels.join(", "));
@@ -210,7 +208,6 @@ pub(super) fn save_card_detail_edit(
     card_edit_scope: Signal<CardEditScope>,
     card_edit_title: Signal<String>,
     card_edit_description: Signal<String>,
-    card_edit_body: Signal<String>,
     card_edit_synthesis: Signal<String>,
     card_edit_synthesis_target_id: Signal<Option<String>>,
     card_edit_labels: Signal<String>,
@@ -225,16 +222,9 @@ pub(super) fn save_card_detail_edit(
 ) {
     card_detail_edit_status.set("Saving...".to_owned());
     let edit_scope = card_edit_scope();
-    if sidecar_track_write.is_some()
-        && !matches!(
-            edit_scope,
-            CardEditScope::Description | CardEditScope::Synthesis
-        )
-    {
-        card_detail_edit_status.set(
-            "Private Sidecar editing is available only on Description and Synthesis tracks"
-                .to_owned(),
-        );
+    if sidecar_track_write.is_some() && edit_scope != CardEditScope::Synthesis {
+        card_detail_edit_status
+            .set("Private Sidecar editing is available only on the Synthesis track".to_owned());
         return;
     }
     let synthesis_target_id = card_edit_synthesis_target_id();
@@ -245,7 +235,6 @@ pub(super) fn save_card_detail_edit(
         synthesis_target_id.as_deref(),
         &card_edit_title(),
         &card_edit_description(),
-        &card_edit_body(),
         &card_edit_synthesis(),
         &card_edit_labels(),
         &card_edit_assignee(),
@@ -288,7 +277,6 @@ pub(super) fn card_detail_draft_for_edit_scope(
     synthesis_target_id: Option<&str>,
     title: &str,
     description: &str,
-    body: &str,
     synthesis: &str,
     labels: &str,
     _assignee: &str,
@@ -301,10 +289,6 @@ pub(super) fn card_detail_draft_for_edit_scope(
             draft.description = description.trim().to_owned();
             draft.labels = parse_card_labels(labels);
             draft.due = due.trim().to_owned();
-            (draft, None)
-        }
-        CardEditScope::Description => {
-            draft.body = body.trim().to_owned();
             (draft, None)
         }
         CardEditScope::Synthesis => {
@@ -867,7 +851,6 @@ pub(super) fn kanban_card_detail_board_route(realm_id: &str, board_id: &str) -> 
 
 pub(super) fn card_detail_tab_slug(tab: CardDetailContentTab) -> &'static str {
     match tab {
-        CardDetailContentTab::Description => "description",
         CardDetailContentTab::Synthesis => "synthesis",
         CardDetailContentTab::Discussion => "discussion",
     }
@@ -876,7 +859,6 @@ pub(super) fn card_detail_tab_slug(tab: CardDetailContentTab) -> &'static str {
 #[cfg(any(test, target_arch = "wasm32"))]
 pub(super) fn card_detail_tab_from_slug(value: &str) -> Option<CardDetailContentTab> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "description" => Some(CardDetailContentTab::Description),
         "synthesis" => Some(CardDetailContentTab::Synthesis),
         "discussion" => Some(CardDetailContentTab::Discussion),
         _ => None,
@@ -990,7 +972,6 @@ pub(super) fn card_detail_draft_from_card(card: &KanbanCard) -> CardDetailDraft 
     CardDetailDraft {
         title: card.title.clone(),
         description: card.description.clone(),
-        body: card.body.clone(),
         synthesis: card.synthesis.clone(),
         labels: card.labels.clone(),
         assignee: editor_value_for_optional_card_field(&card.assignee),

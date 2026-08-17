@@ -29,25 +29,23 @@ struct SidecarTrackEditContext {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SuspendedTrackEdit {
     pub(super) scope: CardEditScope,
-    pub(super) body: String,
     pub(super) synthesis: String,
     pub(super) synthesis_target_id: Option<String>,
 }
 
+/// Only the Synthesis scope edits track content, so it is the only draft a
+/// Sidecar transition has to suspend. Summary / Calendar edits target
+/// `metadata.*` and are unaffected.
 pub(super) fn suspend_track_edit(
     scope: CardEditScope,
-    body: String,
     synthesis: String,
     synthesis_target_id: Option<String>,
 ) -> Option<SuspendedTrackEdit> {
-    matches!(scope, CardEditScope::Description | CardEditScope::Synthesis).then_some(
-        SuspendedTrackEdit {
-            scope,
-            body,
-            synthesis,
-            synthesis_target_id,
-        },
-    )
+    (scope == CardEditScope::Synthesis).then_some(SuspendedTrackEdit {
+        scope,
+        synthesis,
+        synthesis_target_id,
+    })
 }
 
 #[component]
@@ -208,7 +206,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         member_handle_fetching: _,
         mut card_edit_title,
         mut card_edit_description,
-        mut card_edit_body,
         mut card_edit_synthesis,
         mut card_edit_synthesis_target_id,
         mut card_detail_edit_status,
@@ -253,7 +250,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         if editing_card_detail() {
             if let Some(edit) = suspend_track_edit(
                 card_edit_scope(),
-                card_edit_body(),
                 card_edit_synthesis(),
                 card_edit_synthesis_target_id(),
             ) {
@@ -274,7 +270,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         sidecar_edit_context_seen.set(next);
         if let Some(edit) = suspended {
             card_edit_scope.set(edit.scope);
-            card_edit_body.set(edit.body);
             card_edit_synthesis.set(edit.synthesis);
             card_edit_synthesis_target_id.set(edit.synthesis_target_id);
             editing_card_detail.set(true);
@@ -352,11 +347,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                         &card.id,
                         active_detail_tab,
                     );
-                    let description_tab_class = if active_detail_tab == CardDetailContentTab::Description {
-                        "card-detail-tab active"
-                    } else {
-                        "card-detail-tab"
-                    };
                     let synthesis_tab_class = if active_detail_tab == CardDetailContentTab::Synthesis {
                         "card-detail-tab active"
                     } else {
@@ -581,7 +571,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     let draft = card_detail_draft_from_card(&current);
                                                                     card_edit_title.set(draft.title);
                                                                     card_edit_description.set(draft.description);
-                                                                    card_edit_body.set(draft.body);
                                                                     card_edit_synthesis.set(draft.synthesis);
                                                                     card_edit_synthesis_target_id.set(None);
                                                                     card_edit_labels.set(draft.labels.join(", "));
@@ -713,7 +702,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     let draft = card_detail_draft_from_card(&current);
                                                                     card_edit_title.set(draft.title);
                                                                     card_edit_description.set(draft.description);
-                                                                    card_edit_body.set(draft.body);
                                                                     card_edit_synthesis.set(draft.synthesis);
                                                                     card_edit_synthesis_target_id.set(None);
                                                                     card_edit_labels.set(draft.labels.join(", "));
@@ -777,7 +765,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         card_edit_scope,
                                                                         card_edit_title,
                                                                         card_edit_description,
-                                                                        card_edit_body,
                                                                         card_edit_synthesis,
                                                                         card_edit_synthesis_target_id,
                                                                         card_edit_labels,
@@ -799,7 +786,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         &current,
                                                                         card_edit_title,
                                                                         card_edit_description,
-                                                                        card_edit_body,
                                                                         card_edit_synthesis,
                                                                         card_edit_synthesis_target_id,
                                                                         card_edit_labels,
@@ -838,27 +824,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                     "data-testid": "card-detail-tabs",
                                                     role: "tablist",
                                                     "aria-label": "Strand tracks",
-                                                    button {
-                                                        r#type: "button",
-                                                        class: "{description_tab_class}",
-                                                        "data-testid": "card-detail-tab-description",
-                                                        role: "tab",
-                                                        "aria-selected": "{active_detail_tab == CardDetailContentTab::Description}",
-                                                        disabled: editing_card_detail(),
-                                                        onclick: {
-                                                            let realm_id = selected_realm_id.clone();
-                                                            let strand_id = card.primary_strand_id.clone();
-                                                            move |_| {
-                                                                crate::views::chat::capture_chat_feed_scroll_position(
-                                                                    &realm_id,
-                                                                    &strand_id,
-                                                                );
-                                                                card_detail_tab.set(CardDetailContentTab::Description);
-                                                                replace_card_detail_tab_query(CardDetailContentTab::Description);
-                                                            }
-                                                        },
-                                                        "Description"
-                                                    }
                                                     button {
                                                         r#type: "button",
                                                         class: "{synthesis_tab_class}",
@@ -903,183 +868,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "Discussion"
                                                     }
                                                 }
-                                                if active_detail_tab == CardDetailContentTab::Description {
-                                                    div {
-                                                        class: "card-detail-description-panel",
-                                                        "data-testid": "card-description-panel",
-                                                        role: "tabpanel",
-                                                        if show_shared_track_base {
-                                                            div { class: "sidecar-shared-track-base", "data-testid": "sidecar-shared-description-base",
-                                                                span { class: "badge", "Original Strand · read only" }
-                                                                if card.body.trim().is_empty() {
-                                                                    div { class: "card-detail-empty", "No shared description" }
-                                                                } else {
-                                                                    div { class: "card-detail-description",
-                                                                        {crate::content::render_blocks(
-                                                                            &crate::content::parse_message_body(&card.body),
-                                                                        )}
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        if sidecar_track_active {
-                                                            div { class: "sidecar-private-track-label", "data-testid": "sidecar-private-description-label",
-                                                                span { class: "badge", "Private Sidecar overlay" }
-                                                            }
-                                                        }
-                                                        if editing_card_detail() && card_edit_scope() == CardEditScope::Description {
-                                                            div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-edit-form",
-                                                                div { class: "field",
-                                                                    Label { html_for: "card-detail-description-input", "Description" }
-                                                                    CardMarkdownEditor {
-                                                                        value: card_edit_body(),
-                                                                        token: token(),
-                                                                        realm_id: selected_realm_id.clone(),
-                                                                        on_change: move |value| card_edit_body.set(value),
-                                                                        slot: "description".to_owned(),
-                                                                    }
-                                                                }
-                                                                CardDetailEditActions {
-                                                                    status: card_detail_edit_status(),
-                                                                    on_save: {
-                                                                        let base = base_url.clone();
-                                                                        let realm = selected_realm_id.clone();
-                                                                        let actor = account_did.clone();
-                                                                        let device = device_id.clone();
-                                                                        let current = track_card.clone();
-                                                                        let entries = synthesis_entries.clone();
-                                                                        let sidecar_write = sidecar_track_write.clone();
-                                                                        move |_| {
-                                                                            save_card_detail_edit(
-                                                                                base.clone(),
-                                                                                token,
-                                                                                realm.clone(),
-                                                                                actor.clone(),
-                                                                                device.clone(),
-                                                                                current.clone(),
-                                                                                entries.clone(),
-                                                                                selected_scope_security_encrypted,
-                                                                                sidecar_write.clone(),
-                                                                                card_edit_scope,
-                                                                                card_edit_title,
-                                                                                card_edit_description,
-                                                                                card_edit_body,
-                                                                                card_edit_synthesis,
-                                                                                card_edit_synthesis_target_id,
-                                                                                card_edit_labels,
-                                                                                card_edit_assignee,
-                                                                                card_edit_due,
-                                                                                editing_card_detail,
-                                                                                card_detail_actions_open,
-                                                                                card_detail_edit_status,
-                                                                                selected_card,
-                                                                                state_store,
-                                                                                board_status,
-                                                                            );
-                                                                        }
-                                                                    },
-                                                                    on_cancel: {
-                                                                        let current = track_card.clone();
-                                                                        move |_| {
-                                                                            reset_card_detail_edit(
-                                                                                &current,
-                                                                                card_edit_title,
-                                                                                card_edit_description,
-                                                                                card_edit_body,
-                                                                                card_edit_synthesis,
-                                                                                card_edit_synthesis_target_id,
-                                                                                card_edit_labels,
-                                                                                card_edit_assignee,
-                                                                                card_edit_due,
-                                                                                editing_card_detail,
-                                                                                card_detail_actions_open,
-                                                                                card_synthesis_history_open_id,
-                                                                                card_synthesis_selected_revision_id,
-                                                                                card_detail_edit_status,
-                                                                            );
-                                                                        }
-                                                                    },
-                                                                }
-                                                            }
-                                                        } else if track_card.body.trim().is_empty()
-                                                            && track_card.body_locked
-                                                        {
-                                                            // X10.2: encrypted field this device can't
-                                                            // read yet — show a locked notice (NOT "No
-                                                            // description", NOT an edit affordance that
-                                                            // would overwrite the real ciphertext).
-                                                            div {
-                                                                class: "card-detail-empty",
-                                                                "data-testid": "card-detail-body-locked",
-                                                                div { "{MLS_LOCKED_FIELD_PLACEHOLDER}" }
-                                                            }
-                                                        } else if track_card.body.trim().is_empty() {
-                                                            div { class: "card-detail-empty",
-                                                                div { {if sidecar_track_active { "No private description" } else { "No description" }} }
-                                                                if !editing_card_detail() {
-                                                                    Button {
-                                                                        variant: ButtonVariant::Secondary,
-                                                                        class: "card-detail-mini-action",
-                                                                        "data-testid": "card-detail-add-description-button",
-                                                                        onclick: {
-                                                                            let current = track_card.clone();
-                                                                            move |_| {
-                                                                                let draft = card_detail_draft_from_card(&current);
-                                                                                card_edit_title.set(draft.title);
-                                                                                card_edit_description.set(draft.description);
-                                                                                card_edit_body.set(draft.body);
-                                                                                card_edit_synthesis.set(draft.synthesis);
-                                                                                card_edit_synthesis_target_id.set(None);
-                                                                                card_edit_labels.set(draft.labels.join(", "));
-                                                                                card_edit_assignee.set(draft.assignee);
-                                                                                card_edit_due.set(draft.due);
-                                                                                card_edit_scope.set(CardEditScope::Description);
-                                                                                card_detail_edit_status.set(String::new());
-                                                                                editing_card_detail.set(true);
-                                                                            }
-                                                                        },
-                                                                        UiIcon { name: "plus" }
-                                                                        span { "Add description" }
-                                                                    }
-                                                                }
-                                                            }
-                                                        } else {
-                                                            if !editing_card_detail() {
-                                                                div { class: "card-detail-tab-actions",
-                                                                    Button {
-                                                                        variant: ButtonVariant::Secondary,
-                                                                        class: "card-detail-mini-action card-detail-edit-action",
-                                                                        "data-testid": "card-detail-edit-description-button",
-                                                                        onclick: {
-                                                                            let current = track_card.clone();
-                                                                            move |_| {
-                                                                                let draft = card_detail_draft_from_card(&current);
-                                                                                card_edit_title.set(draft.title);
-                                                                                card_edit_description.set(draft.description);
-                                                                                card_edit_body.set(draft.body);
-                                                                                card_edit_synthesis.set(draft.synthesis);
-                                                                                card_edit_synthesis_target_id.set(None);
-                                                                                card_edit_labels.set(draft.labels.join(", "));
-                                                                                card_edit_assignee.set(draft.assignee);
-                                                                                card_edit_due.set(draft.due);
-                                                                                card_edit_scope.set(CardEditScope::Description);
-                                                                                card_detail_edit_status.set(String::new());
-                                                                                editing_card_detail.set(true);
-                                                                            }
-                                                                        },
-                                                                        UiIcon { name: "settings" }
-                                                                        span { {crate::i18n::tr("common.edit")} }
-                                                                    }
-                                                                }
-                                                            }
-                                                            div { class: "card-detail-description",
-                                                                {crate::content::render_blocks(
-                                                                    &crate::content::parse_message_body(&track_card.body),
-                                                                )}
-                                                            }
-                                                        }
-                                                    }
-                                                } else if active_detail_tab == CardDetailContentTab::Synthesis {
+                                                if active_detail_tab == CardDetailContentTab::Synthesis {
                                                     div {
                                                         class: "card-detail-synthesis-panel",
                                                         "data-testid": "card-synthesis-panel",
@@ -1309,8 +1098,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     let draft = card_detail_draft_from_card(&current);
                                                                                                     card_edit_title.set(draft.title);
                                                                                                     card_edit_description.set(draft.description);
-                                                                                                    card_edit_body.set(draft.body);
-                                                                                                    card_edit_synthesis.set(entry_body.clone());
+                                                                                                                                    card_edit_synthesis.set(entry_body.clone());
                                                                                                     card_edit_synthesis_target_id.set(Some(entry_id.clone()));
                                                                                                     card_edit_labels.set(draft.labels.join(", "));
                                                                                                     card_edit_assignee.set(draft.assignee);
@@ -1366,8 +1154,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         card_edit_scope,
                                                                                                         card_edit_title,
                                                                                                         card_edit_description,
-                                                                                                        card_edit_body,
-                                                                                                        card_edit_synthesis,
+                                                                                                                                        card_edit_synthesis,
                                                                                                         card_edit_synthesis_target_id,
                                                                                                         card_edit_labels,
                                                                                                         card_edit_assignee,
@@ -1388,8 +1175,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         &current,
                                                                                                         card_edit_title,
                                                                                                         card_edit_description,
-                                                                                                        card_edit_body,
-                                                                                                        card_edit_synthesis,
+                                                                                                                                        card_edit_synthesis,
                                                                                                         card_edit_synthesis_target_id,
                                                                                                         card_edit_labels,
                                                                                                         card_edit_assignee,
@@ -1456,8 +1242,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 card_edit_scope,
                                                                                 card_edit_title,
                                                                                 card_edit_description,
-                                                                                card_edit_body,
-                                                                                card_edit_synthesis,
+                                                                                        card_edit_synthesis,
                                                                                 card_edit_synthesis_target_id,
                                                                                 card_edit_labels,
                                                                                 card_edit_assignee,
@@ -1478,8 +1263,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 &current,
                                                                                 card_edit_title,
                                                                                 card_edit_description,
-                                                                                card_edit_body,
-                                                                                card_edit_synthesis,
+                                                                                        card_edit_synthesis,
                                                                                 card_edit_synthesis_target_id,
                                                                                 card_edit_labels,
                                                                                 card_edit_assignee,
@@ -1507,8 +1291,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             let draft = card_detail_draft_from_card(&current);
                                                                             card_edit_title.set(draft.title);
                                                                             card_edit_description.set(draft.description);
-                                                                            card_edit_body.set(draft.body);
-                                                                            card_edit_synthesis.set(String::new());
+                                                                                    card_edit_synthesis.set(String::new());
                                                                             card_edit_synthesis_target_id.set(None);
                                                                             card_edit_labels.set(draft.labels.join(", "));
                                                                             card_edit_assignee.set(draft.assignee);

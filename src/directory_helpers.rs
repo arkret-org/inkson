@@ -16,7 +16,11 @@ pub(crate) struct ResolveHandleContext<'a> {
     pub(crate) realm_id: Option<&'a str>,
     pub(crate) expected_did: Option<&'a str>,
     pub(crate) proof_challenge: Option<&'a str>,
-    pub(crate) proofs: &'a [&'a str],
+    /// Detached-JWS proofs answering `proof_challenge`. The wire element is the
+    /// SDK `PayloadProof` (digest over the unsigned request payload), never an
+    /// event-bound `Proof`, so the caller signs
+    /// `DirectoryResolveHandleRequestBody::proof_binding_bytes`.
+    pub(crate) proofs: &'a [arkret_sdk::PayloadProof],
 }
 
 pub(crate) fn resolve_handle_request_body(
@@ -67,13 +71,7 @@ pub(crate) fn resolve_handle_request_body(
         requester,
         audience: non_empty(context.audience),
         realm_id,
-        proofs: context
-            .proofs
-            .iter()
-            .map(|proof| proof.trim())
-            .filter(|proof| !proof.is_empty())
-            .map(ToOwned::to_owned)
-            .collect(),
+        proofs: context.proofs.to_vec(),
     })
 }
 

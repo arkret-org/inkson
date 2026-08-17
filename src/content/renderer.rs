@@ -219,9 +219,13 @@ fn parse_markdown_blob_image_line(line: &str) -> Option<ContentBlock> {
     let split = line.find("](")?;
     let alt = line[2..split].trim().to_owned();
     let blob_ref = line[split + 2..line.len() - 1].trim();
-    if !blob_ref.starts_with("ak:blob:") {
-        return None;
-    }
+    // The SDK `BlobRef` newtype decides whether this target is a blob
+    // reference: an `ak:blob:` prefix test also admits values
+    // `common-ids.schema.json` rejects. The optional `#<media-type>` tail is a
+    // local rendering hint appended by the composer, not part of the id, so it
+    // is split off before validation.
+    let canonical = blob_ref.split_once('#').map_or(blob_ref, |(id, _)| id);
+    arkret_sdk::BlobRef::new(canonical.to_owned()).ok()?;
     match classify_blob_ref(blob_ref) {
         ContentBlock::Image { blob_ref, .. } => Some(ContentBlock::Image {
             blob_ref,
@@ -1012,17 +1016,29 @@ mod tests {
         }
     }
 
+    /// Only a canonical `BlobRef` target is lifted out of Markdown: the
+    /// `#<media-type>` tail is a local rendering hint, and an `ak:blob:` value
+    /// the SDK newtype rejects stays ordinary Markdown.
     #[test]
     fn parse_message_body_recognizes_markdown_blob_image() {
-        let blocks = parse_message_body("![Launch image](ak:blob:abc#image/png)");
+        let target = format!("ak:blob:sha256:{}#image/png", "ab".repeat(32));
+        let blocks = parse_message_body(&format!("![Launch image]({target})"));
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             ContentBlock::Image { blob_ref, alt } => {
-                assert_eq!(blob_ref, "ak:blob:abc#image/png");
+                assert_eq!(blob_ref, &target);
                 assert_eq!(alt.as_deref(), Some("Launch image"));
             }
             other => panic!("expected Image (from markdown blob image), got {other:?}"),
         }
+
+        let blocks = parse_message_body("![Launch image](ak:blob:abc#image/png)");
+        assert!(
+            !blocks
+                .iter()
+                .any(|block| matches!(block, ContentBlock::Image { .. })),
+            "a non-canonical blob ref must not become an Image block: {blocks:?}"
+        );
     }
 
     #[test]
