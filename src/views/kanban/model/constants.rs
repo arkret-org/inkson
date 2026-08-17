@@ -108,13 +108,9 @@ pub(crate) const KANBAN_PRIVATE_STRAND_PATCH_PATHS: &[&str] = &[
     "attachments",
     "fields.body",
     "fields.synthesis",
-    // The schedule moved under one `calendar` namespace, so the encryptable
-    // location now lives at `metadata.fields.calendar.location`. The old flat
-    // paths stay listed so a migration patch that unsets them is still treated
-    // as private rather than leaking a plaintext value.
+    // The schedule lives under one `calendar` namespace, so the encryptable
+    // location is `metadata.fields.calendar.location`.
     "metadata.fields.calendar.location",
-    "metadata.fields.location",
-    "fields.location",
     "tracks.synthesis.body",
     "tracks.discussion.body",
 ];

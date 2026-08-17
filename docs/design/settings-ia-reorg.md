@@ -39,7 +39,7 @@
 | 外观与语言 | Appearance & locale | 不变 |
 | 高级 | Data & sync、Diagnostics(Release)、Audit log、Developer tools、TSP connections（改名"外部连接"） | Audit/Developer 已独立（前置 PR 落地） |
 
-术语映射（label 全部转 i18n key，slug 不变保证 URL 兼容）：
+术语映射（label 全部转 i18n key；slug 不变，URL 保持稳定）：
 `TSP connections→外部连接 / Capabilities→应用授权 / Blocked actors→屏蔽名单 / Consent→邀请与同意 / Diagnostics→发布状态`。
 
 ### 3.2 保存语义标注
@@ -66,9 +66,9 @@
 | L2 不可逆 | 清空黑名单、注销会话 | 确认框 + 后果一句话 |
 | L3 毁灭性 | 撤销设备、销毁 Realm | 保持现状（恢复密钥 / 输入名称验证） |
 
-### 3.6 迁移与兼容
+### 3.6 落地拆分
 
-- slug 全部保留 + 旧分组深链兼容（sections.rs 的 from_slug 已是多对一映射，扩展即可）。
+- slug 全部保留：`sections.rs` 的 `from_slug` 已是多对一映射，新分组扩展它即可。
 - 分四个 PR 落地：①分组+label i18n ②保存语义 pill ③开发者面搬迁 ④搜索。互相独立可乱序。
 - cotest：settings 导航用例按 grep 清单同步（label 断言改 testid 断言）。
 

@@ -40,7 +40,7 @@
 //! `raw_operations` (512) and `mls_governance_proofs` (16) already use.
 
 use arkret_sdk::identity::AcceptedDidBinding;
-use arkret_sdk::{DidFullId, TypedTrustDomainId};
+use arkret_sdk::{DidFullId, TrustDomainId};
 
 use super::*;
 #[cfg(test)]
@@ -155,7 +155,7 @@ impl LocalStateStore {
     /// cannot accidentally preserve an acceptance from another deployment.
     pub(crate) fn clear_accepted_did_bindings_outside_trust_domain(
         &mut self,
-        trust_domain: &TypedTrustDomainId,
+        trust_domain: &TrustDomainId,
     ) -> usize {
         self.ensure_cached_loaded();
         let before = self.cached.accepted_did_bindings.len();

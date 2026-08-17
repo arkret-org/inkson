@@ -154,11 +154,13 @@ The repository includes CI for:
 - `Docker`: local web image build, Trivy scan, SBOM evidence, and local cosign blob evidence when a local key is supplied. It does not push to GHCR or any registry.
 - `Dependabot`: weekly updates for GitHub Actions, Cargo, npm, and Docker.
 
-CI checks out `arkret-rust-sdk`, `garth`, `chime`, and `yoface` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names use those four names under `${OWNER}`.
+CI checks out `arkret-rust-sdk`, `garth`, and `chime` next to `inkson` because `Cargo.toml` uses sibling path dependencies. The expected GitHub repository names use those three names under `${OWNER}`.
+
+`yoface` is not one of them: it is a private cargo git dependency (`git = "https://github.com/arkret-org/yoface"`, branch `main`), so cargo fetches it instead of reading a sibling checkout. `.cargo/config.toml` sets `net.git-fetch-with-cli` so the fetch goes through git and picks up credentials; every workflow installs a `url.…insteadOf` rewrite backed by `CI_REPO_TOKEN` (GitHub Actions) or `GITHUB_COM_TOKEN` (Gitea, which needs a GitHub PAT because a Gitea token cannot authenticate against github.com). The image build receives the same token as the `github_token` build secret.
 
 ### Gitea Actions
 
-The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `arkret-rust-sdk`, `garth`, `chime`, and `yoface` as sibling directories so the local path dependencies resolve.
+The Gitea smoke workflow lives in `.gitea/workflows/smoke.yml`. It follows the lightweight Rust-check structure used by the related synpad workflows and checks out `inkson`, `arkret-rust-sdk`, `garth`, and `chime` as sibling directories so the local path dependencies resolve. `yoface` is fetched from GitHub instead, using the `GITHUB_COM_TOKEN` secret.
 
 The smoke job installs the Linux desktop build packages and runs:
 
@@ -168,13 +170,14 @@ cargo check --locked --all-targets
 cargo test --locked
 ```
 
-The expected Gitea repository names use the four dependency repository names under `${OWNER}`.
+The expected Gitea repository names use the three dependency repository names under `${OWNER}`.
 
-The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `arkret-rust-sdk`, `garth`, `chime`, and `yoface`:
+The Docker image serves the Dioxus web build with nginx. Build it from a clean context containing `inkson`, `arkret-rust-sdk`, `garth`, and `chime`. The build fetches `yoface` from GitHub, so it needs a token with read access to `arkret-org/yoface` mounted as the `github_token` build secret:
 
 ```powershell
+$env:GITHUB_TOKEN = "<pat>"
 powershell -ExecutionPolicy Bypass -File scripts/prepare-docker-context.ps1
-docker build -f docker-context/inkson/Dockerfile -t inkson-web docker-context
+docker build -f docker-context/inkson/Dockerfile --secret id=github_token,env=GITHUB_TOKEN -t inkson-web docker-context
 ```
 
 Local release evidence commands are documented in [`docs/RELEASING.md`](docs/RELEASING.md). The release plan is local-only: no tag creation, registry push, crates.io publish, notarization submit, ticket stapling, timestamp authority, or Sigstore transparency-log upload is part of the phase-3 workflow.

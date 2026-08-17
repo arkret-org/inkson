@@ -16,7 +16,7 @@ use arkret_models_crypto::{
     RecoveryPublicationAuthorizationRule, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody, UnsignedRecoveryPolicy, UnsignedRecoveryPolicyBody,
 };
-use arkret_sdk::{DeviceId, DidUrl, NonEmptyString, PolicyId, TypedTrustDomainId};
+use arkret_sdk::{DeviceId, DidUrl, NonEmptyString, PolicyId, TrustDomainId};
 use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole, event_kind_str};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -355,7 +355,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         principal_id: crate::mls_api_helpers::principal_core_id(principal_id)?,
         version: 1,
         supersedes: None,
-        trust_domain: TypedTrustDomainId::new(trust_domain.to_owned())?,
+        trust_domain: TrustDomainId::new(trust_domain.to_owned())?,
         allowed_proof_kinds: vec![
             RecoveryProofKind::PrincipalSigning,
             RecoveryProofKind::RecoveryUnlock,
@@ -777,7 +777,7 @@ pub fn create_session_body(
             crate::operation::authoring_principal_server_id()?,
         ),
         requesting_device_id: DeviceId::new(requesting_device_id.trim().to_owned())?,
-        trust_domain: TypedTrustDomainId::new(trust_domain.trim().to_owned())?,
+        trust_domain: TrustDomainId::new(trust_domain.trim().to_owned())?,
         expected_recovery_policy_ref: match expected_recovery_policy_ref {
             Some((policy_id, policy_version)) => Some(RecoveryPolicyRef {
                 policy_id: PolicyId::new(policy_id.trim().to_owned())?,

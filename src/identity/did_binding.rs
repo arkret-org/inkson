@@ -39,7 +39,7 @@ use arkret_sdk::identity::{
 };
 #[cfg(test)]
 use arkret_sdk::identity::{FreshnessProfile, FreshnessRequirement};
-use arkret_sdk::{DidDocument, DidFullId, DidUrl, Hash, TypedTrustDomainId};
+use arkret_sdk::{DidDocument, DidFullId, DidUrl, Hash, TrustDomainId};
 use chrono::{DateTime, Duration, Utc};
 
 /// Hard cap on persisted bindings per account.
@@ -77,7 +77,7 @@ pub(crate) const BINDING_HARD_EXPIRY_DAYS: i64 = 30;
 /// an acceptance even if the same DID appears in both.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DidBindingScope {
-    trust_domain: TypedTrustDomainId,
+    trust_domain: TrustDomainId,
     policy_digest: Hash,
 }
 
@@ -111,7 +111,7 @@ impl DidBindingScope {
     /// [`crate::state::LocalStateStore::clear_accepted_did_bindings_outside_trust_domain`]:
     /// a failure to digest the resolver policy must not be able to skip that
     /// cross-deployment cleanup.
-    pub(crate) fn trust_domain_for(base_url: &str) -> TypedTrustDomainId {
+    pub(crate) fn trust_domain_for(base_url: &str) -> TrustDomainId {
         let scope = url::Url::parse(base_url)
             .ok()
             .and_then(|url| {
@@ -122,7 +122,7 @@ impl DidBindingScope {
                 })
             })
             .unwrap_or_default();
-        TypedTrustDomainId::new(format!("ak:trust_domain:{scope}"))
+        TrustDomainId::new(format!("ak:trust_domain:{scope}"))
             .unwrap_or_else(|_| Self::local_trust_domain())
     }
 
@@ -133,8 +133,8 @@ impl DidBindingScope {
         clippy::expect_used,
         reason = "the argument is a compile-time literal that satisfies `is_trust_domain`; a failure here would mean the identifier grammar changed and must fail loudly rather than silently widen the scope"
     )]
-    fn local_trust_domain() -> TypedTrustDomainId {
-        TypedTrustDomainId::new("ak:trust_domain:inkson.local".to_owned())
+    fn local_trust_domain() -> TrustDomainId {
+        TrustDomainId::new("ak:trust_domain:inkson.local".to_owned())
             .expect("static trust domain literal is valid")
     }
 
@@ -142,7 +142,7 @@ impl DidBindingScope {
     /// callers that only need the domain (the trust-domain-switch cleanup) take
     /// the infallible [`Self::trust_domain_for`] instead of building a scope.
     #[cfg(test)]
-    pub(crate) fn trust_domain(&self) -> &TypedTrustDomainId {
+    pub(crate) fn trust_domain(&self) -> &TrustDomainId {
         &self.trust_domain
     }
 

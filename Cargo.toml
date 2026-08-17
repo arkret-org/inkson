@@ -142,7 +142,7 @@ futures-util = {workspace = true}
 # `dioxus_primitives` and `dioxus_icons`; inkson imports
 # `yoface::ui::*` through the SDK-local `pub use yoface::ui`.
 # Keep the patch sections below aligned with the yoface README.
-yoface = {path = "../yoface"}
+yoface = {git = "https://github.com/arkret-org/yoface",branch = "main"}
 ed25519-dalek = {workspace = true,features = ["pem", "pkcs8", "zeroize"]}
 getrandom = {workspace = true,features = ["wasm_js"]}
 getrandom_02 = {workspace = true,features = ["js"]}

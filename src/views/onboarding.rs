@@ -549,7 +549,7 @@ async fn recover_bound_principal_device(
                 crate::operation::authoring_principal_server_id()?,
             ),
             requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
-            trust_domain: arkret_sdk::TypedTrustDomainId::new(handoff.trust_domain.clone())?,
+            trust_domain: arkret_sdk::TrustDomainId::new(handoff.trust_domain.clone())?,
             expected_recovery_policy_ref: Some(arkret_models_crypto::RecoveryPolicyRef {
                 policy_id: policy.policy_id.clone(),
                 policy_version: policy.version,

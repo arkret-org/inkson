@@ -275,8 +275,8 @@ fn normalized_history_visibility(value: Option<&Value>) -> Option<String> {
 /// Resolve the Realm's effective history-visibility projection without
 /// treating the immutable create snapshot as newer than its per-facet state.
 /// `state_after` is the timeline-end state, followed by the current `state`
-/// container. Materialized reducer fields are compatibility snapshots; the
-/// create event is only an initial-state fallback when no facet is projected.
+/// container. Materialized reducer fields are derived snapshots; the create
+/// event is only an initial-state fallback when no facet is projected.
 pub(crate) fn realm_projection_history_visibility(body: &Value) -> Option<String> {
     let facet_value = projected_state_event_values(body)
         .filter(|event| {

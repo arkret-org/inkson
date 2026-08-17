@@ -37,7 +37,7 @@
 1. **板级标签库**：`{ id, name, color }` 列表。**数据落点需协议确认**，两个候选：
    - **方案 A（推荐）**：作为 board Space 的 component（如 `ak.component.board.labels.v1`）随 `ak.space.update` 写——板内共享、随板归档、联邦语义与现有 component 一致；需在 spec 注册 schema（走 contract-registry 流程）。
    - **方案 B**：account_data（`ak.board_labels.v1:<board_id>`）——零 spec 变更但**仅本人可见**，违背"团队共享标签"目标，仅作 fallback。
-2. **卡片标签结构化**：卡 component 的 labels 从自由文本改为 label id 数组（兼容读旧文本值，写新格式）；详情侧栏 Labels 提升到与负责人/截止同层，改多选下拉（选库内 + 就地新建）。
+2. **卡片标签结构化**：卡 component 的 labels 是 label id 数组，只读写这一种形状；详情侧栏 Labels 提升到与负责人/截止同层，改多选下拉（选库内 + 就地新建）。
 3. **卡面升级**：标签色条（顶部 3 条上限 +N）、负责人头像（复用聊天侧 DID 哈希色 + 备注名优先级）、due pill（逾期红）、同步状态 pill 沿用现有 write-state。
 
 ### M3 搜索 / 批量 / 模板 / 收藏（1-2 个 PR）

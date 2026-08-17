@@ -901,8 +901,8 @@ fn outbound_store_scope(event: &arkret_sdk::Event, durable_post_accept: bool) ->
     if durable_post_accept {
         format!("{actor}\u{1f}mls-durable-post-accept")
     } else if event.kind.as_str().starts_with("ak.mls.") {
-        // Legacy MLS callers still persist their snapshot after this method
-        // returns. Keep them host-only until they adopt the durable action.
+        // MLS callers that persist their own snapshot after this method
+        // returns carry no durable post-accept action; keep them host-only.
         format!("{actor}\u{1f}mls-host-only")
     } else {
         actor.to_owned()

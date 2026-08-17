@@ -153,7 +153,7 @@ pub fn build_persisted_oidc_scaffold(
     principal_server_url: &str,
     device_id: &str,
     issuer: &str,
-    principal_trust_domain: &arkret_sdk::TypedTrustDomainId,
+    principal_trust_domain: &arkret_sdk::TrustDomainId,
 ) -> PersistedOidcScaffold {
     PersistedOidcScaffold {
         expected_state: bundle.state.clone(),

@@ -3390,8 +3390,6 @@ export async function mockArkretApi(
       return json(route, {
         ok: true,
         sidecar_id: "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm",
-        private_strand_id: "ak:strand:ASy992JMe_xzh5pluAqo5YuyCnAfDdFni4lmeHQldlUM",
-        private_relation_id: "ak:relation:Adfmbl2dMLTHsS64Yqhc6HgCYJkB-HAVr2AGwL-KZC1d",
         access_readiness:
           sidecarPendingMemberReconciliations.length === 0
             ? "ready"

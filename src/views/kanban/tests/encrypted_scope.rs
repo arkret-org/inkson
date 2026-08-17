@@ -449,7 +449,7 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
         .unwrap()
         .expect("fixture creates and persists epoch-0 MLS state");
     // Reproduce the broken state seen after first-Realm creation: the local
-    // group exists and a legacy/incomplete path set the emitted bit, but no
+    // group exists and an incomplete path set the emitted bit, but no
     // accepted Event id was attached to the snapshot.
     state.mark_mls_genesis_emitted(realm);
     assert!(

@@ -31,13 +31,17 @@ jobs:
           repository: ${{ github.repository_owner }}/chime
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-      - name: Checkout yoface
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ github.repository_owner }}/yoface
-          path: yoface
-          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      # `yoface` is a private cargo git dependency rather than a sibling
+      # checkout (see .github/workflows/ci.yml). cargo-deny runs inside a
+      # container action, so a `git config --global` on the runner would not
+      # reach it — the credential rewrite is passed as `GIT_CONFIG_*` env vars,
+      # which git reads in any process, container included.
       - uses: EmbarkStudios/cargo-deny-action@v2
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.CI_REPO_TOKEN || github.token }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
         with:
           command: check
           manifest-path: inkson/Cargo.toml

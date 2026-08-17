@@ -488,7 +488,7 @@ fn build_realm_genesis_object(
     trust_domain: &str,
     _content_scheme: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::RealmGenesis> {
-    let trust_domain_typed = arkret_sdk::TypedTrustDomainId::new(trust_domain.to_owned())
+    let trust_domain_typed = arkret_sdk::TrustDomainId::new(trust_domain.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid trust_domain for realm.create: {err:?}"))?;
     let notary_profile_typed: arkret_sdk::NotaryProfile =
         parse_wire_enum("notary_profile", notary_profile)?;
@@ -607,7 +607,7 @@ pub fn build_managed_agent_pcr_create_event(
             initial_resolution,
             controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
-            trust_domain: arkret_sdk::TypedTrustDomainId::new(trust_domain.to_owned())?,
+            trust_domain: arkret_sdk::TrustDomainId::new(trust_domain.to_owned())?,
             capability_action_registry_digest:
                 arkret_sdk::current_capability_action_registry_digest()?,
             created_at,
@@ -658,7 +658,7 @@ pub fn build_managed_agent_pcr_bootstrap_events(
 pub fn build_direct_conversation_founding_events(
     founder_id: &arkret_sdk::DidFullId,
     peer_id: &arkret_sdk::DidFullId,
-    trust_domain: arkret_sdk::TypedTrustDomainId,
+    trust_domain: arkret_sdk::TrustDomainId,
     _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     let created_at = event_timestamp();

@@ -490,7 +490,7 @@ mod tests {
         .expect("builds");
         assert_eq!(op.kind.as_str(), "ak.message.create");
         assert!(!op.payload.contains_key("encrypted"));
-        // Canonical poll_block: nested `poll` object, no flat legacy fields.
+        // Canonical poll_block: nested `poll` object, no flat fields.
         let block = op.payload.get("content").unwrap();
         assert_eq!(block["kind"], "ak.content.poll");
         assert_eq!(block["body"], "ship?");
@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn poll_card_from_content_fails_closed_on_non_canonical_shapes() {
-        // Legacy flat shape (pre-canonical) — no `poll` object.
+        // Flat shape — no `poll` object.
         let flat = json!({
             "kind": "ak.content.poll",
             "poll_id": "poll-1",
@@ -648,7 +648,7 @@ mod tests {
             "ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu"
         );
         assert_eq!(selections, vec!["opt-0".to_owned(), "opt-2".to_owned()]);
-        // Legacy flat shape fails closed.
+        // Flat shape fails closed.
         let flat = json!({
             "kind": "ak.content.poll.response",
             "poll_id": "poll-1",

@@ -74,9 +74,9 @@ pub fn consent_revoke(
 /// Recover the `consent_id` a consent cell is keyed on from its `cell_id`.
 ///
 /// `cell_id` is `ak:cell:ak.component.consent.grant.v1:<consent_id>` (spec
-/// `zh/identity/consent-model.md` section 3.1). A cell soland wrote under the
-/// legacy digest subject has no recoverable `consent_id`, and revoking it needs
-/// that subject repaired first rather than a guess here.
+/// `zh/identity/consent-model.md` section 3.1). A cell keyed on a digest
+/// subject instead has no recoverable `consent_id`, and revoking it needs that
+/// subject repaired first rather than a guess here.
 pub fn consent_id_from_cell_id(cell_id: &str) -> anyhow::Result<arkret_sdk::ConsentId> {
     const PREFIX: &str = "ak:cell:ak.component.consent.grant.v1:";
     let subject = cell_id.strip_prefix(PREFIX).ok_or_else(|| {

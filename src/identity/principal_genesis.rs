@@ -63,7 +63,7 @@ pub fn build_genesis_unit(
     principal_id: arkret_sdk::DidFullId,
     principal_server_id: arkret_sdk::DidCoreId,
     genesis_salt: arkret_sdk::GenesisSalt,
-    trust_domain: arkret_sdk::TypedTrustDomainId,
+    trust_domain: arkret_sdk::TrustDomainId,
     did_inception_version_id: String,
     did_inception_log_head: String,
     created_at: DateTime<Utc>,

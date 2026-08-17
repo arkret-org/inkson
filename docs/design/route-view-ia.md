@@ -47,9 +47,9 @@ Route::Call { .. } | Route::Applets => AppView::Dashboard,      // 无自己的�
 - `global_search.rs::result_destination` 把 `seal` 写进 `message` 参数；搜索结果按钮文案区分 "打开消息" / "打开任务"（已有 label 字段，接上即可）。
 - 分享入口：聊天消息 hover "更多" 菜单加"复制消息链接"（与看板卡片"复制链接"同模式）。
 
-### 3.3 兼容与迁移
+### 3.3 迁移
 
-- 旧 URL 全部保活：`/realms/:id` 重定向（方案 A）或渲染新页（方案 B）；`/chat/:id` 无参数行为不变。
+- `/realms/:id` 重定向（方案 A）或渲染新页（方案 B）；`/chat/:id` 无参数行为不变。
 - cotest：grep 深链用例（kanban board persistence 一族），新增消息深链正反用例；`Route::from(AppView)` 的默认参数路径需要同步。
 - `app/mod.rs` 删除 Call/Applets 特判块，改走统一 match——这是纯机械迁移，风险点只在信号传参。
 
@@ -63,5 +63,5 @@ Route::Call { .. } | Route::Applets => AppView::Dashboard,      // 无自己的�
 ## 5. 未决问题（评审时定）
 
 1. `/realms/:id` 采用方案 A（重定向到偏好 surface）还是方案 B（概览页）？——建议 A 先行，B 若立项则替换 A 的落地。
-2. 消息深链参数用 query（`?message=`）还是路径段（`/message/:id`）？query 兼容成本最低（Dioxus router 既有可选 query 支持，Call 路由已用）。
+2. 消息深链参数用 query（`?message=`）还是路径段（`/message/:id`）？query 成本最低（Dioxus router 既有可选 query 支持，Call 路由已用）。
 3. 高亮消息的滚动定位在长历史（需多次回溯分页）时的加载上限与失败降级文案。

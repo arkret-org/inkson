@@ -926,8 +926,8 @@ impl LocalStateStore {
     /// Stamp the accepted epoch-0 Event id onto a local snapshot that does not
     /// carry one yet.
     ///
-    /// This is NOT a legacy repair: [`crate::mls::persistence`] always mints a
-    /// snapshot with `group_state_event_id: None`, and the id is stamped
+    /// [`crate::mls::persistence`] always mints a snapshot with
+    /// `group_state_event_id: None`, and the id is stamped
     /// separately once the genesis Event comes back accepted. A device that
     /// loses that accept response — or re-syncs the group before the local
     /// stamp lands — therefore holds a genuine epoch-0 snapshot with no
@@ -1369,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn accepted_genesis_projection_repairs_legacy_missing_group_state_reference() {
+    fn accepted_genesis_projection_repairs_missing_group_state_reference() {
         let path = std::env::temp_dir().join(format!(
             "inkson-mls-projection-genesis-reference-{}-{}.json",
             std::process::id(),

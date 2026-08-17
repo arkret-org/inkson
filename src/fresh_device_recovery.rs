@@ -70,7 +70,7 @@ pub struct RecoveryReadinessEvidence {
 pub struct RecoveryTerminalObservation {
     pub policy_id: arkret_sdk::PolicyId,
     pub policy_version: u64,
-    pub trust_domain: arkret_sdk::TypedTrustDomainId,
+    pub trust_domain: arkret_sdk::TrustDomainId,
     pub proof_summary: RecoveryProofSummary,
     pub backup_classes_unlocked: Vec<RecoveryBackupClassUnlocked>,
     pub welcome_count: u64,

@@ -254,7 +254,7 @@ test("owned agent sidecar labels private messages in discussion", async ({
     expect(publishedEvent.payload.strand_id).toMatch(/^ak:strand:/);
     expect(publishedEvent.payload.content.body).toBe("@me/assistant hello");
     expect(JSON.stringify(publishedEvent)).not.toMatch(
-      /sidecar_id|backing_circle|private_relation|exchange_id|private_history|context_locator/,
+      /sidecar_id|exchange_id|private_history|context_locator/,
     );
     await expect(page.getByTestId("chat-status")).toContainText(
       "Published to shared Strand",
@@ -273,7 +273,7 @@ test("owned agent sidecar labels private messages in discussion", async ({
     expect(durableOutbound).toContain("@me/assistant hello");
     expect(durableOutbound).toContain(DEMO_REALM);
     expect(durableOutbound).not.toMatch(
-      /sidecar_id|backing_circle|private_relation|exchange_id|private_history|context_locator/,
+      /sidecar_id|exchange_id|private_history|context_locator/,
     );
   }
 });

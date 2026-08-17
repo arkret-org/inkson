@@ -74,7 +74,7 @@ pub struct AuthorityResolver {
     /// Audience the issued session grant authenticates against.
     pub principal_audience: String,
     /// Principal Server trust domain used by the principal-control bootstrap.
-    pub principal_trust_domain: arkret_sdk::TypedTrustDomainId,
+    pub principal_trust_domain: arkret_sdk::TrustDomainId,
     /// Authentication methods the Account Authority accepts.
     pub methods: Vec<arkret_sdk::AuthMethod>,
 }

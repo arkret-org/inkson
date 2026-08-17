@@ -1110,7 +1110,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("shortcuts.list.send", "Send the current message");
     dict.set(
         "shortcuts.list.send_alias",
-        "Send the current message (compatibility alias)",
+        "Send the current message (alternate binding)",
     );
     // Personal blocklist (A5) — actor-private `ak.account.blocklist`
     // account-data namespace. Used by the Settings → Privacy panel, the

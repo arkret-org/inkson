@@ -325,7 +325,7 @@ pub fn prepare_genesis_draft(
         principal_id,
         audience.clone(),
         arkret_sdk::GenesisSalt::new(checkpoint.genesis_salt.clone())?,
-        arkret_sdk::TypedTrustDomainId::new(checkpoint.trust_domain.clone())?,
+        arkret_sdk::TrustDomainId::new(checkpoint.trust_domain.clone())?,
         checkpoint.version_id.clone(),
         validated_inception.log_head_digest.to_string(),
         created_at,

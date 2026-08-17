@@ -180,8 +180,8 @@ pub(crate) fn creator_scope_bootstrap_blocker(
 ///
 /// Returns `None` when genesis was already emitted for this Realm and its exact
 /// accepted group-state Event reference is available, or when there is no local
-/// snapshot. A legacy/incomplete emitted flag without that reference is not a
-/// completed bootstrap: rebuilding is safe because the submit path resolves a
+/// snapshot. An emitted flag without that reference is not a completed
+/// bootstrap: rebuilding is safe because the submit path resolves a
 /// server-side duplicate to the already-accepted Event id. `fresh_summary`
 /// carries either the just-created group's epoch-0 material or material restored
 /// from its durable epoch-0 snapshot.

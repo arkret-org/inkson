@@ -63,8 +63,8 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
             }
             // Recovery setup publishes account-authority policy and therefore
             // requires an enrollment-capable session grant. Keep this guard in
-            // the extracted effect; without it a compatibility session opens a
-            // modal that can only fail with device_unauthorized.
+            // the extracted effect; without it a session lacking that grant
+            // opens a modal that can only fail with device_unauthorized.
             if state_store.read().session_grant().is_none() {
                 return;
             }

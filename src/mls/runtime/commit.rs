@@ -17,8 +17,8 @@ fn current_governance_binding_predecessor(
 }
 
 /// YOU-01-009 — operator-forced MLS epoch rotation via a real
-/// `self_update_commit`, replacing the former non-spec
-/// `POST /_arkret/self/mls/rotate` HTTP shim. Restores the Realm group
+/// `self_update_commit`; the spec defines no `POST /_arkret/self/mls/rotate`
+/// HTTP endpoint. Restores the Realm group
 /// from the local snapshot, performs a self-update commit, and returns
 /// the commit envelope plus the encrypted POST-commit snapshot. The
 /// caller MUST submit the matching `ak.mls.commit` event and persist the

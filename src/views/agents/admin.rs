@@ -834,7 +834,7 @@ fn spawn_set_agent_enabled(
                 signer.as_ref(),
                 signer_account_scope.as_deref(),
             )?;
-            let seal_warning = match super::bootstrap::ensure_managed_agent_pcr_seal_current(
+            super::bootstrap::ensure_managed_agent_pcr_seal_current(
                 &submitter,
                 submitter.http(),
                 signer.as_ref(),
@@ -843,19 +843,7 @@ fn spawn_set_agent_enabled(
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )
-            .await
-            {
-                Ok(_) => None,
-                Err(error)
-                    if super::bootstrap::managed_agent_seal_head_receipt_unavailable(&error) =>
-                {
-                    // Compatibility with servers that predate the signed-head
-                    // receipt. The lifecycle endpoint remains authoritative,
-                    // but this deployment cannot proactively close the Seal.
-                    Some(error.to_string())
-                }
-                Err(error) => return Err(error),
-            };
+            .await?;
             let lifecycle_event = submitter
                 .prepare_initial_submissions(vec![draft])
                 .await?
@@ -895,7 +883,7 @@ fn spawn_set_agent_enabled(
             .await
             .err()
             .map(|error| error.to_string());
-            Ok((outcome, post_seal_warning.or(seal_warning)))
+            Ok((outcome, post_seal_warning))
         })
         .await;
         match result {

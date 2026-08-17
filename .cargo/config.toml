@@ -1,0 +1,7 @@
+# `yoface` is a private arkret-org repository consumed as a git dependency
+# (`Cargo.toml` -> `yoface = {git = ..., branch = "main"}`). Fetch through the
+# git CLI so cargo reuses the developer's existing credential helper / SSH
+# agent; cargo's built-in fetcher has no access to the OS credential store and
+# fails the private clone with an authentication error.
+[net]
+git-fetch-with-cli = true

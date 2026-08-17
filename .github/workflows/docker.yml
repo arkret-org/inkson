@@ -42,13 +42,6 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
-      - name: Checkout yoface
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ github.repository_owner }}/yoface
-          path: yoface
-          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -74,11 +67,10 @@ jobs:
             --exclude .git \
             --exclude target \
             chime/ docker-context/chime/
-          rsync -a --delete \
-            --exclude .git \
-            --exclude target \
-            yoface/ docker-context/yoface/
 
+      # `yoface` is no longer copied into the context: it is a private cargo
+      # git dependency, so the build fetches it from GitHub and needs a token.
+      # The secret is mounted only for the `dx build` layer (see Dockerfile).
       - name: Build image
         uses: docker/build-push-action@v6
         with:
@@ -87,6 +79,8 @@ jobs:
           load: true
           push: false
           tags: ${{ env.IMAGE_NAME }}
+          secrets: |
+            github_token=${{ secrets.CI_REPO_TOKEN || github.token }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

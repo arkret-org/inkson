@@ -165,14 +165,9 @@ jobs:
           ref: main
           token: ${{ secrets.CI_REPO_TOKEN }}
 
-      - name: Check out yoface
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ gitea.repository_owner }}/yoface
-          path: yoface
-          ref: main
-          token: ${{ secrets.CI_REPO_TOKEN }}
-
+      # `yoface` is not checked out: it is a private cargo git dependency on
+      # github.com, fetched inside the image build with the `github_token`
+      # build secret below.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -219,6 +214,10 @@ jobs:
         shell: bash
         env:
           TAGS: ${{ steps.tags.outputs.tags }}
+          # Read inside the build by the Dockerfile's credential helper so
+          # cargo can fetch the private `yoface` git dependency. Must be a
+          # GitHub PAT with read access to arkret-org/yoface.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_COM_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -232,6 +231,7 @@ jobs:
             --load \
             --platform linux/arm64 \
             --pull \
+            --secret id=github_token,env=GITHUB_TOKEN \
             "${tag_args[@]}" \
             -f inkson/Dockerfile \
             .

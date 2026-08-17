@@ -708,8 +708,8 @@ fn device_verification_transcript_canonical_bytes_are_unchanged() {
     )
     .unwrap();
     let created_at = full.device_envelope.created_at.clone();
-    // Byte-for-byte the object the previous `json!` builder produced.
-    let legacy_full = json!({
+    // Byte-for-byte the exact object the typed builder must produce.
+    let expected_full = json!({
         "type": "org.arkret.inkson.device_verification.proof.v1",
         "from_actor": "did:web:alice.example",
         "from_device": "ak:device:alice",
@@ -722,10 +722,10 @@ fn device_verification_transcript_canonical_bytes_are_unchanged() {
     });
     assert_eq!(
         canonical(&serde_json::to_value(&full.device_envelope).unwrap()),
-        canonical(&legacy_full)
+        canonical(&expected_full)
     );
 
-    // The optional members were absent — not null — before the migration.
+    // The optional members are absent — not null.
     let minimal = build_signed_device_verification_proof(
         "did:web:alice.example",
         "ak:device:alice",
@@ -738,7 +738,7 @@ fn device_verification_transcript_canonical_bytes_are_unchanged() {
     )
     .unwrap();
     let created_at = minimal.device_envelope.created_at.clone();
-    let legacy_minimal = json!({
+    let expected_minimal = json!({
         "type": "org.arkret.inkson.device_verification.proof.v1",
         "from_actor": "did:web:alice.example",
         "from_device": "ak:device:alice",
@@ -748,13 +748,13 @@ fn device_verification_transcript_canonical_bytes_are_unchanged() {
     });
     assert_eq!(
         canonical(&serde_json::to_value(&minimal.device_envelope).unwrap()),
-        canonical(&legacy_minimal)
+        canonical(&expected_minimal)
     );
 }
 
-/// A6 — `ak.key.verification.key` content used to carry only the proof block,
-/// so it satisfied none of the members `device-message.schema.json` requires
-/// (`transaction_id`, `from_device`, `key`). The schema gate lives in
+/// A6 — `ak.key.verification.key` content must carry every member
+/// `device-message.schema.json` requires (`transaction_id`, `from_device`,
+/// `key`), not just the proof block. The schema gate lives in
 /// `tests/conformance_gates.rs`; this pins the builder's own contract.
 #[test]
 fn sas_key_verification_content_carries_the_required_members() {

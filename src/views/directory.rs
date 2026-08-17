@@ -1255,9 +1255,8 @@ fn value_bool_any(value: &Value, keys: &[&str]) -> bool {
 ///   - a relationship is revoked / inactive / expired, or
 ///   - the preview only carries a declared hint (no proof-backed relationship).
 ///
-/// The legacy single `verified_badge` / `verified` bool is deliberately NOT
-/// honored on its own: a bare bool cannot distinguish a declared hint from a
-/// verified relationship, which is exactly the confusion this task removes.
+/// A bare `verified_badge` / `verified` bool is deliberately NOT honored on its
+/// own: it cannot distinguish a declared hint from a verified relationship.
 /// Field names align with the forthcoming teabay / soland projection
 /// (TBY-ORG-02): a `verified_relationships` array of
 /// `{relationship, status, expires_at}` objects.
@@ -1408,7 +1407,7 @@ mod tests {
         let org = json!({
             "organization_did": "did:web:hint.example",
             "display_name": "Hinted Org",
-            // Legacy bool is intentionally ignored on its own.
+            // A bare bool is intentionally ignored on its own.
             "verified_badge": true,
         });
         assert!(verified_org_relationships(&org).is_empty());

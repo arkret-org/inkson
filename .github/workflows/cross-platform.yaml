@@ -110,6 +110,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   DIOXUS_CLI_VERSION: "0.7.9"
+  # Private `yoface` git dependency — see .github/workflows/ci.yml.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
   cross-platform:
@@ -166,12 +168,10 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
-      - name: Checkout yoface
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ github.repository_owner }}/yoface
-          path: yoface
-          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      # `yoface` is a private cargo git dependency, not a sibling checkout.
+      # See .github/workflows/ci.yml for the rationale.
+      - name: Authenticate cargo for the private yoface git dependency
+        run: git config --global url."https://x-access-token:${{ secrets.CI_REPO_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Linux desktop dependencies
         run: |

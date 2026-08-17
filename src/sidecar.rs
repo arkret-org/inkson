@@ -22,7 +22,7 @@ pub struct HostedSidecarState {
     pub mls_context: arkret_sdk::AgentSidecarMlsContext,
     /// True only after this device has restored a snapshot keyed by the
     /// native `(realm_id, sidecar_id, mls_group_id)` scope. A server `ready`
-    /// projection alone must never authorize the legacy Circle-backed store.
+    /// projection alone must never authorize a store this device cannot open.
     pub native_mls_ready: bool,
     pub display_mode: arkret_sdk::AgentSidecarDisplayMode,
     pub migrated_draft: String,
@@ -488,10 +488,6 @@ fn is_sidecar_private_identifier_key(key: &str) -> bool {
     matches!(
         key,
         "sidecar_id"
-            | "backing_circle_id"
-            | "backing_scope_circle_id"
-            | "private_strand_id"
-            | "private_relation_id"
             | "exchange_id"
             | "request_binding"
             | "control_plaintext"
@@ -2812,7 +2808,7 @@ mod tests {
             SidecarDisclosureSurface::PublicExport,
             &serde_json::json!({
                 "body": "ordinary looking preview",
-                "private_relation_id": "ak:relation:AbHXuoXZcIiw4QyNSau5zQP8Hpa3rUHSIli9bdNIL7KQ",
+                "internal_locator": "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm",
             }),
         ));
         assert!(!gate.allows_serialized(
@@ -2881,9 +2877,6 @@ mod tests {
         );
         for forbidden in [
             "sidecar_id",
-            "backing_circle_id",
-            "private_strand_id",
-            "private_relation_id",
             "exchange_id",
             "request_binding",
             "private_history",

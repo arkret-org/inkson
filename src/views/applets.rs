@@ -7,7 +7,7 @@
 //!     projection and renders them as registry rows so users see which applets the Space already
 //!     accepts.
 //!   * Registration is derived from the signed manifest during the install preview/commit flow; the
-//!     panel does not expose a legacy short-form registration writer.
+//!     panel does not expose a short-form registration writer.
 //!   * Per-session monitor lists active `interop_session.start/status` rows so an operator can see
 //!     in-flight applet calls + their bridge errors.
 //!

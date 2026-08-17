@@ -625,7 +625,7 @@ pub struct PendingAccountHandoff {
     #[serde(default)]
     pub account_handle: String,
     /// Stable Account Authority subject frozen from the authenticated handoff.
-    /// Legacy checkpoints omit it and must fail closed before cold-root signing.
+    /// A checkpoint that omits it must fail closed before cold-root signing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_subject: Option<arkret_sdk::Hash>,
     pub holder_jkt: String,
@@ -1401,8 +1401,9 @@ pub struct PersistedSessionGrant {
     pub grant_id: String,
     /// Audience the grant is bound to (typically the principal-server URL).
     pub audience: String,
-    /// Stable core principal ID (`DidCoreId`) the grant authorizes. Legacy
-    /// records containing a full DID are projected at the session boundary.
+    /// Stable core principal ID (`DidCoreId`) the grant authorizes. A record
+    /// holding anything else is invalid and the session is unusable; it is
+    /// never repaired by back-projecting a full DID.
     pub principal_id: String,
     /// Device id bound to the grant.
     pub device_id: String,

@@ -449,7 +449,7 @@ fn resolve_gate_account_base_fails_closed_without_account_authority() {
 fn principal_description() -> arkret_sdk::ServiceDescribe {
     let mut description = arkret_sdk::ServiceDescribe::development(
         arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
-        arkret_sdk::TypedTrustDomainId::new("ak:trust_domain:principal.example".to_owned())
+        arkret_sdk::TrustDomainId::new("ak:trust_domain:principal.example".to_owned())
             .unwrap(),
         arkret_sdk::ServiceKind::PrincipalServer,
     );

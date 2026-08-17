@@ -15,7 +15,7 @@ Inkson 采用“命令注册表 + 唯一分发器 + 上下文作用域”的快�
 - `Mod+K` 打开命令面板或快速跳转；自由文本编辑器优先拥有该组合。
 - 目标态中 `Mod+F` 搜索当前上下文，`Mod+Shift+F` 搜索全部可访问内容。
 - 在上下文搜索完成前，现有 `Mod+F` 继续打开全局消息搜索，不能提前修改帮助文案造成行为漂移。
-- 聊天使用 `Enter` 发送、`Shift+Enter` 换行，保留 `Mod+Enter` 作为兼容发送键。
+- 聊天使用 `Enter` 发送、`Shift+Enter` 换行，保留 `Mod+Enter` 作为备用发送键。
 - 无修饰单键只在非编辑状态生效，并可单独关闭。
 - 输入法合成期间不执行发送、提交、导航或写操作。
 - `Escape` 每次只退出最内层状态，并恢复到合理焦点。
@@ -65,7 +65,7 @@ Inkson 采用“命令注册表 + 唯一分发器 + 上下文作用域”的快�
 | `Mod+F` | 打开全局本地消息搜索 | 应用壳层 |
 | `Enter` | 发送消息 | Chat composer |
 | `Shift+Enter` | 原生换行 | Chat composer |
-| `Mod+Enter` | 兼容发送键 | Chat composer |
+| `Mod+Enter` | 备用发送键 | Chat composer |
 | `Enter` / `Escape` | 提交/取消列重命名 | Kanban |
 | `Enter` | 提交目录搜索 | Directory |
 | `Escape` | 关闭消息局部菜单或编辑态 | Chat timeline |
@@ -293,7 +293,7 @@ and not repeat
 and send action is enabled
 ```
 
-`Ctrl+Enter` 与 `Cmd+Enter` 满足同一发送条件，但只是兼容别名。
+`Ctrl+Enter` 与 `Cmd+Enter` 满足同一发送条件，但只是同一发送动作的别名。
 
 ## 7. `Escape` 与浮层栈
 
@@ -331,7 +331,7 @@ and send action is enabled
 
 | 命令 | 默认绑定 | 前置条件 |
 | --- | --- | --- |
-| 发送 | `Enter`、`Mod+Enter` | 非 IME、非 repeat；`Mod+Enter` 为兼容键 |
+| 发送 | `Enter`、`Mod+Enter` | 非 IME、非 repeat；`Mod+Enter` 为备用键 |
 | 换行 | `Shift+Enter` | 编辑器原生行为 |
 | 编辑最近消息 | `↑` | 草稿为空且光标位于起始位置 |
 | 回复聚焦消息 | `R` | 消息浏览焦点 |
@@ -362,7 +362,7 @@ and send action is enabled
 | 表面 | `Enter` | `Shift+Enter` | `Mod+Enter` | `Escape` |
 | --- | --- | --- | --- | --- |
 | 单行表单 | 提交 | 不适用 | 提交别名 | 取消/关闭 |
-| Chat composer | 发送 | 换行 | 发送兼容键 | 退出内层状态 |
+| Chat composer | 发送 | 换行 | 发送备用键 | 退出内层状态 |
 | 多行普通文本 | 换行 | 换行 | 有明确主动作时提交 | 取消编辑 |
 | 富文本/长文档 | 段落 | 硬换行 | 页面声明后保存/提交 | 退出内层状态 |
 | 重命名 | 保存 | 不适用 | 保存别名 | 放弃 |
@@ -404,7 +404,7 @@ and send action is enabled
 
 ### Phase 0：纠正现状漂移
 
-- [x] 帮助显示 `Enter` 发送，并标记 `Mod+Enter` 为兼容键。
+- [x] 帮助显示 `Enter` 发送，并标记 `Mod+Enter` 为备用键。
 - [x] 明确当前 `Mod+F` 是全局消息搜索。
 - [x] 合并重复的全局快捷键监听 owner。
 - [x] 添加 editable、IME 和 repeat 的全局保护。

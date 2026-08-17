@@ -827,8 +827,8 @@ pub(super) fn ChatEffects(
 
     // T7.4: safety-net crypto state refresh for rows built without the
     // decrypt-on-read context. The model layer marks attempted decrypt
-    // failures as `KeyMissing`; this covers legacy/no-snapshot rows so the
-    // user sees a clear missing-key state instead of a spinner forever.
+    // failures as `KeyMissing`; this covers no-snapshot rows so the user
+    // sees a clear missing-key state instead of a spinner forever.
     {
         let realm_for_crypto = selected_realm_after_initial_sync.clone();
         let messages_sig = messages;

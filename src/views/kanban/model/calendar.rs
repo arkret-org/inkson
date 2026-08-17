@@ -264,10 +264,9 @@ fn format_integer_array(values: &[Value]) -> String {
 
 /// True when the touched `metadata.fields` carry the schedule.
 ///
-/// Only the single `calendar` namespace counts. The pre-closure flat keys and
-/// the `profile` / `profile_refs` impostors are deliberately excluded: reading
-/// them back would reintroduce guess-by-field-presence activation, and a patch
-/// that still touches them is a migration unset, not a schedule.
+/// Only the single `calendar` namespace counts. Flat schedule keys and the
+/// `profile` / `profile_refs` impostors are deliberately excluded: reading them
+/// back would reintroduce guess-by-field-presence activation.
 pub(crate) fn fields_have_calendar_keys(fields: &Map<String, Value>) -> bool {
     fields.contains_key(arkret_sdk::CALENDAR_METADATA_FIELDS_NAMESPACE)
 }
@@ -279,35 +278,15 @@ pub(crate) fn fields_have_calendar_keys(fields: &Map<String, Value>) -> bool {
 /// `metadata.fields.calendar`. The two are always written and cleared
 /// together, because a lone ref or a lone subtree is rejected as
 /// `calendar_activation_mismatch` on the post-patch object.
-///
-/// The pre-closure shape — flat `metadata.fields.start` and friends plus
-/// `metadata.fields.profile` / `profile_refs` — is unset here, so a card
-/// authored before the closure migrates on its next schedule edit instead of
-/// carrying two schedules at once.
 pub(crate) fn calendar_patch_entries(
     patch: &mut Map<String, Value>,
     current: &CalendarCardFields,
     draft: &CalendarCardFields,
 ) -> Result<(), String> {
-    const LEGACY_PATHS: &[&str] = &[
-        "metadata.fields.profile",
-        "metadata.fields.profile_refs",
-        "metadata.fields.start",
-        "metadata.fields.end",
-        "metadata.fields.timezone",
-        "metadata.fields.all_day",
-        "metadata.fields.recurrence",
-        "metadata.fields.attendees",
-        "metadata.fields.location",
-    ];
-
     if !current.has_schedule() && !draft.has_editable_schedule() {
         return Ok(());
     }
     if !draft.has_editable_schedule() {
-        for path in LEGACY_PATHS {
-            patch.insert((*path).to_owned(), json!({ "$op": "unset" }));
-        }
         // Ref and subtree are cleared in the same patch: unsetting only one
         // side would leave the object in the mismatch state.
         patch.insert(CALENDAR_SUBTREE_PATH.to_owned(), json!({ "$op": "unset" }));
@@ -323,9 +302,6 @@ pub(crate) fn calendar_patch_entries(
         .map_err(|err| format!("calendar fields serialize failed: {err}"))?;
     validate_calendar_event_value(&event_value)?;
 
-    for path in LEGACY_PATHS {
-        patch.insert((*path).to_owned(), json!({ "$op": "unset" }));
-    }
     patch.insert(
         CALENDAR_SCHEMA_REFS_PATH.to_owned(),
         json!({ "$op": "set", "value": [arkret_sdk::SchemaId::CALENDAR_EVENT_V1] }),

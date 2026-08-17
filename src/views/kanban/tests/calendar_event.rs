@@ -4,7 +4,7 @@ use crate::state::projection_views::{RsvpCellProjectionView, RsvpHeadProjectionV
 const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";
 
 #[test]
-fn calendar_patch_writes_one_activation_pair_and_clears_the_legacy_shape() {
+fn calendar_patch_writes_one_activation_pair() {
     let current = test_card(TEST_CALENDAR_STRAND_ID, "U");
     let mut draft = card_detail_draft_from_card(&current);
     draft.calendar = CalendarCardFields {
@@ -48,8 +48,8 @@ fn calendar_patch_writes_one_activation_pair_and_clears_the_legacy_shape() {
         json!({ "title": "Board room" })
     );
 
-    // The pre-closure shape is cleared in the same patch, so no object ever
-    // carries two schedules or a profile-id activation impostor.
+    // The activation pair plus the encrypted `location` child are the only
+    // schedule entries: no flat field or profile-id impostor is ever written.
     for path in [
         "metadata.fields.profile",
         "metadata.fields.profile_refs",
@@ -60,7 +60,7 @@ fn calendar_patch_writes_one_activation_pair_and_clears_the_legacy_shape() {
         "metadata.fields.recurrence",
         "metadata.fields.location",
     ] {
-        assert_eq!(patch[path]["$op"], "unset", "{path} must be cleared");
+        assert!(patch.get(path).is_none(), "{path} must not be written");
     }
 
     let private_values = collect_encryptable_private_patch_values(&patch).unwrap();

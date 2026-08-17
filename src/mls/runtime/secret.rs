@@ -18,11 +18,10 @@ const ACCOUNT_MLS_SECRET_VERIFIED_MARKER: &str = "verified";
 pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.identity_state.v1";
-// v4 invalidates the former last-resort-only marker. Direct Conversation peer
-// claims must use single-use KeyPackages, so every device republishes an
-// ordinary package after this upgrade and after each successfully applied
+// Direct Conversation peer claims must use single-use KeyPackages, so every
+// device republishes an ordinary package after each successfully applied
 // Welcome.
-const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v4";
+const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v1";
 /// Per-(actor, device) X25519 keypair used to receive HPKE-sealed
 /// `history_secret`s in a `ak.realm_key.share`. This device advertises the
 /// public half as `recipient_hpke_public_key` in a `ak.realm_key.request` and

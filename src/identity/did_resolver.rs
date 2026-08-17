@@ -174,7 +174,7 @@ pub struct ResolverDidAnchor {
     web: std::sync::Mutex<DidWebResolver>,
     webvh: std::sync::Mutex<DidWebvhResolver>,
     cache: std::sync::Mutex<DidResolutionCache>,
-    /// `None` for legacy / test anchors that have no durable binding scope.
+    /// `None` for test anchors that have no durable binding scope.
     /// Production call sites build the anchor with
     /// [`Self::from_persisted_bindings`] so every acceptance is recorded.
     bindings: Option<AnchorBindingState>,

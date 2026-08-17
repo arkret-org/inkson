@@ -11,6 +11,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   DIOXUS_CLI_VERSION: "0.7.9"
+  # Private `yoface` git dependency: cargo must fetch through the git CLI so
+  # the credential rewrite installed below applies. Redundant with
+  # inkson/.cargo/config.toml, but also covers cargo runs started outside the
+  # inkson directory.
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
   rust-and-web:
@@ -50,12 +55,13 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN || github.token }}
 
-      - name: Checkout yoface
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ github.repository_owner }}/yoface
-          path: yoface
-          token: ${{ secrets.CI_REPO_TOKEN || github.token }}
+      # `yoface` is no longer a sibling path dependency: Cargo.toml pulls it
+      # straight from `github.com/arkret-org/yoface` (branch `main`). The repo
+      # is private, so cargo needs the same token the sibling checkouts use.
+      # `net.git-fetch-with-cli` (inkson/.cargo/config.toml) makes cargo shell
+      # out to git, which honours this credential rewrite.
+      - name: Authenticate cargo for the private yoface git dependency
+        run: git config --global url."https://x-access-token:${{ secrets.CI_REPO_TOKEN || github.token }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Linux desktop dependencies
         run: |

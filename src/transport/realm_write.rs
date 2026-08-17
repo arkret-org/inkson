@@ -604,9 +604,9 @@ pub async fn repair_direct_conversation_self_rejoin(
     realm_id: &arkret_sdk::RealmId,
     actor_id: &arkret_sdk::DidFullId,
 ) -> anyhow::Result<SubmitEventResult> {
-    // This low-level compatibility helper performs only the durable membership
-    // half. New callers should use `dispatch_direct_conversation_repair`, which
-    // freezes the resolver-provided whole-value digest and exact KeyPackage.
+    // This low-level helper performs only the durable membership half;
+    // `dispatch_direct_conversation_repair` additionally freezes the
+    // resolver-provided whole-value digest and exact KeyPackage.
     // Resolve the fixed profile baseline up front. Repair must not manufacture
     // a policy Event and must not release old generation keys.
     crate::transport::account::direct_conversation_history_sharing_policy()?;

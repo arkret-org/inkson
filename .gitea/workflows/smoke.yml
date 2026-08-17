@@ -43,12 +43,11 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN }}
 
-      - name: Checkout yoface
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ gitea.repository_owner }}/yoface
-          path: yoface
-          token: ${{ secrets.CI_REPO_TOKEN }}
+      # `yoface` is a private cargo git dependency on github.com, not a sibling
+      # checkout. `GITHUB_COM_TOKEN` must hold a GitHub PAT that can read
+      # arkret-org/yoface — the Gitea `CI_REPO_TOKEN` cannot authenticate there.
+      - name: Authenticate cargo for the private yoface git dependency
+        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_COM_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Linux desktop dependencies
         run: |
@@ -106,12 +105,11 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN }}
 
-      - name: Checkout yoface
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ gitea.repository_owner }}/yoface
-          path: yoface
-          token: ${{ secrets.CI_REPO_TOKEN }}
+      # `yoface` is a private cargo git dependency on github.com, not a sibling
+      # checkout. `GITHUB_COM_TOKEN` must hold a GitHub PAT that can read
+      # arkret-org/yoface — the Gitea `CI_REPO_TOKEN` cannot authenticate there.
+      - name: Authenticate cargo for the private yoface git dependency
+        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_COM_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Linux desktop dependencies
         run: |
@@ -198,12 +196,11 @@ jobs:
           path: chime
           token: ${{ secrets.CI_REPO_TOKEN }}
 
-      - name: Checkout yoface
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ gitea.repository_owner }}/yoface
-          path: yoface
-          token: ${{ secrets.CI_REPO_TOKEN }}
+      # `yoface` is a private cargo git dependency on github.com, not a sibling
+      # checkout. `GITHUB_COM_TOKEN` must hold a GitHub PAT that can read
+      # arkret-org/yoface — the Gitea `CI_REPO_TOKEN` cannot authenticate there.
+      - name: Authenticate cargo for the private yoface git dependency
+        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_COM_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust with wasm target
         uses: dtolnay/rust-toolchain@stable

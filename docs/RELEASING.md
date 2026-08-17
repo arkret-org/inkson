@@ -8,8 +8,11 @@ or upload Sigstore transparency-log entries.
 ## Inputs
 
 - A clean inkson worktree except for deliberate release changes.
-- Sibling `../arkret-rust-sdk`, `../garth`, `../chime`, and `../yoface`
-  checkouts matching the local release plan.
+- Sibling `../arkret-rust-sdk`, `../garth`, and `../chime` checkouts matching
+  the local release plan. `yoface` is a private cargo git dependency, not a
+  sibling checkout: git credentials for `github.com/arkret-org/yoface` are
+  required instead, and the web image build additionally needs that token in
+  `GITHUB_TOKEN` for the `github_token` build secret.
 - Dioxus CLI `0.7.9`.
 - Docker for web image evidence.
 - Optional local signing tools:

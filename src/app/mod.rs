@@ -172,7 +172,7 @@ const APP_OVERRIDES: &str = concat!(
 
 /// C3: yoface shared-component design tokens. The first layer is shadcn
 /// semantic tokens (`--primary/--background/--foreground/...`); the second
-/// layer is dioxus-components compatibility aliases
+/// layer is the dioxus-components token aliases
 /// (`--primary-color-N/--focused-border-color/...`) used by `yoface::ui::*`
 /// `#[css_module]` styles. Values come from the inkson green palette (yoface
 /// tokens.css matches inkson design.css), so this keeps the existing
