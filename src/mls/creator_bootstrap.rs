@@ -303,18 +303,33 @@ mod tests {
         )
     }
 
-    fn realm_projection(owner: &str, encryption_profile: &str) -> serde_json::Value {
-        let owner = crate::mls_api_helpers::principal_core_id(owner).unwrap();
+    /// A realm projection in its post-P1 shape: the creator fact is only
+    /// available through the projected `ak.realm.create` Event, which is the
+    /// single registered writer of the authority-root cell. The retired
+    /// `owner` / `created_by` mirrors are deliberately absent — a fixture that
+    /// carried them would test a fallback the client no longer has.
+    fn realm_projection(creator: &str, encryption_profile: &str) -> serde_json::Value {
+        let creator = crate::mls_api_helpers::principal_core_id(creator).unwrap();
         json!({
             "__kind": "realm",
-            "owner": owner,
             "content_scheme": encryption_profile,
             "members_limited": false,
-            "members": [{ "actor_id": owner, "membership": "join" }],
+            "members": [{ "actor_id": creator, "membership": "join" }],
             "summary": {
                 "title": "Realm",
                 "encryption_profile": encryption_profile,
-                "owner": owner,
+            },
+            "state": {
+                "events": [{
+                    "kind": "ak.realm.create",
+                    "payload": {
+                        "object": {
+                            "id": REALM,
+                            "created_by": creator,
+                            "encryption_profile": encryption_profile,
+                        }
+                    }
+                }]
             }
         })
     }

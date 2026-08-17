@@ -85,18 +85,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     let mut state = temp_state_store("encrypted-scope-allows-encrypted-value");
     state.save_realm_tree_projection(
         TEST_REALM_ID,
-        json!({
-            "__kind": "realm",
-            "owner": actor_id,
-            "content_scheme": "mls_rfc9420",
-            "members_limited": false,
-            "members": [{ "actor_id": actor_id, "membership": "join" }],
-            "summary": {
-                "title": "Encrypted Realm",
-                "encryption_profile": "mls_rfc9420",
-                "owner": actor_id,
-            }
-        }),
+        creator_realm_projection(TEST_REALM_ID, &actor_id, "mls_rfc9420"),
     );
     crate::mls::governance_proof::seed_test_governance_proof(
         &mut state,
@@ -365,18 +354,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let mut state = temp_state_store("creator-bootstrap-mls");
     state.save_realm_tree_projection(
         realm,
-        json!({
-            "__kind": "realm",
-            "owner": actor_id,
-            "content_scheme": "mls_rfc9420",
-            "members_limited": false,
-            "members": [{ "actor_id": actor_id, "membership": "join" }],
-            "summary": {
-                "title": "Encrypted Realm",
-                "encryption_profile": "mls_rfc9420",
-                "owner": actor_id,
-            }
-        }),
+        creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
     );
     crate::mls::governance_proof::seed_test_governance_proof(
         &mut state,
@@ -456,18 +434,7 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
     let mut state = temp_state_store("creator-persisted-epoch-zero");
     state.save_realm_tree_projection(
         realm,
-        json!({
-            "__kind": "realm",
-            "owner": actor_id,
-            "content_scheme": "mls_rfc9420",
-            "members_limited": false,
-            "members": [{ "actor_id": actor_id, "membership": "join" }],
-            "summary": {
-                "title": "Encrypted Realm",
-                "encryption_profile": "mls_rfc9420",
-                "owner": actor_id,
-            }
-        }),
+        creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
     );
     crate::mls::governance_proof::seed_test_governance_proof(
         &mut state,

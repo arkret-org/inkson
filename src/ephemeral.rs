@@ -7,11 +7,38 @@
 
 use serde::Serialize;
 
+/// A batch the server did not fully accept.
+///
+/// The message quotes wire vocabulary — the `status` token and each row's
+/// `reason_code` exactly as they arrived — so a pasted log line can be grepped
+/// against the server's own response. Control flow never reads it; that is what
+/// [`events_submit_rejected_for_reason`] is for.
 #[derive(Debug, thiserror::Error)]
-#[error("events submit was not fully accepted: status={status:?}, rejected={rejected:?}")]
 struct EventsSubmitRejectedError {
     status: arkret_sdk::EventsSubmitStatus,
     rejected: Vec<arkret_sdk::EventsSubmitRejectedRow>,
+}
+
+impl std::fmt::Display for EventsSubmitRejectedError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "events submit was not fully accepted: status={}",
+            self.status.as_str()
+        )?;
+        for row in &self.rejected {
+            write!(
+                formatter,
+                "; rejected {} reason_code={}",
+                row.id,
+                row.reason_code.as_str()
+            )?;
+            if let Some(detail) = &row.detail {
+                write!(formatter, " detail={detail}")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Match a reducer refusal from the typed per-Event rejection rows. Diagnostic

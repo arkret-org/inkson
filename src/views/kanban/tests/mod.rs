@@ -88,6 +88,44 @@ pub(super) fn board_write_record(state: CardState, note: &str) -> BoardWriteReco
     }
 }
 
+/// Realm-tree projection for an encrypted Realm whose creator is `actor_id`.
+///
+/// The creator fact is carried only by the projected `ak.realm.create` Event —
+/// the sole registered writer of `ak.component.realm.authority_root.v1`. Post-P1
+/// projections no longer mirror it into an `owner` / `created_by` field, and
+/// `security_state::realm_authority_root_controller_from_events` reads nothing
+/// else, so a fixture that mirrors it would test a fallback the client does not
+/// have.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn creator_realm_projection(
+    realm_id: &str,
+    actor_id: &arkret_sdk::DidCoreId,
+    encryption_profile: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "__kind": "realm",
+        "content_scheme": encryption_profile,
+        "members_limited": false,
+        "members": [{ "actor_id": actor_id, "membership": "join" }],
+        "summary": {
+            "title": "Encrypted Realm",
+            "encryption_profile": encryption_profile,
+        },
+        "state": {
+            "events": [{
+                "kind": "ak.realm.create",
+                "payload": {
+                    "object": {
+                        "id": realm_id,
+                        "created_by": actor_id,
+                        "encryption_profile": encryption_profile,
+                    }
+                }
+            }]
+        }
+    })
+}
+
 /// Helper for `relocate_card` tests — builds a KanbanCard with the
 /// supplied id and rank, defaulting the rest of the demo fields.
 pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {

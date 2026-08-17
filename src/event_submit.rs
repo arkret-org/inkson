@@ -4640,14 +4640,16 @@ mod tests {
         assert_eq!(event.prev_refs, vec![frontier_event_id]);
     }
 
-    /// The envelope `actor_seq` and a cell-local `ordered_log` `issuer_seq`
-    /// are different sequences. v1 has no producer `effects[]` for the frontier
-    /// stamp to overwrite, so the invariant is now asserted where the value
-    /// actually comes from: the registered projection, which pins
-    /// `ak.realm.create`'s create-log append at `issuer_seq 0` regardless of
-    /// how far the actor chain has advanced.
+    /// `contract-registry.json` (`event_kind_registry.registry_rules`) closes
+    /// the question the old version of this test guessed at: *every*
+    /// `ordered_log` append MUST project `issuer_seq` from `envelope.actor_seq`
+    /// exactly, and a registry row MUST NOT declare a cell-local constant. A
+    /// genesis append is not special-cased into slot zero, so the frontier
+    /// stamp is required to carry into `ak.realm.create`'s create-log append —
+    /// while every other registered write of that Event, none of which reads
+    /// `actor_seq`, must come out byte-identical.
     #[test]
-    fn actor_frontier_stamp_does_not_move_cell_local_ordered_log_sequence() {
+    fn actor_frontier_stamp_carries_into_the_ordered_log_issuer_seq() {
         let mut event = crate::event_builders::build_realm_create_event(
             arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
             "did:web:alice.example",
@@ -4669,12 +4671,26 @@ mod tests {
             None,
         )
         .unwrap();
-        let before = crate::operation::direct_registered_cell_writes(&event).unwrap();
-        let create_log = before
-            .iter()
-            .find(|write| write.cell.as_str() == arkret_bootstrap::REALM_CREATE_CELL)
-            .expect("realm.create projects the create-log append");
-        assert_eq!(create_log.op.issuer_seq, Some(0));
+        let create_log_issuer_seq = |event: &arkret_sdk::Event| {
+            crate::operation::direct_registered_cell_writes(event)
+                .unwrap()
+                .into_iter()
+                .find(|write| write.cell.as_str() == arkret_bootstrap::REALM_CREATE_CELL)
+                .expect("realm.create projects the create-log append")
+                .op
+                .issuer_seq
+        };
+        let other_writes = |event: &arkret_sdk::Event| {
+            crate::operation::direct_registered_cell_writes(event)
+                .unwrap()
+                .into_iter()
+                .filter(|write| write.cell.as_str() != arkret_bootstrap::REALM_CREATE_CELL)
+                .collect::<Vec<_>>()
+        };
+
+        let authored_seq = event.actor_seq;
+        assert_eq!(create_log_issuer_seq(&event), Some(authored_seq));
+        let before_other = other_writes(&event);
 
         let frontier = arkret_sdk::RealmActorFrontierView::new(
             event.realm_id.clone(),
@@ -4690,10 +4706,9 @@ mod tests {
         apply_actor_frontier_to_sdk_event(&mut event, &frontier).unwrap();
 
         assert_eq!(event.actor_seq, 8);
-        assert_eq!(
-            crate::operation::direct_registered_cell_writes(&event).unwrap(),
-            before
-        );
+        assert_ne!(event.actor_seq, authored_seq);
+        assert_eq!(create_log_issuer_seq(&event), Some(8));
+        assert_eq!(other_writes(&event), before_other);
     }
 
     #[test]
