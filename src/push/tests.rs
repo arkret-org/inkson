@@ -41,10 +41,10 @@ fn builds_persistable_registration_state() {
     let request = build_register_request("dev_inkson").unwrap();
     let mut response = ChimePushRegisterDeviceOutcome::default();
     response.ok = true;
-    response.registration_id = Some("ak:push:test".to_owned());
+    response.registration_id = Some(arkret_sdk::OpaqueLocalId::new("push:test").unwrap());
     let state = registration_state_from_response(&request, &response);
 
-    assert_eq!(state.registration_id.as_deref(), Some("ak:push:test"));
+    assert_eq!(state.registration_id.as_deref(), Some("push:test"));
     assert_eq!(state.device_id, "dev_inkson");
     assert!(state.push_key_hash.starts_with("sha256:"));
     assert!(!state.push_key_hash.contains("placeholder"));
@@ -55,12 +55,12 @@ fn builds_unregister_request_from_existing_state() {
     let request = build_register_request("dev_inkson").unwrap();
     let mut response = ChimePushRegisterDeviceOutcome::default();
     response.ok = true;
-    response.registration_id = Some("ak:push:test".to_owned());
+    response.registration_id = Some(arkret_sdk::OpaqueLocalId::new("push:test").unwrap());
     let state = registration_state_from_response(&request, &response);
     let unregister = build_unregister_request("dev_inkson", Some(&state)).unwrap();
 
     assert_eq!(unregister.device_id, "dev_inkson");
-    assert_eq!(unregister.registration_id.as_deref(), Some("ak:push:test"));
+    assert_eq!(unregister.registration_id.as_deref(), Some("push:test"));
     assert_eq!(unregister.app_id.as_deref(), Some("inkson"));
 }
 

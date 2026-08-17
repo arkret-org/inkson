@@ -422,7 +422,7 @@ pub(crate) fn test_invite(
         invitee: None,
         invite_delivery_target: None,
         introduction_evidence_digest: None,
-        third_party_id: None,
+        third_party_invite: None,
         join_rule_snapshot,
         capability_grant_refs: Vec::new(),
         state: arkret_sdk::InviteState::Pending,

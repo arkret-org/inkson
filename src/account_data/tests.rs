@@ -449,27 +449,27 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
 
 #[test]
 fn blocklist_payload_uses_cas_revision_and_preserves_empty_clear() {
-    let owner = "did:web:owner.example";
-    let body = build_blocklist_account_data_body(owner, 7, &[]).unwrap();
-    assert_eq!(body["owner"], "ak:did_core:web:owner.example");
+    let holder_id = "did:web:owner.example";
+    let body = build_blocklist_account_data_body(holder_id, 7, &[]).unwrap();
+    assert_eq!(body["holder_id"], "ak:did_core:web:owner.example");
     assert_eq!(body["version"], 7);
     assert_eq!(body["entries"], json!([]));
     assert!(
-        blocklist_entries_from_account_data(&body, owner)
+        blocklist_entries_from_account_data(&body, holder_id)
             .unwrap()
             .is_empty()
     );
 }
 
 #[test]
-fn blocklist_payload_rejects_wrong_owner_and_zero_revision() {
-    let owner = "did:web:owner.example";
-    let body = build_blocklist_account_data_body(owner, 2, &[]).unwrap();
+fn blocklist_payload_rejects_wrong_holder_id_and_zero_revision() {
+    let holder_id = "did:web:owner.example";
+    let body = build_blocklist_account_data_body(holder_id, 2, &[]).unwrap();
     assert!(blocklist_entries_from_account_data(&body, "did:web:other.example").is_err());
 
     let mut wrong_version = body;
     wrong_version["version"] = json!(0);
-    assert!(blocklist_entries_from_account_data(&wrong_version, owner).is_err());
+    assert!(blocklist_entries_from_account_data(&wrong_version, holder_id).is_err());
 }
 
 #[test]
@@ -618,7 +618,7 @@ fn build_account_data_set_emits_canonical_kind() {
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
-    assert_eq!(op.payload["owner"], "ak:did_core:web:alice");
+    assert_eq!(op.payload["holder_id"], "ak:did_core:web:alice");
     assert_eq!(op.payload["body"]["send"], false);
     assert!(op.payload["updated_at"].is_string());
 }
@@ -817,7 +817,7 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     .build("node");
     assert_eq!(op.kind, "ak.account_data.set");
     assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
-    assert_eq!(op.payload["owner"], "ak:did_core:web:alice");
+    assert_eq!(op.payload["holder_id"], "ak:did_core:web:alice");
     assert_eq!(op.payload["expected_revision"], 3);
     assert_eq!(op.payload["tombstone"], true);
     assert!(op.payload["updated_at"].is_string());

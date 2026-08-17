@@ -2163,7 +2163,10 @@ pub fn SettingsPanel(
                                                 let label = outcome
                                                     .response
                                                     .registration_id
-                                                    .unwrap_or_else(|| "registered".to_owned());
+                                                    .map_or_else(
+                                                        || "registered".to_owned(),
+                                                        arkret_sdk::OpaqueLocalId::into_string,
+                                                    );
                                                 push_state.set(label.clone());
                                                 crate::components::feedback::toast_success(
                                                     "feedback.push_registered",

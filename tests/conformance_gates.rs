@@ -328,10 +328,11 @@ fn test_auth_context() -> arkret_sdk::AuthContext {
     arkret_sdk::AuthContext {
         actor_id: arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example")
             .expect("test actor core is canonical"),
-        // `key_id` is the bare verification-method fragment (the schema
-        // pattern forbids `#`), which is what `data_event_key_id_for`
-        // produces from the active signer's device id.
-        key_id: "device".to_owned(),
+        // `key_id` is the bare verification-method fragment with the `ak:`
+        // sigil dropped (the schema pattern forbids both `#` and the typed-ID
+        // lexical space), which is what `data_event_key_id_for` produces from
+        // the active signer's device id.
+        key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
         key_epoch: 0,
         credential_epoch: None,
     }
@@ -981,7 +982,7 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
     // the server-side view the recipient sees and validate that.
     let target = &request["messages"]["ak:did_core:web:bob.example"][target_device];
     let delivered = serde_json::json!({
-        "message_id": target["message_id"],
+        "device_message_id": target["device_message_id"],
         "kind": target["kind"],
         "sender_principal_id": "ak:did_core:web:alice.example",
         "sender_device_id": from_device,

@@ -1777,10 +1777,10 @@ fn realm_key_request_envelope_request_id(envelope: &Value) -> Option<String> {
     envelope
         .get("request_id")
         // The production to-device relay identifies deliveries with
-        // `message_id`; RealmKeyRequestPayload itself has no `request_id`.
+        // `device_message_id`; RealmKeyRequestPayload itself has no `request_id`.
         // Treat that delivery id as the request identity so the provider can
         // remove a successfully answered envelope from its local inbox.
-        .or_else(|| envelope.get("message_id"))
+        .or_else(|| envelope.get("device_message_id"))
         .or_else(|| {
             envelope
                 .get("content")
@@ -1789,7 +1789,7 @@ fn realm_key_request_envelope_request_id(envelope: &Value) -> Option<String> {
         .or_else(|| {
             envelope
                 .get("content")
-                .and_then(|content| content.get("message_id"))
+                .and_then(|content| content.get("device_message_id"))
         })
         .or_else(|| {
             envelope
@@ -1799,7 +1799,7 @@ fn realm_key_request_envelope_request_id(envelope: &Value) -> Option<String> {
         .or_else(|| {
             envelope
                 .get("payload")
-                .and_then(|payload| payload.get("message_id"))
+                .and_then(|payload| payload.get("device_message_id"))
         })
         .and_then(Value::as_str)
         .map(str::trim)
@@ -5939,7 +5939,7 @@ mod tests {
         snapshot.epoch = 1;
         store.save_mls_snapshot(realm.to_owned(), snapshot);
         store.ingest_to_device_messages(&[serde_json::from_value(json!({
-            "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
+            "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
             "kind": "ak.mls.welcome",
             "sender_principal_id": PROVIDER_DID,
             "sender_device_id": PROVIDER_DEVICE,
@@ -6015,7 +6015,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_relayed_realm_key_request_message_id() {
+    fn parses_relayed_realm_key_request_device_message_id() {
         let realm = TEST_REALM;
         let request = arkret_sdk::RealmKeyRequestPayload {
             key_scope: arkret_sdk::RealmKeyRequestScope {
@@ -6044,7 +6044,7 @@ mod tests {
                 .with_timezone(&chrono::Utc),
         };
         let envelope = json!({
-            "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000072",
+            "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000072",
             "kind": "ak.realm_key.request",
             "sender_device_id": SELF_DEVICE,
             "content": request,

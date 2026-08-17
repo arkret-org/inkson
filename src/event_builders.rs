@@ -830,7 +830,7 @@ pub fn recommended_realm_policy_bundle_value(
         // the AAD event-ref digest reachable at all; the value is the narrowest
         // one that supports digest-based dedupe.
         aad_visibility: Some(arkret_sdk::RealmAadVisibilityPolicy {
-            event_id: arkret_sdk::EncryptedEnvelopeAadVisibility::RoutingDigest,
+            event_id_kind: arkret_sdk::EncryptedEnvelopeAadVisibility::RoutingDigest,
         }),
         ..arkret_sdk::RealmPolicyBundlePayload::new(1)
     }

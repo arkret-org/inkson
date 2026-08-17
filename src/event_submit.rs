@@ -3287,17 +3287,23 @@ fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_s
     })
 }
 
-fn data_event_key_id_for(event: &arkret_sdk::Event) -> String {
+/// `auth_context.key_id` for one DataEvent.
+///
+/// `event-envelope.schema.json` closes the member over
+/// `^(?!ak:)[A-Za-z0-9._:-]{1,128}$`: it labels the signing key locally and is
+/// not a typed object id, so a device id or verification-method fragment loses
+/// its `ak:` sigil instead of borrowing the typed-ID lexical space.
+fn data_event_key_id_for(event: &arkret_sdk::Event) -> arkret_sdk::OpaqueLocalId {
     let controller = event
         .executed_by
         .as_ref()
         .map(|did| did.as_str())
         .unwrap_or_else(|| event.actor_id.as_str());
     let Some(signer) = crate::event_signer::active_signer() else {
-        return "device".to_owned();
+        return fallback_key_id();
     };
     if let Some(device_id) = signer.device_id() {
-        return device_id.to_owned();
+        return opaque_key_id(device_id);
     }
     let method = signer.verification_method();
     let method_without_query = method
@@ -3305,13 +3311,22 @@ fn data_event_key_id_for(event: &arkret_sdk::Event) -> String {
         .map(|(head, _)| head)
         .unwrap_or(method);
     let Some((method_controller, fragment)) = method_without_query.split_once('#') else {
-        return "device".to_owned();
+        return fallback_key_id();
     };
     if method_controller == controller && !fragment.is_empty() {
-        fragment.to_owned()
+        opaque_key_id(fragment)
     } else {
-        "device".to_owned()
+        fallback_key_id()
     }
+}
+
+fn opaque_key_id(value: &str) -> arkret_sdk::OpaqueLocalId {
+    arkret_sdk::OpaqueLocalId::new(value.strip_prefix("ak:").unwrap_or(value))
+        .unwrap_or_else(|_| fallback_key_id())
+}
+
+fn fallback_key_id() -> arkret_sdk::OpaqueLocalId {
+    arkret_sdk::OpaqueLocalId::new("device").expect("device is a valid opaque local id")
 }
 
 #[cfg(test)]
@@ -4155,7 +4170,7 @@ mod tests {
         );
         authored.auth_context = Some(arkret_sdk::AuthContext {
             actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-            key_id: "device".to_owned(),
+            key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
             key_epoch: 0,
             credential_epoch: None,
         });

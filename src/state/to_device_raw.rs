@@ -608,7 +608,7 @@ impl LocalStateStore {
     }
 
     /// Drop a handled `ak.realm_key.request` from the local to-device inbox.
-    /// The server-delivered envelope carries a to-device `message_id` at the
+    /// The server-delivered envelope carries a to-device `device_message_id` at the
     /// top level. Older local/test envelopes may use `request_id` or nest the
     /// identifier under `content`; accept all supported shapes so a
     /// successfully answered request does not trigger duplicate shares forever.
@@ -816,7 +816,7 @@ fn realm_scan_cursor_key(
 fn realm_key_request_message_id(message: &Value) -> Option<String> {
     message
         .get("request_id")
-        .or_else(|| message.get("message_id"))
+        .or_else(|| message.get("device_message_id"))
         .or_else(|| {
             message
                 .get("content")
@@ -825,7 +825,7 @@ fn realm_key_request_message_id(message: &Value) -> Option<String> {
         .or_else(|| {
             message
                 .get("content")
-                .and_then(|content| content.get("message_id"))
+                .and_then(|content| content.get("device_message_id"))
         })
         .or_else(|| {
             message
@@ -835,7 +835,7 @@ fn realm_key_request_message_id(message: &Value) -> Option<String> {
         .or_else(|| {
             message
                 .get("payload")
-                .and_then(|payload| payload.get("message_id"))
+                .and_then(|payload| payload.get("device_message_id"))
         })
         .and_then(Value::as_str)
         .map(str::trim)

@@ -201,7 +201,7 @@ pub(super) fn activity_title_from_operation(
             });
             if relation
                 .as_ref()
-                .is_some_and(|payload| payload.relation.kind == "assigned_to")
+                .is_some_and(|payload| payload.relation.relation_kind.as_str() == "assigned_to")
             {
                 let actor = json_path_string(Some(payload), &["assignment_actor_id"])
                     .or_else(|| {

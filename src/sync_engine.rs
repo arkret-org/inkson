@@ -3621,7 +3621,7 @@ mod tests {
 
     fn to_device_message(kind: &str) -> arkret_sdk::DeviceMessageEnvelope {
         serde_json::from_value(json!({
-            "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
+            "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
             "kind": kind,
             "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",

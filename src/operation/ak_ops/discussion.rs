@@ -108,11 +108,13 @@ pub fn confidential_discussion_relation_create(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::RelationCreate>(
             realm_id,
             actor,
-            arkret_sdk::RelationCreatePayload::new(
+            super::relation::relation_create_payload(
+                realm_id,
+                actor,
                 "confidential_discussion_of",
                 private_strand_id,
                 public_seal_ref,
-            ),
+            )?,
         )
         .circle_id(circle_id),
     )

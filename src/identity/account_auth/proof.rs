@@ -76,8 +76,8 @@ pub fn build_session_grant_introspection_proof(
     let now = chrono::Utc::now();
     let claims = arkret_sdk::SessionGrantIntrospectionProofClaims {
         kind: arkret_sdk::SESSION_GRANT_INTROSPECTION_PROOF_CLAIMS_KIND.to_owned(),
-        grant_id: grant_id.to_owned(),
-        grant_jwt_hash: session_grant_jwt_hash(grant_jwt),
+        session_grant_id: grant_id.to_owned(),
+        grant_jwt_digest: session_grant_jwt_digest(grant_jwt),
         audience,
         challenge: challenge.to_owned(),
         issued_at: now,
@@ -86,10 +86,10 @@ pub fn build_session_grant_introspection_proof(
     sign_compact_jws_ed25519(&claims, signing_key)
 }
 
-/// Hash the grant JWT bytes per coauth's `session_grant_jwt_hash`
+/// Hash the grant JWT bytes per coauth's `session_grant_jwt_digest`
 /// (`"sha256:" + hex(sha256(grant_jwt))`). Public so callers can verify
 /// their proof binding before sending.
-pub fn session_grant_jwt_hash(grant_jwt: &str) -> String {
+pub fn session_grant_jwt_digest(grant_jwt: &str) -> String {
     arkret_sdk::canonical::sha256_digest(grant_jwt.as_bytes())
 }
 

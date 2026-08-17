@@ -184,7 +184,7 @@ mod tests {
         // The relation travels on the object branch, the only one the
         // registered `ak.relation.create` contract can project into a cell.
         let relation = &ops[2].payload["relation"];
-        assert_eq!(relation["kind"], "confidential_discussion_of");
+        assert_eq!(relation["relation_kind"], "confidential_discussion_of");
         // Relation scope belongs to the signed Event envelope, not the
         // closed RelationSnapshot payload.
         assert_eq!(

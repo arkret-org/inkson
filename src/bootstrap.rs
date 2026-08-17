@@ -612,7 +612,7 @@ fn to_device_envelope_dedup_key(message: &Value) -> Result<(&str, &str, &str), S
     Ok((
         required("sender_principal_id")?,
         required("sender_device_id")?,
-        required("message_id")?,
+        required("device_message_id")?,
     ))
 }
 
@@ -991,9 +991,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
 mod tests {
     use super::*;
 
-    fn durable_welcome(message_id: &str, realm_id: &str) -> Value {
+    fn durable_welcome(device_message_id: &str, realm_id: &str) -> Value {
         serde_json::json!({
-            "message_id": message_id,
+            "device_message_id": device_message_id,
             "kind": "ak.mls.welcome",
             "sender_principal_id": "did:webvh:alice.example",
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",

@@ -44,7 +44,7 @@ fn s256_challenge_matches_rfc7636_test_vector() {
 
 /// The introspection proof MUST be a valid Ed25519 JWS over the
 /// canonical claims, MUST embed `ak.session_grant.introspection_proof.v1`
-/// as `type`, MUST hash the grant JWT into `grant_jwt_hash`, and MUST
+/// as `type`, MUST hash the grant JWT into `grant_jwt_digest`, and MUST
 /// round-trip the challenge / audience / grant_id verbatim. coauth's
 /// verifier requires every one of those exact strings - drift here
 /// would surface as `InvalidProof` at the principal server.
@@ -80,16 +80,16 @@ fn session_grant_proof_signs_canonical_claims() {
         claims.kind, "ak.session_grant.introspection_proof.v1",
         "type claim must match coauth's spec"
     );
-    assert_eq!(claims.grant_id, "01HABC123");
+    assert_eq!(claims.session_grant_id, "01HABC123");
     assert_eq!(
         claims.audience.as_str(),
         "ak:did_core:web:principal.example"
     );
     assert_eq!(claims.challenge, "challenge-deadbeef");
     assert_eq!(
-        claims.grant_jwt_hash,
-        session_grant_jwt_hash("eyJ.opaque-grant.jwt"),
-        "grant_jwt_hash must be sha256(grant_jwt) hex prefixed"
+        claims.grant_jwt_digest,
+        session_grant_jwt_digest("eyJ.opaque-grant.jwt"),
+        "grant_jwt_digest must be sha256(grant_jwt) hex prefixed"
     );
     // Header claim is `Ed25519` + `JWT`.
     let header_bytes = URL_SAFE_NO_PAD.decode(parts[0]).unwrap();
@@ -124,10 +124,10 @@ fn session_grant_proof_rejects_empty_inputs() {
 }
 
 #[test]
-fn session_grant_jwt_hash_matches_coauth_format() {
+fn session_grant_jwt_digest_matches_coauth_format() {
     // `sha256:<lowercase-hex(sha256(bytes))>`. Pin the format so a
     // refactor that switches to base64url doesn't silently desync.
-    let hash = session_grant_jwt_hash("hello");
+    let hash = session_grant_jwt_digest("hello");
     assert!(hash.starts_with("sha256:"));
     // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
     assert_eq!(

@@ -107,7 +107,7 @@ export function mockArkretContract(req) {
       claimed_profiles: [],
       verified_profiles: [],
       experimental_features: [],
-      compat_surfaces: [],
+      interop_surfaces: [],
       development_mode: false,
       resource_kinds: ["realm", "organization", "actor"],
       discovery_profiles: ["ak.profile.directory_service.v1"],

@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use arkret_sdk::EventPayloadExt as _;
 use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
-    ClaimedProfileEntry, CompatSurfaceEntry, ContactAgentProjection as ContactAgentRow,
-    ContactList as ContactListView, ContactListRow, DirectConversationSummary, ServiceDescribe,
+    ClaimedProfileEntry, ContactAgentProjection as ContactAgentRow, ContactList as ContactListView,
+    ContactListRow, DirectConversationSummary, InteropSurfaceEntry, ServiceDescribe,
     VerifiedProfileEntry,
 };
 use arkret_wire::ProfileId;

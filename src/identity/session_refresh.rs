@@ -644,7 +644,7 @@ struct SoftLogoutDidProofClaims<'a> {
 #[derive(Debug, Serialize)]
 struct SoftLogoutRestoreRequestDigest<'a> {
     pub operation: &'static str,
-    pub grant_jwt_hash: String,
+    pub grant_jwt_digest: String,
     pub principal_id: &'a str,
     pub device_id: &'a str,
     pub audience: &'a str,
@@ -730,7 +730,7 @@ fn soft_logout_restore_request_canonical_digest(
 ) -> anyhow::Result<String> {
     crate::canonical::canonical_sha256(&SoftLogoutRestoreRequestDigest {
         operation: SOFT_LOGOUT_RESTORE_OPERATION,
-        grant_jwt_hash: crate::identity::account_auth::session_grant_jwt_hash(grant_jwt),
+        grant_jwt_digest: crate::identity::account_auth::session_grant_jwt_digest(grant_jwt),
         principal_id,
         device_id,
         audience,

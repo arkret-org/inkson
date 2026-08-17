@@ -20,11 +20,11 @@ pub(crate) fn to_device_message_dedup_key(message: &Value) -> String {
         .get("sender_device_id")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let message_id = message
-        .get("message_id")
+    let device_message_id = message
+        .get("device_message_id")
         .and_then(Value::as_str)
         .unwrap_or("");
-    format!("{sender}|{sender_device}|{message_id}")
+    format!("{sender}|{sender_device}|{device_message_id}")
 }
 
 pub(crate) fn to_device_message_expired(message: &Value, now: DateTime<Utc>) -> bool {

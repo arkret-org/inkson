@@ -1268,7 +1268,7 @@ export async function mockArkretApi(
         claimed_profiles: [],
         verified_profiles: [],
         experimental_features: [],
-        compat_surfaces: [],
+        interop_surfaces: [],
         development_mode: true,
         frontier: [DEMO_FRONTIER_EVENT],
       });
@@ -1793,7 +1793,7 @@ export async function mockArkretApi(
         claimed_profiles: [],
         verified_profiles: [],
         experimental_features: [],
-        compat_surfaces: [],
+        interop_surfaces: [],
         development_mode: true,
         frontier: [DEMO_FRONTIER_EVENT],
       });
@@ -2362,7 +2362,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/gate/account/session-grants/revoke" &&
       route.request().method() === "POST"
     ) {
-      return json(route, { revoked_count: 1, revoked_grant_ids: [] });
+      return json(route, { revoked_count: 1, revoked_session_grant_ids: [] });
     }
 
     if (
@@ -2781,7 +2781,7 @@ export async function mockArkretApi(
         claimed_profiles: [],
         verified_profiles: [],
         experimental_features: [],
-        compat_surfaces: [],
+        interop_surfaces: [],
         development_mode: false,
         resource_kinds: ["realm", "organization", "actor"],
         discovery_profiles: ["ak.profile.directory_service.v1"],
@@ -4063,7 +4063,7 @@ export async function mockArkretApi(
     ) {
       return json(route, {
         ok: true,
-        registration_id: "ak:push:e2e",
+        registration_id: "push:e2e",
         expires_at: null,
       });
     }

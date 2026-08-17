@@ -395,7 +395,7 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     let path = temp_state_path("read-cursor-update");
     let mut store = LocalStateStore::with_path(path.clone());
     store.ingest_to_device_messages(&[serde_json::from_value(serde_json::json!({
-        "message_id": "ak:device_message:01904100-0000-7000-8000-000000000005",
+        "device_message_id": "ak:device_message:01904100-0000-7000-8000-000000000005",
         "kind": "ak.read_cursor.update",
         "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
         "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
@@ -447,7 +447,7 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
             [event_seed; 32],
         );
         serde_json::from_value(serde_json::json!({
-            "message_id": format!(
+            "device_message_id": format!(
                 "ak:device_message:01904100-0000-7000-8000-{message_suffix}"
             ),
             "kind": "ak.read_cursor.update",
@@ -518,7 +518,7 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
 fn local_state_store_durably_deduplicates_device_message_envelopes() {
     let path = temp_state_path("device-message-dedup");
     let message: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({
-    "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
+    "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
     "kind": "ak.key.verification.request",
     "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
     "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
@@ -558,7 +558,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
 
     let conflicting: arkret_sdk::DeviceMessageEnvelope =
         serde_json::from_value(serde_json::json!({
-        "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
+        "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
         "kind": "ak.key.verification.request",
         "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
         "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
@@ -582,10 +582,10 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
 }
 
 #[test]
-fn local_state_store_dismisses_answered_realm_key_request_by_message_id() {
+fn local_state_store_dismisses_answered_realm_key_request_by_device_message_id() {
     let path = temp_state_path("realm-key-request-dismiss");
     let request: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({
-        "message_id": "ak:device_message:0196419b-0000-7000-8000-000000000072",
+        "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000072",
         "kind": "ak.realm_key.request",
         "sender_principal_id": "ak:did_core:webvh:z6mkfixture:bob.example",
         "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
@@ -688,7 +688,7 @@ fn local_state_store_persists_push_registration_state() {
     store.save_push_registration(PushRegistrationState {
         schema_version: chime::PUSH_REGISTRATION_STATE_SCHEMA_VERSION,
         principal_id: None,
-        registration_id: Some("ak:push:local".to_owned()),
+        registration_id: Some("push:local".to_owned()),
         device_id: "dev_inkson".to_owned(),
         platform: Some("desktop".to_owned()),
         app_id: Some("inkson".to_owned()),
@@ -704,7 +704,7 @@ fn local_state_store_persists_push_registration_state() {
 
     let mut reader = LocalStateStore::with_path(path);
     let state = reader.push_registration().expect("push registration");
-    assert_eq!(state.registration_id.as_deref(), Some("ak:push:local"));
+    assert_eq!(state.registration_id.as_deref(), Some("push:local"));
     assert_eq!(state.device_id, "dev_inkson");
 
     reader.clear_push_registration();

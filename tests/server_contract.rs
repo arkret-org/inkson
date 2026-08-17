@@ -151,7 +151,7 @@ fn inkson_accepts_server_contract_payloads() {
         "claimed_profiles": [],
         "verified_profiles": [],
         "experimental_features": [],
-        "compat_surfaces": [],
+        "interop_surfaces": [],
         "development_mode": true,
     }))
     .unwrap();
@@ -210,7 +210,7 @@ fn inkson_accepts_server_contract_payloads() {
         "claimed_profiles": [],
         "verified_profiles": [],
         "experimental_features": [],
-        "compat_surfaces": [],
+        "interop_surfaces": [],
         "development_mode": false
     }))
     .unwrap();
@@ -258,7 +258,7 @@ fn inkson_accepts_server_contract_payloads() {
         "claimed_profiles": [],
         "verified_profiles": [],
         "experimental_features": [],
-        "compat_surfaces": [],
+        "interop_surfaces": [],
         "development_mode": false,
         "resource_kinds": ["realm", "organization", "actor"],
         "discovery_profiles": ["ak.profile.directory_service.v1"],
@@ -464,11 +464,11 @@ fn inkson_accepts_server_contract_payloads() {
 
     let push: inkson::models::PushRegisterDeviceOutcome = serde_json::from_value(json!({
         "ok": true,
-        "registration_id": "ak:push:dev_alice",
+        "registration_id": "push:dev_alice",
         "expires_at": null
     }))
     .unwrap();
-    assert_eq!(push.registration_id.as_deref(), Some("ak:push:dev_alice"));
+    assert_eq!(push.registration_id.as_deref(), Some("push:dev_alice"));
 
     let ok: inkson::models::OkOutcome = serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
@@ -546,7 +546,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "claimed_profiles": [],
         "verified_profiles": [],
         "experimental_features": [],
-        "compat_surfaces": [],
+        "interop_surfaces": [],
         "development_mode": true,
     }))
     .unwrap();
@@ -554,17 +554,17 @@ fn server_description_gates_event_envelope_write_plane() {
     assert!(service_is_v1_principal_server_ready(&events_ready));
     assert!(missing_event_envelope_write_requirements(&events_ready).is_empty());
 
-    // `service-describe.schema.json` closes the compat-surface object
+    // `service-describe.schema.json` closes the interop-surface object
     // (`additionalProperties: false`) precisely so a product-private route root
     // cannot be smuggled in through extension keys, so the free-form
     // `base_path` / `status` members the pre-v1 fixture attached no longer
     // exist. `notes` is the one free-text member left.
-    let external_compat_surface = serde_json::to_value(
-        arkret_sdk::CompatSurfaceEntry::external_interop("external_mimi_provider")
+    let external_interop_surface = serde_json::to_value(
+        arkret_sdk::InteropSurfaceEntry::external_interop("external_mimi_provider")
             .with_notes("external interop surfaces must not redefine principal-server routes"),
     )
     .unwrap();
-    let described_with_external_compat_surface = parse_server_description(json!({
+    let described_with_external_interop_surface = parse_server_description(json!({
         "service_id": "ak:did_core:web:local.host",
         "service_resolution": service_resolution("did:web:local.host"),
         "trust_domain": "ak:trust_domain:local.host",
@@ -592,18 +592,18 @@ fn server_description_gates_event_envelope_write_plane() {
         ],
         "verified_profiles": [],
         "experimental_features": [],
-        "compat_surfaces": [external_compat_surface],
+        "interop_surfaces": [external_interop_surface],
         "development_mode": true,
     }))
     .unwrap();
     assert_eq!(
-        described_with_external_compat_surface.compat_surfaces[0].name,
+        described_with_external_interop_surface.interop_surfaces[0].name,
         "external_mimi_provider"
     );
     // And the closure is load-bearing: an entry that carries its own route root
     // as an extension key MUST NOT parse.
     assert!(
-        serde_json::from_value::<arkret_sdk::CompatSurfaceEntry>(json!({
+        serde_json::from_value::<arkret_sdk::InteropSurfaceEntry>(json!({
             "name": "external_mimi_provider",
             "kind": "external_interop",
             "base_path": "https://mimi.example.com/_arkret/open/mimi"
@@ -646,7 +646,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "claimed_profiles": [],
         "verified_profiles": [],
         "experimental_features": [],
-        "compat_surfaces": [],
+        "interop_surfaces": [],
         "development_mode": true,
     }))
     .unwrap();
