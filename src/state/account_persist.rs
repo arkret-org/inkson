@@ -3,8 +3,8 @@
 //! On wasm the per-account `ClientLocalState` blob is stored in the
 //! IndexedDB + non-extractable SubtleCrypto encrypted entries store
 //! (the same `inkson.secret.inkson`/`entries` store the seed-grade secrets
-//! use). The semantic key is unchanged (`inkson.local_state.v1.account.<did>`),
-//! but the physical backend is now the hardened secure store, so the account
+//! use). The semantic key is `inkson.local_state.v2.account.<core_id>`, and the physical backend
+//! is the hardened secure store, so the account
 //! blob is ciphertext at rest instead of near-plaintext localStorage JSON.
 //!
 //! Two target-agnostic pieces live here so they can be unit-tested natively:
@@ -462,6 +462,7 @@ mod wasm_bootstrap {
             &mut self,
             secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         ) {
+            self.ensure_cached_loaded();
             let effective_did = self.effective_account_key();
             let user_store = user_local_store_for_principal(&effective_did).map_err(|error| {
                 tracing::warn!(
@@ -538,8 +539,8 @@ pub(crate) async fn run_browser_account_persist_fault_contract() -> anyhow::Resu
     let store = IndexedDbSecureKeyStore::new_async(&service)
         .await
         .context("open browser account store")?;
-    let key_a = "inkson.local_state.v1.account.did:example:contract-a";
-    let key_b = "inkson.local_state.v1.account.did:example:contract-b";
+    let key_a = "inkson.local_state.v2.account.ak:did_core:example:contract-a";
+    let key_b = "inkson.local_state.v2.account.ak:did_core:example:contract-b";
     let mut queue = AccountPersistQueueState::default();
 
     queue.enqueue(key_a.to_owned(), state_json("sx:a1", &["a1"])?);

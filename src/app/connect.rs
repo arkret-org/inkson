@@ -1220,6 +1220,14 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             };
                         {
                             let mut store = state_store.write();
+                            if !store.active_account_matches(&canonical_actor) {
+                                tracing::warn!(
+                                    response_principal = %canonical_actor,
+                                    active_principal = ?store.active_account_did(),
+                                    "discarded account snapshot after the active principal changed"
+                                );
+                                return;
+                            }
                             store.save_sync_cursor(sync.cursor.clone());
                             // Server-authoritative reconcile for top-level
                             // Realm membership. Keep acknowledged optimistic

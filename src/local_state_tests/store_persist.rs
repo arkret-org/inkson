@@ -939,6 +939,72 @@ fn per_account_entries_persist_independently_across_store_instances() {
 }
 
 #[test]
+fn stale_store_instance_cannot_flush_previous_account_into_new_account() {
+    let path = temp_state_path("stale-instance-account-fence");
+    let facebook = "ak:realm:Abs3Q1pCqMmpdkCB57E6rKcrsHG2Xc8YeTBUR3YVG7ld";
+
+    let mut stale = LocalStateStore::with_path(path.clone());
+    stale.switch_active_account("did:web:alice.example");
+    stale.save_realm_tree_projection(
+        facebook,
+        serde_json::json!({"summary": {"name": "Facebook"}}),
+    );
+
+    // A second live store instance changes the shared root to Bob. This models
+    // a late async task that still retains Alice's in-memory cache after account
+    // registration/switch completed elsewhere.
+    let mut switcher = LocalStateStore::with_path(path.clone());
+    switcher.switch_active_account("did:web:bob.example");
+    switcher.save_sync_cursor("sx:bob");
+
+    let error = stale
+        .flush()
+        .expect_err("a stale cache scope must never write into the active account");
+    assert!(error.to_string().contains("refusing cross-account"));
+    assert!(
+        stale.load().realm_tree_projections.is_empty(),
+        "reads from a stale instance must resolve the active account, not expose Alice"
+    );
+
+    let reader = LocalStateStore::with_path(path);
+    assert_eq!(reader.load().sync_cursor.as_deref(), Some("sx:bob"));
+    assert!(
+        !reader.load().realm_tree_projections.contains_key(facebook),
+        "Alice's Facebook realm must not be persisted under Bob"
+    );
+}
+
+#[test]
+fn active_account_match_uses_stable_core_id() {
+    let path = temp_state_path("active-account-core-id");
+    let mut store = LocalStateStore::with_path(path);
+    store.switch_active_account("did:webvh:zSameScid:old.example:users:alice");
+
+    assert!(store.active_account_matches("ak:did_core:webvh:zSameScid"));
+    assert!(store.active_account_matches("did:webvh:zSameScid:new.example:people:alice"));
+    assert!(!store.active_account_matches("did:webvh:zOtherScid:new.example:people:alice"));
+}
+
+#[test]
+fn same_core_full_id_update_reuses_the_local_account_state() {
+    let path = temp_state_path("same-core-local-state");
+    let mut store = LocalStateStore::with_path(path);
+    store.switch_active_account("did:webvh:zSameScid:old.example:users:alice");
+    store.save_sync_cursor("sx:before-resolution-update");
+    store.save_realm_tree_projection(
+        "ak:realm:ASameCoreRealm11111111111111111111111111111111111",
+        serde_json::json!({"summary": {"name": "same identity"}}),
+    );
+
+    store.switch_active_account("did:webvh:zSameScid:new.example:people:alice");
+    assert_eq!(
+        store.load().sync_cursor.as_deref(),
+        Some("sx:before-resolution-update")
+    );
+    assert_eq!(store.load().realm_tree_projections.len(), 1);
+}
+
+#[test]
 fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
     let path = temp_state_path("forget-account");
     let mut store = LocalStateStore::with_path(path);

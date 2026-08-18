@@ -18,7 +18,7 @@ use crate::notification_rules::WatchLevel;
 /// Root-index storage key. Per-account `ClientLocalState` entries live under
 /// the sibling key `account_state_key(did)`.
 #[cfg(target_arch = "wasm32")]
-const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
+const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v2";
 
 /// Reserved namespace for the pre-login (signed-out) account entry. Local state
 /// exists before any DID is known — drafts, UI scratch, the boot-time device
@@ -30,14 +30,27 @@ const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
 /// account and never appears in `known_dids`).
 const ANONYMOUS_ACCOUNT_NAMESPACE: &str = "anonymous";
 
-/// Per-account `ClientLocalState` storage key. The DID is appended verbatim;
-/// on wasm (localStorage) any DID character is a valid key, so no sanitisation
-/// is needed. The native backend derives sibling *files* instead (see
-/// [`LocalStateStore::account_state_path`]) and sanitises filesystem-hostile
-/// characters there.
+/// Canonical local account namespace. Identity equality and every durable
+/// account-local key use the stable DID core id; a full DID is resolution
+/// material and may legitimately change without creating a new local account.
+fn account_storage_scope(principal: &str) -> String {
+    let principal = principal.trim();
+    if principal.is_empty() || principal == ANONYMOUS_ACCOUNT_NAMESPACE {
+        return principal.to_owned();
+    }
+    crate::mls_api_helpers::principal_core_id(principal)
+        .map(|core_id| core_id.as_str().to_owned())
+        .unwrap_or_else(|_| principal.to_owned())
+}
+
+/// Per-account `ClientLocalState` storage key, always core-id scoped for a
+/// signed-in principal.
 #[cfg(target_arch = "wasm32")]
-fn account_state_key(did: &str) -> String {
-    format!("{LOCAL_STATE_STORAGE_KEY}.account.{did}")
+fn account_state_key(principal: &str) -> String {
+    format!(
+        "{LOCAL_STATE_STORAGE_KEY}.account.{}",
+        account_storage_scope(principal)
+    )
 }
 
 /// YOU-02-003: hard cap on the persisted `raw_operations` audit log. Each
@@ -128,6 +141,12 @@ pub struct LocalStateStore {
     /// through [`Self::read_root`] and updated atomically through
     /// [`Self::mutate_root`] so every clone observes one shared source of truth.
     cached: ClientLocalState,
+    /// Principal storage scope bound to `cached`. The root index is shared by every
+    /// store instance, while `cached` is instance-local; without this fence a
+    /// store loaded for Alice can observe Bob becoming active and flush Alice's
+    /// snapshot into Bob's entry. `None` means this instance has not hydrated a
+    /// namespace yet.
+    cached_account_key: Option<String>,
     /// Perf: whether `cached` has been reconciled with the persistence layer at
     /// least once. Before this flag existed, an empty/default account (where
     /// `cached == ClientLocalState::default()`) re-read the backing store (disk
@@ -286,6 +305,7 @@ impl Default for LocalStateStore {
     fn default() -> Self {
         Self {
             cached: ClientLocalState::default(),
+            cached_account_key: None,
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),
@@ -444,12 +464,14 @@ impl LocalStateStore {
         // Once reconciled with persistence, `cached` is authoritative (single
         // process) — skip the full-state `!= default` compare and the repeated
         // backing-store read that an empty account used to pay on every call.
-        let mut state =
-            if self.loaded.load(Ordering::Relaxed) || self.cached != ClientLocalState::default() {
-                self.cached.clone()
-            } else {
-                self.read_persisted_state().unwrap_or_default()
-            };
+        let effective_account_key = self.effective_account_key();
+        let mut state = if self.loaded.load(Ordering::Relaxed)
+            && self.cached_account_key.as_deref() == Some(effective_account_key.as_str())
+        {
+            self.cached.clone()
+        } else {
+            self.read_persisted_state().unwrap_or_default()
+        };
         // YOU-02-004: readers must observe receive-chain write-backs that the
         // decrypt paths recorded through the interior-mutable overlay.
         {
@@ -462,6 +484,7 @@ impl LocalStateStore {
     }
 
     pub fn save(&mut self, state: ClientLocalState) {
+        self.ensure_cached_loaded();
         // Wholesale replacement: the incoming state is authoritative, so any
         // pending receive-chain overlay entries derived from the OLD state
         // must not survive to shadow it.
@@ -478,7 +501,8 @@ impl LocalStateStore {
             self.flush_pending.store(true, Ordering::Relaxed);
             return Ok(());
         }
-        let result = self.write_persisted_state(&self.effective_state_for_persist());
+        let account_key = self.cached_account_key_for_persist()?;
+        let result = self.write_account_state(&account_key, &self.effective_state_for_persist());
         self.record_persist_result(&result);
         result
     }
@@ -501,10 +525,11 @@ impl LocalStateStore {
 
         #[cfg(target_arch = "wasm32")]
         let inner = {
+            let account_key = self.cached_account_key_for_persist()?;
             let state = e2ee_safe_persist_state(&self.effective_state_for_persist());
             let json = serde_json::to_string(&state)?;
             match account_persist::enqueue_account_state_persist_barrier(
-                account_state_key(&self.effective_account_key()),
+                account_state_key(&account_key),
                 json,
             ) {
                 Ok(barrier) => barrier,
@@ -591,7 +616,11 @@ impl LocalStateStore {
         let result = body(self);
         self.flush_suspended = self.flush_suspended.saturating_sub(1);
         if self.flush_suspended == 0 && self.flush_pending.swap(false, Ordering::Relaxed) {
-            let persisted = self.write_persisted_state(&self.effective_state_for_persist());
+            let persisted = self
+                .cached_account_key_for_persist()
+                .and_then(|account_key| {
+                    self.write_account_state(&account_key, &self.effective_state_for_persist())
+                });
             self.record_persist_result(&persisted);
         }
         result
@@ -601,6 +630,7 @@ impl LocalStateStore {
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
             cached: ClientLocalState::default(),
+            cached_account_key: None,
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),
@@ -631,7 +661,7 @@ impl LocalStateStore {
         // Sibling file with the stem suffixed by `.account.<sanitized_did>`.
         // DID syntax (`did:webvh:…`) contains `:` which is filesystem-hostile
         // on Windows, so sanitise to a stable token.
-        let sanitized = sanitize_did_for_filename(did);
+        let sanitized = sanitize_did_for_filename(&account_storage_scope(did));
         let stem = self
             .path
             .file_stem()
@@ -759,6 +789,7 @@ impl LocalStateStore {
     fn effective_account_key(&self) -> String {
         self.read_root()
             .active_did
+            .map(|principal| account_storage_scope(&principal))
             .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned())
     }
 
@@ -945,37 +976,40 @@ impl LocalStateStore {
         Ok(())
     }
 
-    /// Persist the active account's `state` to its own entry. The hot path
-    /// (every flush) ONLY touches the active account's `…account.<did>` key and
-    /// deliberately does NOT rewrite the root index: the index is the shared
-    /// source of truth owned by [`Self::mutate_root`], and co-writing a
-    /// per-clone copy of it here is exactly what let a stale clone clobber a
-    /// freshly-adopted `active_did` back to null. The active DID is resolved by
-    /// reading the index through ([`Self::effective_account_key`]), so a flush
-    /// always lands in whatever account the latest adoption selected.
-    fn write_persisted_state(&self, state: &ClientLocalState) -> anyhow::Result<()> {
-        // Active DID when signed in, else the anonymous sentinel so pre-login
-        // local state (drafts, scratch) is durable rather than memory-only.
-        // YOU-02-003 note: the per-account split keeps each account's blob well
-        // under the localStorage quota the single global blob used to risk.
-        self.write_account_state(&self.effective_account_key(), state)
+    /// Return the namespace that may receive this instance's cached snapshot.
+    /// The shared root can change through another store instance while this
+    /// instance is alive; fail closed instead of routing a stale snapshot to the
+    /// newly-active account.
+    fn cached_account_key_for_persist(&self) -> anyhow::Result<String> {
+        let active = self.effective_account_key();
+        match self.cached_account_key.as_deref() {
+            Some(cached_scope) if cached_scope == active => Ok(active),
+            Some(cached_scope) => anyhow::bail!(
+                "refusing cross-account local-state persist: cached principal scope {cached_scope} is not active account scope {active}"
+            ),
+            None => anyhow::bail!(
+                "refusing local-state persist before the active account namespace is hydrated"
+            ),
+        }
     }
 
     fn ensure_cached_loaded(&mut self) {
         // Read the backing store at most once; afterwards `cached` is the
         // authoritative source so empty/default accounts stop re-reading disk /
         // localStorage on every mutation.
-        if self.loaded.load(Ordering::Relaxed) {
+        let effective_account_key = self.effective_account_key();
+        if self.loaded.load(Ordering::Relaxed)
+            && self.cached_account_key.as_deref() == Some(effective_account_key.as_str())
+        {
             return;
         }
         // The root index is read through storage on demand (no `self.root`
         // field), so `effective_account_key` already reflects the persisted
         // active account; just hydrate `cached` from that account's entry.
-        if self.cached == ClientLocalState::default()
-            && let Some(state) = self.read_account_state(&self.effective_account_key())
-        {
-            self.cached = state;
-        }
+        self.cached = self
+            .read_account_state(&effective_account_key)
+            .unwrap_or_default();
+        self.cached_account_key = Some(effective_account_key);
         self.loaded.store(true, Ordering::Relaxed);
     }
 }

@@ -335,9 +335,17 @@ impl AccountStepCommitter for InksonAccountCommitter {
             // frontier+catchup_complete. Persist the resume cursor, but do
             // not publish a fake business update that remounts resources
             // and fans out viewer/backups/invites requests.
-            self.ctx
-                .state_store
-                .write(|store| store.save_sync_cursor(cursor));
+            self.ctx.state_store.write(|store| {
+                if store.active_account_matches(&self.ctx.account_did) {
+                    store.save_sync_cursor(cursor);
+                } else {
+                    tracing::warn!(
+                        response_principal = %self.ctx.account_did,
+                        active_principal = ?store.active_account_did(),
+                        "discarded idle account cursor after the active principal changed"
+                    );
+                }
+            });
             if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
                 return Err(garth::Error::Protocol(format!(
                     "persist idle account stream cursor: {error}"
@@ -661,6 +669,14 @@ impl
                 Ok(invites) => {
                     let invite_notifications = invites.invites;
                     self.ctx.state_store.write(|store| {
+                        if !store.active_account_matches(&self.ctx.account_did) {
+                            tracing::warn!(
+                                response_principal = %self.ctx.account_did,
+                                active_principal = ?store.active_account_did(),
+                                "discarded invite projection after the active principal changed"
+                            );
+                            return;
+                        }
                         store.batch(|store| {
                             apply_notification_projection(
                                 store,
@@ -1928,6 +1944,14 @@ pub fn apply_response(
     }
 
     state_store.write(|store| {
+        if !store.active_account_matches(&account_did) {
+            tracing::warn!(
+                response_principal = %account_did,
+                active_principal = ?store.active_account_did(),
+                "discarded account sync response after the active principal changed"
+            );
+            return;
+        }
         // Perf (P0): a single sync response can touch the cursor, dozens of
         // realm-tree projections, seal views, member identity events and account
         // data — each setter used to flush the *entire* `ClientLocalState` to

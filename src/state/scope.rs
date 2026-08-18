@@ -8,6 +8,22 @@ impl LocalStateStore {
         self.read_root().active_did
     }
 
+    /// Whether `principal` is the foreground identity. Equality is based on
+    /// the stable DID core id, so a legitimate full-id resolution update does
+    /// not create a second local account namespace.
+    pub fn active_account_matches(&self, principal: &str) -> bool {
+        let Some(active) = self.active_account_did() else {
+            return false;
+        };
+        match (
+            crate::mls_api_helpers::principal_core_id(&active),
+            crate::mls_api_helpers::principal_core_id(principal),
+        ) {
+            (Ok(active), Ok(candidate)) => active == candidate,
+            _ => active.trim() == principal.trim(),
+        }
+    }
+
     /// Every account DID with a persisted per-account entry on this browser.
     pub fn known_account_dids(&self) -> Vec<String> {
         self.read_root().known_dids
@@ -46,7 +62,7 @@ impl LocalStateStore {
             return;
         }
         let handle = handle.trim();
-        let is_active = self.read_root().active_did.as_deref() == Some(did);
+        let is_active = self.active_account_matches(did);
         if is_active {
             self.ensure_cached_loaded();
             if self.cached.primary_handle == handle {
@@ -74,9 +90,7 @@ impl LocalStateStore {
         if did.is_empty() {
             return None;
         }
-        let handle = if self.loaded.load(Ordering::Relaxed)
-            && self.read_root().active_did.as_deref() == Some(did)
-        {
+        let handle = if self.loaded.load(Ordering::Relaxed) && self.active_account_matches(did) {
             self.cached.primary_handle.clone()
         } else {
             self.read_account_state(did)
@@ -105,19 +119,17 @@ impl LocalStateStore {
     /// is always preferred for display; callers must never render the raw DID.
     pub fn known_accounts(&self) -> Vec<KnownAccount> {
         let root = self.read_root();
-        let active = root.active_did.clone();
         root.known_dids
             .iter()
             .map(|did| {
                 // Read the account's own entry; prefer the live `cached` copy
                 // for the active account so an unflushed login is reflected.
-                let state = if self.loaded.load(Ordering::Relaxed)
-                    && active.as_deref() == Some(did.as_str())
-                {
-                    Some(self.cached.clone())
-                } else {
-                    self.read_account_state(did)
-                };
+                let state =
+                    if self.loaded.load(Ordering::Relaxed) && self.active_account_matches(did) {
+                        Some(self.cached.clone())
+                    } else {
+                        self.read_account_state(did)
+                    };
                 let (handle, device_id, server_url) = match state {
                     Some(state) => {
                         let grant = state.session_grant.as_ref();
@@ -222,6 +234,8 @@ impl LocalStateStore {
         });
         // Load the target account's own entry (default for a brand-new account).
         self.cached = self.read_account_state(actor).unwrap_or_default();
+        self.cached_account_key = Some(self.effective_account_key());
+        self.loaded.store(true, Ordering::Relaxed);
         self.hydrate_e2ee_plaintext_cache_if_ready();
         // Flush `cached` under the now-active account's key.
         let _ = self.flush();
@@ -251,6 +265,8 @@ impl LocalStateStore {
             // E7: reset the account-scoped cursor overlay alongside the receive
             // overlay so a stale cursor never leaks across account scope changes.
             self.cached = ClientLocalState::default();
+            self.cached_account_key = Some(self.effective_account_key());
+            self.loaded.store(true, Ordering::Relaxed);
             let _ = self.flush();
         }
     }
@@ -348,13 +364,15 @@ impl LocalStateStore {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
         };
-        // Publish the anonymous owner before flushing its state so the generic
-        // persistence path cannot route this snapshot back into the old DID.
+        // Publish the anonymous principal scope before flushing its state so
+        // the generic persistence path cannot route this snapshot back into
+        // the old DID.
         self.mutate_root(|root| {
             root.active_did = None;
             root.pending_login = Some(pending);
         });
         self.cached = anonymous;
+        self.cached_account_key = Some(self.effective_account_key());
         self.loaded.store(true, Ordering::Relaxed);
         let _ = self.flush();
     }
