@@ -160,25 +160,21 @@ fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedaction
         return None;
     }
     let payload = redaction_payload_candidate(event);
-    let target_ref = [
-        "target_event_id",
-        "message_id",
-        "target_ref",
-        "target",
-        "redacts",
-    ]
-    .into_iter()
-    .find_map(|key| payload.get(key).and_then(Value::as_str))
-    .or_else(|| {
-        ["target_event_id", "target_ref", "target", "redacts"]
-            .into_iter()
-            .find_map(|key| event.get(key).and_then(Value::as_str))
-    })
-    .map(str::trim)
-    .filter(|value| {
-        !value.is_empty() && (value.starts_with("ak:event:") || value.starts_with("ak:message:"))
-    })?
-    .to_owned();
+    // Registered payload target members only. `message_redact_payload` accepts
+    // message_id / target_ref / event_id / target_event_id;
+    // `cross_object_redaction_payload` accepts the same set minus message_id.
+    // `redacts` is an Event Envelope field, so it is read at envelope level and
+    // nowhere else.
+    let target_ref = ["message_id", "target_ref", "event_id", "target_event_id"]
+        .into_iter()
+        .find_map(|key| payload.get(key).and_then(Value::as_str))
+        .or_else(|| event.get("redacts").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| {
+            !value.is_empty()
+                && (value.starts_with("ak:event:") || value.starts_with("ak:message:"))
+        })?
+        .to_owned();
     let redaction_ref = value_string_at(event, &["event_id", "id"])
         .or_else(|| value_string_at(payload, &["event_id", "id"]))
         .map(str::trim)

@@ -823,7 +823,11 @@ fn clearing_card_summary_emits_unset() {
     // compliant reducer.
     let wire: arkret_sdk::Patch =
         serde_json::from_value(patch.clone()).expect("patch decodes as ak.patch.v1");
-    arkret_sdk::validate_patch_semantic_safety(&wire).expect("metadata.summary unset is accepted");
+    arkret_sdk::validate_patch_semantic_safety(
+        &wire,
+        arkret_sdk::PatchTargetKind::from_typed_target(&current.id),
+    )
+    .expect("metadata.summary unset is accepted");
 
     // The registered slots are the ones that stay refused.
     for slot in arkret_wire::generated::REDACTABLE_FIELD_PATHS {
@@ -831,7 +835,11 @@ fn clearing_card_summary_emits_unset() {
         rejected
             .insert_op(*slot, arkret_sdk::PatchOp::unset())
             .unwrap();
-        let rejection = arkret_sdk::validate_patch_semantic_safety(&rejected).unwrap_err();
+        let rejection = arkret_sdk::validate_patch_semantic_safety(
+            &rejected,
+            arkret_sdk::PatchTargetKind::from_typed_target(&current.id),
+        )
+        .unwrap_err();
         assert!(
             rejection
                 .to_string()

@@ -12,7 +12,6 @@ use super::model::{
     apply_sync_projection_to_store, drop_joined_invite_notifications,
     hydrate_notifications_with_privacy_gate, merge_invite_notifications,
     notification_id_for_dedupe, raw_notifications_from_sources, read_cursor_targets,
-    realm_title_hints_from_invites,
 };
 use crate::api_error::is_auth_expired_error;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
@@ -503,9 +502,6 @@ fn accept_invite_notification(
                     Some(&sync.updates.notifications),
                     &sync.updates.account_data,
                 );
-                for (realm_id, title) in realm_title_hints_from_invites(&invite_notifications) {
-                    realm_title_hints.entry(realm_id).or_insert(title);
-                }
                 drop_joined_invite_notifications(&mut raw_notifications, &hidden_realms);
                 append_invite_notifications(
                     &mut raw_notifications,

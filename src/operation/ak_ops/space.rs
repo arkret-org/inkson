@@ -77,7 +77,7 @@ pub fn space_update_patch(
     space_id: &str,
     patch: serde_json::Value,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let patch = patch_from_value(patch)?;
+    let patch = patch_from_value(space_id, patch)?;
     let payload = arkret_sdk::SpacePatchPayload {
         space_id: space_id_value(space_id)?,
         patch,

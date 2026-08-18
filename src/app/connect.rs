@@ -1245,12 +1245,11 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // they're redundant with `retain_realm_tree_projections`
                             // above but cheap to apply when soland evolves
                             // to send them on full sync.
-                            let realm_title_hints = invite_notifications
-                                .as_deref()
-                                .map(
-                                    crate::state::projection::notifications::realm_title_hints_from_invites,
-                                )
-                                .unwrap_or_default();
+                            // The Invite object registers no Realm title
+                            // (`governance-objects.md` §5.3), so the only title
+                            // hints are the ones the sync realm bodies carry.
+                            let realm_title_hints: std::collections::BTreeMap<String, String> =
+                                std::collections::BTreeMap::new();
                             for (id, body) in &sync.realm_projections {
                                 let projection = crate::realm_tree::projection_with_title_hint(
                                     id,

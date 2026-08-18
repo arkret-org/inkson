@@ -17,7 +17,7 @@ pub fn morph_update_patch(
     morph_id: &str,
     patch: serde_json::Value,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let patch = patch_from_value(patch)?;
+    let patch = patch_from_value(morph_id, patch)?;
     let payload = arkret_sdk::MorphUpdatePayload::for_morph(morph_id_value(morph_id)?, patch)?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::MorphUpdate>(realm_id, actor, payload)

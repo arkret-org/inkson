@@ -644,10 +644,10 @@ fn dashboard_notification_summaries(
                 crate::state::StoredNotification::AgentRuntimeApproval { data, .. } => Some(
                     format!("Approve a runtime key for {}.", data.agent_id.as_str()),
                 ),
-                crate::state::StoredNotification::Invite { invite } => invite
-                    .realm_label
-                    .as_deref()
-                    .map(|label| format!("You were invited to join {label}.")),
+                crate::state::StoredNotification::Invite { invite } => Some(format!(
+                    "You were invited to join {}.",
+                    crate::views::helpers::short_protocol_id(invite.realm_id.as_str())
+                )),
             }
             .unwrap_or_else(|| "Notification".to_owned());
             Some(DashboardNotificationSummary {

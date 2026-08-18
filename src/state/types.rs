@@ -81,10 +81,6 @@ pub enum StoredNotification {
 pub struct StoredInviteNotification {
     pub invite_id: arkret_sdk::InviteId,
     pub realm_id: arkret_sdk::RealmId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub invite_token: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub realm_label: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 

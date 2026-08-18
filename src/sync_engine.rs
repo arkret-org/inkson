@@ -3903,8 +3903,6 @@ mod tests {
         let invite = crate::state::projection::notifications::test_invite(
             0x10,
             "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
-            None,
-            None,
         );
         let expected_invite_notification_id = format!("invite:{}", invite.id);
         apply_notification_projection(&mut store, &response, "", false, Some(vec![invite]));
@@ -3931,8 +3929,7 @@ mod tests {
         let actor_id = "did:web:bob.example";
         let actor_core_id = "ak:did_core:web:bob.example";
         let realm_id = "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
-        let invite =
-            || crate::state::projection::notifications::test_invite(0x10, realm_id, None, None);
+        let invite = || crate::state::projection::notifications::test_invite(0x10, realm_id);
         let response = |membership: &str| {
             let mut response = empty_response("sx:invite-membership");
             let realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();

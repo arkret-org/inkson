@@ -305,7 +305,7 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
 #[test]
 fn mls_commit_builder_matches_registered_payload_schema() {
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let group_id = "ak:mls_group:kanban-test";
+    let group_id = "mls-group-kanban-test";
     let governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
         arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
         group_id,

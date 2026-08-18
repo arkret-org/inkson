@@ -26,7 +26,7 @@ pub(crate) use crate::state::projection::notifications::{
     JoinedRealmIds, append_invite_notifications, default_notification_title,
     drop_joined_invite_notifications, invite_notification_target_for_dedupe,
     merge_invite_notifications, notification_id_for_dedupe, notification_kind_wire,
-    raw_notifications_from_sources, realm_title_hints_from_invites,
+    raw_notifications_from_sources,
 };
 use crate::state::{ClientLocalState, LocalStateStore, StoredNotification};
 
@@ -292,8 +292,12 @@ fn notification_from_stored(
         .map(|invite| UiNotificationAction::AcceptInvite {
             realm_id: invite.realm_id.as_str().to_owned(),
             invite_id: invite.invite_id.as_str().to_owned(),
-            invite_token: invite.invite_token.clone(),
-            realm_label: invite.realm_label.clone(),
+            // Neither member is registered on the Invite object
+            // (`governance-objects.md` §5.3), so the accept flow resolves the
+            // Realm preview itself and the private delivery token — when a
+            // directed invite has one — arrives on the private delivery channel.
+            invite_token: None,
+            realm_label: None,
         });
     let timestamp = arkret_sdk::canonical::format_timestamp_canonical(value.created_at());
     let (projection_read, projection_archived) = notification_wire_state(&value);
@@ -598,11 +602,12 @@ fn notification_body(value: &StoredNotification) -> String {
         StoredNotification::AgentRuntimeApproval { data, .. } => {
             format!("Approve a runtime key for {}.", data.agent_id.as_str())
         }
-        StoredNotification::Invite { invite } => invite
-            .realm_label
-            .as_deref()
-            .map(|title| format!("You were invited to join {title}."))
-            .unwrap_or_else(|| "You were invited to join a Realm.".to_owned()),
+        // The Invite object carries no Realm title, so the short protocol id is
+        // the only name available before the accept flow resolves a preview.
+        StoredNotification::Invite { invite } => format!(
+            "You were invited to join {}.",
+            crate::views::helpers::short_protocol_id(invite.realm_id.as_str())
+        ),
     }
 }
 
@@ -610,7 +615,7 @@ fn notification_realm_label(value: &StoredNotification) -> Option<String> {
     match value {
         StoredNotification::Event { .. } => preview_string(value, &["realm_label", "realm_title"]),
         StoredNotification::AgentRuntimeApproval { .. } => None,
-        StoredNotification::Invite { invite } => invite.realm_label.clone(),
+        StoredNotification::Invite { .. } => None,
     }
 }
 

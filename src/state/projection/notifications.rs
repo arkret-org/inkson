@@ -129,32 +129,19 @@ fn account_event_notification(event: &arkret_sdk::Event) -> Option<StoredNotific
     Some(StoredNotification::Event { notification })
 }
 
+/// Project one Invite object into a notification.
+///
+/// The Invite object carries neither a Realm title nor the private invite
+/// delivery token: `invite.schema.json` registers neither, and
+/// `governance-objects.md` §5.3 forbids materializing transport material on it.
+/// The Realm display name comes from the directory realm preview the accept flow
+/// already resolves, and the token — when a directed invite has one — arrives on
+/// the private delivery channel, not through this read model.
 fn invite_notification(invite: Invite) -> StoredNotification {
-    let realm_label = invite
-        .join_rule_snapshot
-        .get("realm_title")
-        .or_else(|| invite.join_rule_snapshot.get("title"))
-        .or_else(|| {
-            invite
-                .join_rule_snapshot
-                .get("summary")
-                .and_then(|summary| summary.get("title"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .map(ToOwned::to_owned);
-    let invite_token = invite
-        .join_rule_snapshot
-        .get("invite_token")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
     StoredNotification::Invite {
         invite: StoredInviteNotification {
             invite_id: invite.id,
             realm_id: invite.realm_id,
-            invite_token,
-            realm_label,
             created_at: invite.created_at,
         },
     }
@@ -290,20 +277,6 @@ pub(crate) fn invite_notification_target_for_dedupe(value: &StoredNotification) 
         .map(|invite| invite.realm_id.as_str().to_owned())
 }
 
-pub(crate) fn realm_title_hints_from_invites(invites: &[Invite]) -> BTreeMap<String, String> {
-    invites
-        .iter()
-        .filter_map(|invite| {
-            let notification = invite_notification(invite.clone());
-            let invite = notification.invite()?;
-            Some((
-                invite.realm_id.as_str().to_owned(),
-                invite.realm_label.clone()?,
-            ))
-        })
-        .collect()
-}
-
 /// i18n key for the default notification title.
 pub(crate) fn default_notification_title(kind: &str) -> &'static str {
     match kind {
@@ -387,19 +360,7 @@ pub(crate) fn test_event_notification(
 }
 
 #[cfg(test)]
-pub(crate) fn test_invite(
-    ordinal: u64,
-    realm_id: &str,
-    realm_title: Option<&str>,
-    invite_token: Option<&str>,
-) -> Invite {
-    let mut join_rule_snapshot = BTreeMap::new();
-    if let Some(title) = realm_title {
-        join_rule_snapshot.insert("title".to_owned(), Value::String(title.to_owned()));
-    }
-    if let Some(token) = invite_token {
-        join_rule_snapshot.insert("invite_token".to_owned(), Value::String(token.to_owned()));
-    }
+pub(crate) fn test_invite(ordinal: u64, realm_id: &str) -> Invite {
     // Frozen accepted Event identities keep this projection helper honest:
     // tests must not manufacture Event tokens by mutating bytes or truncating
     // an ordinal into a digest-shaped buffer.
@@ -423,7 +384,6 @@ pub(crate) fn test_invite(
         invite_delivery_target: None,
         introduction_evidence_digest: None,
         third_party_invite: None,
-        join_rule_snapshot,
         capability_grant_refs: Vec::new(),
         state: arkret_sdk::InviteState::Pending,
         expires_at: chrono::DateTime::parse_from_rfc3339("2027-05-29T00:00:00.000Z")

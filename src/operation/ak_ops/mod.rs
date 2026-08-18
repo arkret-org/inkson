@@ -239,10 +239,21 @@ pub(super) fn strand_reorder_payload(
 /// both path lists; failing here keeps a patch a compliant reducer would reject
 /// with `patch_unset_redactable_field` / `patch_path_reducer_managed` off the
 /// wire in the first place.
-pub(super) fn patch_from_value(patch: Value) -> anyhow::Result<arkret_sdk::Patch> {
+pub(super) fn patch_from_value(
+    target_ref: &str,
+    patch: Value,
+) -> anyhow::Result<arkret_sdk::Patch> {
     let patch: arkret_sdk::Patch = serde_json::from_value(patch)
         .map_err(|err| anyhow::anyhow!("patch must match ak.patch.v1: {err}"))?;
-    arkret_sdk::validate_patch_semantic_safety(&patch)
-        .map_err(|err| anyhow::anyhow!("patch must match ak.patch.v1: {err}"))?;
+    // `target_ref` is the typed id of the object this patch is being authored
+    // against, so it is the proven object kind for the reducer-managed path
+    // decision. Passing it is what lets the registered per-kind carve-outs (such
+    // as the View terminal `state` patch of `views.md` §3.1) through instead of
+    // being refused by the object-agnostic superset.
+    arkret_sdk::validate_patch_semantic_safety(
+        &patch,
+        arkret_sdk::PatchTargetKind::from_typed_target(target_ref),
+    )
+    .map_err(|err| anyhow::anyhow!("patch must match ak.patch.v1: {err}"))?;
     Ok(patch)
 }

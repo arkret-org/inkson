@@ -69,7 +69,7 @@ pub fn strand_tracks_update(
     strand_id: &str,
     patch: serde_json::Value,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let patch = patch_from_value(patch)?;
+    let patch = patch_from_value(strand_id, patch)?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandTracksUpdate>(
             realm_id,
@@ -199,7 +199,7 @@ pub fn strand_update_patch(
     strand_id: &str,
     patch: serde_json::Value,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let patch = patch_from_value(patch)?;
+    let patch = patch_from_value(strand_id, patch)?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandUpdate>(
             realm_id,

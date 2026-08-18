@@ -4,7 +4,7 @@ use super::model::{
     JoinedRealmIds, UiNotificationAction, actor_is_joined_member, append_invite_notifications,
     drop_joined_invite_notifications, hydrate_notifications, hydrate_notifications_for_actor,
     notification_eval_context, notification_overrides_realm_mute, raw_notifications_from_sources,
-    read_cursor_targets, realm_is_muted, realm_title_hints_from_invites,
+    read_cursor_targets, realm_is_muted,
 };
 use crate::notification_rules::WatchLevel;
 use crate::state::projection::notifications::{test_event_notification, test_invite};
@@ -68,18 +68,8 @@ fn hydrate_notifications_applies_push_rules_and_dnd() {
 
 #[test]
 fn pending_invites_are_hydrated_as_notifications() {
-    let invite = test_invite(
-        1,
-        "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
-        None,
-        None,
-    );
-    let duplicate_invite = test_invite(
-        99,
-        "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
-        None,
-        None,
-    );
+    let invite = test_invite(1, "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1");
+    let duplicate_invite = test_invite(99, "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1");
     let mut raw = Vec::new();
     append_invite_notifications(&mut raw, vec![invite.clone()], &JoinedRealmIds::default());
     append_invite_notifications(&mut raw, vec![duplicate_invite], &JoinedRealmIds::default());
@@ -96,7 +86,18 @@ fn pending_invites_are_hydrated_as_notifications() {
         notifications[0].realm_id,
         "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
     );
-    assert_eq!(notifications[0].body, "You were invited to join a Realm.");
+    // The Invite object carries no Realm title (`governance-objects.md` §5.3),
+    // so the short protocol id is the name available before the accept flow
+    // resolves a directory preview.
+    assert_eq!(
+        notifications[0].body,
+        format!(
+            "You were invited to join {}.",
+            crate::views::helpers::short_protocol_id(
+                "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
+            )
+        )
+    );
     assert_eq!(
         notifications[0].action_label.as_deref(),
         Some("notifications.default_action.accept")
@@ -147,7 +148,7 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
             }]
         })
     };
-    let invite = || test_invite(1, realm_id, None, None);
+    let invite = || test_invite(1, realm_id);
 
     let mut invited_state = ClientLocalState::default();
     invited_state
@@ -315,7 +316,7 @@ fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
         .insert(realm_id.to_owned(), WatchLevel::Muted);
 
     // A brand-new invitation (distinct invite id) to the same realm.
-    let invite = test_invite(0xbb, realm_id, None, None);
+    let invite = test_invite(0xbb, realm_id);
     let expected_notification_id = format!("invite:{}", invite.id);
     let mut raw = Vec::new();
     append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
@@ -407,36 +408,26 @@ fn assignment_and_schedule_notifications_respect_realm_mute_hydration() {
 }
 
 #[test]
-fn invite_title_is_preserved_for_accept_projection_hint() {
+fn invite_notification_carries_no_unregistered_invite_members() {
     let realm_id = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
-    let invite = test_invite(
-        0x11,
-        realm_id,
-        Some("Partner Launch"),
-        Some("ak:invite-token:01904100-0000-7000-8000-000000000012"),
-    );
-    let hints = realm_title_hints_from_invites(std::slice::from_ref(&invite));
+    let invite = test_invite(0x11, realm_id);
     let mut raw = Vec::new();
     append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
 
     let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
 
-    assert_eq!(
-        hints.get(realm_id).map(String::as_str),
-        Some("Partner Launch")
-    );
-    assert_eq!(
-        notifications[0].body,
-        "You were invited to join Partner Launch."
-    );
+    // `invite.schema.json` registers neither a Realm title nor the private
+    // delivery token, and `governance-objects.md` §5.3 forbids materializing
+    // transport material on the Invite. The projection MUST NOT invent either.
+    assert_eq!(notifications[0].realm_label, None);
     assert!(matches!(
         notifications[0].action.as_ref(),
         Some(UiNotificationAction::AcceptInvite {
-            invite_token: Some(token),
-            realm_label: Some(label),
+            invite_token: None,
+            realm_label: None,
+            realm_id: action_realm_id,
             ..
-        }) if label == "Partner Launch"
-            && token == "ak:invite-token:01904100-0000-7000-8000-000000000012"
+        }) if action_realm_id == realm_id
     ));
 }
 
