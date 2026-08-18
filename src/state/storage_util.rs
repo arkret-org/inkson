@@ -287,6 +287,20 @@ pub(crate) fn load_session_grant_from_user_secure_store(
 }
 
 #[cfg_attr(test, allow(dead_code))]
+// Counterpart of `store_session_grant_in_secure_store` below. The only caller
+// is `app::secure_store_effects::apply_test_session_grant_expiry_override`,
+// which is gated on the same cfg, so this carries the caller's cfg rather than
+// an `allow(dead_code)`. Do not delete it as an "uncalled thin wrapper": a
+// native-host build (including `--all-features`) never compiles the call site,
+// so a plain reachability scan cannot see it. The joint-e2e web fixture build
+// (`dx build --platform web --features wasm-localstorage-secrets-test`) does.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
+pub(crate) fn load_session_grant_from_secure_store(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<Option<PersistedSessionGrant>, crate::secure_key_store::SecureKeyStoreError> {
+    load_session_grant_from_user_secure_store(&active_user_local_store()?, secure_store)
+}
+
 pub(crate) fn store_session_grant_in_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     grant: &PersistedSessionGrant,
