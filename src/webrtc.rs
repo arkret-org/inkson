@@ -21,62 +21,18 @@ use crate::operation::TypedOperationBuilder;
 // the ciphertext. Do NOT re-introduce a durable `OperationBuilder`-based
 // helper, a plaintext envelope, or a parallel kind list here.
 
-/// Call lifecycle state for `ak.call.state`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CallState {
-    Scheduled,
-    Ringing,
-    Connecting,
-    Active,
-    Ended,
-    Missed,
-    Failed,
-    Cancelled,
-}
-
-impl CallState {
-    pub fn as_wire(self) -> &'static str {
-        match self {
-            Self::Scheduled => "scheduled",
-            Self::Ringing => "ringing",
-            Self::Connecting => "connecting",
-            Self::Active => "active",
-            Self::Ended => "ended",
-            Self::Missed => "missed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-        }
-    }
-
-    fn typed(self) -> arkret_sdk::CallLifecycleState {
-        match self {
-            Self::Scheduled => arkret_sdk::CallLifecycleState::Scheduled,
-            Self::Ringing => arkret_sdk::CallLifecycleState::Ringing,
-            Self::Connecting => arkret_sdk::CallLifecycleState::Connecting,
-            Self::Active => arkret_sdk::CallLifecycleState::Active,
-            Self::Ended => arkret_sdk::CallLifecycleState::Ended,
-            Self::Missed => arkret_sdk::CallLifecycleState::Missed,
-            Self::Failed => arkret_sdk::CallLifecycleState::Failed,
-            Self::Cancelled => arkret_sdk::CallLifecycleState::Cancelled,
-        }
-    }
-}
-
 /// Build a `ak.call.state` event — durable call lifecycle transition.
 pub fn build_call_state(
     realm_id: &str,
     actor: &str,
     call_id: &str,
-    from: Option<CallState>,
-    to: CallState,
+    from: Option<arkret_sdk::CallLifecycleState>,
+    to: arkret_sdk::CallLifecycleState,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let from = from.ok_or_else(|| anyhow::anyhow!("call state transition requires from state"))?;
     let payload = arkret_sdk::CallStatePayload {
         call_id: arkret_sdk::CallId::new(call_id.to_owned())?,
-        state_transition: Some(arkret_sdk::CallStateTransition {
-            from: from.typed(),
-            to: to.typed(),
-        }),
+        state_transition: Some(arkret_sdk::CallStateTransition { from, to }),
         focus: None,
         recording_transition: None,
         transcript_transition: None,
@@ -254,8 +210,8 @@ mod tests {
             "ak:realm:AedjkD9d4O8HsmPTELawvNXaIESdgksYx6jB4w3TZG0J",
             "did:web:alice",
             "ak:call:AV2POYJXMfLYPg5u4jsNfpIyQjrEWx4_pWcsA9U7yXJQ",
-            Some(CallState::Connecting),
-            CallState::Active,
+            Some(arkret_sdk::CallLifecycleState::Connecting),
+            arkret_sdk::CallLifecycleState::Active,
         )
         .unwrap()
         .build("node");

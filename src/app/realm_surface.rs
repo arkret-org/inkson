@@ -45,9 +45,7 @@ impl RealmSurface {
 
     pub(crate) fn from_preference(value: &str) -> Option<Self> {
         match value {
-            "timeline" => Some(Self::Board),
             "board" => Some(Self::Board),
-            "discussion" => Some(Self::Board),
             _ => None,
         }
     }

@@ -800,16 +800,6 @@ fn realm_top_nav_is_board_only() {
     let surfaces = RealmSurface::top_nav();
 
     assert_eq!(surfaces, [RealmSurface::Board]);
-    assert_eq!(
-        RealmSurface::from_preference("timeline"),
-        Some(RealmSurface::Board)
-    );
-    assert_eq!(
-        RealmSurface::from_preference("discussion"),
-        Some(RealmSurface::Board)
-    );
-    // The removed `document` surface no longer resolves.
-    assert_eq!(RealmSurface::from_preference("document"), None);
 }
 
 #[test]

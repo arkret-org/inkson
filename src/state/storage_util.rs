@@ -328,11 +328,7 @@ pub(crate) fn plaintext_identity_seed_fallback_allowed() -> bool {
 pub(crate) fn snapshot_item_encrypted_payload(
     item: &arkret_sdk::SnapshotMaterializedItem,
 ) -> Option<EncryptedPayload> {
-    let schema = item
-        .object
-        .get("schema")
-        .or_else(|| item.object.get("type"))
-        .and_then(Value::as_str);
+    let schema = item.object.get("schema").and_then(Value::as_str);
     let is_envelope = item.kind == SchemaId::ENCRYPTED_ENVELOPE_V1
         || schema == Some(SchemaId::ENCRYPTED_ENVELOPE_V1);
     if !is_envelope {
