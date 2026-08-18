@@ -34,7 +34,6 @@ pub(crate) struct PreparedRootAnchoredRecovery {
 pub(crate) struct CompletedFreshDeviceRecovery {
     pub transaction_id: TransactionId,
     pub readiness: crate::fresh_device_recovery::RecoveryReadinessEvidence,
-    pub restore_report: super::RestoreReport,
     pub standard_grant_installed: bool,
 }
 
@@ -556,7 +555,6 @@ pub(crate) async fn execute_root_anchored_recovery(
             authorization_event_id: binding.authorize_event_id.clone(),
             did_entry_ref: binding.did_entry_ref.clone(),
         },
-        restore_report,
         standard_grant_installed: false,
     })
 }
@@ -704,7 +702,6 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
     Ok(Some(CompletedFreshDeviceRecovery {
         transaction_id,
         readiness,
-        restore_report,
         standard_grant_installed: false,
     }))
 }

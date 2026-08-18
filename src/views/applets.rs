@@ -78,11 +78,11 @@ pub fn applet_effective_scope(realm_id: &str, circle_id: Option<&str>) -> Result
 /// The admin escalates these in the wizard's approval step before commit.
 fn approval_request(
     approve_actions: Vec<String>,
-    ghost_actors_allowed: bool,
+    ghost_actor_mode: AppletGhostActorMode,
 ) -> AppletApprovalRequest {
     AppletApprovalRequest {
         approve_actions,
-        ghost_actors_allowed,
+        ghost_actor_mode,
         delegated_native_actors_allowed: false,
         e2ee_join_allowed: false,
         widget_allowed: false,
@@ -600,7 +600,11 @@ pub fn AppletsPanel(
                                         let api_token = token();
                                         let circle = install_circle_id();
                                         let approve_actions = install_approve_actions();
-                                        let ghost_actors_allowed = install_ghost_actors_allowed();
+                                        let ghost_actor_mode = if install_ghost_actors_allowed() {
+                                            AppletGhostActorMode::PolicyDeclared
+                                        } else {
+                                            AppletGhostActorMode::Disallowed
+                                        };
                                         install_status.set("previewing install plan…".to_owned());
                                         spawn(async move {
                                             let effective_scope = match applet_effective_scope(
@@ -618,7 +622,7 @@ pub fn AppletsPanel(
                                                 effective_scope: effective_scope.clone(),
                                                 approval_request: approval_request(
                                                     parse_applet_approval_actions(&approve_actions),
-                                                    ghost_actors_allowed,
+                                                    ghost_actor_mode,
                                                 ),
                                             };
                                             let result = with_authed_sdk_client(&base, api_token, |http| async move {
@@ -683,7 +687,11 @@ pub fn AppletsPanel(
                                         let base = base.clone();
                                         let api_token = token();
                                         let actor_id = account_did();
-                                        let ghost_actors_allowed = install_ghost_actors_allowed();
+                                        let ghost_actor_mode = if install_ghost_actors_allowed() {
+                                            AppletGhostActorMode::PolicyDeclared
+                                        } else {
+                                            AppletGhostActorMode::Disallowed
+                                        };
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
                                             let idem = crate::operation::uuid_v7();
@@ -704,11 +712,7 @@ pub fn AppletsPanel(
                                                     capability_grant_events: events,
                                                     actor_policy: Some(AppletActorPolicy {
                                                         bot_membership: Some(AppletBotMembership::Join),
-                                                        ghost_actor_mode: Some(if ghost_actors_allowed {
-                                                            AppletGhostActorMode::PolicyDeclared
-                                                        } else {
-                                                            AppletGhostActorMode::Disallowed
-                                                        }),
+                                                        ghost_actor_mode: Some(ghost_actor_mode),
                                                     }),
                                                     e2ee_policy: None,
                                                     widget_policy: None,

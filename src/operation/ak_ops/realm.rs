@@ -31,16 +31,18 @@ pub fn realm_archive(
 
 /// Build a `ak.message.revise` operation carrying the replacement content
 /// block required by `message_revise_payload`.
+///
+/// `message_id` is the single registered target carrier: an `ak:event:` token
+/// is retyped to `ak:message:` (`common-fields.md` §6.0) before it is written.
 pub fn message_revise_content(
     realm_id: &str,
     actor: &str,
     target_ref: &str,
     content: arkret_sdk::ContentBlock,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let mut payload = arkret_sdk::MessageRevisePayload {
-        message_id: None,
-        target_ref: None,
-        revision_of: None,
+    let message_id = message_id_from_target_ref(target_ref)?;
+    let payload = arkret_sdk::MessageRevisePayload {
+        message_id: message_id.clone(),
         track_name: None,
         content: Some(content),
         encrypted_content: None,
@@ -48,20 +50,23 @@ pub fn message_revise_content(
         encrypted_metadata: None,
         reason: None,
     };
-    if target_ref.starts_with("ak:message:") {
-        payload.message_id = Some(
-            arkret_sdk::MessageId::new(target_ref.to_owned())
-                .map_err(|err| anyhow::anyhow!("invalid message_id {target_ref:?}: {err}"))?,
-        );
-    } else {
-        payload.target_ref = Some(target_ref.to_owned());
-    }
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageRevise>(
             realm_id, actor, payload,
         )
-        .target_ref(target_ref),
+        .target_ref(message_id.as_str()),
     )
+}
+
+/// Retype an `ak:event:` create-Event token to the `ak:message:` typed ID that
+/// the Message-scoped payload classes register as their only target carrier.
+fn message_id_from_target_ref(target_ref: &str) -> anyhow::Result<arkret_sdk::MessageId> {
+    let candidate = match target_ref.strip_prefix("ak:event:") {
+        Some(token) => format!("ak:message:{token}"),
+        None => target_ref.to_owned(),
+    };
+    arkret_sdk::MessageId::new(candidate)
+        .map_err(|err| anyhow::anyhow!("invalid message_id {target_ref:?}: {err}"))
 }
 
 /// Build a `ak.realm.organization` statement operation (YGN-ORG-02).

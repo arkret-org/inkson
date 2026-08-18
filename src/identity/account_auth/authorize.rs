@@ -2,13 +2,15 @@ use anyhow::Context;
 use sha2::{Digest as _, Sha256};
 use url::Url;
 
+#[cfg(any(target_arch = "wasm32", test))]
+use super::OIDC_SCAFFOLD_STORAGE_KEY_PREFIX;
 use super::util::{
     PKCE_VERIFIER_BYTES, STATE_NONCE_TOKEN_BYTES, pkce_code_challenge_s256, preferred_pkce_method,
     random_url_safe_token,
 };
 use super::{
-    ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OIDC_SCAFFOLD_STORAGE_KEY_PREFIX,
-    OidcDiscoveryDocument, OidcEntryPoint, OidcScaffoldBundle, PersistedOidcScaffold,
+    ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OidcDiscoveryDocument, OidcEntryPoint,
+    OidcScaffoldBundle, PersistedOidcScaffold,
 };
 
 /// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
@@ -171,6 +173,7 @@ pub fn build_persisted_oidc_scaffold(
     }
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 fn oidc_scaffold_storage_key(state: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(b"inkson.oidc-scaffold-state-v1\0");

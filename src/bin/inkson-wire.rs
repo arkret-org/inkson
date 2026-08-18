@@ -188,7 +188,6 @@ fn range_completeness(input: Value) -> Result<Value> {
         auth_context: None,
         seal_basis: None,
         payload: payload.into_iter().collect(),
-        redacts: None,
         unsigned: BTreeMap::new(),
         proofs: Vec::new(),
         requirements: EventRequirements::default(),

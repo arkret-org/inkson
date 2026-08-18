@@ -160,15 +160,13 @@ fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedaction
         return None;
     }
     let payload = redaction_payload_candidate(event);
-    // Registered payload target members only. `message_redact_payload` accepts
-    // message_id / target_ref / event_id / target_event_id;
-    // `cross_object_redaction_payload` accepts the same set minus message_id.
-    // `redacts` is an Event Envelope field, so it is read at envelope level and
-    // nowhere else.
-    let target_ref = ["message_id", "target_ref", "event_id", "target_event_id"]
+    // Each redaction payload class registers exactly one target carrier:
+    // `message_redact_payload.message_id` and
+    // `cross_object_redaction_payload.target_ref`. The two member names are
+    // disjoint, so this is a per-kind lookup, not a fallback chain.
+    let target_ref = ["message_id", "target_ref"]
         .into_iter()
         .find_map(|key| payload.get(key).and_then(Value::as_str))
-        .or_else(|| event.get("redacts").and_then(Value::as_str))
         .map(str::trim)
         .filter(|value| {
             !value.is_empty()

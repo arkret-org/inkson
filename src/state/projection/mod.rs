@@ -21,17 +21,3 @@ pub use sync::projection_events_from_sync_realms;
 pub(crate) mod kanban_ops;
 pub(crate) mod message_ops;
 pub(crate) mod moderation_ops;
-
-/// First non-empty trimmed string at `path` under `value` (shared by the
-/// projection extractors).
-pub(crate) fn json_path_string(value: Option<&serde_json::Value>, path: &[&str]) -> Option<String> {
-    let mut current = value?;
-    for segment in path {
-        current = current.get(*segment)?;
-    }
-    current
-        .as_str()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}

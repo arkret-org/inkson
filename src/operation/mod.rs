@@ -351,16 +351,6 @@ impl TypedOperationBuilder {
         })
     }
 
-    pub fn redacts(self, redacts: impl Into<String>) -> Self {
-        self.map_event(|event| {
-            event.redacts = Some(
-                arkret_sdk::EventId::new(redacts.into())
-                    .map_err(|err| anyhow::anyhow!("invalid redacts Event id: {err}"))?,
-            );
-            Ok(())
-        })
-    }
-
     #[allow(clippy::expect_used)]
     pub fn build(self, node_id: &str) -> Event {
         self.build_sdk_event(node_id)

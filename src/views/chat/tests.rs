@@ -4629,8 +4629,12 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
     assert_eq!(msg.crypto_state, MessageCryptoState::KeyMissing);
 }
 
+/// `message_revise_payload` registers exactly one target carrier, `message_id`.
+/// An `ak:event:` create token handed to the builder is retyped to
+/// `ak:message:` (`common-fields.md` §6.0) rather than written verbatim, so the
+/// same Message can never be addressed two ways.
 #[test]
-fn chat_message_revise_operation_uses_schema_target_ref() {
+fn chat_message_revise_operation_retypes_event_target_to_message_id() {
     let op = chat_message_revise_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
         "did:web:bob.example",
@@ -4640,13 +4644,15 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["target_ref"],
-        "ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
+        op.payload["message_id"],
+        "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
     );
     assert_eq!(op.payload["content"]["kind"], "ak.content.text");
     assert_eq!(op.payload["content"]["body"], "edited");
     assert!(!op.payload.contains_key("body"));
-    assert!(!op.payload.contains_key("target_event_id"));
+    for retired in ["target_ref", "target_event_id", "revision_of"] {
+        assert!(!op.payload.contains_key(retired));
+    }
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -4658,10 +4664,8 @@ fn chat_message_revise_operation_uses_schema_target_ref() {
 
 #[test]
 fn chat_message_revise_operation_addresses_message_target_via_message_id() {
-    // A `ak:message:` target is addressed through the payload's `message_id`
-    // field (like `chat_message_redact_operation`), not `target_ref` — both are
-    // valid per the message_revise_payload anyOf, and message_id is the typed
-    // form the SDK builder emits for message ids.
+    // `message_id` is the only registered target carrier, so an already-typed
+    // `ak:message:` target passes through unchanged.
     let op = chat_message_revise_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
         "did:web:bob.example",
@@ -4686,8 +4690,9 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
         .unwrap();
 }
 
+/// Same single-carrier rule for `message_redact_payload`.
 #[test]
-fn chat_message_redact_operation_uses_event_target_for_event_id() {
+fn chat_message_redact_operation_retypes_event_target_to_message_id() {
     let op = chat_message_redact_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
         "did:web:bob.example",
@@ -4697,11 +4702,13 @@ fn chat_message_redact_operation_uses_event_target_for_event_id() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["target_event_id"],
-        "ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
+        op.payload["message_id"],
+        "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
     );
     assert_eq!(op.payload["reason"], "author_redaction");
-    assert!(!op.payload.contains_key("message_id"));
+    for retired in ["target_ref", "event_id", "target_event_id"] {
+        assert!(!op.payload.contains_key(retired));
+    }
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(

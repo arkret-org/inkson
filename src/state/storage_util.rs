@@ -270,12 +270,6 @@ pub(crate) fn store_dpop_device_key_in_secure_store(
     )
 }
 
-pub(crate) fn load_session_grant_from_secure_store(
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-) -> Result<Option<PersistedSessionGrant>, crate::secure_key_store::SecureKeyStoreError> {
-    load_session_grant_from_user_secure_store(&active_user_local_store()?, secure_store)
-}
-
 pub(crate) fn load_session_grant_from_user_secure_store(
     user_store: &crate::secure_key_store::UserLocalStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,

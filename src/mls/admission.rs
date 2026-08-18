@@ -12,8 +12,6 @@ use crate::state::LocalStateStore;
 pub(crate) struct RealmMlsAdmissionEvents {
     pub(crate) commit: arkret_sdk::Event,
     pub(crate) welcome: arkret_sdk::Event,
-    #[cfg(test)]
-    pub(crate) welcome_envelope: arkret_sdk::MlsWelcomeEnvelope,
     pub(crate) snapshot: MlsSnapshotEnvelope,
 }
 
@@ -141,8 +139,6 @@ fn build_realm_mls_admission_events_from_verified_claim(
     Ok(RealmMlsAdmissionEvents {
         commit,
         welcome,
-        #[cfg(test)]
-        welcome_envelope: add.welcome.clone(),
         snapshot,
     })
 }
@@ -170,34 +166,6 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
         requester_device_authorize_event_id,
         claims,
         None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_sidecar_mls_admission_events_from_claims(
-    state_store: &LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    requester_device_authorize_event_id: &arkret_sdk::EventId,
-    claims: &[(
-        arkret_sdk::KeyPackageClaimRecord,
-        String,
-        arkret_sdk::MlsWelcomeClaimReceipt,
-    )],
-    sidecar_binding: arkret_sdk::SidecarMlsBinding,
-) -> Result<RealmMlsBatchAdmissionEvents, String> {
-    build_mls_admission_events_from_claims_for_effective_scope(
-        state_store,
-        secure_store,
-        realm_id,
-        None,
-        actor_id,
-        device_id,
-        requester_device_authorize_event_id,
-        claims,
-        Some(sidecar_binding),
     )
 }
 
@@ -777,7 +745,7 @@ mod tests {
             }
         };
         arkret_sdk::KeyPackageClaimRecord {
-            claim_id: "ak:mls_keypackage:test:Y2xhaW0tbm9uY2U".to_owned(),
+            claim_id: "keypackage-test:Y2xhaW0tbm9uY2U".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
             keypackage_digest: record.keypackage_ref.clone(),
             principal_id: principal_id.clone(),

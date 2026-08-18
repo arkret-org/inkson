@@ -15,6 +15,10 @@ use super::signing_seed::{
 use super::{SecureKeyStore, SecureKeyStoreError};
 
 const PENDING_NAMESPACE: &str = "pending";
+/// Only the wasm32 `localStorage` backend names an installation-global entry
+/// (the secure-store wrapping seed), so the namespace carries that gate rather
+/// than an allow that would also hide a real regression.
+#[cfg(any(target_arch = "wasm32", test))]
 const GLOBAL_NAMESPACE: &str = "global";
 const DEVICE_ID_ENTRY: &str = "device_id.v1";
 const SIGNING_SEED_ENTRY: &str = "device.ed25519.signing_seed.v1";
@@ -135,6 +139,7 @@ impl GlobalLocalStore {
     }
 
     /// Expand a caller-supplied logical key into an installation-global key.
+    #[cfg(any(target_arch = "wasm32", test))]
     #[must_use]
     pub(crate) fn key(&self, logical_key: &str) -> String {
         format!("{}.{GLOBAL_NAMESPACE}.{logical_key}", self.application)
@@ -253,6 +258,9 @@ impl UserLocalStore {
         store_signing_seed_at(store, &self.key(GRANT_BINDING_SEED_ENTRY), &seed)
     }
 
+    /// Logout-only; the sole caller sits under `cfg(not(test))`, so this carries
+    /// the same gate instead of an allow.
+    #[cfg(not(test))]
     pub(crate) fn delete_grant_binding_seed(
         &self,
         store: &dyn SecureKeyStore,

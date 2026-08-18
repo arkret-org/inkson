@@ -142,7 +142,11 @@ impl<'de, K: arkret_sdk::EventSpec> Deserialize<'de> for ExpectedEventKind<K> {
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "K::Payload: Deserialize<'de>"))]
 struct StoredModerationRecord<K: arkret_sdk::EventSpec> {
-    kind: ExpectedEventKind<K>,
+    /// Deserialization-time discriminator: the `untagged` enum below picks a
+    /// variant by whether this member parses as the expected kind. Nothing reads
+    /// it afterwards, so it is named for what it is instead of being silenced.
+    #[serde(rename = "kind")]
+    _kind: ExpectedEventKind<K>,
     #[serde(default)]
     event_id: Option<String>,
     body: K::Payload,

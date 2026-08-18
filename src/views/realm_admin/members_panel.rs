@@ -1773,38 +1773,18 @@ pub(crate) fn realm_key_source_ref_str(source_ref: &arkret_sdk::RealmKeySourceRe
     }
 }
 
+/// Delivery identity of a relayed `ak.realm_key.request` envelope.
+///
+/// `RealmKeyRequestPayload` has no `request_id`; the to-device relay identifies
+/// a delivery by the envelope's top-level `device_message_id`, which
+/// `device-message.schema.json` makes required. There is no second legal
+/// position, so an envelope missing it — or carrying it only under `content` /
+/// `payload` — is schema-invalid and produces no request identity.
 fn realm_key_request_envelope_request_id(envelope: &Value) -> Option<String> {
-    envelope
-        .get("request_id")
-        // The production to-device relay identifies deliveries with
-        // `device_message_id`; RealmKeyRequestPayload itself has no `request_id`.
-        // Treat that delivery id as the request identity so the provider can
-        // remove a successfully answered envelope from its local inbox.
-        .or_else(|| envelope.get("device_message_id"))
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("request_id"))
-        })
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("device_message_id"))
-        })
-        .or_else(|| {
-            envelope
-                .get("payload")
-                .and_then(|payload| payload.get("request_id"))
-        })
-        .or_else(|| {
-            envelope
-                .get("payload")
-                .and_then(|payload| payload.get("device_message_id"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    let raw = envelope.get("device_message_id").and_then(Value::as_str)?;
+    arkret_sdk::DeviceMessageId::new(raw.to_owned())
+        .ok()
+        .map(|id| id.as_str().to_owned())
 }
 
 fn realm_key_request_envelope_realm_id(envelope: &Value) -> Option<String> {
@@ -5900,7 +5880,7 @@ mod tests {
             "unsigned": {
                 "source_event_id": "ak:event:AepQFRXl2eSinSnm-0nVn5vcGxTITGIGhxhsGbRyLhMw",
                 "mls_welcome_id": "ak:mls_welcome:welcome",
-                "key_package_id": "ak:mls_keypackage:key"
+                "key_package_id": "keypackage-key"
             }
         })];
 
@@ -5994,10 +5974,14 @@ mod tests {
                 .unwrap()
                 .with_timezone(&chrono::Utc),
         };
+        // The delivery identity is the envelope's top-level `device_message_id`
+        // (device-message.schema.json required member). `RealmKeyRequestPayload`
+        // has no `request_id`, so an envelope carrying one under some other name
+        // supplies no request identity at all.
         let envelope = json!({
+            "device_message_id": "ak:device_message:0196419b-0000-7000-8000-0000000000f1",
             "kind": "ak.realm_key.request",
             "realm_id": realm,
-            "request_id": "sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9",
             "sender_device_id": SELF_DEVICE,
             "payload": request,
         });
@@ -6007,7 +5991,7 @@ mod tests {
         assert_eq!(parsed.realm_id, realm);
         assert_eq!(
             parsed.request_id.as_deref(),
-            Some("sha256:5e54ee81d9debde1e0a09f20e0c7bc282f511e5ccb6c1e41d75f07018db835e9")
+            Some("ak:device_message:0196419b-0000-7000-8000-0000000000f1")
         );
         assert_eq!(
             realm_key_source_ref_str(&parsed.payload.target_source_ref),
@@ -6060,6 +6044,50 @@ mod tests {
         );
     }
 
+    /// `device_message_id` has exactly one legal position: the envelope top
+    /// level (`device-message.schema.json` required member). An id that only
+    /// appears under `content` / `payload`, or that conflicts with the
+    /// top-level value, MUST NOT produce a request identity.
+    #[test]
+    fn relayed_request_id_rejects_misplaced_and_conflicting_device_message_id() {
+        const TOP: &str = "ak:device_message:0196419b-0000-7000-8000-0000000000a1";
+        const NESTED: &str = "ak:device_message:0196419b-0000-7000-8000-0000000000a2";
+
+        // Only under `content` -> no identity.
+        let content_only = json!({
+            "kind": "ak.realm_key.request",
+            "content": { "device_message_id": NESTED },
+        });
+        assert_eq!(realm_key_request_envelope_request_id(&content_only), None);
+
+        // Only under `payload` -> no identity.
+        let payload_only = json!({
+            "kind": "ak.realm_key.request",
+            "payload": { "device_message_id": NESTED },
+        });
+        assert_eq!(realm_key_request_envelope_request_id(&payload_only), None);
+
+        // Top level plus a conflicting nested copy -> the top level is the only
+        // carrier the reader consults, so the nested copy cannot win.
+        let conflicting = json!({
+            "device_message_id": TOP,
+            "kind": "ak.realm_key.request",
+            "content": { "device_message_id": NESTED },
+        });
+        assert_eq!(
+            realm_key_request_envelope_request_id(&conflicting).as_deref(),
+            Some(TOP)
+        );
+
+        // A top-level value that is not a canonical typed id is rejected
+        // outright rather than propagated as an opaque string.
+        let malformed = json!({
+            "device_message_id": "not-a-typed-id",
+            "kind": "ak.realm_key.request",
+        });
+        assert_eq!(realm_key_request_envelope_request_id(&malformed), None);
+    }
+
     #[test]
     fn realm_key_request_answer_dedup_key_prefers_request_id() {
         let realm = TEST_REALM;
@@ -6090,16 +6118,16 @@ mod tests {
                 .with_timezone(&chrono::Utc),
         };
         let envelope = json!({
+            "device_message_id": "ak:device_message:0196419b-0000-7000-8000-0000000000f1",
             "kind": "ak.realm_key.request",
             "realm_id": realm,
-            "request_id": "sha256:answer-dedup",
             "payload": request,
         });
         let parsed = parse_realm_key_request_envelope(&envelope).unwrap();
 
         assert_eq!(
             realm_key_request_answer_dedup_key(&parsed),
-            "id:sha256:answer-dedup"
+            "id:ak:device_message:0196419b-0000-7000-8000-0000000000f1"
         );
     }
 

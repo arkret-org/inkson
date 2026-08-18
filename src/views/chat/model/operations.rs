@@ -163,33 +163,25 @@ pub(crate) fn chat_message_redact_operation(
     target_id: &str,
     reason: &str,
 ) -> anyhow::Result<arkret_sdk::Event> {
+    // `message_id` is the single registered target carrier; an `ak:event:`
+    // create token is retyped to `ak:message:` (`common-fields.md` §6.0).
     let target_id = target_id.trim();
-    let mut payload = arkret_sdk::MessageRedactPayload {
-        message_id: None,
-        target_ref: None,
-        event_id: None,
-        target_event_id: None,
+    let candidate = match target_id.strip_prefix("ak:event:") {
+        Some(token) => format!("ak:message:{token}"),
+        None => target_id.to_owned(),
+    };
+    let message_id = arkret_sdk::MessageId::new(candidate)
+        .map_err(|err| anyhow::anyhow!("invalid redaction message target: {err}"))?;
+    let payload = arkret_sdk::MessageRedactPayload {
+        message_id: message_id.clone(),
         track_name: None,
         reason: Some(reason.to_owned()),
         preserve: None,
     };
-    if target_id.starts_with("ak:event:") {
-        payload.target_event_id = Some(
-            arkret_sdk::EventId::new(target_id.to_owned())
-                .map_err(|err| anyhow::anyhow!("invalid redaction event target: {err}"))?,
-        );
-    } else if target_id.starts_with("ak:message:") {
-        payload.message_id = Some(
-            arkret_sdk::MessageId::new(target_id.to_owned())
-                .map_err(|err| anyhow::anyhow!("invalid redaction message target: {err}"))?,
-        );
-    } else {
-        payload.target_ref = Some(target_id.to_owned());
-    }
     crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageRedact>(
         realm_id, actor, payload,
     )
-    .target_ref(target_id)
+    .target_ref(message_id.as_str())
     .build_sdk_event("inkson")
 }
 

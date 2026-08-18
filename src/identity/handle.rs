@@ -71,20 +71,6 @@ pub fn normalize_user_handle_display(input: &str) -> Option<String> {
     parse_user_handle(input).map(|handle| handle.display)
 }
 
-/// Return an authoritative principal DID for an identifier that is *already*
-/// a DID. A bare handle (`alice:example.com`) is intentionally NOT accepted:
-/// reducing a handle to its principal DID requires a directory-attested
-/// `resolve_handle` round-trip (see module docs), which this synchronous
-/// helper cannot perform. Handle inputs therefore fail closed (`None`) instead
-/// of being materialised into a fabricated `did:web` identifier.
-pub fn principal_did_from_identifier(input: &str) -> Option<String> {
-    let trimmed = input.trim();
-    if trimmed.starts_with("did:") && trimmed.len() > "did:".len() {
-        return Some(trimmed.to_owned());
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,16 +116,7 @@ mod tests {
 
     #[test]
     fn principal_identifier_accepts_did_but_fails_closed_on_handle() {
-        assert_eq!(
-            principal_did_from_identifier("did:web:alice.example").unwrap(),
-            "did:web:alice.example"
-        );
-        assert_eq!(
-            principal_did_from_identifier("did:webvh:zSCID:alice.example").unwrap(),
-            "did:webvh:zSCID:alice.example"
-        );
         // A bare handle is NOT materialised into a fabricated DID; reducing it
         // requires a directory-attested resolve_handle round-trip.
-        assert!(principal_did_from_identifier("alice:example.com").is_none());
     }
 }

@@ -608,10 +608,12 @@ impl LocalStateStore {
     }
 
     /// Drop a handled `ak.realm_key.request` from the local to-device inbox.
-    /// The server-delivered envelope carries a to-device `device_message_id` at the
-    /// top level. Older local/test envelopes may use `request_id` or nest the
-    /// identifier under `content`; accept all supported shapes so a
-    /// successfully answered request does not trigger duplicate shares forever.
+    ///
+    /// `DeviceMessageEnvelope.device_message_id` is top-level required in
+    /// `device-message.schema.json`; the protocol has no second legal position
+    /// for it. An envelope that omits it, or that only carries the id nested
+    /// under `content` / `payload`, is schema-invalid and MUST NOT reach dedupe
+    /// or dispatch.
     pub fn dismiss_realm_key_request_to_device_message(&mut self, request_id: &str) -> usize {
         self.ensure_cached_loaded();
         let request_id = request_id.trim();
@@ -623,7 +625,7 @@ impl LocalStateStore {
             if message.get("kind").and_then(Value::as_str) != Some("ak.realm_key.request") {
                 return true;
             }
-            realm_key_request_message_id(message).as_deref() != Some(request_id)
+            to_device_message_id(message).as_deref() != Some(request_id)
         });
         let removed = before - self.cached.to_device_inbox.len();
         if removed > 0 {
@@ -813,34 +815,17 @@ fn realm_scan_cursor_key(
     )
 }
 
-fn realm_key_request_message_id(message: &Value) -> Option<String> {
-    message
-        .get("request_id")
-        .or_else(|| message.get("device_message_id"))
-        .or_else(|| {
-            message
-                .get("content")
-                .and_then(|content| content.get("request_id"))
-        })
-        .or_else(|| {
-            message
-                .get("content")
-                .and_then(|content| content.get("device_message_id"))
-        })
-        .or_else(|| {
-            message
-                .get("payload")
-                .and_then(|payload| payload.get("request_id"))
-        })
-        .or_else(|| {
-            message
-                .get("payload")
-                .and_then(|payload| payload.get("device_message_id"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+/// Delivery identity of a to-device envelope.
+///
+/// The single legal carrier is the top-level `device_message_id`
+/// (`device-message.schema.json` required member). Values that do not parse as
+/// a canonical `ak:device_message:<uuidv7>` are rejected here so a
+/// schema-invalid envelope never reaches dedupe, state update or UI dispatch.
+fn to_device_message_id(message: &Value) -> Option<String> {
+    let raw = message.get("device_message_id").and_then(Value::as_str)?;
+    arkret_sdk::DeviceMessageId::new(raw.to_owned())
+        .ok()
+        .map(|id| id.as_str().to_owned())
 }
 
 fn realm_key_share_message_id(message: &Value) -> Option<String> {

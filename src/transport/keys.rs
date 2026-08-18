@@ -65,6 +65,35 @@ pub async fn send_device_message<K: arkret_sdk::DeviceMessageSpec>(
     content: K::Content,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
     let message_id = arkret_sdk::DeviceMessageId::new_v7_at(crate::clock::now_unix_ms());
+    send_device_message_with_id::<K>(
+        http,
+        txn_id,
+        message_id,
+        target_actor,
+        target_device_id,
+        expires_at,
+        content,
+    )
+    .await
+}
+
+/// Same as [`send_device_message`] but with a caller-pinned
+/// `device_message_id`.
+///
+/// Kinds whose HPKE AAD binds the envelope id (`ak.secret.send`,
+/// device-lifecycle.md §10.7) MUST allocate that id **before** sealing and hand
+/// the same value here, so the ciphertext, the envelope and the durable queue
+/// row all carry one id. Minting a second id at send time would break the AAD.
+#[allow(clippy::too_many_arguments)]
+pub async fn send_device_message_with_id<K: arkret_sdk::DeviceMessageSpec>(
+    http: &arkret_sdk::http_client::Client,
+    txn_id: &str,
+    message_id: arkret_sdk::DeviceMessageId,
+    target_actor: &str,
+    target_device_id: &str,
+    expires_at: &str,
+    content: K::Content,
+) -> anyhow::Result<DeviceMessagesSendOutcome> {
     let target_actor = crate::mls_api_helpers::principal_core_id(target_actor)?;
     let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())?;
     let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);

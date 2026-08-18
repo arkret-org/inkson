@@ -125,14 +125,16 @@ pub fn parse_request_content(
 /// Build `ak.secret.send.content` on the responding (existing) device: seal the
 /// account secret to the requester's HPKE public key.
 ///
-/// `account_did` is the shared principal DID of both devices (same-account
-/// D2D). `self_device_id` is the responding device (the envelope's
+/// `account_did` is the shared principal `did_core_id` of both devices
+/// (same-account D2D). `self_device_id` is the responding device (the envelope's
 /// `sender_device_id`). `expires_at` is the RFC3339 value used for the
 /// `DeviceMessageTarget.expires_at`; it is part of the HPKE AAD and so MUST be
 /// the exact string later put on the wire.
+#[allow(clippy::too_many_arguments)]
 pub fn build_send_content(
     request: &arkret_crypto::secret_share::SecretShareRequestContent,
     account_secret: &StoredAccountMlsSecret,
+    device_message_id: &arkret_sdk::DeviceMessageId,
     account_did: &str,
     self_device_id: &str,
     expires_at: &str,
@@ -146,10 +148,13 @@ pub fn build_send_content(
         &request.request_id,
     )?;
     let aad = send_aad(
+        device_message_id,
         account_did,
         self_device_id,
         account_did,
         request.from_device.as_str(),
+        &request.request_id,
+        SECRET_SHARE_SECRET_ID,
         expires_at,
     )?;
     let sealed = hpke_backup::hpke_seal(
@@ -177,9 +182,11 @@ pub fn build_send_content(
 /// `sender_device_id` is the responding device from the received envelope;
 /// `our_device_id` is this device; `expires_at` is the received envelope
 /// `expires_at`. All three feed the AAD that MUST match the sender's.
+#[allow(clippy::too_many_arguments)]
 pub fn open_send_content(
     requester: &SecretShareRequester,
     send_content: &Value,
+    device_message_id: &arkret_sdk::DeviceMessageId,
     account_did: &str,
     sender_device_id: &str,
     our_device_id: &str,
@@ -211,10 +218,13 @@ pub fn open_send_content(
         .map_err(|err| anyhow!("decode ak.secret.send.ciphertext: {err}"))?;
 
     let aad = send_aad(
+        device_message_id,
         account_did,
         sender_device_id,
         account_did,
         our_device_id,
+        &outer_request_id,
+        &secret_id,
         expires_at,
     )?;
     let plaintext = hpke_backup::hpke_open(
@@ -303,16 +313,23 @@ pub async fn respond_to_request(
     self_device_id: &str,
 ) -> Result<()> {
     let expires_at = crate::clock::timestamp_in(30);
+    // The envelope id is part of the HPKE AAD, so it MUST exist before sealing
+    // and the very same value MUST ride on the wire.
+    let device_message_id = arkret_sdk::DeviceMessageId::new_v7_at(crate::clock::now_unix_ms());
     let content = build_send_content(
         request,
         account_secret,
+        &device_message_id,
         account_did,
         self_device_id,
         &expires_at,
     )?;
-    crate::transport::keys::send_device_message::<arkret_sdk::device_message_spec::SecretSend>(
+    crate::transport::keys::send_device_message_with_id::<
+        arkret_sdk::device_message_spec::SecretSend,
+    >(
         &api.sdk_http_client()?,
         &format!("ak.secret.send:{}", request.request_id),
+        device_message_id,
         account_did,
         request.from_device.as_str(),
         &expires_at,
@@ -338,12 +355,18 @@ pub fn try_open_envelope(
     }
     let sender_device_id = string_field(envelope, "sender_device_id")?;
     let expires_at = string_field(envelope, "expires_at")?;
+    // Top-level required member; the AAD binds it, so a missing or malformed id
+    // fails closed before any HPKE work.
+    let device_message_id =
+        arkret_sdk::DeviceMessageId::new(string_field(envelope, "device_message_id")?)
+            .map_err(|err| anyhow!("invalid ak.secret.send device_message_id: {err}"))?;
     let content = envelope
         .get("content")
         .ok_or_else(|| anyhow!("ak.secret.send envelope missing content"))?;
     let opened = open_send_content(
         requester,
         content,
+        &device_message_id,
         account_did,
         &sender_device_id,
         our_device_id,
@@ -352,29 +375,44 @@ pub fn try_open_envelope(
     Ok(Some(opened))
 }
 
-/// Canonical HPKE AAD for `ak.secret.send` (device-lifecycle.md §10.7): the
-/// RFC 8785 JCS bytes of the six envelope binding fields both sides
-/// reconstruct. `expires_at` is the already-validated canonical Arkret
-/// timestamp string; non-canonical spellings are rejected before AAD creation.
+/// Canonical HPKE AAD for `ak.secret.send` (device-lifecycle.md §10.7).
+///
+/// The nine-member construction lives in the SDK
+/// ([`arkret_crypto::secret_share::SecretShareSendAad`]); this thin wrapper only
+/// converts the local `&str` identities into the typed members. There is no
+/// local JSON assembly — a short AAD would let different messages, requests or
+/// secrets share one binding.
+#[allow(clippy::too_many_arguments)]
 fn send_aad(
+    device_message_id: &arkret_sdk::DeviceMessageId,
     sender_principal_id: &str,
     sender_device_id: &str,
     recipient_principal_id: &str,
     recipient_device_id: &str,
+    request_id: &str,
+    secret_id: &str,
     expires_at: &str,
 ) -> Result<Vec<u8>> {
-    arkret_sdk::canonical::validate_timestamp_canonical(expires_at)
-        .map_err(|err| anyhow!("invalid secret-share expires_at {expires_at:?}: {err}"))?;
-    let aad = json!({
-        "kind": SECRET_SEND_KIND,
-        "sender_principal_id": sender_principal_id,
-        "sender_device_id": sender_device_id,
-        "recipient_principal_id": recipient_principal_id,
-        "recipient_device_id": recipient_device_id,
-        "expires_at": expires_at,
-    });
-    arkret_sdk::canonical::canonical_json_bytes(&aad)
-        .map_err(|err| anyhow!("canonicalize secret-share AAD: {err}"))
+    let sender_principal_id = arkret_sdk::DidCoreId::new(sender_principal_id.to_owned())
+        .map_err(|err| anyhow!("invalid secret-share sender_principal_id: {err}"))?;
+    let sender_device_id = arkret_sdk::DeviceId::new(sender_device_id.to_owned())
+        .map_err(|err| anyhow!("invalid secret-share sender_device_id: {err}"))?;
+    let recipient_principal_id = arkret_sdk::DidCoreId::new(recipient_principal_id.to_owned())
+        .map_err(|err| anyhow!("invalid secret-share recipient_principal_id: {err}"))?;
+    let recipient_device_id = arkret_sdk::DeviceId::new(recipient_device_id.to_owned())
+        .map_err(|err| anyhow!("invalid secret-share recipient_device_id: {err}"))?;
+    arkret_crypto::secret_share::SecretShareSendAad {
+        device_message_id,
+        sender_principal_id: &sender_principal_id,
+        sender_device_id: &sender_device_id,
+        recipient_principal_id: &recipient_principal_id,
+        recipient_device_id: &recipient_device_id,
+        request_id,
+        secret_id,
+        expires_at,
+    }
+    .canonical_bytes()
+    .map_err(|err| anyhow!("build secret-share AAD: {err}"))
 }
 
 fn secret_plaintext(secret: &str, secret_version: u32, request_id: &str) -> Result<Vec<u8>> {
@@ -401,10 +439,18 @@ mod tests {
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;
 
-    const ACCOUNT_DID: &str = "did:web:alice.example";
+    // `DeviceMessageEnvelope.sender_principal_id` / `recipient_principal_id` are
+    // `did_core_id` (device-message.schema.json), so the AAD binds that form,
+    // not a bare full DID.
+    const ACCOUNT_DID: &str = "ak:did_core:web:alice.example";
     const OLD_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000a";
     const NEW_DEVICE: &str = "ak:device:01904100-0000-7000-8000-00000000000b";
     const EXPIRES: &str = "2026-06-10T00:30:00.000Z";
+    const MESSAGE_ID: &str = "ak:device_message:01904100-0000-7000-8000-0000000000d1";
+
+    fn message_id() -> arkret_sdk::DeviceMessageId {
+        arkret_sdk::DeviceMessageId::new(MESSAGE_ID.to_owned()).unwrap()
+    }
 
     fn stored_secret() -> StoredAccountMlsSecret {
         StoredAccountMlsSecret {
@@ -419,8 +465,15 @@ mod tests {
         let parsed =
             parse_request_content(&serde_json::to_value(request_content).unwrap()).unwrap();
         assert_eq!(parsed.from_device.as_str(), NEW_DEVICE);
-        let send = build_send_content(&parsed, &stored_secret(), ACCOUNT_DID, OLD_DEVICE, EXPIRES)
-            .unwrap();
+        let send = build_send_content(
+            &parsed,
+            &stored_secret(),
+            &message_id(),
+            ACCOUNT_DID,
+            OLD_DEVICE,
+            EXPIRES,
+        )
+        .unwrap();
         (requester, serde_json::to_value(send).unwrap())
     }
 
@@ -430,6 +483,7 @@ mod tests {
         let opened = open_send_content(
             &requester,
             &send,
+            &message_id(),
             ACCOUNT_DID,
             OLD_DEVICE,
             NEW_DEVICE,
@@ -457,8 +511,16 @@ mod tests {
     fn rejects_unsolicited_request_id() {
         let (_requester, send) = drive_happy_path();
         let other = new_secret_request().unwrap();
-        let err = open_send_content(&other, &send, ACCOUNT_DID, OLD_DEVICE, NEW_DEVICE, EXPIRES)
-            .unwrap_err();
+        let err = open_send_content(
+            &other,
+            &send,
+            &message_id(),
+            ACCOUNT_DID,
+            OLD_DEVICE,
+            NEW_DEVICE,
+            EXPIRES,
+        )
+        .unwrap_err();
         assert!(format!("{err}").contains("unsolicited"));
     }
 
@@ -470,6 +532,7 @@ mod tests {
         let err = open_send_content(
             &requester,
             &send,
+            &message_id(),
             ACCOUNT_DID,
             "ak:device:01904100-0000-7000-8000-00000000000c",
             NEW_DEVICE,
@@ -488,6 +551,7 @@ mod tests {
         let err = open_send_content(
             &attacker,
             &send,
+            &message_id(),
             ACCOUNT_DID,
             OLD_DEVICE,
             NEW_DEVICE,
@@ -507,6 +571,7 @@ mod tests {
         let err = open_send_content(
             &spoofed,
             &send,
+            &message_id(),
             ACCOUNT_DID,
             OLD_DEVICE,
             NEW_DEVICE,
@@ -524,6 +589,7 @@ mod tests {
         let error = open_send_content(
             &requester,
             &send,
+            &message_id(),
             ACCOUNT_DID,
             OLD_DEVICE,
             NEW_DEVICE,
@@ -544,7 +610,10 @@ mod tests {
         );
 
         // A materialized ak.secret.send envelope (as soland would hand it back).
+        // `device_message_id` is a top-level required member and part of the
+        // HPKE AAD, so it MUST be the same id the sender sealed under.
         let envelope = json!({
+            "device_message_id": MESSAGE_ID,
             "kind": SECRET_SEND_KIND,
             "sender_principal_id": ACCOUNT_DID,
             "sender_device_id": OLD_DEVICE,
@@ -556,6 +625,20 @@ mod tests {
         });
         let opened = try_open_envelope(&requester, &envelope, ACCOUNT_DID, NEW_DEVICE).unwrap();
         assert_eq!(opened.unwrap().account_secret, stored_secret().secret);
+
+        // Missing the top-level device_message_id fails closed before HPKE work:
+        // the AAD binds it, so there is nothing to fall back to.
+        let mut no_id = envelope.clone();
+        no_id.as_object_mut().unwrap().remove("device_message_id");
+        assert!(try_open_envelope(&requester, &no_id, ACCOUNT_DID, NEW_DEVICE).is_err());
+
+        // A different id yields a different AAD, so the seal cannot be opened.
+        let mut other_id = envelope;
+        other_id.as_object_mut().unwrap().insert(
+            "device_message_id".to_owned(),
+            json!("ak:device_message:01904100-0000-7000-8000-0000000000d2"),
+        );
+        assert!(try_open_envelope(&requester, &other_id, ACCOUNT_DID, NEW_DEVICE).is_err());
     }
 
     #[test]

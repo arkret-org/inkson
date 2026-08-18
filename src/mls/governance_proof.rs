@@ -21,20 +21,6 @@ pub(crate) fn bind_sidecar_scope(
     )
 }
 
-pub(crate) fn strip_sidecar_scope(
-    binding: &arkret_sdk::MlsGovernanceBindingPayload,
-) -> arkret_wire::Result<arkret_sdk::MlsGovernanceBindingPayload> {
-    arkret_sdk::MlsGovernanceBindingPayload::realm(
-        binding.realm_id().clone(),
-        binding.mls_group_id(),
-        binding.previous_epoch(),
-        binding.next_epoch(),
-        binding.security_frontier_digest().clone(),
-        binding.binding_profile(),
-        binding.reducer_profile(),
-    )
-}
-
 pub(crate) trait GovernanceProofStateStore: Clone {
     fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R;
     fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;
@@ -288,25 +274,6 @@ pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateS
     fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None, None)
         .await
         .map(|(bundle, _)| bundle)
-}
-
-pub(crate) async fn fetch_verify_and_cache_sidecar_proof_bundle<S: GovernanceProofStateStore>(
-    api: &crate::transport::TransportClient,
-    state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequestBody,
-    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
-    sidecar_binding: &arkret_sdk::SidecarMlsBinding,
-) -> Result<arkret_sdk::MaterializedMlsGovernanceProofBundle, String> {
-    fetch_verify_and_cache_proof_internal(
-        api,
-        state_store,
-        request,
-        leaves,
-        None,
-        Some(sidecar_binding),
-    )
-    .await
-    .map(|(bundle, _)| bundle)
 }
 
 pub(crate) async fn fetch_verify_and_cache_expected_proof<S: GovernanceProofStateStore>(

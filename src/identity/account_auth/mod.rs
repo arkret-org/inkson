@@ -95,4 +95,8 @@ pub enum OidcEntryPoint {
     SignIn,
 }
 
+/// Only the wasm32 browser build persists the OIDC scaffold; a native build
+/// compiles no reader, so the key namespace carries the same gate rather than
+/// an allow that would also hide a real regression.
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) const OIDC_SCAFFOLD_STORAGE_KEY_PREFIX: &str = "inkson.oidc_scaffold.v1.";

@@ -1746,31 +1746,6 @@ impl EventSubmitter {
         Ok(crate::event_signer::EventProofContext::new().with_digest_suite(digest_suite))
     }
 
-    /// Wire-submit a fully-prepared, already-signed SDK [`arkret_sdk::Event`].
-    /// This is the only single-event HTTP tail that serialises onto
-    /// `POST /_arkret/self/events`.
-    async fn post_signed_sdk_event(
-        &self,
-        signed: &arkret_sdk::Event,
-        idempotency_key: String,
-    ) -> anyhow::Result<SubmitEventResult> {
-        validate_signed_sdk_event_for_submit(signed)?;
-        let submission =
-            crate::authorization_lease::standard_initial_submission(&self.http, signed).await?;
-        let response: arkret_sdk::EventsSubmitOutcome = self
-            .http
-            .events_submit_with_options(
-                &submission,
-                &arkret_sdk::http_client::ClientRequestOptions::new()
-                    .request_id(idempotency_key.clone())
-                    .idempotency_key(idempotency_key),
-            )
-            .await
-            .map_err(anyhow::Error::from)?;
-        ensure_events_submit_accepted(&response)?;
-        Ok(SubmitEventResult::from(response))
-    }
-
     async fn post_persisted_signed_sdk_event(
         &self,
         signed: &arkret_sdk::Event,
@@ -1818,21 +1793,6 @@ impl EventSubmitter {
         );
         ensure_events_submit_accepted(&response)?;
         Ok(SubmitEventResult::from(response))
-    }
-
-    /// Submit a fully-prepared, already-signed SDK [`arkret_sdk::Event`]
-    /// without passing through the local builder path.
-    ///
-    /// This is for service-returned Events that are already the authoritative
-    /// wire object, such as account-authority device enrollment. It does not
-    /// stamp `seal_ref` or attach proofs because either change would mutate the
-    /// signed transcript.
-    pub(crate) async fn submit_signed_sdk_event(
-        &self,
-        signed: &arkret_sdk::Event,
-    ) -> anyhow::Result<SubmitEventResult> {
-        self.ensure_recovery_material_ready(signed, None).await?;
-        self.post_signed_sdk_event(signed, uuid_v7()).await
     }
 
     /// Submit a SDK-typed Event, signing it with the active signer when needed.
@@ -3032,11 +2992,6 @@ fn rewrite_event_id_references(
         {
             event_ref.id = replacement.to_string();
         }
-    }
-    if let Some(redacts) = &mut event.redacts
-        && let Some(replacement) = rewrites.get(redacts)
-    {
-        *redacts = replacement.clone();
     }
     for value in event.payload.values_mut() {
         rewrite_event_ids_in_value(value, rewrites);
