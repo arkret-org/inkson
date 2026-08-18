@@ -213,7 +213,6 @@ pub struct ReadMarkerRecord {
 ///
 /// Until the sync wires the policy from soland's `ak.component.realm.read_receipt_policy.v1`
 /// cas-register cell, this is populated by tests / dev tooling only.
-/// See `_todos.md` C10.D "Policy lock UI".
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadReceiptPolicySnapshot {
     /// Disclosure mode — `optional` (default), `required`, or `disabled`.

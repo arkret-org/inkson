@@ -1,10 +1,9 @@
 //! `client.language` account-data payload helpers.
 //!
-//! Spec: `discovery/client-preferences.md` §2 declares `client.language` as the
-//! actor-private carrier for a user's locale preference. The key was declared
-//! in [`super::AccountDataKey`] but never read or written by anything, so a
-//! user who chose a language on one device found the next one still guessing
-//! from `navigator.language`.
+//! Decision 0007 §4 makes `client.language` the actor-private carrier that
+//! syncs one user's locale choice between their own inkson devices, so a
+//! language picked on one device is not re-guessed from `navigator.language`
+//! on the next.
 //!
 //! This is deliberately *not* the public [`ActorProfile`]: which language
 //! someone reads in is nobody else's business, and `ActorProfile` is visible
@@ -16,6 +15,16 @@
 use serde_json::Value;
 
 use crate::i18n::Locale;
+
+/// Wire key for the actor-private locale preference.
+///
+/// Unlike every other key this client writes, `client.language` has **no** row
+/// in `account-data-key-registry.json` and therefore no
+/// `arkret_wire::AccountDataKey` constant — it exists because decision 0007 §4
+/// chose it, not because the spec registered it. The literal lives here, next
+/// to the only code that reads and writes it, so the gap stays visible instead
+/// of hiding among registered constants.
+pub const CLIENT_LANGUAGE_WIRE_KEY: &str = "client.language";
 
 /// Build the canonical `content` body for the `client.language` entry.
 ///

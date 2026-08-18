@@ -3,21 +3,24 @@
 
 use serde_json::Value;
 
-use super::AccountDataKey;
 use crate::operation::TypedOperationBuilder;
 
 /// Build a `ak.account_data.set` operation envelope for `key` -> `value`.
+///
+/// `key` is the registered namespace literal (an `arkret_wire::AccountDataKey`
+/// constant) or a derived key from one of the helpers below — the same `&str`
+/// the wire carries, not a re-encoded local vocabulary.
 ///
 /// `ak.account_data.set` is classified `actor_private_event` in
 /// `conformance.rs:393`; reducers MUST NOT include it in shared Realm state.
 pub fn build_account_data_set(
     realm_id: &str,
     actor: &str,
-    key: &AccountDataKey,
+    key: &str,
     value: Value,
     expected_revision: u64,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let value_field = if private_account_data_key_prefix(key.as_wire()).is_some() {
+    let value_field = if private_account_data_key_prefix(key).is_some() {
         "encrypted_payload"
     } else {
         "body"
@@ -34,7 +37,7 @@ pub fn build_account_data_set(
         (arkret_sdk::AccountDataBody::Value(value), None)
     };
     let payload = arkret_sdk::AccountDataSetPayload {
-        key: arkret_sdk::NonEmptyString::new(key.as_wire()).map_err(anyhow::Error::msg)?,
+        key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
         holder_id: Some(crate::mls_api_helpers::principal_core_id(actor)?),
         expected_revision,
         body,
@@ -51,11 +54,11 @@ pub fn build_account_data_set(
 pub fn build_account_data_tombstone(
     realm_id: &str,
     actor: &str,
-    key: &AccountDataKey,
+    key: &str,
     expected_revision: u64,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::AccountDataSetPayload {
-        key: arkret_sdk::NonEmptyString::new(key.as_wire()).map_err(anyhow::Error::msg)?,
+        key: arkret_sdk::NonEmptyString::new(key).map_err(anyhow::Error::msg)?,
         holder_id: Some(crate::mls_api_helpers::principal_core_id(actor)?),
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,

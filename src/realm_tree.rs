@@ -100,8 +100,24 @@ impl OptimisticRealmTreeProjection {
             encryption_floor,
         } = input;
         // Realm metadata is mirrored at the body top level *and* under
-        // `summary` because downstream readers (e.g.
-        // security-state readers probe both containers.
+        // `summary` because the two have different readers, and neither set
+        // covers the other:
+        //
+        //   * top level only — `security_state::strand_projection_security_state` walks `[],
+        //     object, strand, body, fields, scope, …` and never descends into `summary`, and
+        //     `state::realm_tree_snapshot` reads `projection["members"]` flat;
+        //   * `summary` first — `explicit_realm_title` and `extract_parent_space_id` /
+        //     `extract_child_space_ids` prefer it, because that is where the *server* sync
+        //     projection puts these fields. Matching that shape is the point of an optimistic body:
+        //     the authoritative projection replaces this value in place, and the same extractors
+        //     must keep working across the swap.
+        //
+        // This is unrelated to the "MUST NOT double-write" rule in
+        // `event_builders::assert_realm_candidate_matches_closed_schema`. That
+        // one governs the authored `ak.realm.create` `payload.object`, which is
+        // validated against the closed `ak.schema.realm_genesis.v1` and rejects
+        // unknown members. Nothing here is authored or sent: this body is an
+        // inkson-local projection tagged `__kind`, never a wire payload.
         Self::Realm(Box::new(RealmProjectionBody {
             owner: owner.clone(),
             admins: admins.clone(),

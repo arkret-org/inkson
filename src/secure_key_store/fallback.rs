@@ -1,4 +1,27 @@
 //! wasm32-only primary/fallback compositing [`SecureKeyStore`].
+//!
+//! This is **not** a migration bridge between an old and a new backend. Both
+//! tiers are current, and the reason there are two is that the browser gives
+//! inkson no synchronous path to its strong one:
+//!
+//! * `IndexedDbSecureKeyStore` (primary) needs `await` to open the database and to derive its
+//!   non-extractable SubtleCrypto wrapping key, so it does not exist during the first synchronous
+//!   paint.
+//! * `LocalStorageSecureKeyStore` (fallback) is synchronous and therefore is the only store
+//!   `default_secure_key_store` can hand out before `initialize_wasm_secure_key_store_async` has
+//!   run.
+//!
+//! Every write therefore mirrors into the fallback tier: the reader of that
+//! mirror is the *next* page load's pre-initialization seam, which can see
+//! nothing but `localStorage`. Dropping the mirror would not remove a legacy
+//! path, it would make first-paint reads miss values this session wrote.
+//!
+//! Durability is the only thing the mirror buys, never a weaker protection
+//! level: `is_wasm_indexeddb_required_secret_key` makes the fallback tier
+//! *refuse* signing seeds, identity seeds, account MLS material, session
+//! credentials and the account state blob, so those keys stay IndexedDB-only
+//! and the mirror silently no-ops for them (`let _ =`). Reads resolve
+//! primary-first, so an entry present in both always answers from IndexedDB.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -36,6 +59,10 @@ impl SecureKeyStore for FallbackSecureKeyStore {
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
         match self.primary.store_secret_bytes(key, value) {
             Ok(()) => {
+                // Best-effort mirror for the next boot's synchronous seam (see
+                // the module doc). IndexedDB-only keys are rejected by the
+                // fallback tier by design, so the error is discarded rather
+                // than failing a write the primary already committed.
                 let _ = self.fallback.store_secret_bytes(key, value);
                 Ok(())
             }

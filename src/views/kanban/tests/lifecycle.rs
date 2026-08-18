@@ -21,21 +21,6 @@ fn board_write_manual_review_is_only_for_conflicts() {
     assert!(active_conflict.needs_manual_conflict_review());
 }
 
-/// `try_load_api_columns` is the synchronous-init probe. Real API
-/// fetching now lives in the async refresh handler that calls
-/// `TransportClient::collection_projection`. This test still pins the
-/// init-time behaviour as None so UI startup stays empty unless explicit
-/// demo seed is enabled; async projection hydrate promotes to ApiDerived
-/// once the HTTP call returns.
-#[test]
-fn try_load_api_columns_returns_none_in_sync_init_context() {
-    let result = try_load_api_columns("");
-    assert!(
-        result.is_none(),
-        "synchronous init MUST return None; async refresh handles real fetch"
-    );
-}
-
 /// SDK projection lifecycle values map exhaustively into renderer enums.
 #[test]
 fn projection_lifecycle_values_map_to_renderer_enums() {

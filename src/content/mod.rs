@@ -10,8 +10,7 @@
 //!    existing message-body container.
 //!
 //! Out of scope for this increment: OpenGraph fetching, syntax
-//! highlighting, lightbox interactions. They're tracked as follow-ups in
-//! `_claude_todos.md`.
+//! highlighting, lightbox interactions.
 
 pub mod renderer;
 

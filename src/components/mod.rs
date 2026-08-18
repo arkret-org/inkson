@@ -314,7 +314,7 @@ pub fn ErrorBanner(message: String) -> Element {
 
 /// Cross-Space lazy_link badge.
 ///
-/// Protocol rule (`models/object-model-core.md` §2.4.1): a cross-Space
+/// Protocol rule (`models/relation.md`, `lazy_link` reference state): a cross-Space
 /// Relation's `from_ref` / `to_ref` may point at objects in other Spaces, but
 /// only the reference fact is published — content is not copied and read
 /// access is not granted. The sync / projection layer must not backfill the
@@ -335,7 +335,7 @@ pub fn LazyLinkBadge(
         span {
             class: "badge amber",
             "data-testid": "lazy-link-badge",
-            "title": "object-model-core.md §2.4.1 — cross-Space lazy link: {target_full}",
+            "title": "relation.md lazy_link — cross-Space lazy link: {target_full}",
             "🔒 lazy_link · {reason_text} · {target_text}"
         }
     }

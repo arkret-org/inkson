@@ -30,7 +30,7 @@ fn snapshot_head_default_is_none_and_round_trips() {
     // Subsequent reconcile overwrites without affecting entries.
     store
         .set(
-            AccountDataKey::ClientUi,
+            "ak.client.ui_state",
             json!({"theme": "night"}),
             1,
             "01970e589d21-0001-a13f9c2e".to_owned(),
@@ -46,7 +46,7 @@ fn snapshot_head_clears_independently_of_entries() {
     let mut store = AccountDataStore::new();
     store
         .set(
-            AccountDataKey::ClientUi,
+            "ak.client.ui_state",
             json!({"theme": "light"}),
             1,
             "01970e589d21-0001-a13f9c2e".to_owned(),
@@ -65,7 +65,7 @@ fn snapshot_head_persists_through_serde_round_trip() {
     let mut store = AccountDataStore::new();
     store
         .set(
-            AccountDataKey::ClientUi,
+            "ak.client.ui_state",
             json!({"theme": "night"}),
             1,
             "01970e589d21-0001-a13f9c2e".to_owned(),
@@ -97,28 +97,11 @@ fn snapshot_head_absent_from_state_defaults_to_none() {
 }
 
 #[test]
-fn key_round_trip() {
-    for s in [
-        "ak.client.ui_state",
-        "ak.read_receipt.preferences",
-        "ak.presence.visibility",
-        "ak.presence.preference",
-        "ak.account.blocklist",
-        "ak.push_rules",
-        "ak.dnd_schedule",
-        "client.language",
-    ] {
-        assert_eq!(AccountDataKey::from_wire(s).as_wire(), s);
-    }
-    assert_eq!(AccountDataKey::from_wire("custom.x").as_wire(), "custom.x");
-}
-
-#[test]
 fn set_tracks_server_revision() {
     let mut store = AccountDataStore::new();
     let revision_a = store
         .set(
-            AccountDataKey::ClientUi,
+            "ak.client.ui_state",
             json!({"sidebar_collapsed": true}),
             1,
             "0-0-0".into(),
@@ -126,7 +109,7 @@ fn set_tracks_server_revision() {
         .unwrap();
     let revision_b = store
         .set(
-            AccountDataKey::ClientUi,
+            "ak.client.ui_state",
             json!({"sidebar_collapsed": false}),
             2,
             "0-0-1".into(),
@@ -135,13 +118,13 @@ fn set_tracks_server_revision() {
     assert_eq!(revision_a, 1);
     assert_eq!(revision_b, 2);
     assert_eq!(
-        store.get(&AccountDataKey::ClientUi).unwrap().revision,
+        store.get("ak.client.ui_state").unwrap().revision,
         revision_b
     );
     assert!(
         store
             .set(
-                AccountDataKey::ClientUi,
+                "ak.client.ui_state",
                 json!({"sidebar_collapsed": true}),
                 1,
                 "0-0-0".into(),
@@ -610,7 +593,7 @@ fn build_account_data_set_emits_canonical_kind() {
     let op = build_account_data_set(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
-        &AccountDataKey::ClientReadReceipts,
+        "ak.read_receipt.preferences",
         json!({"send": false}),
         0,
     )
@@ -681,7 +664,7 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
     let op = build_account_data_set(
         realm_id,
         "did:web:alice.example",
-        &AccountDataKey::Custom(realm_key),
+        &realm_key,
         json!({"pinned": true}),
         0,
     )
@@ -718,7 +701,7 @@ fn private_view_and_notification_inbox_are_encrypted_account_data() {
         let op = build_account_data_set(
             realm_id,
             "did:web:alice.example",
-            &AccountDataKey::Custom(key.clone()),
+            key,
             json!({"ciphertext": "opaque"}),
             0,
         )
@@ -789,13 +772,11 @@ fn private_account_data_builder_emits_required_revision() {
 
 #[test]
 fn generic_builder_does_not_put_private_values_under_body() {
-    let key = AccountDataKey::Custom(
-        "ak.scheduled_send.v1:ak:scheduled_send:01904100-0000-7000-8000-000000000003".to_owned(),
-    );
+    let key = "ak.scheduled_send.v1:ak:scheduled_send:01904100-0000-7000-8000-000000000003";
     let op = build_account_data_set(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
-        &key,
+        key,
         json!({"ciphertext": "opaque"}),
         0,
     )
@@ -810,7 +791,7 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     let op = build_account_data_tombstone(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
-        &AccountDataKey::ClientReadReceipts,
+        "ak.read_receipt.preferences",
         3,
     )
     .unwrap()

@@ -2,8 +2,7 @@
 
 use chrono::Utc;
 use inkson::account_data::{
-    AccountDataKey, ContactRemark, RealmRemark, contact_remark_account_data_key,
-    realm_remark_account_data_key,
+    ContactRemark, RealmRemark, contact_remark_account_data_key, realm_remark_account_data_key,
 };
 use inkson::api_error::{TransportClientError, decode_arkret_error, is_auth_expired_error};
 use inkson::config::{ClientConfig, LocalConfigStore};
@@ -741,18 +740,6 @@ fn account_data_canonical_contact_and_realm_remark_keys_contract() {
     assert_eq!(
         contact_remark_account_data_key(&namespace_key, &principal_id).unwrap(),
         "ak.contacts.actor.pD0U2utjPMaXROrStCFHbCtquoTSVsA7mo9nVniePkY"
-    );
-    assert_eq!(
-        AccountDataKey::ClientReadReceipts.as_wire(),
-        "ak.read_receipt.preferences"
-    );
-    assert_eq!(
-        AccountDataKey::ClientNotifications.as_wire(),
-        "ak.push_rules"
-    );
-    assert_eq!(
-        AccountDataKey::ClientDndSchedule.as_wire(),
-        "ak.dnd_schedule"
     );
 }
 

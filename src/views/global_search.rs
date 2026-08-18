@@ -1,6 +1,6 @@
 //! A6.1 — global cross-Realm message search panel.
 //!
-//! Spec: inkson UX backlog (see `_claude_todos.md` lane A). Pressing
+//! Pressing
 //! `Cmd+F` (or `Ctrl+F` off-mac), the `topbar-search-button`, or
 //! navigating directly to `/search` opens this panel. The remote Arkret HTTP
 //! catalog still has no spec-defined global plaintext search endpoint; this

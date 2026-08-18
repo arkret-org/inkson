@@ -311,18 +311,17 @@ pub(crate) fn store_session_grant_in_user_secure_store(
     )
 }
 
+/// Whether the device identity seed may live in the plaintext local-state
+/// blob instead of the [`SecureKeyStore`](crate::secure_key_store::SecureKeyStore).
+///
+/// Unit tests only, on every target. A shipped build — debug or release,
+/// native or wasm — has **no** way to turn this on: when the secure store is
+/// unavailable, identity bootstrap fails with a diagnosable error rather than
+/// silently writing an Ed25519 seed where a disk dump can read it. There is
+/// deliberately no environment variable, config key, or feature that relaxes
+/// this; a developer without a working keyring is meant to fix the keyring.
 pub(crate) fn plaintext_identity_seed_fallback_allowed() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        cfg!(test)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        cfg!(test)
-            || std::env::var("INKSON_ALLOW_PLAINTEXT_IDENTITY_SEED")
-                .ok()
-                .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-    }
+    cfg!(test)
 }
 
 pub(crate) fn snapshot_item_encrypted_payload(

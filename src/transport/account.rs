@@ -1387,19 +1387,18 @@ async fn account_data_set_submission(
     let holder = account_data_holder()?;
     let realm_id =
         crate::identity::principal_control::resolve_accepted(submitter.http(), &holder).await?;
-    let key = crate::account_data::AccountDataKey::from_wire(type_key);
     let builder = match value {
         Some(value) => crate::account_data::build_account_data_set(
             realm_id.as_str(),
             holder.as_str(),
-            &key,
+            type_key,
             value,
             expected_revision,
         ),
         None => crate::account_data::build_account_data_tombstone(
             realm_id.as_str(),
             holder.as_str(),
-            &key,
+            type_key,
             expected_revision,
         ),
     }?;

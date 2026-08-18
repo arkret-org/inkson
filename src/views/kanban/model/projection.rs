@@ -12,32 +12,8 @@ pub(crate) fn kanban_seed_fallback_allowed(_base_url: &str) -> bool {
     false
 }
 
-#[cfg(test)]
-pub(crate) fn kanban_seed_fallback_allowed_for_url(_base_url: &str) -> bool {
-    false
-}
-
 pub(crate) fn truthy_env_value(value: Option<&str>) -> bool {
     value.is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-}
-
-/// T20 — Attempt to load the board projection from the API; return `None`
-/// on failure or when the endpoint is unavailable.
-///
-/// The current `api.rs` does not expose a `collection_projection()` method,
-/// so this probe always returns `None` and the caller falls back to
-/// `seed_columns()`. Once the SDK exposes `client.collection_projection
-/// (view_id)`, swap the probe's body to call the SDK; the surrounding UI
-/// does not need to change.
-///
-/// The `_view_id` parameter is reserved so the future signature is stable:
-/// the UI holds the saved View's `ak:view:` id and threads it in when calling
-/// the probe.
-pub(crate) fn try_load_api_columns(_view_id: &str) -> Option<Vec<KanbanColumn>> {
-    // Synchronous init context — always returns None. UI starts with
-    // Unavailable unless explicit demo seed is enabled; async projection
-    // hydrate promotes the board to ApiDerived once the server returns data.
-    None
 }
 
 pub(crate) fn initial_board_space_options(seed_fallback_allowed: bool) -> Vec<BoardSpaceOption> {

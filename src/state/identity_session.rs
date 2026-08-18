@@ -9,14 +9,15 @@ impl LocalStateStore {
         #[cfg(not(test))]
         {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            if let Some(record) = load_identity_record_from_secure_store(secure_store.as_ref()) {
-                return Some(record);
-            }
-            if !plaintext_identity_seed_fallback_allowed() {
-                return None;
-            }
+            load_identity_record_from_secure_store(secure_store.as_ref())
         }
-        self.load().local_identity
+        // The plaintext `local_identity` member of the persisted state is a
+        // unit-test carrier only; a shipped build never reads an identity seed
+        // from it (see `plaintext_identity_seed_fallback_allowed`).
+        #[cfg(test)]
+        {
+            self.load().local_identity
+        }
     }
 
     /// Read the in-memory device identity. Returns `None` when no record
@@ -73,10 +74,12 @@ impl LocalStateStore {
                 let _ = self.flush();
                 Ok(identity)
             }
+            // Unit tests only — `plaintext_identity_seed_fallback_allowed()` is
+            // `cfg!(test)`, so a shipped build always takes the `Err` arm below.
             Err(error) if plaintext_identity_seed_fallback_allowed() => {
                 tracing::warn!(
                     ?error,
-                    "secure identity store unavailable; using explicit plaintext identity fallback",
+                    "secure identity store unavailable; using the test-only plaintext identity fallback",
                 );
                 self.cached.local_identity = Some(record);
                 let _ = self.flush();

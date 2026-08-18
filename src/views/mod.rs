@@ -18,11 +18,11 @@
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle | ak.profile.update, ak.account.status, ak.identity.disclosure_*      |
 // | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
 //
-// Pending views (see `_todos.md`):
+// Pending views:
 // - onboarding   → desktop/onboarding.html        (independent stepper; T12)
 // - recovery     → desktop/recovery.html          (Recovery Key (24 words) / SSS; T10)
 //
-// Shared rules (`_todos.md` §6):
+// Shared rules:
 // 1. Any write UI must explicitly label the canonical event kind it emits.
 // 2. discoverability / join_rule / history_visibility are independent and must be displayed
 //    independently — none implies the other.
@@ -111,8 +111,9 @@ pub enum AppView {
     /// Applets host (`/applets`). Own view variant for the same 1:1 reason;
     /// gated behind the `experimental-applets` feature at render time.
     Applets,
-    /// Notifications. Per `models/object-model-core.md` §1,
-    /// `notification` is a *derived* projection — NOT a canonical wire object.
+    /// Notifications. Per `models/overview.md` (object table: `ak:notification:`
+    /// is an inbox projection), `notification` is a *derived* projection — NOT a
+    /// canonical wire object.
     /// The only canonical events feeding this view are `ak.read_cursor.advance`,
     /// `ak.receipt.read`, `@-mention` extractions, plus capability/grant
     /// approval requests. Writes here MUST land on those canonical kinds, not

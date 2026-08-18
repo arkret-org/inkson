@@ -7,8 +7,9 @@
 //! signal instead of juggling three.
 //!
 //! The sidecar-hash helper covers the E2EE notification routing path
-//! described in `discovery/push-notifications.md §4.5` and the
-//! `chat-advanced.md` spec — the server must be able to route a
+//! described in `discovery/push-notifications.md §4.5` (the wire field is
+//! `mention_sidecar_digest` in `artifacts/schemas/event-payload.schema.json`)
+//! — the server must be able to route a
 //! notification to the mentioned actor without learning that actor's
 //! DID in plaintext. We compute the epoch-scoped MLS exporter HMAC and surface it
 //! as `content.mention_sidecar_digest` inside the outgoing

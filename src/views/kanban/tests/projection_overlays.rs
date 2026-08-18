@@ -649,15 +649,11 @@ fn non_spec_projection_paths_expose_no_strand_content() {
     assert!(!card.synthesis_locked);
 }
 
+/// The demo-seed opt-in is spelled `INKSON_ALLOW_KANBAN_SEED_FALLBACK=1` /
+/// `=true` and nothing else — an empty or unset variable MUST NOT seed a board
+/// that the server never returned.
 #[test]
-fn kanban_seed_fallback_requires_explicit_opt_in() {
-    assert!(!kanban_seed_fallback_allowed_for_url("https://local.host"));
-    assert!(!kanban_seed_fallback_allowed_for_url(
-        "http://127.0.0.1:8787"
-    ));
-    assert!(!kanban_seed_fallback_allowed_for_url(
-        "https://arkret.example"
-    ));
+fn kanban_seed_fallback_opt_in_accepts_only_explicit_truthy_values() {
     assert!(truthy_env_value(Some("1")));
     assert!(truthy_env_value(Some("true")));
     assert!(!truthy_env_value(Some("0")));

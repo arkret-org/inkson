@@ -120,8 +120,7 @@ pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk:
 /// never the container scaffold. Exempting these kinds here is a hard
 /// invariant: it guarantees the plaintext-block decision can never silently
 /// drop a container create/update, regardless of what
-/// `kanban_event_carries_plaintext_private_content` matches in the future. See
-/// _next.md X13.
+/// `kanban_event_carries_plaintext_private_content` matches in the future.
 pub(super) const KANBAN_PLAINTEXT_METADATA_KINDS: &[arkret_sdk::EventKind] = &[
     arkret_sdk::EventKind::SpaceCreate,
     arkret_sdk::EventKind::SpaceUpdate,

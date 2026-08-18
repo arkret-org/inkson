@@ -757,23 +757,17 @@ pub fn KanbanPanel(
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
     let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
-    // T20 — load board projection from API when available, otherwise seed.
-    // Source signal lets the UI surface persisted API projection vs
-    // explicit demo seed in the board header.
+    // T20 — synchronous init cannot fetch a projection: the real read is
+    // `transport::realm_read::collection_projection`, which the async refresh
+    // effects await before promoting the source signal to `ApiDerived`. So the
+    // board starts either on the explicit demo seed or on nothing at all, and
+    // the source signal lets the header say which.
     let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
-    let initial_api_columns = try_load_api_columns("");
-    let initial_source = match initial_api_columns {
-        Some(_) => BoardProjectionSource::ApiDerived,
-        None if seed_fallback_allowed => BoardProjectionSource::SeedFallback,
-        None => BoardProjectionSource::Unavailable,
+    let (initial_source, initial_columns) = if seed_fallback_allowed {
+        (BoardProjectionSource::SeedFallback, seed_columns())
+    } else {
+        (BoardProjectionSource::Unavailable, Vec::new())
     };
-    let initial_columns = initial_api_columns.unwrap_or_else(|| {
-        if seed_fallback_allowed {
-            seed_columns()
-        } else {
-            Vec::new()
-        }
-    });
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let local_realm_id = local_projection_realm_id(&selected_realm_id, &projection_realm_id);

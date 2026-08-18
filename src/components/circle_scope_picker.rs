@@ -2,7 +2,7 @@
 //! composer-banner family that lets the user pick between Realm scope
 //! (default) and any Circle the active account belongs to.
 //!
-//! Spec: AKP-0007 / `_inkson_todos.md` §P3B.2.2-§P3B.2.3.
+//! Spec: AKP-0007 (`docs/design/unified-feedback-system.md`).
 
 use dioxus::prelude::*;
 

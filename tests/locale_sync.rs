@@ -7,39 +7,13 @@
 //! * the OIDC `ui_locales` parameter — coauth, on the next sign-in, built from the same device
 //!   preference this module resolves.
 //!
-//! An integration test rather than a unit test: the lib test target does not
-//! currently compile (pre-existing SDK drift in `did_binding` / `did_resolver`
-//! / `webrtc` / `read_receipts`, none of it locale-related), and an
-//! integration test only needs the lib to build.
+//! An integration test rather than a unit test because it exercises the two
+//! tiers across their public surface (`inkson::account_data` and
+//! `inkson::i18n`) the way coauth and the settings view reach them.
 
-use inkson::account_data::{
-    AccountDataKey, CLIENT_LANGUAGE_WIRE_KEY, build_client_language_body, merge_client_language,
-};
+use inkson::account_data::{build_client_language_body, merge_client_language};
 use inkson::i18n::{Locale, resolve_locale};
 use serde_json::json;
-
-#[test]
-fn the_declared_account_data_key_round_trips() {
-    // The key was declared and never used, so nothing ever proved the wire
-    // string and the enum agreed.
-    assert_eq!(
-        AccountDataKey::ClientLanguage.as_wire(),
-        CLIENT_LANGUAGE_WIRE_KEY
-    );
-    assert_eq!(
-        AccountDataKey::from_wire(CLIENT_LANGUAGE_WIRE_KEY),
-        AccountDataKey::ClientLanguage
-    );
-    assert_eq!(
-        AccountDataKey::ClientLanguage.as_wire_static(),
-        Some(CLIENT_LANGUAGE_WIRE_KEY)
-    );
-    assert_eq!(
-        AccountDataKey::Custom("x.y".to_owned()).as_wire_static(),
-        None,
-        "a custom key owns its string and has no 'static form"
-    );
-}
 
 #[test]
 fn a_choice_made_on_another_device_switches_this_one() {

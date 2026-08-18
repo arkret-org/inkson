@@ -1,7 +1,7 @@
 //! R3.2 — Realm-scoped `ak.member.identity.update` event store.
 //!
-//! Spec source: arkret-spec @ b56cab1 (2026-05-28)
-//! `models/member-identity.md` + `artifacts/schemas/member-identity.schema.json`.
+//! Spec source: `identity/identity-handles.md` (`ak.member.identity.update`)
+//! + `artifacts/schemas/member-identity.schema.json`.
 //!
 //! Sync ingest pipeline (MID-2): when a `members[]` roster entry on an
 //! `account.subscribe` frame inlines `identity_events[]` (or references

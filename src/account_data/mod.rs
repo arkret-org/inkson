@@ -5,10 +5,16 @@
 //! actor-private wire scope. Inkson previously kept these as ad-hoc fields on
 //! `LocalState`; this module centralizes the storage shape so
 //! `ak.account_data.set` writes have a single canonical entry point.
+//!
+//! The key vocabulary itself is **not** redefined here. Registered namespace
+//! literals come from the generated `arkret_wire::AccountDataKey` (whose rows
+//! are `account-data-key-registry.json`), and keys travel through this module
+//! as the `&str` the wire actually carries — the same shape the private
+//! account-data builders already use. Derived keys are built by the
+//! `arkret_sdk` helpers wrapped in [`keys`].
 
 use std::collections::BTreeMap;
 
-use arkret_wire::AccountDataKey as WireAccountDataKey;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,95 +38,6 @@ pub use private_view::*;
 pub use productivity::*;
 pub use remark::*;
 
-/// Canonical account_data namespace keys.
-///
-/// Keys mirror the spec example list in `discovery/client-preferences.md` §2.
-/// Custom apps may extend with `Custom(String)`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AccountDataKey {
-    /// `ak.client.ui_state` — sidebar collapsed, theme, default view per Realm.
-    ClientUi,
-    /// `ak.read_receipt.preferences` — global + per-Realm + per-strand send override.
-    ClientReadReceipts,
-    /// `ak.presence.visibility` — principal-private presence fanout policy.
-    ClientPresence,
-    /// `ak.presence.preference` — principal-private manual presence
-    /// preference (pinned state / status message / expiry), enforced on
-    /// the send side (profiles-presence.md §3.6).
-    ClientPresencePreference,
-    /// `ak.account.blocklist` — actor-private personal blocklist entries.
-    ClientBlocklist,
-    /// `ak.push_rules` — per-Realm mute, sound, push routing.
-    ClientNotifications,
-    /// `ak.dnd_schedule` — actor-private quiet-hour schedule and exceptions.
-    ClientDndSchedule,
-    /// `client.language` — locale / RTL preferences.
-    ClientLanguage,
-    /// Application-specific extension key.
-    Custom(String),
-}
-
-/// Wire key for the actor-private locale preference.
-///
-/// `discovery/client-preferences.md` §2 declares it, but the SDK's generated
-/// `arkret_wire::AccountDataKey` registry does not carry a constant for it yet,
-/// so the literal lives here as the single local definition.
-pub const CLIENT_LANGUAGE_WIRE_KEY: &str = "client.language";
-
-impl AccountDataKey {
-    /// The wire key for a variant that carries no owned data.
-    ///
-    /// [`Self::as_wire`] borrows from `self` because [`Self::Custom`] holds a
-    /// `String`. Callers that hold one of the fixed variants need the
-    /// `'static` literal instead — passing it to a spawned task, for example —
-    /// and this spares them cloning a constant.
-    ///
-    /// Returns `None` for [`Self::Custom`], whose key is owned by the value.
-    #[must_use]
-    pub fn as_wire_static(&self) -> Option<&'static str> {
-        match self {
-            Self::ClientUi => Some(WireAccountDataKey::CLIENT_UI_STATE),
-            Self::ClientReadReceipts => Some(WireAccountDataKey::READ_RECEIPT_PREFERENCES),
-            Self::ClientPresence => Some(WireAccountDataKey::PRESENCE_VISIBILITY),
-            Self::ClientPresencePreference => Some(WireAccountDataKey::PRESENCE_PREFERENCE),
-            Self::ClientBlocklist => Some(WireAccountDataKey::ACCOUNT_BLOCKLIST),
-            Self::ClientNotifications => Some(WireAccountDataKey::PUSH_RULES),
-            Self::ClientDndSchedule => Some(WireAccountDataKey::DND_SCHEDULE),
-            Self::ClientLanguage => Some(CLIENT_LANGUAGE_WIRE_KEY),
-            Self::Custom(_) => None,
-        }
-    }
-
-    pub fn as_wire(&self) -> &str {
-        match self {
-            Self::ClientUi => WireAccountDataKey::CLIENT_UI_STATE,
-            Self::ClientReadReceipts => WireAccountDataKey::READ_RECEIPT_PREFERENCES,
-            Self::ClientPresence => WireAccountDataKey::PRESENCE_VISIBILITY,
-            Self::ClientPresencePreference => WireAccountDataKey::PRESENCE_PREFERENCE,
-            Self::ClientBlocklist => WireAccountDataKey::ACCOUNT_BLOCKLIST,
-            Self::ClientNotifications => WireAccountDataKey::PUSH_RULES,
-            Self::ClientDndSchedule => WireAccountDataKey::DND_SCHEDULE,
-            Self::ClientLanguage => CLIENT_LANGUAGE_WIRE_KEY,
-            Self::Custom(s) => s,
-        }
-    }
-
-    pub fn from_wire(s: &str) -> Self {
-        match s {
-            WireAccountDataKey::CLIENT_UI_STATE => Self::ClientUi,
-            WireAccountDataKey::READ_RECEIPT_PREFERENCES => Self::ClientReadReceipts,
-            WireAccountDataKey::PRESENCE_VISIBILITY => Self::ClientPresence,
-            WireAccountDataKey::PRESENCE_PREFERENCE => Self::ClientPresencePreference,
-            WireAccountDataKey::ACCOUNT_BLOCKLIST => Self::ClientBlocklist,
-            WireAccountDataKey::PUSH_RULES => Self::ClientNotifications,
-            WireAccountDataKey::DND_SCHEDULE => Self::ClientDndSchedule,
-            CLIENT_LANGUAGE_WIRE_KEY => Self::ClientLanguage,
-            other => Self::Custom(other.to_owned()),
-        }
-    }
-}
-
 /// A single account_data record with the server-authoritative CAS revision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountDataRecord {
@@ -136,7 +53,8 @@ pub struct AccountDataRecord {
 /// responsibility (e.g. `local_state` hydrate / save).
 ///
 /// F-ACCT-SNAP-1: tracks the server-declared snapshot head this store was
-/// last reconciled to (per `sync/account-data-sync.md`). A new device can
+/// last reconciled to (the account-data delta itself arrives on the
+/// `sync/client-sync.md` account-subscribe frame). A new device can
 /// hydrate from `snapshot_head` instead of replaying every historic
 /// `ak.account_data.set` event; once the snapshot endpoint surfaces a
 /// fingerprint matching this value, the client knows it's caught up and
@@ -158,14 +76,14 @@ impl AccountDataStore {
         Self::default()
     }
 
-    pub fn get(&self, key: &AccountDataKey) -> Option<&AccountDataRecord> {
-        self.entries.get(key.as_wire())
+    pub fn get(&self, key: &str) -> Option<&AccountDataRecord> {
+        self.entries.get(key)
     }
 
     /// Insert or replace `key` with a server-observed revision.
     pub fn set(
         &mut self,
-        key: AccountDataKey,
+        key: &str,
         value: Value,
         revision: u64,
         hlc: String,
@@ -173,7 +91,7 @@ impl AccountDataStore {
         if revision == 0 {
             anyhow::bail!("live account_data revision must be greater than zero");
         }
-        let wire = key.as_wire().to_owned();
+        let wire = key.to_owned();
         if let Some(current) = self.entries.get(&wire) {
             if current.revision > revision {
                 anyhow::bail!(
@@ -196,8 +114,8 @@ impl AccountDataStore {
         Ok(revision)
     }
 
-    pub fn remove(&mut self, key: &AccountDataKey) -> Option<AccountDataRecord> {
-        self.entries.remove(key.as_wire())
+    pub fn remove(&mut self, key: &str) -> Option<AccountDataRecord> {
+        self.entries.remove(key)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &AccountDataRecord)> {

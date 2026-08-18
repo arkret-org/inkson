@@ -20,8 +20,7 @@ use super::{
 /// key — this is the same trust posture as
 /// `MemorySecureKeyStore` against a fully-compromised DOM, but it
 /// keeps secrets out of plaintext if a backup / disk-dump only sees
-/// the localStorage blob (an actual attack the spec calls out in
-/// `crypto-media/secret-storage.md` §3 — the "lukewarm" tier).
+/// the localStorage blob.
 ///
 /// This backend is only for non-sensitive first-paint secrets. Ed25519
 /// signing seeds, local identity seeds, account MLS secrets, and session
