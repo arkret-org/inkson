@@ -445,6 +445,7 @@ pub async fn complete_account_handoff_binding(
         {
             anyhow::bail!("prepared identity creation request belongs to another lease or draft");
         }
+        persist_register_request_prepared_checkpoint(checkpoint, state_store).await?;
         prepared
     } else {
         let challenge = issue_identity_binding_challenge_with_retry(
@@ -467,6 +468,7 @@ pub async fn complete_account_handoff_binding(
             handoff, &request,
         )
         .await?;
+        persist_register_request_prepared_checkpoint(checkpoint, state_store).await?;
         request
     };
     let (register_request, register_outcome) = match account_client
@@ -513,6 +515,7 @@ pub async fn complete_account_handoff_binding(
                 handoff, &request,
             )
             .await?;
+            persist_register_request_prepared_checkpoint(checkpoint, state_store).await?;
             let outcome = account_client.account_register(&request).await?;
             (request, outcome)
         }
@@ -535,7 +538,7 @@ pub async fn complete_account_handoff_binding(
     // transient authority-history failure can be retried without discarding
     // the signed proof or substituting a later response.
     {
-        let mut durable = checkpoint.clone();
+        let mut durable = register_request_prepared_checkpoint(checkpoint)?;
         durable.binding_receipt = Some(binding_receipt.clone());
         durable.pcr_genesis_receipt = Some(pcr_genesis_receipt.clone());
         let barrier = {
@@ -570,6 +573,35 @@ pub async fn complete_account_handoff_binding(
         session_private_key_pem,
         dpop_device_key,
     })
+}
+
+fn register_request_prepared_checkpoint(
+    checkpoint: &PendingPrincipalRegistration,
+) -> anyhow::Result<PendingPrincipalRegistration> {
+    let mut prepared = checkpoint.clone();
+    match prepared.stage {
+        PendingPrincipalRegistrationStage::GenesisDraftPrepared => prepared
+            .advance_registration_stage(PendingPrincipalRegistrationStage::RegisterRequestPrepared)
+            .map_err(anyhow::Error::msg)?,
+        PendingPrincipalRegistrationStage::RegisterRequestPrepared => {}
+        _ => anyhow::bail!(
+            "identity registration checkpoint is not ready to persist a register request"
+        ),
+    }
+    Ok(prepared)
+}
+
+async fn persist_register_request_prepared_checkpoint(
+    checkpoint: &PendingPrincipalRegistration,
+    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+) -> anyhow::Result<()> {
+    let prepared = register_request_prepared_checkpoint(checkpoint)?;
+    let barrier = {
+        let mut store = state_store.write();
+        store.set_pending_principal_registration(Some(prepared))?;
+        store.begin_durable_flush()?
+    };
+    barrier.wait().await
 }
 
 const IDENTITY_BINDING_CHALLENGE_RETRY_GUARD: Duration = Duration::from_millis(250);
@@ -792,6 +824,34 @@ mod tests {
         schedule.next_delay();
         schedule.next_delay();
         assert!(schedule.exhausted());
+    }
+
+    #[test]
+    fn prepared_register_request_advances_checkpoint_before_submission() {
+        let key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff = handoff("ak:device:019f0000-0000-7000-8000-000000000001", 1);
+        let mut checkpoint = prepare_registration_checkpoint(
+            &handoff,
+            "ak:device:019f0000-0000-7000-8000-000000000001",
+            &key,
+        )
+        .unwrap();
+        checkpoint
+            .advance_registration_stage(PendingPrincipalRegistrationStage::GenesisDraftPrepared)
+            .unwrap();
+
+        let prepared = register_request_prepared_checkpoint(&checkpoint).unwrap();
+
+        assert_eq!(
+            prepared.stage,
+            PendingPrincipalRegistrationStage::RegisterRequestPrepared
+        );
+        assert_eq!(
+            register_request_prepared_checkpoint(&prepared)
+                .unwrap()
+                .stage,
+            PendingPrincipalRegistrationStage::RegisterRequestPrepared
+        );
     }
 
     fn handoff(device_id: &str, fence: u64) -> PendingAccountHandoff {
