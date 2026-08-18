@@ -66,6 +66,20 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
     })
 }
 
+/// True when the authenticated account-viewer read proves that the Principal
+/// Server has no account projection for the session subject.
+///
+/// This predicate is intentionally only used at the account-viewer bootstrap
+/// call site. A structured 404 there cannot be repaired by continuing with the
+/// locally cached actor: a fresh Account Authority sign-in must recreate the
+/// Principal Server projection before the authenticated shell is usable.
+pub fn is_account_viewer_projection_missing_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        status == StatusCode::NOT_FOUND
+            && envelope.code() == arkret_sdk::error::ErrorCode::NOT_FOUND
+    })
+}
+
 /// True only for the durable accepted-but-not-sealed device revocation gate.
 ///
 /// This state is deliberately non-terminal for local client material: the

@@ -221,7 +221,7 @@ pub(super) fn save_card_detail_edit(
     mut card_detail_edit_status: Signal<String>,
     selected_card: Signal<Option<KanbanCard>>,
     state_store: SyncSignal<LocalStateStore>,
-    board_status: Signal<String>,
+    mut board_status: Signal<String>,
 ) {
     card_detail_edit_status.set("Saving...".to_owned());
     let edit_scope = card_edit_scope();
@@ -244,6 +244,67 @@ pub(super) fn save_card_detail_edit(
         &card_edit_assignee(),
         &card_edit_due(),
     );
+    let encrypted_realm_write = sidecar_track_write.is_none()
+        && current
+            .security_encrypted
+            .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
+    if encrypted_realm_write && state_store.read().mls_snapshot_for(&realm_id).is_none() {
+        let session_credential = token();
+        card_detail_edit_status.set("Restoring encrypted Realm state before saving...".to_owned());
+        spawn(async move {
+            match recover_mls_snapshot_for_encrypted_write(
+                &base_url,
+                &session_credential,
+                &realm_id,
+                &actor_id,
+                &device_id,
+                state_store,
+            )
+            .await
+            {
+                Ok(()) => {
+                    if dispatch_card_detail_update(
+                        base_url,
+                        token,
+                        realm_id,
+                        actor_id,
+                        device_id,
+                        current,
+                        draft,
+                        scope_security_encrypted,
+                        sidecar_track_write,
+                        synthesis_target_id,
+                        synthesis_revision,
+                        selected_card,
+                        state_store,
+                        board_status,
+                    ) {
+                        card_detail_edit_status.set(String::new());
+                        editing_card_detail.set(false);
+                        card_detail_actions_open.set(false);
+                    } else {
+                        let status = board_status();
+                        card_detail_edit_status.set(if status.trim().is_empty() {
+                            "Unable to save changes.".to_owned()
+                        } else {
+                            status
+                        });
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        realm = %realm_id,
+                        %error,
+                        "encrypted Kanban write readiness recovery failed"
+                    );
+                    board_status.set(error.clone());
+                    card_detail_edit_status.set(error);
+                }
+            }
+        });
+        return;
+    }
+
     if dispatch_card_detail_update(
         base_url,
         token,
@@ -270,6 +331,127 @@ pub(super) fn save_card_detail_edit(
         } else {
             status
         });
+    }
+}
+
+/// Make a Realm-scoped encrypted write independent of the timing of the
+/// background MLS effects. A Save click is itself a concrete readiness demand:
+/// fetch a pending Welcome, restore a decryptable account history backup, or
+/// finish creator genesis before retrying the exact draft the user submitted.
+async fn recover_mls_snapshot_for_encrypted_write(
+    base_url: &str,
+    session_credential: &str,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    mut state_store: SyncSignal<LocalStateStore>,
+) -> Result<(), String> {
+    if state_store.read().mls_snapshot_for(realm_id).is_some() {
+        return Ok(());
+    }
+
+    let mut failures = Vec::new();
+    match crate::app::bootstrap_mls_welcome_for_realm(
+        base_url.to_owned(),
+        session_credential.to_owned(),
+        actor_id.to_owned(),
+        device_id.to_owned(),
+        realm_id.to_owned(),
+        state_store,
+        None,
+    )
+    .await
+    {
+        Ok(_) => {}
+        Err(error) => failures.push(format!("Welcome: {error}")),
+    }
+    if state_store.read().mls_snapshot_for(realm_id).is_some() {
+        return Ok(());
+    }
+
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let has_local_account_secret = matches!(
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id),
+        Ok(Some(_))
+    );
+    if has_local_account_secret {
+        let actor_for_fetch = actor_id.to_owned();
+        let device_for_fetch = device_id.to_owned();
+        match with_authed_api(
+            base_url,
+            session_credential.to_owned(),
+            move |api| async move {
+                crate::mls::account_recovery::fetch_mls_restore_payload_with_unlock_proof(
+                    &api,
+                    &actor_for_fetch,
+                    &device_for_fetch,
+                )
+                .await
+            },
+        )
+        .await
+        {
+            Ok(payload) => {
+                let report = {
+                    let mut store = state_store.write();
+                    crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
+                        &payload,
+                        &mut store,
+                        secure_store.as_ref(),
+                        actor_id,
+                        device_id,
+                    )
+                };
+                if report.failed > 0 {
+                    failures.push(format!(
+                        "history backup: {}",
+                        report.first_error.as_deref().unwrap_or("restore failed")
+                    ));
+                }
+            }
+            Err(error) => failures.push(format!("history backup: {}", error.display())),
+        }
+    }
+    if state_store.read().mls_snapshot_for(realm_id).is_some() {
+        return Ok(());
+    }
+
+    if crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
+        &state_store.read(),
+        realm_id,
+        actor_id,
+    ) {
+        let api = crate::transport::auth::authed_api_ready(base_url, session_credential.to_owned())
+            .await
+            .map_err(|error| format!("creator MLS bootstrap transport: {error}"))?;
+        if let Err(error) = crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+            &api,
+            state_store,
+            realm_id,
+            actor_id,
+            device_id,
+        )
+        .await
+        {
+            failures.push(format!("creator bootstrap: {error}"));
+        }
+    }
+    if state_store.read().mls_snapshot_for(realm_id).is_some() {
+        return Ok(());
+    }
+
+    if failures.is_empty() {
+        let recovery = if has_local_account_secret {
+            "No pending Welcome or matching MLS history snapshot exists on the server for this Realm."
+        } else {
+            "This device has no account MLS secret; unlock it with the Recovery Key or approve this device so it can receive a new Welcome."
+        };
+        Err(recovery.to_owned())
+    } else {
+        Err(format!(
+            "Could not restore this Realm's encrypted state ({}).",
+            failures.join("; ")
+        ))
     }
 }
 

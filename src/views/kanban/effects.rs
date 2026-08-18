@@ -544,7 +544,7 @@ pub(super) fn KanbanEffects(
             let Some(card) = selected_card() else {
                 return;
             };
-            if !card.synthesis_locked {
+            if !private_narrative_restore_needed(card.description_locked, card.synthesis_locked) {
                 return;
             }
             let api_token = restore_token();
@@ -569,13 +569,14 @@ pub(super) fn KanbanEffects(
                 format!("{containers_len}:{strands_len}")
             };
             let restore_key = format!(
-                "{}|{}|{}|{}|{}|{}|synthesis={}",
+                "{}|{}|{}|{}|{}|{}|description={}|synthesis={}",
                 restore_base.trim().trim_end_matches('/'),
                 restore_actor.trim(),
                 restore_device.trim(),
                 restore_realm_id.trim(),
                 card.primary_strand_id,
                 projection_shape,
+                card.description_locked,
                 card.synthesis_locked
             );
             // Wake when account bootstrap first becomes ready, but never use
@@ -678,7 +679,8 @@ pub(super) fn KanbanEffects(
                             &events,
                         );
                     }
-                    let card_unlocked = selected_card().is_some_and(|card| !card.synthesis_locked);
+                    let card_unlocked = selected_card()
+                        .is_some_and(|card| !card.description_locked && !card.synthesis_locked);
                     if restored_private_plaintext || card_unlocked {
                         break;
                     }
@@ -812,6 +814,22 @@ pub(super) fn KanbanEffects(
     }
 
     rsx! {}
+}
+
+fn private_narrative_restore_needed(description_locked: bool, synthesis_locked: bool) -> bool {
+    description_locked || synthesis_locked
+}
+
+#[cfg(test)]
+mod private_narrative_restore_tests {
+    use super::private_narrative_restore_needed;
+
+    #[test]
+    fn description_only_lock_triggers_backup_restore() {
+        assert!(private_narrative_restore_needed(true, false));
+        assert!(private_narrative_restore_needed(false, true));
+        assert!(!private_narrative_restore_needed(false, false));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

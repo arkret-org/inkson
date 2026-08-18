@@ -964,6 +964,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let state_store_for_probe = state_store_for_bootstrap;
             let mut coverage_repair_in_flight_for_probe = coverage_repair_in_flight;
             spawn(async move {
+                let mut bootstrap_retry_required = false;
                 match bootstrap_mls_welcome_for_realm(
                     base,
                     session,
@@ -971,7 +972,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     device,
                     bootstrap_realm_id,
                     state_store_task,
-                    needs_mls_backup_for_bootstrap,
+                    Some(needs_mls_backup_for_bootstrap),
                 )
                 .await
                 {
@@ -988,6 +989,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     }
                     Ok(_) => {}
                     Err(error) => {
+                        bootstrap_retry_required = true;
                         last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
                     }
                 }
@@ -1029,6 +1031,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         Err(error) => Some(error.to_string()),
                     };
                     if let Some(error) = creator_bootstrap_error {
+                        bootstrap_retry_required = true;
                         tracing::warn!(
                             realm = %creator_bootstrap_realm_id,
                             %error,
@@ -1040,13 +1043,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         // and the creator bootstrap never ran again in the
                         // session, leaving every encrypted write stuck on
                         // "MLS state is not ready".
-                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
-                        let mut seen_bootstrap_key_reset = seen_bootstrap_key_for_probe;
-                        if seen_bootstrap_key_reset.peek().as_deref()
-                            == Some(bootstrap_key.as_str())
-                        {
-                            seen_bootstrap_key_reset.set(None);
-                        }
                     } else {
                         tracing::warn!(
                             realm = %creator_bootstrap_realm_id,
@@ -1134,6 +1130,13 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 // signals. The two independent writers could observe different
                 // projection moments during first-Realm creation and made a
                 // transient `needs_mls_unlock=true` permanently sticky.
+                if bootstrap_retry_required {
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
+                    let mut seen_bootstrap_key_reset = seen_bootstrap_key_for_probe;
+                    if seen_bootstrap_key_reset.peek().as_deref() == Some(bootstrap_key.as_str()) {
+                        seen_bootstrap_key_reset.set(None);
+                    }
+                }
             });
         });
     }

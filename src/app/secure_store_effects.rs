@@ -147,11 +147,10 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         .read()
                         .load_with_secure_store(secure_store.as_ref());
                     let held_token = token_for_secure_upgrade.peek().trim().to_owned();
-                    let grant_present = state_store_for_secure_upgrade
-                        .read()
-                        .session_grant()
-                        .map(|grant| !grant.grant_jwt.trim().is_empty())
-                        .unwrap_or(false);
+                    let active_grant = state_store_for_secure_upgrade.read().session_grant();
+                    let grant_present = active_grant
+                        .as_ref()
+                        .is_some_and(|grant| !grant.grant_jwt.trim().is_empty());
                     tracing::debug!(
                         target: "secure_store",
                         held_token_empty = held_token.is_empty(),
@@ -325,22 +324,59 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     if let (Some(user_store), Some(stable_device_id)) =
                         (user_store.as_ref(), stable_device_id_for_signer)
                     {
-                        match crate::event_signer::bootstrap_default_signer_for_device(
-                            "inkson",
-                            &stable_device_id,
-                        ) {
-                            Ok(_) => {
+                        let signer_bootstrap =
+                            crate::event_signer::bootstrap_default_signer_for_device(
+                                "inkson",
+                                &stable_device_id,
+                            )
+                            .map_err(|error| {
+                                anyhow::anyhow!("load device identity signer: {error}")
+                            })
+                            .and_then(|_| {
+                                bind_active_signer_to_account_session(
+                                    &account_scope,
+                                    &stable_device_id,
+                                    active_grant.as_ref(),
+                                )
+                            });
+                        match signer_bootstrap {
+                            Ok(()) => {
                                 tracing::info!(
                                     target: "secure_store",
+                                    principal = %account_scope,
                                     device_id = %stable_device_id,
-                                    "IndexedDB device identity signer bootstrap succeeded"
+                                    "IndexedDB account-bound device identity signer bootstrap succeeded"
                                 );
                             }
                             Err(error) => {
+                                crate::event_signer::clear_active_device_signer();
+                                if active_grant.is_some()
+                                    || !token_for_secure_upgrade.peek().trim().is_empty()
+                                    || !loaded_config.session_credential.trim().is_empty()
+                                {
+                                    // Identity binding is part of the session transaction,
+                                    // not a best-effort repair. Never publish secure-store
+                                    // readiness with a grant that cannot be signed by this
+                                    // account/device tuple; require a fresh sign-in instead.
+                                    state_store_for_secure_upgrade
+                                        .write()
+                                        .set_session_grant(None);
+                                    token_for_secure_upgrade.set(String::new());
+                                    crate::config::clear_session_credential_secret(&account_scope);
+                                    persist_config(
+                                        config_store_for_secure_upgrade,
+                                        base_url_for_secure_upgrade(),
+                                        account_scope.clone(),
+                                        stable_device_id.clone(),
+                                        String::new(),
+                                    );
+                                }
                                 tracing::warn!(
                                     target: "secure_store",
-                                    ?error,
-                                    "IndexedDB device identity signer bootstrap failed"
+                                    principal = %account_scope,
+                                    device_id = %stable_device_id,
+                                    %error,
+                                    "IndexedDB account-bound device identity signer bootstrap failed; session discarded"
                                 );
                             }
                         }
@@ -362,6 +398,110 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
         });
     }
     rsx! {}
+}
+
+/// A durable signing seed identifies a key, not the account identity that
+/// authorizes that key. Rebind the freshly loaded key to the active account's
+/// full DID on every boot before session refresh or Event authoring can run.
+fn bind_active_signer_to_account_session(
+    account_scope: &str,
+    device_id: &str,
+    grant: Option<&PersistedSessionGrant>,
+) -> anyhow::Result<()> {
+    let principal = arkret_sdk::DidFullId::new(account_scope.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!("active account has no valid full DID: {error}"))?;
+    let principal_core = arkret_sdk::project_full_id_to_core_id(&principal)
+        .map_err(|error| anyhow::anyhow!("project active account full DID: {error}"))?;
+    let device = arkret_sdk::DeviceId::new(device_id.trim().to_owned())
+        .map_err(|error| anyhow::anyhow!("active account has no valid device_id: {error}"))?;
+    if let Some(grant) = grant {
+        let grant_principal =
+            crate::identity::session_refresh::persisted_grant_principal_core_id(grant)?;
+        if grant_principal != principal_core {
+            anyhow::bail!("session grant principal does not match the active account");
+        }
+        if grant.device_id.trim() != device.as_str() {
+            anyhow::bail!("session grant device does not match the active device");
+        }
+    }
+    let signer = crate::event_signer::bind_active_signer_principal_device_id(&principal, device_id)
+        .map_err(|error| anyhow::anyhow!("bind active account signer: {error}"))?
+        .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
+    if signer.signer_did() != principal.as_str() || signer.device_id() != Some(device.as_str()) {
+        anyhow::bail!("active signer binding did not preserve the account/device identity");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod account_signer_boot_tests {
+    use super::bind_active_signer_to_account_session;
+    use crate::state::PersistedSessionGrant;
+
+    fn session_grant(principal_id: String, device_id: &str) -> PersistedSessionGrant {
+        PersistedSessionGrant {
+            grant_jwt: "header.payload.signature".to_owned(),
+            session_private_key_pem: String::new(),
+            grant_id: "grant-boot-test".to_owned(),
+            audience: "did:web:principal.example".to_owned(),
+            principal_id,
+            device_id: device_id.to_owned(),
+            principal_server_url: "https://principal.example".to_owned(),
+            grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            stored_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn boot_rebinds_loaded_device_key_to_active_account_full_id() {
+        let _guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
+        let device = "ak:device:019f0000-0000-7000-8000-000000000041";
+        let principal = "did:webvh:z6mkfixture:boot.example";
+        crate::event_signer::activate_device_signer_from_seed_for_device(
+            [41; 32],
+            None,
+            Some(device),
+        )
+        .unwrap();
+
+        let principal_full = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
+        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal_full).unwrap();
+        let grant = session_grant(principal_core.to_string(), device);
+        bind_active_signer_to_account_session(principal, device, Some(&grant)).unwrap();
+
+        let signer = crate::event_signer::active_signer().expect("bound signer");
+        assert_eq!(signer.signer_did(), principal);
+        assert_eq!(signer.device_id(), Some(device));
+    }
+
+    #[test]
+    fn boot_rejects_a_session_grant_for_another_principal_before_binding() {
+        let _guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
+        let device = "ak:device:019f0000-0000-7000-8000-000000000042";
+        let principal = "did:webvh:z6mkfixture:boot.example";
+        crate::event_signer::activate_device_signer_from_seed_for_device(
+            [42; 32],
+            None,
+            Some(device),
+        )
+        .unwrap();
+        let other =
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixtureother:other.example".to_owned())
+                .unwrap();
+        let other_core = arkret_sdk::project_full_id_to_core_id(&other).unwrap();
+        let grant = session_grant(other_core.to_string(), device);
+
+        let error =
+            bind_active_signer_to_account_session(principal, device, Some(&grant)).unwrap_err();
+
+        assert!(error.to_string().contains("principal does not match"));
+        assert_ne!(
+            crate::event_signer::active_signer()
+                .expect("unbound signer remains installed")
+                .signer_did(),
+            principal
+        );
+    }
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]

@@ -220,6 +220,17 @@ mod tests {
     }
 
     #[test]
+    fn account_viewer_projection_missing_requires_structured_not_found() {
+        let missing = sdk_api_error(404, arkret_sdk::error::ErrorCode::NOT_FOUND);
+        let unavailable = sdk_api_error(503, arkret_sdk::error::ErrorCode::NOT_FOUND);
+        let unrelated = sdk_api_error(404, arkret_sdk::error::ErrorCode::UNRECOGNIZED_ENDPOINT);
+
+        assert!(is_account_viewer_projection_missing_error(&missing));
+        assert!(!is_account_viewer_projection_missing_error(&unavailable));
+        assert!(!is_account_viewer_projection_missing_error(&unrelated));
+    }
+
+    #[test]
     fn mls_stale_classifier_accepts_canonical_typed_reason() {
         let envelope = ErrorEnvelope::new(
             arkret_sdk::error::ErrorCode::FAILED_PRECONDITION,

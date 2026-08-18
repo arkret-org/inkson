@@ -396,6 +396,9 @@
   min-height: 180px;
   resize: vertical;
 }
+.card-rich-editor-fallback.toast-fallback-hidden {
+  display: none;
+}
 .card-rich-editor .ProseMirror{
   background: var(--editor-bg);
   color: var(--editor-ink);

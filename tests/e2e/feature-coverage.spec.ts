@@ -155,7 +155,7 @@ test.describe("feature coverage placeholders", () => {
     ).toBeVisible();
     await expect(
       drawer.getByTestId("card-detail-description-input"),
-    ).toBeAttached();
+    ).toBeHidden();
   });
 
   // ---- Identity / Device — three independent concerns ----

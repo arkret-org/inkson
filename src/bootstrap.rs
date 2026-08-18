@@ -687,7 +687,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     device_id: String,
     realm_id: String,
     mut state_store: SyncSignal<LocalStateStore>,
-    needs_mls_backup: Signal<bool>,
+    needs_mls_backup: Option<Signal<bool>>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
     if session_credential.trim().is_empty() || realm_id.trim().is_empty() {
         return Ok(MlsWelcomeBootstrapOutcome::default());
@@ -827,6 +827,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             first_error = welcome_outcome.first_error.as_deref().unwrap_or(""),
             "some MLS welcome(s) failed to apply"
         );
+        if let Some(error) = terminal_welcome_apply_error(&welcome_outcome) {
+            return Err(error);
+        }
     }
 
     let applied = welcome_outcome.applied;
@@ -902,7 +905,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         }
     }
 
-    if applied > 0 {
+    if applied > 0
+        && let Some(needs_mls_backup) = needs_mls_backup
+    {
         // Applying a Welcome creates/imports the local account MLS secret before
         // the user necessarily sends an encrypted message. Back it up with the
         // cached recovery public key when available, otherwise surface the prompt.
@@ -988,6 +993,20 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     })
 }
 
+fn terminal_welcome_apply_error(
+    outcome: &crate::mls::runtime::WelcomeApplyOutcome,
+) -> Option<String> {
+    (outcome.failed > 0 && outcome.applied == 0 && outcome.skipped_stale == 0).then(|| {
+        format!(
+            "MLS Welcome could not be applied: {}",
+            outcome
+                .first_error
+                .as_deref()
+                .unwrap_or("unknown MLS Welcome error")
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1021,6 +1040,17 @@ mod tests {
             first_error: None,
             consumable_claims: Vec::new(),
         }
+    }
+
+    #[test]
+    fn fully_failed_welcome_batch_is_not_silently_treated_as_empty() {
+        let mut outcome = welcome_outcome(0, 1, 0);
+        outcome.first_error = Some("missing KeyPackage private state".to_owned());
+
+        let error = terminal_welcome_apply_error(&outcome).expect("terminal failure");
+        assert!(error.contains("missing KeyPackage private state"));
+        assert!(terminal_welcome_apply_error(&welcome_outcome(1, 1, 0)).is_none());
+        assert!(terminal_welcome_apply_error(&welcome_outcome(0, 0, 0)).is_none());
     }
 
     #[test]

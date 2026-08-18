@@ -3,7 +3,10 @@ use std::future::Future;
 use arkret_wire::AccountDataKey;
 
 use super::*;
-use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
+use crate::api_error::{
+    is_account_viewer_projection_missing_error, is_auth_expired_error,
+    is_terminal_session_grant_error,
+};
 
 #[cfg(target_arch = "wasm32")]
 const BOOTSTRAP_NETWORK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
@@ -660,6 +663,17 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         ));
                         actor.clone()
                     }
+                    Err(error) if is_account_viewer_projection_missing_error(&error) => {
+                        invalidate_bootstrap_session(
+                            &session,
+                            format!(
+                                "Principal Server account projection is missing; sign in again to recreate it: {error}"
+                            ),
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
+                        return;
+                    }
                     Err(error) if is_auth_expired_error(&error) => {
                         match bootstrap_session_refresh(&session).await {
                             crate::runtime::session::CurrentSessionRefresh::Credential(
@@ -706,6 +720,21 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                                 .to_owned(),
                                         ));
                                         actor.clone()
+                                    }
+                                    Err(retry_error)
+                                        if is_account_viewer_projection_missing_error(
+                                            &retry_error,
+                                        ) =>
+                                    {
+                                        invalidate_bootstrap_session(
+                                            &session,
+                                            format!(
+                                                "Principal Server account projection is missing after session refresh; sign in again to recreate it: {retry_error}"
+                                            ),
+                                            session_boot_state,
+                                            sync_bootstrap_complete,
+                                        );
+                                        return;
                                     }
                                     Err(retry_error) if !is_auth_expired_error(&retry_error) => {
                                         last_error.set(Some(format!("account_me: {retry_error}")));
