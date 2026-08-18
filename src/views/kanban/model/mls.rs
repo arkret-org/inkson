@@ -170,8 +170,9 @@ pub(crate) fn private_strand_field_locked(
 /// 3. **Blank** — encrypted-but-unreadable; never leaks the raw envelope.
 ///
 /// `field_path` MUST match the token the writer stored under — the ENCRYPTED
-/// patch key (`kanban_encrypted_patch_path`), i.e. `"encrypted_content"` for
-/// Strand synthesis content.
+/// patch key (`kanban_encrypted_patch_path`): `"encrypted_content"` for the
+/// Strand Description, or `"tracks.synthesis.encrypted_content"` for the
+/// Synthesis track.
 pub(crate) fn private_strand_field_text(
     ctx: Option<&MlsDecryptCtx<'_>>,
     strand_id: &str,

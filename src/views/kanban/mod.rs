@@ -525,8 +525,12 @@ fn toast_editor_bootstrap_script(
         "fallbackId": fallback_id,
         "value": value,
         "allowImageUpload": allow_image_upload,
-        "scriptUrl": TOAST_EDITOR_SCRIPT_URL,
-        "cssUrl": TOAST_EDITOR_CSS_URL,
+        // The asset pipeline flattens source directories and may hash the
+        // emitted filename. Use the generated URLs instead of guessing the
+        // public path; a guessed miss falls through to the SPA index and the
+        // browser then tries to parse HTML as JavaScript/CSS.
+        "scriptUrl": TOAST_EDITOR_SCRIPT.to_string(),
+        "cssUrl": TOAST_EDITOR_CSS.to_string(),
     }))
     .ok()?;
     Some(format!(
@@ -829,6 +833,7 @@ pub fn KanbanPanel(
         member_handle_fetching: _,
         mut card_edit_title,
         mut card_edit_description,
+        mut card_edit_body,
         mut card_edit_synthesis,
         mut card_edit_synthesis_target_id,
         mut card_detail_edit_status,
@@ -1945,6 +1950,7 @@ pub fn KanbanPanel(
                                         let draft = card_detail_draft_from_card(&c);
                                         card_edit_title.set(draft.title);
                                         card_edit_description.set(draft.description);
+                                        card_edit_body.set(draft.description_body);
                                         card_edit_synthesis.set(draft.synthesis);
                                         card_edit_synthesis_target_id.set(None);
                                         card_edit_labels.set(draft.labels.join(", "));

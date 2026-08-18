@@ -322,10 +322,9 @@ mod tests {
             "state": {
                 "events": [{
                     "kind": "ak.realm.create",
+                    "actor_id": creator,
                     "payload": {
                         "object": {
-                            "id": REALM,
-                            "created_by": creator,
                             "encryption_profile": encryption_profile,
                         }
                     }
@@ -359,7 +358,8 @@ mod tests {
                 "state": {
                     "events": [{
                         "kind": "ak.realm.create",
-                        "payload": { "object": { "id": REALM, "created_by": actor_id } }
+                        "actor_id": actor_id,
+                        "payload": { "object": { "encryption_profile": "mls_rfc9420" } }
                     }]
                 }
             }),

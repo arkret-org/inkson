@@ -46,8 +46,8 @@ pub(crate) fn mls_base_epoch_ref_for_scope(
 /// `realm_id` according to local state. Single predicate for every creator
 /// MLS bootstrap gate.
 ///
-/// The only source is the `created_by` of the locally projected accepted
-/// `ak.realm.create` — the same create-locked fact the authority-root
+/// The only source is the envelope `actor_id` of the locally projected
+/// accepted `ak.realm.create` — the same create-locked fact the authority-root
 /// authorization claim uses. The Realm sync entry itself carries no creator
 /// mirror: it deserializes into the closed `RealmSyncEntry`
 /// (`joined/invited_member_count` + `heroes` under `summary`, and no `object`
@@ -530,7 +530,8 @@ mod tests {
             "state": {
                 "events": [{
                 "kind": "ak.realm.create",
-                    "payload": { "object": { "id": REALM, "created_by": "ak:did_core:web:alice.example" } }
+                    "actor_id": "ak:did_core:web:alice.example",
+                    "payload": { "object": { "encryption_profile": "mls_rfc9420" } }
                 }]
             }
         })

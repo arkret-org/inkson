@@ -168,12 +168,14 @@ pub fn LoginPanel(
     // interactive sign-in. Only a verified unfinished handoff can retain its
     // pending device id; every other account-first sign-in starts in a fresh
     // anonymous device namespace.
-    let launch_sign_in = move || {
+    let sign_in_session = session.clone();
+    let mut launch_sign_in = move || {
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
         let device = interactive_sign_in_device_id(&state_store.read());
         device_id.set(device.clone());
         let mut reset_state_store = state_store;
+        let session = sign_in_session.clone();
         is_busy.set(true);
         auth_status.set("Opening server sign-in...".to_owned());
         spawn(async move {
@@ -193,6 +195,12 @@ pub fn LoginPanel(
                 let mut store = reset_state_store.write();
                 recover_pending_handoff_for_sign_in(&mut store, secure_store.as_ref(), &device)
             };
+            // Stop every old-account poller before installing the anonymous
+            // pending namespace. Otherwise a delayed refresh can reinstall the
+            // previous account's signer while onboarding is preparing proofs.
+            session.invalidate("starting an account sign-in transaction");
+            token.set(String::new());
+            account_did.set(String::new());
             if resume_account_handoff {
                 // An unfinished identity-creation lease is fenced to this DPoP
                 // holder. Rotating the key here makes the same browser look like
@@ -358,10 +366,7 @@ pub fn LoginPanel(
                     class: "auth-primary",
                     "data-testid": "start-server-login-button",
                     disabled: is_busy(),
-                    onclick: move |_| {
-                        let mut go = launch_sign_in;
-                        go();
-                    },
+                    onclick: move |_| launch_sign_in(),
                     if is_busy() {
                         {crate::i18n::tr("login.working")}
                     } else {

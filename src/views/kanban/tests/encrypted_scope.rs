@@ -114,7 +114,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     let (patched, _mls_events) = encrypt_private_card_detail_patch_values_with_store(
         json!({
             "content": {"$op": "set", "value": {
-                "kind": "ak.content.text", "format": "markdown", "body": "private synthesis"
+                "kind": "ak.content.text", "format": "markdown", "body": "private description"
             }},
         }),
         TEST_REALM_ID,
@@ -153,6 +153,9 @@ fn private_patch_value_collection_targets_only_canonical_content_fields() {
         "metadata.title": {"$op": "set", "value": "metadata is allowed"},
         "metadata.summary": {"$op": "set", "value": "metadata is allowed"},
         "content": {"$op": "set", "value": {
+            "kind": "ak.content.text", "format": "markdown", "body": "private description"
+        }},
+        "tracks.synthesis.content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown", "body": "private synthesis"
         }},
         // Retired non-spec paths must not be collected for encryption: a write
@@ -165,15 +168,61 @@ fn private_patch_value_collection_targets_only_canonical_content_fields() {
     });
 
     let values = collect_encryptable_private_patch_values(&patch).unwrap();
-    assert_eq!(values.len(), 1);
-    assert_eq!(values[0].0, KANBAN_CONTENT_PATH);
+    assert_eq!(values.len(), 2);
+    let description = values
+        .iter()
+        .find(|(path, _)| path == KANBAN_CONTENT_PATH)
+        .expect("Description is independently encryptable");
     assert_eq!(
-        serde_json::from_slice::<Value>(&values[0].1).unwrap(),
+        serde_json::from_slice::<Value>(&description.1).unwrap(),
+        json!({ "kind": "ak.content.text", "format": "markdown", "body": "private description" })
+    );
+    let synthesis = values
+        .iter()
+        .find(|(path, _)| path == KANBAN_SYNTHESIS_CONTENT_PATH)
+        .expect("Synthesis is independently encryptable");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&synthesis.1).unwrap(),
         json!({ "kind": "ak.content.text", "format": "markdown", "body": "private synthesis" })
     );
     assert_eq!(
         kanban_encrypted_patch_path(KANBAN_CONTENT_PATH),
         KANBAN_ENCRYPTED_CONTENT_PATH
+    );
+    assert_eq!(
+        kanban_encrypted_patch_path(KANBAN_SYNTHESIS_CONTENT_PATH),
+        KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH
+    );
+}
+
+#[test]
+fn private_patch_replacement_keeps_description_and_synthesis_separate() {
+    let mut patch = json!({
+        (KANBAN_CONTENT_PATH): {"$op": "set", "value": {"body": "Description"}},
+        (KANBAN_SYNTHESIS_CONTENT_PATH): {"$op": "set", "value": {"body": "Synthesis"}},
+    });
+    replace_private_patch_values(
+        &mut patch,
+        &[
+            KANBAN_CONTENT_PATH.to_owned(),
+            KANBAN_SYNTHESIS_CONTENT_PATH.to_owned(),
+        ],
+        vec![
+            json!({"ciphertext": "description"}),
+            json!({"ciphertext": "synthesis"}),
+        ],
+    )
+    .unwrap();
+
+    assert!(patch.get(KANBAN_CONTENT_PATH).is_none());
+    assert!(patch.get(KANBAN_SYNTHESIS_CONTENT_PATH).is_none());
+    assert_eq!(
+        patch[KANBAN_ENCRYPTED_CONTENT_PATH]["value"]["ciphertext"],
+        "description"
+    );
+    assert_eq!(
+        patch[KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH]["value"]["ciphertext"],
+        "synthesis"
     );
 }
 
@@ -183,7 +232,7 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let patch = json!({
         "content": {"$op": "set", "value": {
-            "kind": "ak.content.text", "format": "markdown", "body": "private synthesis"
+            "kind": "ak.content.text", "format": "markdown", "body": "private description"
         }},
     });
 
@@ -259,7 +308,7 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     let patch = json!({
         "content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown",
-            "body": "private synthesis from invited member"
+            "body": "private description from invited member"
         }},
     });
     let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
@@ -336,7 +385,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     let patch = json!({
         "content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown",
-            "body": "private synthesis from invited member"
+            "body": "private description from invited member"
         }},
     });
     let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
@@ -363,7 +412,9 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     ));
     assert_eq!(
         state.private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH),
-        Some(content_block_json("private synthesis from invited member"))
+        Some(content_block_json(
+            "private description from invited member"
+        ))
     );
     // The KeyPackage init private state is retained after a successful apply so
     // a redelivered durable Welcome remains an idempotent replay until ACK.
@@ -405,7 +456,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let patch = json!({
         "content": {"$op": "set", "value": {
-            "kind": "ak.content.text", "format": "markdown", "body": "private synthesis"
+            "kind": "ak.content.text", "format": "markdown", "body": "private description"
         }},
     });
 
@@ -421,7 +472,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     // decrypt their own ciphertext).
     assert_eq!(
         state.private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH),
-        Some(content_block_json("private synthesis"))
+        Some(content_block_json("private description"))
     );
     assert_eq!(
         patched["encrypted_content"]["value"]["content_type"],
@@ -503,7 +554,7 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
 
     let patch = json!({
         "content": {"$op": "set", "value": {
-            "kind": "ak.content.text", "format": "markdown", "body": "first synthesis"
+            "kind": "ak.content.text", "format": "markdown", "body": "first description"
         }},
     });
     let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
@@ -607,7 +658,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     );
     let patch = json!({
         "content": {"$op": "set", "value": {
-            "kind": "ak.content.text", "format": "markdown", "body": "private synthesis"
+            "kind": "ak.content.text", "format": "markdown", "body": "private description"
         }},
     });
 
@@ -633,12 +684,12 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     ));
     let envelope_str = serde_json::to_string(&patched["encrypted_content"]["value"]).unwrap();
     assert!(
-        !envelope_str.contains("private synthesis"),
+        !envelope_str.contains("private description"),
         "on-wire envelope must not contain the plaintext"
     );
     assert_eq!(
         state.private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH),
-        Some(content_block_json("private synthesis"))
+        Some(content_block_json("private description"))
     );
     // The snapshot already existed (not freshly created here), so there is
     // no fresh epoch-0 material and genesis is not emitted on this path.

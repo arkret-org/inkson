@@ -53,8 +53,8 @@ pub struct StrandProjectionView {
     pub title: String,
     #[serde(default)]
     pub summary: Option<String>,
-    /// Strand synthesis content — the canonical top-level `content`
-    /// ContentBlock (`strand.schema.json`). Mutual exclusion with
+    /// Strand Description — the canonical top-level `content` ContentBlock.
+    /// Mutual exclusion with
     /// [`Self::encrypted_content`] and the binding to [`Self::state`] are
     /// fixed by that schema and by the SDK `Strand`, so this carries the
     /// authoritative type rather than a raw value paired with a discriminator.
@@ -64,6 +64,10 @@ pub struct StrandProjectionView {
     /// plaintext is a ContentBlock.
     #[serde(default)]
     pub encrypted_content: Option<arkret_sdk::EncryptedEnvelope>,
+    /// Canonical Strand track map. Synthesis content lives inside the
+    /// `synthesis` entry; Discussion content is represented by Messages.
+    #[serde(default)]
+    pub tracks: std::collections::BTreeMap<String, arkret_sdk::StrandTrack>,
     #[serde(default)]
     pub board_space_id: Option<String>,
     #[serde(default)]
@@ -166,6 +170,7 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
             // read supplies them.
             content: None,
             encrypted_content: None,
+            tracks: std::collections::BTreeMap::new(),
             schema_refs: Vec::new(),
             rsvps: Vec::new(),
             schedule_revision_heads: Vec::new(),

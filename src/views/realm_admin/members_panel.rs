@@ -5046,7 +5046,8 @@ mod tests {
         let events = vec![
             json!({
                 "kind": "ak.realm.create",
-                "payload": {"object": {"created_by": actor_core}}
+                "actor_id": actor_core,
+                "payload": {"object": {}}
             }),
             json!({
                 "kind": "ak.capability.grant",
@@ -5071,7 +5072,8 @@ mod tests {
         let actor = "did:web:alice.example";
         let events = vec![json!({
             "kind": "ak.realm.create",
-            "payload": {"object": {"created_by": "ak:did_core:web:alice.example"}}
+            "actor_id": "ak:did_core:web:alice.example",
+            "payload": {"object": {}}
         })];
 
         // Without this branch the owner silently downgrades every recovery
@@ -5304,9 +5306,8 @@ mod tests {
                 }],
                 "state": {"events": [{
                     "kind": "ak.realm.create",
-                    "payload": {"object": {
-                        "created_by": "ak:did_core:web:alice.example"
-                    }}
+                    "actor_id": "ak:did_core:web:alice.example",
+                    "payload": {"object": {}}
                 }]}
             }),
         );

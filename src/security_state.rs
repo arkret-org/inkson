@@ -104,6 +104,7 @@ pub fn strand_projection_security_state(value: &Value) -> Option<bool> {
         &["scope_circle"],
         &["metadata"],
         &["content"],
+        &["tracks", "synthesis"],
     ];
     paths
         .iter()
@@ -154,8 +155,8 @@ pub fn security_projection_for_scope_id<'a>(
 ///
 /// `ak.realm.create` is the only registered writer of
 /// `ak.component.realm.authority_root.v1` in v1 (contract-registry.json), and
-/// its registered `value_projection` sets `controller_id =
-/// payload.object.created_by`. This reads that one cell input; it is not the
+/// its registered `value_projection` sets `controller_id` from the Event
+/// envelope's `actor_id`. This reads that one cell input; it is not the
 /// forbidden `realm_state.owner` / membership fallback — those are projection
 /// mirrors of a different fact, and post-P1 realm projections no longer carry
 /// them at all.
@@ -169,12 +170,9 @@ pub fn realm_authority_root_controller_from_events(events: &[Value]) -> Option<S
             return None;
         }
         event
-            .get("payload")
-            .unwrap_or(event)
-            .get("object")?
-            .get("created_by")
+            .get("actor_id")
             .and_then(Value::as_str)
-            .map(|created_by| created_by.trim().to_owned())
+            .map(|actor_id| actor_id.trim().to_owned())
     })
 }
 
@@ -279,6 +277,38 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn realm_authority_root_controller_comes_from_create_envelope_actor() {
+        let events = json!([{
+            "kind": "ak.realm.create",
+            "actor_id": "ak:did_core:webvh:z6mkcreator",
+            "payload": {
+                "object": {
+                    "schema": "ak.schema.realm_genesis.v1",
+                    "purpose": "collaboration"
+                }
+            }
+        }]);
+        assert_eq!(
+            realm_authority_root_controller_from_events(events.as_array().unwrap()).as_deref(),
+            Some("ak:did_core:webvh:z6mkcreator")
+        );
+    }
+
+    #[test]
+    fn realm_authority_root_controller_does_not_trust_legacy_payload_mirror() {
+        let events = json!([{
+            "kind": "ak.realm.create",
+            "payload": {
+                "object": { "created_by": "ak:did_core:webvh:z6mkforged" }
+            }
+        }]);
+        assert_eq!(
+            realm_authority_root_controller_from_events(events.as_array().unwrap()),
+            None
+        );
+    }
 
     #[test]
     fn realm_projection_reads_profile_and_plaintext_visibility() {

@@ -98,7 +98,7 @@ pub(super) fn board_write_record(state: CardState, note: &str) -> BoardWriteReco
 /// have.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn creator_realm_projection(
-    realm_id: &str,
+    _realm_id: &str,
     actor_id: &arkret_sdk::DidCoreId,
     encryption_profile: &str,
 ) -> serde_json::Value {
@@ -114,16 +114,30 @@ pub(super) fn creator_realm_projection(
         "state": {
             "events": [{
                 "kind": "ak.realm.create",
+                "actor_id": actor_id,
                 "payload": {
                     "object": {
-                        "id": realm_id,
-                        "created_by": actor_id,
                         "encryption_profile": encryption_profile,
                     }
                 }
             }]
         }
     })
+}
+
+#[test]
+fn toast_editor_bootstrap_uses_asset_pipeline_urls() {
+    let script = toast_editor_bootstrap_script("editor-host", "editor-fallback", "", true)
+        .expect("bootstrap script");
+    let config_json = script
+        .split_once("const config = ")
+        .and_then(|(_, suffix)| suffix.split_once(";\n"))
+        .map(|(config, _)| config)
+        .expect("embedded editor config");
+    let config: serde_json::Value = serde_json::from_str(config_json).expect("editor config JSON");
+    assert_eq!(config["scriptUrl"], TOAST_EDITOR_SCRIPT.to_string());
+    assert_eq!(config["cssUrl"], TOAST_EDITOR_CSS.to_string());
+    assert!(!script.contains("/assets/vendor/"));
 }
 
 /// Canonical `encrypted_content` envelope fixture.
@@ -175,6 +189,8 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         rank: rank.to_owned(),
         title: "test".to_owned(),
         description: String::new(),
+        description_body: String::new(),
+        description_locked: false,
         synthesis: String::new(),
         synthesis_locked: false,
         created_by: String::new(),

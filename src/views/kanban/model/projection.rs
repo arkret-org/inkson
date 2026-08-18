@@ -302,11 +302,13 @@ pub(crate) fn card_from_projection_item(
         rank,
         title,
         description: object_str(&["summary", "description"]),
+        description_body: String::new(),
+        description_locked: false,
         // The registered `projection_item.object`
         // (`view.schema.json#/$defs/projection_item`) carries id / title /
         // fields only — never Strand `content` or `encrypted_content`. The
         // Strand projection read (`card_from_strand_projection`) is the single
-        // source for synthesis content; a collection row simply has none.
+        // source for Description or Synthesis content; a collection row simply has neither.
         synthesis: String::new(),
         synthesis_locked: false,
         created_by,

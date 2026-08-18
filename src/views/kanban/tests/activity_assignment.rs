@@ -71,6 +71,7 @@ fn card_detail_update_patch_uses_strand_update_patch_paths() {
     let draft = CardDetailDraft {
         title: "Launch checklist".to_owned(),
         description: "Ship blockers only".to_owned(),
+        description_body: String::new(),
         synthesis: String::new(),
         labels: vec!["release".to_owned(), "ops".to_owned()],
         assignee: "did:web:alice.example".to_owned(),

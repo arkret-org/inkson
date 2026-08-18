@@ -128,7 +128,7 @@ fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
         "payload": {
             "target_ref": strand_id,
             "patch": {
-                "encrypted_content": { "$op": "set", "value": envelope }
+                "tracks.synthesis.encrypted_content": { "$op": "set", "value": envelope }
             }
         }
     })];
@@ -279,10 +279,19 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         title: "Persisted card".to_owned(),
         summary: Some("Loaded from projection".to_owned()),
         content: Some(
-            arkret_sdk::ContentBlock::text("Projection synthesis content")
+            arkret_sdk::ContentBlock::text("Projection description content")
                 .with_field("format", json!("markdown")),
         ),
         encrypted_content: None,
+        tracks: BTreeMap::from([(
+            arkret_sdk::STRAND_TRACK_NAME_SYNTHESIS.to_owned(),
+            arkret_sdk::StrandTrack {
+                content: Some(arkret_sdk::ContentBlock::text(
+                    "Projection synthesis content",
+                )),
+                ..Default::default()
+            },
+        )]),
         board_space_id: Some(board_id.to_owned()),
         list_space_id: Some(list_id.to_owned()),
         rank: Some("U".to_owned()),
@@ -318,6 +327,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     let card = &columns[0].cards[0];
     assert_eq!(card.title, "Persisted card");
     assert_eq!(card.description, "Loaded from projection");
+    assert_eq!(card.description_body, "Projection description content");
     assert_eq!(card.synthesis, "Projection synthesis content");
     assert_eq!(card.labels, vec!["demo".to_owned(), "db".to_owned()]);
     assert_eq!(card.assignee, "did:web:alice.example");
@@ -444,7 +454,7 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
             "target_ref": strand_id,
             "patch": {
                 "metadata.summary": { "$op": "set", "value": "new summary" },
-                "content": {
+                "tracks.synthesis.content": {
                     "$op": "set",
                     "value": {
                         "kind": "ak.content.text",
@@ -510,7 +520,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "payload": {
             "target_ref": strand_id,
             "patch": {
-                "encrypted_content": { "$op": "set", "value": envelope }
+                "tracks.synthesis.encrypted_content": { "$op": "set", "value": envelope }
             }
         }
     })];
@@ -613,6 +623,7 @@ fn non_spec_projection_paths_expose_no_strand_content() {
         summary: None,
         content: None,
         encrypted_content: None,
+        tracks: Default::default(),
         board_space_id: None,
         list_space_id: None,
         rank: None,

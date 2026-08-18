@@ -328,6 +328,13 @@ impl PendingLocalStore {
         ensure_signing_seed_at(store, &self.key(SIGNING_SEED_ENTRY))
     }
 
+    pub fn load_signing_seed(
+        &self,
+        store: &dyn SecureKeyStore,
+    ) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
+        load_signing_seed_at(store, &self.key(SIGNING_SEED_ENTRY))
+    }
+
     pub fn ensure_grant_binding_seed(
         &self,
         store: &dyn SecureKeyStore,

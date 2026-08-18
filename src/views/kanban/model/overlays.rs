@@ -21,6 +21,8 @@ pub(crate) fn local_created_card(
         rank,
         title,
         description,
+        description_body: String::new(),
+        description_locked: false,
         synthesis: String::new(),
         synthesis_locked: false,
         created_by: "inkson".to_owned(),
@@ -377,8 +379,9 @@ pub(crate) struct LocalCardUpdate {
     pub(crate) strand_id: String,
     pub(crate) title: Option<Option<String>>,
     pub(crate) summary: Option<Option<String>>,
-    /// Overlay for the Strand's synthesis content (`content` /
-    /// `encrypted_content`).
+    /// Overlay for the Strand Description (`content` / `encrypted_content`).
+    pub(crate) description_body: Option<PrivateFieldOverlay>,
+    /// Overlay for the Synthesis track's nested content pair.
     pub(crate) synthesis: Option<PrivateFieldOverlay>,
     pub(crate) fields: Option<Value>,
     pub(crate) fields_replaces_all: bool,
@@ -454,6 +457,12 @@ pub(crate) fn local_card_update_from_raw_operation(
     // them here would only resurrect the non-spec shape locally.
     let title = patch.get("metadata.title").and_then(extract_set_unset);
     let summary = patch.get("metadata.summary").and_then(extract_set_unset);
+    let description_body = extract_private_for_paths(
+        patch,
+        KANBAN_DESCRIPTION_PRIVATE_FIELD_PATHS,
+        decrypt_ctx,
+        &strand_id,
+    );
     let synthesis = extract_private_for_paths(
         patch,
         KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS,
@@ -513,6 +522,7 @@ pub(crate) fn local_card_update_from_raw_operation(
         strand_id,
         title,
         summary,
+        description_body,
         synthesis,
         fields,
         fields_replaces_all,
@@ -527,6 +537,22 @@ pub(crate) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
     }
     if let Some(slot) = &update.summary {
         card.description = slot.clone().unwrap_or_default();
+    }
+    if let Some(slot) = &update.description_body {
+        match slot {
+            PrivateFieldOverlay::Set(value) => {
+                card.description_body = value.clone();
+                card.description_locked = false;
+            }
+            PrivateFieldOverlay::Unset => {
+                card.description_body.clear();
+                card.description_locked = false;
+            }
+            PrivateFieldOverlay::Locked => {
+                card.description_body.clear();
+                card.description_locked = true;
+            }
+        }
     }
     if let Some(slot) = &update.synthesis {
         match slot {
@@ -799,25 +825,36 @@ pub(crate) fn json_path_string(value: Option<&Value>, path: &[&str]) -> Option<S
         .map(ToOwned::to_owned)
 }
 
-/// Resolve the Strand's synthesis content from a projection row, together with
-/// the canonical path it was found at (`content` or `encrypted_content`).
-///
-/// The two are mutually exclusive on a schema-valid Strand, and there is no
-/// third location: `metadata.fields.synthesis` / `tracks.<name>.body` are not
-/// Strand wire paths, so a projection that carries them exposes no content.
-///
-/// The slots hold two different SDK types, so the shared decrypt / display
-/// path is fed the canonical JSON encoding of whichever one is present.
-pub(crate) fn strand_projection_synthesis_content(
+pub(crate) fn strand_projection_description_content(
     strand: &crate::state::projection_views::StrandProjectionView,
 ) -> Option<(Value, &'static str)> {
-    KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS
+    KANBAN_DESCRIPTION_PRIVATE_FIELD_PATHS
         .iter()
         .find_map(|path| {
             let value = match *path {
                 KANBAN_CONTENT_PATH => strand.content.as_ref().map(serde_json::to_value),
                 KANBAN_ENCRYPTED_CONTENT_PATH => {
                     strand.encrypted_content.as_ref().map(serde_json::to_value)
+                }
+                _ => None,
+            }?
+            .ok()?;
+            Some((value, *path))
+        })
+}
+
+/// Resolve content owned by `tracks.synthesis`, never Strand Description.
+pub(crate) fn strand_projection_synthesis_content(
+    strand: &crate::state::projection_views::StrandProjectionView,
+) -> Option<(Value, &'static str)> {
+    let track = strand.tracks.get(arkret_sdk::STRAND_TRACK_NAME_SYNTHESIS)?;
+    KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS
+        .iter()
+        .find_map(|path| {
+            let value = match *path {
+                KANBAN_SYNTHESIS_CONTENT_PATH => track.content.as_ref().map(serde_json::to_value),
+                KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH => {
+                    track.encrypted_content.as_ref().map(serde_json::to_value)
                 }
                 _ => None,
             }?

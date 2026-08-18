@@ -26,10 +26,7 @@ pub fn discussion_strand_create(
     // handle in `unsigned.local_target_ref`.
     let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
         .with_metadata_title(title)
-        .with_track(
-            "discussion",
-            arkret_sdk::StrandTrackConfig::discussion_primary(),
-        );
+        .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::StrandCreate,
     >(realm_id, actor, strand_create_payload(strand)?))
@@ -78,10 +75,7 @@ pub fn scoped_discussion_strand_create(
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
         .with_metadata_title(title)
-        .with_track(
-            "discussion",
-            arkret_sdk::StrandTrackConfig::discussion_primary(),
-        );
+        .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
     strand.scope_circle_id = Some(circle_id_value(circle_id)?);
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(

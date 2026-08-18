@@ -723,7 +723,8 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             "replayed MLS welcome envelopes from the durable to-device dispatcher inbox"
         );
     }
-    let api = crate::transport::auth::authed_api(&base_url, session_credential.clone())
+    let api = crate::transport::auth::authed_api_ready(&base_url, session_credential.clone())
+        .await
         .map_err(|error| format!("MLS governance proof client: {error}"))?;
     let has_welcome = messages_value
         .get("messages")

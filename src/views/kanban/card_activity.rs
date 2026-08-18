@@ -268,7 +268,12 @@ pub(super) fn strand_update_activity_title(payload: &arkret_sdk::StrandPatchPayl
         if operation_at(KANBAN_CONTENT_PATH).is_some()
             || operation_at(KANBAN_ENCRYPTED_CONTENT_PATH).is_some()
         {
-            return "Card content updated".to_owned();
+            return "Description updated".to_owned();
+        }
+        if operation_at(KANBAN_SYNTHESIS_CONTENT_PATH).is_some()
+            || operation_at(KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH).is_some()
+        {
+            return "Synthesis updated".to_owned();
         }
     }
     "Card updated".to_owned()

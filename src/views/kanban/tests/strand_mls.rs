@@ -195,8 +195,9 @@ fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
 #[test]
 fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
     // X5.2 gate — simulate the writer having stored the author's synthesis
-    // plaintext, then build a card from a projection whose `encrypted_content`
-    // is an un-decryptable MLS envelope, with NO MLS snapshot present. The
+    // plaintext, then build a card from a projection whose
+    // `tracks.synthesis.encrypted_content` is an un-decryptable MLS envelope,
+    // with NO MLS snapshot present. The
     // card must show the author's plaintext (proving the author sees
     // own content with zero decryption).
     let realm = "ak:realm:ARuquux-GRSwGPPZ0lJor6JUmVSERFPzPWlj1mjx8JCX";
@@ -206,7 +207,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
     store.save_private_plaintext(
         realm,
         strand,
-        KANBAN_ENCRYPTED_CONTENT_PATH,
+        KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH,
         &serde_json::to_string(&json!({
             "kind": "ak.content.text",
             "format": "markdown",
@@ -227,7 +228,14 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         title: "Encrypted card".to_owned(),
         summary: Some("public summary".to_owned()),
         content: None,
-        encrypted_content: Some(test_encrypted_content_envelope(realm, "AAAA")),
+        encrypted_content: None,
+        tracks: BTreeMap::from([(
+            arkret_sdk::STRAND_TRACK_NAME_SYNTHESIS.to_owned(),
+            arkret_sdk::StrandTrack {
+                encrypted_content: Some(test_encrypted_content_envelope(realm, "AAAA")),
+                ..Default::default()
+            },
+        )]),
         board_space_id: None,
         list_space_id: None,
         rank: Some("U".to_owned()),
@@ -268,7 +276,14 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
             title: "Encrypted card".to_owned(),
             summary: Some("public summary".to_owned()),
             content: None,
-            encrypted_content: Some(envelope.clone()),
+            encrypted_content: None,
+            tracks: BTreeMap::from([(
+                arkret_sdk::STRAND_TRACK_NAME_SYNTHESIS.to_owned(),
+                arkret_sdk::StrandTrack {
+                    encrypted_content: Some(envelope.clone()),
+                    ..Default::default()
+                },
+            )]),
             board_space_id: None,
             list_space_id: None,
             rank: Some("U".to_owned()),
@@ -305,7 +320,7 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
     unlocked_store.save_private_plaintext(
         realm,
         strand,
-        KANBAN_ENCRYPTED_CONTENT_PATH,
+        KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH,
         &serde_json::to_string(&json!({
             "kind": "ak.content.text",
             "format": "markdown",
@@ -327,10 +342,15 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
     // A plaintext scope reads the ContentBlock straight through and is never
     // locked, so the two branches share one canonical path.
     let mut plaintext_view = strand_view(realm, strand);
-    plaintext_view.encrypted_content = None;
-    plaintext_view.content = Some(
-        arkret_sdk::ContentBlock::text("plaintext synthesis")
-            .with_field("format", json!("markdown")),
+    plaintext_view.tracks.insert(
+        arkret_sdk::STRAND_TRACK_NAME_SYNTHESIS.to_owned(),
+        arkret_sdk::StrandTrack {
+            content: Some(
+                arkret_sdk::ContentBlock::text("plaintext synthesis")
+                    .with_field("format", json!("markdown")),
+            ),
+            ..Default::default()
+        },
     );
     let plaintext = card_from_strand_projection(&plaintext_view, None);
     assert_eq!(plaintext.synthesis, "plaintext synthesis");

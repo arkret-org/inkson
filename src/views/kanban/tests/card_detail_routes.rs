@@ -20,6 +20,10 @@ fn card_detail_deep_link_targets_kanban_task_route() {
 #[test]
 fn card_detail_tab_deep_link_round_trips() {
     assert_eq!(
+        card_detail_tab_slug(CardDetailContentTab::Description),
+        "description"
+    );
+    assert_eq!(
         card_detail_tab_slug(CardDetailContentTab::Synthesis),
         "synthesis"
     );
@@ -32,19 +36,24 @@ fn card_detail_tab_deep_link_round_trips() {
         Some(CardDetailContentTab::Discussion)
     );
     assert_eq!(card_detail_tab_from_slug("activity"), None);
-    // The Description tab is gone with the duplicate long-text field: the short
-    // description is `metadata.summary` in the Summary section, and the Strand's
-    // single `content` block is the Synthesis tab. A stale deep link falls back
-    // to the default tab instead of resolving to a surface that no longer exists.
-    assert_eq!(card_detail_tab_from_slug("description"), None);
+    assert_eq!(
+        card_detail_tab_from_slug("description"),
+        Some(CardDetailContentTab::Description)
+    );
     assert_eq!(
         CardDetailContentTab::default(),
-        CardDetailContentTab::Synthesis
+        CardDetailContentTab::Description
     );
 }
 
 #[test]
 fn card_detail_tab_reads_url_query() {
+    assert_eq!(
+        card_detail_tab_from_href(
+            "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=description"
+        ),
+        Some(CardDetailContentTab::Description)
+    );
     assert_eq!(
         card_detail_tab_from_href(
             "http://127.0.0.1:8080/kanban/ak:realm:r/task/ak:strand:f?tab=discussion"

@@ -34,18 +34,17 @@ pub(crate) struct KanbanCard {
     /// refreshes (server-side cell update), this must be re-synced.
     pub(crate) rank: String,
     pub(crate) title: String,
-    /// Strand `metadata.summary` — the short one-line/paragraph overview. This
-    /// is the ONLY short-text description the board persists; the long-form
-    /// text lives in [`Self::synthesis`].
+    /// Strand `metadata.summary` — the short one-line/paragraph overview.
     pub(crate) description: String,
-    /// The Strand's synthesis content, rendered as display text.
-    ///
-    /// Canonical wire home is top-level `content: ContentBlock`, or
-    /// `encrypted_content: EncryptedEnvelope` in an E2EE scope
-    /// (`strand.schema.json`). A Strand carries exactly one synthesis content
-    /// slot, so this is the board's single long-form field.
+    /// Strand top-level `content` / `encrypted_content`, rendered in the
+    /// Description tab. This is independent of every track.
+    pub(crate) description_body: String,
+    /// `tracks.synthesis.content` / `encrypted_content`, rendered in the
+    /// Synthesis tab.
     pub(crate) synthesis: String,
-    /// X10.2 — the Strand's content is an encrypted envelope this device
+    /// The Description envelope exists but cannot be decrypted on this device.
+    pub(crate) description_locked: bool,
+    /// X10.2 — the synthesis track content is an encrypted envelope this device
     /// cannot read yet (no local plaintext sidecar + can't decrypt: author's
     /// own ciphertext, or a fresh browser before MLS unlock). When true the
     /// display layer shows a locked placeholder and [`Self::synthesis`] stays
@@ -151,7 +150,10 @@ pub(crate) struct CardDetailDraft {
     pub(crate) title: String,
     /// Strand `metadata.summary`.
     pub(crate) description: String,
-    /// Strand synthesis content (`content` / `encrypted_content`).
+    /// Strand Description (`content` / `encrypted_content`).
+    pub(crate) description_body: String,
+    /// Synthesis track content (`tracks.synthesis.content` /
+    /// `tracks.synthesis.encrypted_content`).
     pub(crate) synthesis: String,
     pub(crate) labels: Vec<String>,
     pub(crate) assignee: String,
@@ -234,13 +236,10 @@ pub(crate) enum BoardToolbarPopover {
     Queue,
 }
 
-/// Card-detail content tabs. There is no Description tab: `metadata.summary`
-/// is rendered by the always-visible Summary section, and the Strand's single
-/// synthesis `content` block is the Synthesis tab. A second persisted long-text
-/// field has no canonical home on a Strand, so the board does not model one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CardDetailContentTab {
     #[default]
+    Description,
     Synthesis,
     Discussion,
 }
@@ -260,20 +259,18 @@ pub(crate) enum CardDetailSidebarTab {
 
 /// Which slice of card fields the inline edit form is currently editing.
 /// The Summary scope edits title + the short `metadata.summary` blurb; the
-/// Synthesis scope edits the Strand's canonical `content` block. Each entry
-/// point seeds the matching scope so the form only renders the relevant editor
-/// (avoids the "edit synthesis" CTA opening an unrelated Title + Summary
+/// Description scope edits top-level `content`; the Synthesis scope edits
+/// `tracks.synthesis.content`. Each entry point seeds the matching scope so the
+/// form only renders the relevant editor (avoids one CTA opening an unrelated
 /// editor as well).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CardEditScope {
     #[default]
     Summary,
+    Description,
     Synthesis,
     Calendar,
 }
-
-pub(crate) const TOAST_EDITOR_SCRIPT_URL: &str = "/assets/vendor/toastui-editor-all.min.js";
-pub(crate) const TOAST_EDITOR_CSS_URL: &str = "/assets/vendor/toastui-editor.min.css";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CardState {

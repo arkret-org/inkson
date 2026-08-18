@@ -1,7 +1,7 @@
 use super::*;
 
-/// Canonical `content` patch op: `strand.schema.json` types the Strand's
-/// synthesis slot as a ContentBlock, so a bare string is a schema violation.
+/// Canonical content patch op shared by Description and Synthesis values. The
+/// owning path, not the ContentBlock shape, determines which surface it edits.
 fn content_patch_value(body: &str) -> serde_json::Value {
     json!({
         "$op": "set",
@@ -62,6 +62,7 @@ fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projec
     );
     card.title = "old title".to_owned();
     card.description = "old summary".to_owned();
+    card.description_body = "old description".to_owned();
     card.synthesis = "old synthesis".to_owned();
     let columns = vec![KanbanColumn {
         id: "ak:space:list-a".to_owned(),
@@ -83,7 +84,8 @@ fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projec
                 "patch": {
                     "metadata.title": { "$op": "set", "value": "new title" },
                     "metadata.summary": { "$op": "set", "value": "new summary" },
-                    "content": content_patch_value("new synthesis"),
+                    "content": content_patch_value("new description"),
+                    "tracks.synthesis.content": content_patch_value("new synthesis"),
                 },
             },
         }),
@@ -92,6 +94,7 @@ fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projec
     let card = &overlaid[0].cards[0];
     assert_eq!(card.title, "new title");
     assert_eq!(card.description, "new summary");
+    assert_eq!(card.description_body, "new description");
     assert_eq!(card.synthesis, "new synthesis");
     assert_eq!(card.state, CardState::Queued);
 }
@@ -162,7 +165,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
                 "body": {
                     "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                     "patch": {
-                        "content": content_patch_value("first synthesis")
+                        "tracks.synthesis.content": content_patch_value("first synthesis")
                     }
                 }
             }),
@@ -180,7 +183,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
                 "body": {
                     "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                     "patch": {
-                        "content": content_patch_value("second synthesis")
+                        "tracks.synthesis.content": content_patch_value("second synthesis")
                     }
                 }
             }),
@@ -235,7 +238,7 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
                 "body": {
                     "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                     "patch": {
-                        "content": content_patch_value("alice synthesis")
+                        "tracks.synthesis.content": content_patch_value("alice synthesis")
                     }
                 }
             }),
@@ -253,7 +256,7 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
                 "body": {
                     "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
                     "patch": {
-                        "content": content_patch_value("alice synthesis\n\n---\n\nbob synthesis")
+                        "tracks.synthesis.content": content_patch_value("alice synthesis\n\n---\n\nbob synthesis")
                     }
                 }
             }),
@@ -300,7 +303,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
             "realm_id": TEST_REALM_ID,
             "payload": {
                 "target_ref": strand_id,
-                "patch": { "content": content_patch_value("alice synthesis") }
+                "patch": { "tracks.synthesis.content": content_patch_value("alice synthesis") }
             }
         }),
         json!({
@@ -312,7 +315,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
             "payload": {
                 "target_ref": strand_id,
                 "patch": {
-                    "content": content_patch_value("alice synthesis\n\n---\n\nbob synthesis")
+                    "tracks.synthesis.content": content_patch_value("alice synthesis\n\n---\n\nbob synthesis")
                 }
             }
         }),
@@ -372,7 +375,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
         "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "payload": {
             "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
-            "patch": { "content": content_patch_value("alice synthesis") }
+            "patch": { "tracks.synthesis.content": content_patch_value("alice synthesis") }
         }
     });
 
@@ -658,9 +661,8 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
     assert!(strand_participant_dids(&ops, "").is_empty());
 }
 
-/// Canonical ContentBlock round-trip: the editor's plain text becomes a
-/// `content` ContentBlock on the wire, and the projection reads that block back
-/// as the same text. The forbidden top-level `body` never appears.
+/// Canonical Synthesis round-trip: the editor emits a ContentBlock at the
+/// nested track path, never at the Strand Description path.
 #[test]
 fn card_detail_update_patch_emits_a_canonical_content_block() {
     let strand_id = "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs";
@@ -673,21 +675,68 @@ fn card_detail_update_patch_emits_a_canonical_content_block() {
     let patch = card_detail_update_patch(&current, &draft).unwrap();
     assert!(patch.get("body").is_none(), "top-level body is forbidden");
     assert!(patch.get("synthesis").is_none());
-    assert_eq!(patch["content"]["$op"], "set");
-    assert_eq!(patch["content"]["value"]["kind"], "ak.content.text");
-    assert_eq!(patch["content"]["value"]["format"], "markdown");
-    assert_eq!(patch["content"]["value"]["body"], "new synthesis");
+    assert_eq!(patch[KANBAN_SYNTHESIS_CONTENT_PATH]["$op"], "set");
+    assert_eq!(
+        patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"]["kind"],
+        "ak.content.text"
+    );
+    assert_eq!(
+        patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"]["format"],
+        "markdown"
+    );
+    assert_eq!(
+        patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"]["body"],
+        "new synthesis"
+    );
 
     // The emitted value decodes as the SDK ContentBlock (the spec type), and
     // the projection read renders exactly the text that went in.
     let block: arkret_sdk::ContentBlock =
-        serde_json::from_value(patch["content"]["value"].clone()).expect("canonical ContentBlock");
+        serde_json::from_value(patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"].clone())
+            .expect("canonical ContentBlock");
     assert_eq!(block.body, "new synthesis");
-    let strand = strand_projection_with_content(strand_id, patch["content"]["value"].clone());
+    let strand = strand_projection_with_synthesis_content(
+        strand_id,
+        patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"].clone(),
+    );
     assert_eq!(
         card_from_strand_projection(&strand, None).synthesis,
         "new synthesis"
     );
+}
+
+#[test]
+fn description_and_synthesis_emit_and_project_distinct_paths() {
+    let strand_id = "ak:strand:ACO0mgcDtIZrNCmU08vIqkIuP8CD6VrARiuEFskkdlWs";
+    let mut current = test_card(strand_id, "U");
+    current.description_body = "old description".to_owned();
+    current.synthesis = "old synthesis".to_owned();
+    let mut draft = card_detail_draft_from_card(&current);
+    draft.description_body = "new description".to_owned();
+    draft.synthesis = "new synthesis".to_owned();
+
+    let patch = card_detail_update_patch(&current, &draft).unwrap();
+    assert_eq!(
+        patch[KANBAN_CONTENT_PATH]["value"]["body"],
+        "new description"
+    );
+    assert_eq!(
+        patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"]["body"],
+        "new synthesis"
+    );
+    assert_ne!(KANBAN_CONTENT_PATH, KANBAN_SYNTHESIS_CONTENT_PATH);
+
+    let mut strand = strand_projection_with_synthesis_content(
+        strand_id,
+        patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"].clone(),
+    );
+    strand.content = Some(
+        serde_json::from_value(patch[KANBAN_CONTENT_PATH]["value"].clone())
+            .expect("Description ContentBlock"),
+    );
+    let card = card_from_strand_projection(&strand, None);
+    assert_eq!(card.description_body, "new description");
+    assert_eq!(card.synthesis, "new synthesis");
 }
 
 /// Clearing the text writes an EMPTY ContentBlock, never `$op: unset`:
@@ -704,9 +753,9 @@ fn clearing_card_content_writes_an_empty_block_instead_of_unset() {
     draft.synthesis = String::new();
 
     let patch = card_detail_update_patch(&current, &draft).unwrap();
-    assert_eq!(patch["content"]["$op"], "set");
-    assert_eq!(patch["content"]["value"]["body"], "");
-    assert!(patch.get("encrypted_content").is_none());
+    assert_eq!(patch[KANBAN_SYNTHESIS_CONTENT_PATH]["$op"], "set");
+    assert_eq!(patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"]["body"], "");
+    assert!(patch.get(KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH).is_none());
 }
 
 /// Inline `ak.content.text` is bounded by the schema; the board has no Blob
@@ -726,9 +775,8 @@ fn oversized_card_content_is_refused_instead_of_emitting_an_invalid_block() {
     assert!(error.contains("ak.content.text"), "{error}");
 }
 
-/// `content` round-trips as the SDK ContentBlock: the value the patch emitted
-/// decodes into the projection field, and the card reads the same text back.
-fn strand_projection_with_content(
+/// Synthesis round-trips through the nested `tracks.synthesis.content` slot.
+fn strand_projection_with_synthesis_content(
     strand_id: &str,
     content: serde_json::Value,
 ) -> crate::state::projection_views::StrandProjectionView {
@@ -739,8 +787,15 @@ fn strand_projection_with_content(
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Keep".to_owned(),
         summary: None,
-        content: Some(content),
+        content: None,
         encrypted_content: None,
+        tracks: BTreeMap::from([(
+            arkret_sdk::STRAND_TRACK_NAME_SYNTHESIS.to_owned(),
+            arkret_sdk::StrandTrack {
+                content: Some(content),
+                ..Default::default()
+            },
+        )]),
         board_space_id: None,
         list_space_id: None,
         rank: None,
@@ -774,6 +829,7 @@ fn card_detail_update_patch_unsets_empty_optional_fields() {
         // The summary is carried over unchanged, so it must not appear in the
         // patch at all; clearing it is covered by its own test.
         description: "old summary".to_owned(),
+        description_body: String::new(),
         synthesis: String::new(),
         labels: Vec::new(),
         assignee: String::new(),
@@ -868,6 +924,7 @@ fn synthesis_edit_scope_preserves_metadata_fields() {
         None,
         "",
         "",
+        "",
         "new synthesis",
         "",
         "",
@@ -883,8 +940,11 @@ fn synthesis_edit_scope_preserves_metadata_fields() {
     let patch = card_detail_update_patch(&current, &draft).unwrap();
     let object = patch.as_object().unwrap();
     assert_eq!(object.len(), 1);
-    assert_eq!(patch["content"]["$op"], "set");
-    assert_eq!(patch["content"]["value"]["body"], "new synthesis");
+    assert_eq!(patch[KANBAN_SYNTHESIS_CONTENT_PATH]["$op"], "set");
+    assert_eq!(
+        patch[KANBAN_SYNTHESIS_CONTENT_PATH]["value"]["body"],
+        "new synthesis"
+    );
     assert!(patch.get("metadata.fields.labels").is_none());
     assert!(patch.get("metadata.fields.due_at").is_none());
     assert_eq!(
@@ -902,6 +962,7 @@ fn apply_card_detail_draft_marks_card_queued() {
     let draft = CardDetailDraft {
         title: "New title".to_owned(),
         description: "New summary".to_owned(),
+        description_body: "New description".to_owned(),
         synthesis: "Synthesis content".to_owned(),
         labels: vec!["ops".to_owned()],
         assignee: String::new(),
@@ -912,6 +973,7 @@ fn apply_card_detail_draft_marks_card_queued() {
     apply_card_detail_draft(&mut card, &draft);
     assert_eq!(card.title, "New title");
     assert_eq!(card.description, "New summary");
+    assert_eq!(card.description_body, "New description");
     assert_eq!(card.synthesis, "Synthesis content");
     assert_eq!(card.labels, vec!["ops".to_owned()]);
     assert_eq!(card.assignee, "—");
@@ -1025,7 +1087,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
             "ak:realm:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM",
             "did:web:acme.example:users:alice",
             strand_id,
-            json!({"content": content_patch_value("demo synthesis")}),
+            json!({"tracks.synthesis.content": content_patch_value("demo synthesis")}),
         )
         .expect("builds")
         .build("inkson");

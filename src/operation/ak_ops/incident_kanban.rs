@@ -27,11 +27,11 @@ pub fn kanban_card_strand_create(
         .with_metadata_field("rank", json!(rank))
         .with_track(
             "synthesis",
-            arkret_sdk::StrandTrackConfig::new()
+            arkret_sdk::StrandTrack::new()
                 .primary()
                 .with_profile("kanban_card"),
         )
-        .with_track("discussion", arkret_sdk::StrandTrackConfig::discussion());
+        .with_track("discussion", arkret_sdk::StrandTrack::discussion());
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::StrandCreate,
     >(&realm_id, actor, strand_create_payload(object)?))

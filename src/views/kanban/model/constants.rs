@@ -104,39 +104,49 @@ pub(crate) const DEMO_STRAND_SECURITY_REVIEW_ID: &str =
 /// Canonical Strand paths whose value carries user content and therefore MUST
 /// be encrypted before it leaves the client in an E2EE scope.
 ///
-/// `strand.schema.json` puts the Strand's synthesis content at top-level
-/// `content` (a ContentBlock) and its E2EE dual at `encrypted_content`; the two
-/// are mutually exclusive. There is no `body` / `synthesis` / `fields.*` /
-/// `tracks.<name>.body` content path — those names are either explicitly
-/// forbidden top-level fields or plain schema violations, so they are neither
-/// written nor read.
+/// Description lives at top-level `content`; Synthesis lives inside
+/// `tracks.synthesis.content`. Each has an `encrypted_content` counterpart.
 pub(crate) const KANBAN_PRIVATE_STRAND_PATCH_PATHS: &[&str] = &[
     "content",
     "encrypted_content",
+    "tracks.synthesis.content",
+    "tracks.synthesis.encrypted_content",
     // The schedule lives under one `calendar` namespace, so the encryptable
     // location is `metadata.fields.calendar.location`.
     "metadata.fields.calendar.location",
 ];
 
-/// The Strand synthesis content pair, in read precedence order. Exactly one of
-/// the two can be present on a schema-valid Strand.
-pub(crate) const KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS: &[&str] = &["content", "encrypted_content"];
+pub(crate) const KANBAN_DESCRIPTION_PRIVATE_FIELD_PATHS: &[&str] =
+    &["content", "encrypted_content"];
 
-/// Canonical plaintext path for Strand synthesis content.
+pub(crate) const KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS: &[&str] = &[
+    "tracks.synthesis.content",
+    "tracks.synthesis.encrypted_content",
+];
+
+/// Canonical plaintext path for the Strand Description.
 pub(crate) const KANBAN_CONTENT_PATH: &str = "content";
 
-/// Canonical E2EE path for Strand synthesis content.
+/// Canonical E2EE path for the Strand Description.
 pub(crate) const KANBAN_ENCRYPTED_CONTENT_PATH: &str = "encrypted_content";
 
+/// Canonical plaintext path for the Synthesis track body.
+pub(crate) const KANBAN_SYNTHESIS_CONTENT_PATH: &str = "tracks.synthesis.content";
+/// Canonical E2EE path for the Synthesis track body.
+pub(crate) const KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH: &str =
+    "tracks.synthesis.encrypted_content";
+
 /// Where a private patch value moves once it has been wrapped in an
-/// `EncryptedEnvelope`. Plaintext `content` and `encrypted_content` are
-/// mutually exclusive on the object, so the encrypted write REPLACES the path
-/// instead of writing an envelope into the ContentBlock slot (which would fail
-/// `strand.schema.json` — an envelope is not a ContentBlock). Every other
-/// private path is an open `metadata.fields` subtree and stays where it is.
+/// `EncryptedEnvelope`. Each plaintext/encrypted pair is mutually exclusive,
+/// so encryption moves Description from `content` to `encrypted_content` and
+/// Synthesis from `tracks.synthesis.content` to
+/// `tracks.synthesis.encrypted_content`. Other private metadata paths stay in
+/// place.
 pub(crate) fn kanban_encrypted_patch_path(path: &str) -> &str {
     if path == KANBAN_CONTENT_PATH {
         KANBAN_ENCRYPTED_CONTENT_PATH
+    } else if path == KANBAN_SYNTHESIS_CONTENT_PATH {
+        KANBAN_ENCRYPTED_SYNTHESIS_CONTENT_PATH
     } else {
         path
     }

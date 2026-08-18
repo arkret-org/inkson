@@ -180,6 +180,15 @@ fn strand_view_from_create_op(
     let encrypted_content = object.get(KANBAN_ENCRYPTED_CONTENT_PATH).and_then(|value| {
         serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value.clone()).ok()
     });
+    let tracks = object
+        .get("tracks")
+        .and_then(|value| {
+            serde_json::from_value::<std::collections::BTreeMap<String, arkret_sdk::StrandTrack>>(
+                value.clone(),
+            )
+            .ok()
+        })
+        .unwrap_or_default();
 
     let created_by = json_path_string(Some(&record.payload), &["actor_id"])
         .or_else(|| json_path_string(Some(object), &["created_by"]));
@@ -198,6 +207,7 @@ fn strand_view_from_create_op(
         summary,
         content,
         encrypted_content,
+        tracks,
         board_space_id,
         list_space_id,
         rank,

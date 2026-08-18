@@ -6,7 +6,7 @@ use super::{
     value_is_plaintext_private_content,
 };
 
-/// Build the `content` patch op for the Strand's synthesis text.
+/// Build a canonical ContentBlock patch op for Description or Synthesis.
 ///
 /// The value is always a ContentBlock — `strand.schema.json` types top-level
 /// `content` as `content_block`, so a bare string is a schema violation.
@@ -54,8 +54,10 @@ pub(super) fn card_detail_update_patch(
     // `metadata.summary` has no empty representation: `strand.schema.json`
     // types it as the `short_text` string profile, whose `minLength` is 1. It is
     // not a redactable content slot either — `redactable-field-registry.json`
-    // registers only `content` / `encrypted_content` — so `event-and-patch.md`
-    // §4.2.4 makes `$op: unset` its one legal non-terminal clear path.
+    // registers the Description pair (`content` / `encrypted_content`) and the
+    // independent Synthesis pair under `tracks.synthesis` — so
+    // `event-and-patch.md` §4.2.4 makes `$op: unset` the summary's one legal
+    // non-terminal clear path.
     let description = draft.description.trim();
     if current.description.trim() != description {
         let op = if description.is_empty() {
@@ -66,10 +68,18 @@ pub(super) fn card_detail_update_patch(
         patch.insert("metadata.summary".to_owned(), op);
     }
 
+    let description_body = draft.description_body.trim();
+    if current.description_body.trim() != description_body {
+        patch.insert(
+            KANBAN_CONTENT_PATH.to_owned(),
+            strand_content_patch_value(description_body)?,
+        );
+    }
+
     let synthesis = draft.synthesis.trim();
     if current.synthesis.trim() != synthesis {
         patch.insert(
-            KANBAN_CONTENT_PATH.to_owned(),
+            KANBAN_SYNTHESIS_CONTENT_PATH.to_owned(),
             strand_content_patch_value(synthesis)?,
         );
     }
@@ -121,6 +131,7 @@ pub(super) fn card_detail_activity_summary(
     }
     if current.title.trim() != draft.title.trim()
         || current.description.trim() != draft.description.trim()
+        || current.description_body.trim() != draft.description_body.trim()
         || current.synthesis.trim() != draft.synthesis.trim()
     {
         return "Card details updated".to_owned();
@@ -131,6 +142,7 @@ pub(super) fn card_detail_activity_summary(
 pub(super) fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.title = draft.title.trim().to_owned();
     card.description = draft.description.trim().to_owned();
+    card.description_body = draft.description_body.trim().to_owned();
     card.synthesis = draft.synthesis.trim().to_owned();
     card.labels = draft.labels.clone();
     card.assignee = display_optional_card_field(&draft.assignee);
@@ -180,9 +192,9 @@ pub(super) fn collect_encryptable_private_patch_values(
 
 /// Swap each collected plaintext patch value for its `EncryptedEnvelope`.
 ///
-/// `content` additionally MOVES to `encrypted_content`: the two are mutually
-/// exclusive on the object and an envelope is not a ContentBlock, so leaving
-/// the envelope under `content` would be a `strand.schema.json` violation.
+/// Each plaintext narrative path MOVES to its own encrypted counterpart:
+/// Description `content` → `encrypted_content`, and Synthesis
+/// `tracks.synthesis.content` → `tracks.synthesis.encrypted_content`.
 pub(super) fn replace_private_patch_values(
     patch: &mut Value,
     paths: &[String],

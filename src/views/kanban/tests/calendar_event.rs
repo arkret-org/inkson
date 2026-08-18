@@ -215,6 +215,7 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         summary: Some("Release planning".to_owned()),
         content: None,
         encrypted_content: None,
+        tracks: Default::default(),
         board_space_id: None,
         list_space_id: None,
         rank: Some("U".to_owned()),

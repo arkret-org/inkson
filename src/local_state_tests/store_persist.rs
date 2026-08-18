@@ -1082,6 +1082,24 @@ fn adopt_pending_login_keeps_pending_device_for_new_account() {
 }
 
 #[test]
+fn pending_login_clears_the_previous_accounts_process_signer() {
+    let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
+    crate::event_signer::activate_device_signer_from_seed_for_device(
+        [3; 32],
+        None,
+        Some("ak:device:019f0000-0000-7000-8000-000000000099"),
+    )
+    .unwrap();
+    assert!(crate::event_signer::active_signer().is_some());
+    let path = temp_state_path("pending-clears-process-signer");
+    let mut store = LocalStateStore::with_path(path);
+
+    store.begin_pending_login("ak:device:019f0000-0000-7000-8000-000000000001", None);
+
+    assert!(crate::event_signer::active_signer().is_none());
+}
+
+#[test]
 fn adopt_pending_login_preserves_returning_account_entry() {
     let path = temp_state_path("pending-returning");
     let mut store = LocalStateStore::with_path(path);

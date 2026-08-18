@@ -1010,10 +1010,12 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         realm = %creator_bootstrap_realm_id,
                         "creator MLS bootstrap pending; replaying epoch-0 setup + ak.mls.genesis",
                     );
-                    let creator_bootstrap_error = match crate::transport::auth::authed_api(
+                    let creator_bootstrap_error = match crate::transport::auth::authed_api_ready(
                         &detect_base,
                         detect_session.clone(),
-                    ) {
+                    )
+                    .await
+                    {
                         Ok(api) => crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
                             &api,
                             state_store_task,
@@ -1094,10 +1096,12 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         circle = circle_id.as_deref().unwrap_or("-"),
                         "MLS governance coverage is stale; advancing the epoch to resume encrypted sending",
                     );
-                    let coverage_error = match crate::transport::auth::authed_api(
+                    let coverage_error = match crate::transport::auth::authed_api_ready(
                         &detect_base,
                         detect_session.clone(),
-                    ) {
+                    )
+                    .await
+                    {
                         Ok(api) => crate::mls::coverage_liveness::ensure_mls_governance_coverage(
                             &api,
                             state_store_task,

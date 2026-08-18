@@ -336,6 +336,11 @@ impl LocalStateStore {
         };
 
         crate::secure_key_store::set_pending_login_device_id(Some(device_id));
+        // A pre-DID transaction must not inherit the process-wide signer from
+        // the account that was active before this login. The onboarding path
+        // rehydrates the exact pending signer from durable storage before it
+        // signs or resumes a prepared registration request.
+        crate::event_signer::clear_active_device_signer();
         let pending = PendingLogin {
             device_id: device_id.to_owned(),
             dpop_jkt: dpop_jkt

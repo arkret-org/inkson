@@ -1425,6 +1425,36 @@ fn RecoveryKeyWords(recovery_key: String) -> Element {
     }
 }
 
+fn activate_pending_registration_signer(
+    checkpoint: &crate::state::PendingPrincipalRegistration,
+    device: &str,
+    pending_store: &crate::secure_key_store::PendingLocalStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<std::sync::Arc<crate::event_signer::InksonEventSigner>> {
+    let signing_material =
+        if checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
+            pending_store.ensure_signing_seed(secure_store)?
+        } else {
+            pending_store
+                .load_signing_seed(secure_store)?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "prepared registration checkpoint has no durable pending device signer"
+                    )
+                })?
+        };
+    let signer = crate::event_signer::activate_device_signer_from_seed_for_device(
+        signing_material.seed,
+        None,
+        Some(device),
+    )?;
+    let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
+    Ok(
+        crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device)?
+            .unwrap_or(signer),
+    )
+}
+
 async fn create_and_bind_identity(
     handoff: &crate::state::PendingAccountHandoff,
     recovery_key: &str,
@@ -1479,61 +1509,62 @@ async fn create_and_bind_identity(
         barrier.wait().await?;
     }
 
-    let checkpoint =
-        if checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
-            // The first device identity does not belong to a user namespace
-            // until the authority accepts the principal binding. Create/load it
-            // in this handoff's pending namespace, then activate the same key in
-            // memory for the genesis proofs. Promotion happens only after the
-            // server returns the principal.
-            let signing_material = pending_store.ensure_signing_seed(secure_store.as_ref())?;
-            let signer = crate::event_signer::activate_device_signer_from_seed_for_device(
-                signing_material.seed,
-                None,
-                Some(device),
+    let checkpoint = if matches!(
+        checkpoint.stage,
+        crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed
+            | crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared
+            | crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared
+    ) {
+        // Every pre-register re-entry must restore the exact pending signer
+        // before validating or submitting the durable draft. A prepared
+        // checkpoint can survive a reload or an uncertain register response,
+        // while the process-wide signer cannot.
+        let signer = activate_pending_registration_signer(
+            &checkpoint,
+            device,
+            &pending_store,
+            secure_store.as_ref(),
+        )?;
+        let device_public_key_multibase = signer
+            .public_key_multibase()
+            .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
+        let device_public_key = format!("did:key:{device_public_key_multibase}");
+        let hpke_key = {
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+                secure_store.as_ref(),
+                &checkpoint.did,
+                device,
             )?;
-            let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
-            let signer =
-                crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device)?
-                    .unwrap_or(signer);
-            let device_public_key_multibase = signer
-                .public_key_multibase()
-                .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
-            let device_public_key = format!("did:key:{device_public_key_multibase}");
-            let hpke_key = {
-                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
-                    secure_store.as_ref(),
-                    &checkpoint.did,
-                    device,
-                )?;
-                crate::identity::did_key::encode_x25519_multibase(&public_key)
-            };
-            let dpop =
+            crate::identity::did_key::encode_x25519_multibase(&public_key)
+        };
+        let dpop =
             crate::identity::account_auth::grant_dpop::ensure_pending_device_key_with_secure_store(
                 &mut state_store.write(),
                 secure_store.as_ref(),
                 &pending_store,
             )?;
-            let prepared = crate::identity::principal_registration::prepare_genesis_draft(
-                &checkpoint,
-                recovery_key,
-                device_public_key,
-                hpke_key,
-                signer.as_ref(),
-                &dpop,
-                arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
-            )?;
+        let prepared = crate::identity::principal_registration::prepare_genesis_draft(
+            &checkpoint,
+            recovery_key,
+            device_public_key,
+            hpke_key,
+            signer.as_ref(),
+            &dpop,
+            arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+        )?;
+        if prepared != checkpoint {
             let barrier = {
                 let mut store = state_store.write();
                 store.set_pending_principal_registration(Some(prepared.clone()))?;
                 store.begin_durable_flush()?
             };
             barrier.wait().await?;
-            prepared
-        } else {
-            checkpoint
-        };
+        }
+        prepared
+    } else {
+        checkpoint
+    };
 
     let (registration, actor, grant_jwt) = if matches!(
         checkpoint.stage,
@@ -1955,6 +1986,86 @@ mod tests {
             ),
             "arkret-recovery-key-alice.txt"
         );
+    }
+
+    #[test]
+    fn prepared_registration_rehydrates_its_pending_signer_before_retry() {
+        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared,
+        );
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        let pending_store = crate::secure_key_store::PendingLocalStore::new(
+            arkret_sdk::DeviceId::new(handoff.device_id.clone()).unwrap(),
+        );
+        pending_store
+            .save_signing_seed(&secure_store, &[7; 32])
+            .unwrap();
+        crate::event_signer::activate_device_signer_from_seed_for_device(
+            [9; 32],
+            None,
+            Some("ak:device:019f0000-0000-7000-8000-000000000099"),
+        )
+        .unwrap();
+
+        let signer = activate_pending_registration_signer(
+            &checkpoint,
+            &handoff.device_id,
+            &pending_store,
+            &secure_store,
+        )
+        .unwrap();
+
+        assert_eq!(signer.signer_did(), checkpoint.did);
+        assert_eq!(signer.device_id(), Some(handoff.device_id.as_str()));
+        assert!(
+            signer
+                .verification_method()
+                .ends_with(&format!("#{}", handoff.device_id))
+        );
+    }
+
+    #[test]
+    fn prepared_registration_never_rotates_a_missing_pending_signer() {
+        let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared,
+        );
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        let pending_store = crate::secure_key_store::PendingLocalStore::new(
+            arkret_sdk::DeviceId::new(handoff.device_id.clone()).unwrap(),
+        );
+
+        let error = activate_pending_registration_signer(
+            &checkpoint,
+            &handoff.device_id,
+            &pending_store,
+            &secure_store,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("no durable pending device signer")
+        );
+        assert!(crate::event_signer::active_signer().is_none());
     }
 
     fn test_checkpoint(

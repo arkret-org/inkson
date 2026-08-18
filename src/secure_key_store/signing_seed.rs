@@ -123,6 +123,21 @@ pub fn account_scoped_device_key(base: &str) -> String {
     account_scoped_device_key_for(base, effective_device_seed_scope().as_deref())
 }
 
+/// Resolve an identity-owned device key for fallible runtime paths.
+///
+/// Startup and account-switch effects can legitimately observe a short window
+/// with neither an active user nor a pending login. That state means there is
+/// no credential to load; it must become a handled error, never a wasm panic.
+fn try_account_scoped_device_key(base: &str) -> Result<String, SecureKeyStoreError> {
+    let scope = effective_device_seed_scope().ok_or_else(|| {
+        SecureKeyStoreError::Backend(
+            "identity-owned key is unavailable before a UserLocalStore or PendingLocalStore scope is active"
+                .to_owned(),
+        )
+    })?;
+    try_identity_storage_key(&scope, base)
+}
+
 pub(crate) fn account_scoped_device_key_for(base: &str, scope: Option<&str>) -> String {
     let scope = scope
         .map(str::trim)
@@ -134,9 +149,14 @@ pub(crate) fn account_scoped_device_key_for(base: &str, scope: Option<&str>) -> 
 }
 
 fn identity_storage_key(scope: &str, logical_key: &str) -> String {
+    try_identity_storage_key(scope, logical_key)
+        .expect("identity-owned key scope is not a validated DidCoreId or DidFullId")
+}
+
+fn try_identity_storage_key(scope: &str, logical_key: &str) -> Result<String, SecureKeyStoreError> {
     if let Some(device_id) = scope.strip_prefix("pending:") {
         let device_scope = device_id.strip_prefix("ak:device:").unwrap_or(device_id);
-        return format!("inkson.pending.{device_scope}.{logical_key}");
+        return Ok(format!("inkson.pending.{device_scope}.{logical_key}"));
     }
 
     let core_scope = if let Some(core_scope) = scope.strip_prefix("ak:did_core:") {
@@ -150,9 +170,11 @@ fn identity_storage_key(scope: &str, logical_key: &str) -> String {
             .unwrap_or_else(|| core_id.as_str())
             .to_owned()
     } else {
-        panic!("identity-owned key scope is not a validated DidCoreId or DidFullId")
+        return Err(SecureKeyStoreError::Backend(
+            "identity-owned key scope is not a validated DidCoreId or DidFullId".to_owned(),
+        ));
     };
-    format!("inkson.{core_scope}.{logical_key}")
+    Ok(format!("inkson.{core_scope}.{logical_key}"))
 }
 
 /// Secure-store key for the signing seed under `scope` (the account DID), or
@@ -365,7 +387,7 @@ pub fn load_grant_binding_seed(
     store: &dyn SecureKeyStore,
 ) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
     require_wasm_indexeddb_ed25519_seed_store(store)?;
-    let key = account_scoped_device_key(GRANT_BINDING_SEED_KEY);
+    let key = try_account_scoped_device_key(GRANT_BINDING_SEED_KEY)?;
     let Some(raw) = store.get_secret(&key)? else {
         return Ok(None);
     };
@@ -394,7 +416,8 @@ pub fn store_grant_binding_seed(
 ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
     require_wasm_indexeddb_ed25519_seed_store(store)?;
     let encoded = STANDARD_NO_PAD.encode(seed);
-    store.store_secret(&account_scoped_device_key(GRANT_BINDING_SEED_KEY), &encoded)?;
+    let key = try_account_scoped_device_key(GRANT_BINDING_SEED_KEY)?;
+    store.store_secret(&key, &encoded)?;
     Ok(SigningSeedMaterial {
         seed: *seed,
         local_signing_did: ed25519_seed_to_did_key(seed),
@@ -457,7 +480,8 @@ pub fn rotate_grant_binding_seed(
 /// Delete the grant-binding seed (hard logout). Best-effort; a missing entry is
 /// not an error at the backend level. Soft recovery MUST NOT call this.
 pub fn delete_grant_binding_seed(store: &dyn SecureKeyStore) -> Result<(), SecureKeyStoreError> {
-    store.delete_secret(&account_scoped_device_key(GRANT_BINDING_SEED_KEY))
+    let key = try_account_scoped_device_key(GRANT_BINDING_SEED_KEY)?;
+    store.delete_secret(&key)
 }
 
 /// Canonical storage key for the stable protocol `device_id`
@@ -641,6 +665,23 @@ mod grant_binding_tests {
         ensure_grant_binding_seed(&store).unwrap();
         delete_grant_binding_seed(&store).unwrap();
         assert!(load_grant_binding_seed(&store).unwrap().is_none());
+    }
+
+    #[test]
+    fn missing_identity_scope_returns_an_error_instead_of_panicking() {
+        let _scope_guard = lock_active_device_seed_scope_for_test();
+        let _reset = ScopeReset;
+        set_active_device_seed_scope(None);
+        set_pending_login_device_id(None);
+        let store = MemorySecureKeyStore::default();
+
+        let error = load_grant_binding_seed(&store).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("before a UserLocalStore or PendingLocalStore scope is active")
+        );
     }
 
     #[test]

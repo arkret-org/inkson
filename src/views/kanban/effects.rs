@@ -29,6 +29,7 @@ pub(super) fn KanbanEffects(
         mut mls_sidecar_restore_key_seen,
         mut card_edit_title,
         mut card_edit_description,
+        mut card_edit_body,
         mut card_edit_synthesis,
         mut card_edit_synthesis_target_id,
         mut card_edit_labels,
@@ -156,6 +157,7 @@ pub(super) fn KanbanEffects(
                 let draft = card_detail_draft_from_card(&card);
                 card_edit_title.set(draft.title);
                 card_edit_description.set(draft.description);
+                card_edit_body.set(draft.description_body);
                 card_edit_synthesis.set(draft.synthesis);
                 card_edit_synthesis_target_id.set(None);
                 card_edit_labels.set(draft.labels.join(", "));

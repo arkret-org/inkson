@@ -67,8 +67,17 @@ pub(crate) fn strand_projection_security_state(
 ) -> Option<bool> {
     let mut value = Map::new();
     value.insert("fields".to_owned(), Value::Object(strand.fields.clone()));
-    if let Some((content, path)) = strand_projection_synthesis_content(strand) {
+    if let Some((content, path)) = strand_projection_description_content(strand) {
         value.insert(path.to_owned(), content);
+    }
+    if let Some((content, path)) = strand_projection_synthesis_content(strand) {
+        let leaf = path
+            .strip_prefix("tracks.synthesis.")
+            .expect("Synthesis projection paths are nested under tracks.synthesis");
+        value.insert(
+            "tracks".to_owned(),
+            serde_json::json!({"synthesis": {(leaf): content}}),
+        );
     }
     crate::security_state::strand_projection_security_state(&Value::Object(value))
 }
@@ -134,7 +143,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
     } else {
         strand.title.clone()
     };
-    let description = strand_projection_field_string(
+    let summary = strand_projection_field_string(
         strand,
         strand.summary.as_deref(),
         &["summary", "description"],
@@ -169,18 +178,30 @@ pub(crate) fn card_from_strand_projection_for_actor(
         });
     // X10.2: bind the content value + its canonical path once so the display
     // text and the locked decision can never read different sources.
+    let strand_description_field = strand_projection_description_content(strand);
+    let strand_description_value = strand_description_field.as_ref().map(|(value, _)| value);
+    let strand_description_path = strand_description_field
+        .as_ref()
+        .map(|(_, path)| *path)
+        .unwrap_or(KANBAN_CONTENT_PATH);
     let strand_synthesis_field = strand_projection_synthesis_content(strand);
     let strand_synthesis_value = strand_synthesis_field.as_ref().map(|(value, _)| value);
     let strand_synthesis_path = strand_synthesis_field
         .as_ref()
         .map(|(_, path)| *path)
-        .unwrap_or(KANBAN_CONTENT_PATH);
+        .unwrap_or(KANBAN_SYNTHESIS_CONTENT_PATH);
     KanbanCard {
         id: strand.strand_id.clone(),
         rank: strand_projection_field_string(strand, strand.rank.as_deref(), &["rank"])
             .unwrap_or_default(),
         title: title.clone(),
-        description,
+        description: summary,
+        description_body: private_strand_field_text(
+            decrypt_ctx,
+            &strand.strand_id,
+            strand_description_path,
+            strand_description_value,
+        ),
         synthesis: private_strand_field_text(
             decrypt_ctx,
             &strand.strand_id,
@@ -192,6 +213,12 @@ pub(crate) fn card_from_strand_projection_for_actor(
             &strand.strand_id,
             strand_synthesis_path,
             strand_synthesis_value,
+        ),
+        description_locked: private_strand_field_locked(
+            decrypt_ctx,
+            &strand.strand_id,
+            strand_description_path,
+            strand_description_value,
         ),
         created_by: strand
             .created_by
