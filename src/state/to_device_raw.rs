@@ -918,12 +918,43 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
         // target. Realm Event projections intentionally do not repeat the
         // private service route, so preserve it for deferred MLS claim retry.
         "recipient_service_id",
+        // The producer's draft-time object handle. Losing it would strand every
+        // reference other rows recorded against the temporary id (see below).
+        "local_temporary_target_ref",
     ] {
         if incoming_object.get(key).is_none_or(|value| value.is_null())
             && let Some(value) = existing_object.get(key).filter(|value| !value.is_null())
         {
             incoming_object.insert(key.to_owned(), value.clone());
         }
+    }
+    // An event-derived create's optimistic row is keyed by the DRAFT object id
+    // (`local_target_ref` = retype(draft event_id)); the canonical row that
+    // replaces it re-derives `local_target_ref` from the ACCEPTED event id.
+    // The draft handle is what `selected_board_space_id`, the board URL, and
+    // any child created while the accept receipt was in flight still point at,
+    // so keep it on the merged row as `local_temporary_target_ref` — the alias
+    // source `event_derived_target_aliases` resolves those references with.
+    if incoming_object
+        .get("local_temporary_target_ref")
+        .is_none_or(Value::is_null)
+        && let (Some(existing_ref), Some(incoming_ref)) = (
+            existing_object
+                .get("local_target_ref")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty()),
+            incoming_object
+                .get("local_target_ref")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty()),
+        )
+        && existing_ref != incoming_ref
+    {
+        let existing_ref = existing_ref.to_owned();
+        incoming_object.insert(
+            "local_temporary_target_ref".to_owned(),
+            Value::String(existing_ref),
+        );
     }
     incoming
 }
@@ -1102,6 +1133,62 @@ mod durable_inbox_tests {
             "the signed Event's local alias heals old rows"
         );
         assert_eq!(rows[0].payload["write_state"], json!("synced"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// The canonical row replacing an optimistic create must keep the draft
+    /// object handle: `selected_board_space_id`, the board URL, and children
+    /// created while the accept receipt was in flight all still reference it,
+    /// and `event_derived_target_aliases` can only resolve them if the merged
+    /// row records draft -> accepted. (2026-08-19 board-title incident: the
+    /// merge dropped the handle, the alias vanished, and the switcher showed
+    /// the raw draft id with "No lists yet".)
+    #[test]
+    fn canonical_event_merge_preserves_draft_target_handle() {
+        let path = temp_path();
+        let realm_id = "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6";
+        let operation_alias = "ak:operation:01904100-0000-7000-8000-000000000097";
+        let event_id = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let temporary_target = "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
+        let canonical_target = "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let mut store = LocalStateStore::with_path(&path);
+        store.upsert_raw_operation(
+            operation_alias,
+            Some(realm_id.to_owned()),
+            json!({
+                "kind": "ak.space.create",
+                "operation_id": operation_alias,
+                "local_target_ref": temporary_target,
+                "write_state": "queued",
+                "body": { "object": { "kind": "board", "title": "Board", "realm_id": realm_id } }
+            }),
+        );
+
+        store.upsert_raw_operation(
+            event_id,
+            Some(realm_id.to_owned()),
+            json!({
+                "kind": "ak.space.create",
+                "operation_id": event_id,
+                "local_operation_idempotency_alias": operation_alias,
+                "local_target_ref": canonical_target,
+                "write_state": "synced",
+                "body": { "object": { "kind": "board", "title": "Board", "realm_id": realm_id } }
+            }),
+        );
+
+        let rows = store.load().raw_operations;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].payload["local_target_ref"],
+            json!(canonical_target),
+            "the merged row is keyed by the accepted object id"
+        );
+        assert_eq!(
+            rows[0].payload["local_temporary_target_ref"],
+            json!(temporary_target),
+            "the draft handle survives the merge as the alias source"
+        );
         let _ = std::fs::remove_file(path);
     }
 }

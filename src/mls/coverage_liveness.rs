@@ -207,11 +207,15 @@ pub(crate) async fn ensure_mls_governance_coverage(
         (commit_envelope, next_snapshot, commit_event)
     };
 
-    let commit_event_id = commit_event.event_id.clone();
-    submitter
+    let submit_result = submitter
         .submit_sdk_event(&commit_event)
         .await
         .map_err(|error| format!("submitting the MLS coverage repair commit failed: {error}"))?;
+    // The accepted id from the submit outcome — authoring re-derives the
+    // content-bound id, so the built event's id is not the on-wire one.
+    let commit_event_id = arkret_sdk::EventId::new(submit_result.event_id).map_err(|error| {
+        format!("accepted MLS coverage repair commit returned an invalid Event id: {error}")
+    })?;
 
     // Persist-on-accept, identical to every other commit path: the local
     // snapshot only advances once the server admitted the epoch.

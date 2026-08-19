@@ -969,7 +969,6 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
-                                let commit_event_id = commit_event.event_id.clone();
                                 spawn(async move {
                                     match crate::transport::auth::with_authed_api(
                                         &base,
@@ -980,7 +979,21 @@ pub fn RealmAdminPanel(
                                     )
                                     .await
                                     {
-                                        Ok(_) => {
+                                        Ok(result) => {
+                                            // The accepted commit id — the
+                                            // build-time id is re-derived away
+                                            // during authoring.
+                                            let commit_event_id = match arkret_sdk::EventId::new(
+                                                result.event_id,
+                                            ) {
+                                                Ok(event_id) => event_id,
+                                                Err(error) => {
+                                                    status_msg.set(format!(
+                                                        "rotate accepted but the Event id is invalid: {error}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
                                             // Persist-on-accept: only advance the
                                             // local snapshot after the server
                                             // accepted the ak.mls.commit.

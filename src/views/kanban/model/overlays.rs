@@ -820,6 +820,21 @@ pub(crate) fn local_space_create_from_raw_operation(
 /// `operation_id`, and fall back to the temporary handle while the write is in
 /// flight.
 pub(crate) fn raw_operation_create_target_id(payload: &Value) -> Option<String> {
+    raw_operation_accepted_create_target_id(payload).or_else(|| {
+        let kind = json_path_string(Some(payload), &["kind"])
+            .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
+        if kind != event_kind_str::SPACE_CREATE && kind != event_kind_str::STRAND_CREATE {
+            return None;
+        }
+        json_path_string(Some(payload), &["local_target_ref"])
+    })
+}
+
+/// [`raw_operation_create_target_id`] restricted to ids derived from an
+/// ACCEPTED Event id — never the temporary `local_target_ref` fallback. This is
+/// the set of object ids that provably exist server-side; alias resolution uses
+/// it to refuse mapping one of them away as if it were a draft handle.
+pub(crate) fn raw_operation_accepted_create_target_id(payload: &Value) -> Option<String> {
     let kind = json_path_string(Some(payload), &["kind"])
         .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
     if kind != event_kind_str::SPACE_CREATE && kind != event_kind_str::STRAND_CREATE {
@@ -836,7 +851,6 @@ pub(crate) fn raw_operation_create_target_id(payload: &Value) -> Option<String> 
         .and_then(|event_id| {
             arkret_sdk::schema::derived_object_id_for_kind(kind.as_str(), &event_id)
         })
-        .or_else(|| json_path_string(Some(payload), &["local_target_ref"]))
 }
 
 /// Map temporary optimistic object ids to their accepted content-bound ids.
@@ -846,7 +860,14 @@ pub(crate) fn event_derived_target_aliases(
     let mut aliases = raw_operations
         .iter()
         .filter_map(|record| {
-            let temporary = json_path_string(Some(&record.payload), &["local_target_ref"])?;
+            // `local_temporary_target_ref` is the producer's draft handle
+            // carried by a canonical (backfilled / merged) row; a purely local
+            // optimistic row instead holds the draft handle in
+            // `local_target_ref` until its accept receipt lands. Either one
+            // pairs with the accepted-id derivation to name the same alias.
+            let temporary =
+                json_path_string(Some(&record.payload), &["local_temporary_target_ref"])
+                    .or_else(|| json_path_string(Some(&record.payload), &["local_target_ref"]))?;
             let canonical = raw_operation_create_target_id(&record.payload)?;
             (temporary != canonical).then_some((temporary, canonical))
         })
@@ -877,6 +898,15 @@ pub(crate) fn event_derived_target_aliases(
             aliases.insert(temporary, canonical_target);
         }
     }
+    // Fail-safe: a draft handle is by definition an id no accepted create ever
+    // derived. Refuse any alias whose "temporary" side IS an accepted object id
+    // (e.g. a forged or corrupt unsigned hint) — resolving a real Board away to
+    // another object must be impossible.
+    let accepted_ids = raw_operations
+        .iter()
+        .filter_map(|record| raw_operation_accepted_create_target_id(&record.payload))
+        .collect::<BTreeSet<_>>();
+    aliases.retain(|temporary, _| !accepted_ids.contains(temporary));
     aliases
 }
 

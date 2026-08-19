@@ -860,6 +860,65 @@ mod tests {
         assert_eq!(todos.cards[0].title, "queued card");
     }
 
+    /// Live incident (2026-08-19): final authoring changes a create's
+    /// content-bound Event id, so the accepted Board id differs from the
+    /// draft-time handle in `unsigned.local_target_ref`, and a List created
+    /// while the accept receipt was in flight references the DRAFT handle as
+    /// its parent. With no local optimistic rows (fresh device / merged rows),
+    /// the unsigned hint is the only alias source. It must resolve the board
+    /// selection AND the dangling parent — otherwise the switcher shows the
+    /// raw draft id and the board renders "No lists yet".
+    #[test]
+    fn accepted_create_draft_handle_hint_aliases_selection_and_children() {
+        let draft_board = "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
+        let mut board_create = space_create_event(BOARD, "board", "Board1", None);
+        board_create
+            .unsigned
+            .insert("local_target_ref".to_owned(), json!(draft_board));
+        let list_create = space_create_event(LIST_A, "list", "Todos", Some(draft_board));
+
+        let ops = kanban_operations_from_events(&[board_create, list_create]);
+        let (columns, options, board_id) = project_board(&ops, draft_board, REALM, None);
+
+        assert_eq!(
+            board_id.as_deref(),
+            Some(BOARD),
+            "the draft handle resolves to the accepted Board id"
+        );
+        assert_eq!(
+            options.len(),
+            1,
+            "no phantom fallback board is minted for the draft parent"
+        );
+        assert_eq!(options[0].id, BOARD);
+        assert_eq!(options[0].title, "Board1", "the Board keeps its title");
+        assert_eq!(columns.len(), 1, "the draft-parented list attaches");
+        assert_eq!(columns[0].title, "Todos");
+    }
+
+    /// The unsigned draft-handle hint is producer-controlled. A hint that
+    /// claims ANOTHER accepted object's id must never alias that object away.
+    #[test]
+    fn draft_handle_hint_cannot_alias_an_accepted_object_away() {
+        let mut second_board = space_create_event(LIST_B, "board", "Board2", None);
+        second_board
+            .unsigned
+            .insert("local_target_ref".to_owned(), json!(BOARD));
+        let ops = kanban_operations_from_events(&[
+            space_create_event(BOARD, "board", "Board1", None),
+            second_board,
+        ]);
+        let aliases = event_derived_target_aliases(&ops);
+        assert!(
+            !aliases.contains_key(BOARD),
+            "an accepted Board id must not be redirected by an unsigned hint"
+        );
+        let (_, options, board_id) = project_board(&ops, BOARD, REALM, None);
+        assert_eq!(board_id.as_deref(), Some(BOARD));
+        assert!(options.iter().any(|option| option.title == "Board1"));
+        assert!(options.iter().any(|option| option.title == "Board2"));
+    }
+
     #[test]
     fn accepted_create_identity_migration_dedupes_list_and_card_backfill() {
         let temporary_list = LIST_A;

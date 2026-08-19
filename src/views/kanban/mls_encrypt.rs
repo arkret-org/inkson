@@ -624,8 +624,7 @@ pub(super) fn dispatch_card_detail_update(
         // Event id; merely setting the emitted flag strands secure messages
         // without their mandatory group_state_ref.
         if let Some(genesis_op) = mls_genesis_op {
-            let genesis_event_id = genesis_op.event_id.clone();
-            let provisional_genesis_event_id = genesis_event_id.clone();
+            let provisional_genesis_event_id = genesis_op.event_id.clone();
             let realm_for_genesis_lookup = realm_id.clone();
             let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
                 let material = mls_genesis_material.ok_or_else(|| {
@@ -638,7 +637,21 @@ pub(super) fn dispatch_card_detail_update(
                     .map_err(|error| anyhow::anyhow!(error.user_message()))?;
                 let submitter = api.event_submitter()?;
                 match submitter.submit_sdk_event(&genesis_op).await {
-                    Ok(_) => Ok(genesis_event_id),
+                    // The queue re-authors the envelope before signing, so the
+                    // accepted id is not the build-time id. Returning the
+                    // accepted id is what arms the group_state_ref rebind
+                    // below.
+                    Ok(result) => match arkret_sdk::EventId::new(result.event_id) {
+                        Ok(accepted_event_id) => Ok(accepted_event_id),
+                        Err(_) => submitter
+                            .find_mls_genesis_event_id(&realm_for_genesis_lookup)
+                            .await?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "MLS genesis was accepted but its Event id is unavailable"
+                                )
+                            }),
+                    },
                     Err(error)
                         if crate::ephemeral::events_submit_rejected_for_reason(
                             &error,
@@ -715,7 +728,6 @@ pub(super) fn dispatch_card_detail_update(
             }
         }
         if let Some(commit_op) = mls_commit_op {
-            let commit_event_id = commit_op.event_id.clone();
             let snapshot_for_submit = mls_new_snapshot.clone();
             let realm_for_submit = realm_id.clone();
             let scope_for_submit = sidecar_effective_scope.clone();
@@ -751,12 +763,25 @@ pub(super) fn dispatch_card_detail_update(
                         if let (Some(effective_scope), Some(snapshot)) =
                             (sidecar_effective_scope.as_ref(), mls_new_snapshot.clone())
                         {
+                            // The accepted Event id from the submit outcome —
+                            // the build-time id died when the queue re-authored
+                            // the envelope.
+                            let accepted_commit_ref =
+                                match arkret_sdk::EventId::new(resp.event_id.clone()) {
+                                    Ok(event_id) => event_id,
+                                    Err(error) => {
+                                        board_status.set(format!(
+                                            "accepted MLS commit returned an invalid Event id: {error}"
+                                        ));
+                                        return;
+                                    }
+                                };
                             if let Err(error) =
                                 state_store.write().record_mls_group_state_ref_for_scope(
                                     effective_scope,
                                     snapshot.group_id.as_str(),
                                     snapshot.epoch,
-                                    commit_event_id,
+                                    accepted_commit_ref,
                                 )
                             {
                                 board_status

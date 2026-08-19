@@ -127,25 +127,38 @@ fn circle_lifecycle_submission(
     Ok(arkret_wire::EventInitialSubmission::online(event))
 }
 
+/// Returns the outcome together with the id of the `ak.mls.commit` Event as it
+/// was actually submitted. Batch preparation re-authors every unsigned Event
+/// (actor chain, HLC, CBA basis are all in the digest preimage), so the
+/// caller's draft ids are NOT the on-wire ids — group-state references must be
+/// recorded against the returned id, never the draft's.
 pub async fn submit_circle_scope_rotate_events(
     submitter: &EventSubmitter,
     circle_id: &str,
     events: &[arkret_sdk::Event],
     idempotency_key: Option<String>,
-) -> anyhow::Result<arkret_sdk::CircleScopeRotateOutcome> {
+) -> anyhow::Result<(
+    arkret_sdk::CircleScopeRotateOutcome,
+    Option<arkret_sdk::EventId>,
+)> {
     let circle_id = circle_id.trim();
     if circle_id.is_empty() {
         anyhow::bail!("circle_id is required for scope rotate");
     }
     let signed_events = submitter.prepare_sdk_events_batch(events.to_vec()).await?;
+    let submitted_commit_event_id = signed_events
+        .iter()
+        .find(|event| event.kind == arkret_sdk::EventKind::MlsCommit)
+        .map(|event| event.event_id.clone());
     let idem = idempotency_key.unwrap_or_else(uuid_v7);
     let body = arkret_sdk::CircleScopeRotateRequestBody {
         events: signed_events,
         idempotency_key: Some(idem.clone()),
     };
-    submitter
+    let outcome = submitter
         .http()
         .circle_scope_rotate(circle_id, &idem, &body)
         .await
-        .map_err(anyhow::Error::from)
+        .map_err(anyhow::Error::from)?;
+    Ok((outcome, submitted_commit_event_id))
 }

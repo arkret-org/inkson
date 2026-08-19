@@ -47,13 +47,37 @@ fn projection_mls_genesis_event_id(
     effective_scope: &arkret_sdk::ScopeRef,
     group_id: &str,
 ) -> Option<arkret_sdk::EventId> {
-    let realm_id = effective_scope.realm_id_opt()?.as_str();
-    let projection = state.realm_tree_projections.get(realm_id)?;
-    let events = projection
+    projection_mls_genesis_event_ids(state, effective_scope, group_id)
+        .into_iter()
+        .next()
+}
+
+/// Every accepted `ak.mls.genesis` Event id the durable Realm projection
+/// carries for this exact `(effective_scope, group_id)`, in projection order.
+///
+/// The genesis cell is `cas_register`, so a healthy Realm exposes exactly one;
+/// more than one means the scope's genesis is contested and callers must fail
+/// closed instead of picking a winner locally.
+fn projection_mls_genesis_event_ids(
+    state: &ClientLocalState,
+    effective_scope: &arkret_sdk::ScopeRef,
+    group_id: &str,
+) -> Vec<arkret_sdk::EventId> {
+    let Some(realm_id) = effective_scope.realm_id_opt() else {
+        return Vec::new();
+    };
+    let realm_id = realm_id.as_str();
+    let Some(projection) = state.realm_tree_projections.get(realm_id) else {
+        return Vec::new();
+    };
+    let Some(events) = projection
         .get("state")
         .and_then(|state| state.get("events"))
-        .and_then(Value::as_array)?;
-    events.iter().find_map(|event| {
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    events.iter().filter_map(|event| {
         let kind = event
             .get("kind")
             .or_else(|| event.get("event_kind"))
@@ -92,6 +116,7 @@ fn projection_mls_genesis_event_id(
             .and_then(Value::as_str)
             .and_then(|event_id| arkret_sdk::EventId::new(event_id.to_owned()).ok())
     })
+    .collect()
 }
 
 /// A history-secret update assembled but not yet published. The owned value
@@ -948,11 +973,45 @@ impl LocalStateStore {
             return Ok(false);
         }
         let scope = mls_realm_or_circle_scope(realm_id, circle_id)?;
-        let Some(event_id) =
-            projection_mls_genesis_event_id(&self.cached, &scope, &snapshot.group_id)
-        else {
+        let genesis_ids =
+            projection_mls_genesis_event_ids(&self.cached, &scope, &snapshot.group_id);
+        let Some(event_id) = genesis_ids.first().cloned() else {
             return Ok(false);
         };
+        // A locally recorded epoch-0 reference whose Event id appears nowhere
+        // in the accepted projection was never on the wire — the classic case
+        // is a build-time id persisted before the durable submit queue
+        // re-authored the envelope (actor chain, HLC, CBA basis are all in the
+        // digest preimage, so authoring changes the id). That is bookkeeping
+        // damage, not a fork: the local group state is the very state the
+        // accepted genesis exported. Repair it from the projection, but only
+        // while the projection shows exactly one genesis for this scope —
+        // a contested genesis still fails closed below.
+        if genesis_ids.len() == 1
+            && let Some(current) = self.cached.mls_group_state_refs.get(&key)
+            && current.group_id == snapshot.group_id
+            && current.epoch == 0
+            && !genesis_ids.contains(&current.event_id)
+        {
+            tracing::warn!(
+                %realm_id,
+                stale_event_id = %current.event_id,
+                accepted_event_id = %event_id,
+                "repairing MLS genesis group-state reference that never matched an accepted Event",
+            );
+            let record = MlsGroupStateRefRecord {
+                group_id: snapshot.group_id.clone(),
+                epoch: 0,
+                event_id,
+            };
+            self.cached
+                .mls_group_state_refs
+                .insert(key.clone(), record.clone());
+            attach_group_state_ref_to_snapshot(&mut self.cached, &key, &record);
+            self.flush()
+                .map_err(|error| format!("persist repaired MLS group-state reference: {error}"))?;
+            return Ok(true);
+        }
         self.record_mls_group_state_ref_for_effective_scope(
             realm_id.to_owned(),
             circle_id,
@@ -1435,6 +1494,171 @@ mod tests {
                 .unwrap()
                 .group_state_event_id,
             Some(event_id)
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn phantom_local_genesis_reference_is_repaired_from_projection() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-mls-projection-genesis-phantom-{}-{}.json",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let group_id = "010203";
+        // The build-time id persisted before the durable queue re-authored the
+        // envelope — it never reached the server.
+        let phantom_event_id =
+            arkret_sdk::EventId::new("ak:event:ASeq_1SMGFgL0OgySv7t3u5l9Sr1eV_HZwUb7tMFwZON")
+                .unwrap();
+        let accepted_event_id =
+            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+                .unwrap();
+        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+            realm_id: realm_id.to_owned(),
+            group_id: group_id.to_owned(),
+            epoch: 0,
+            group_state_event_id: None,
+            salt_hex: "00".repeat(16),
+            ciphertext_hex: "11".repeat(32),
+            mac_hex: "22".repeat(12),
+            recorded_at: chrono::Utc::now(),
+            epoch_started_at: chrono::Utc::now(),
+            app_messages_observed: 0,
+            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        };
+        let mut store = LocalStateStore::with_path(&path);
+        store.save_mls_snapshot(realm_id, snapshot);
+        store
+            .record_mls_group_state_ref_for_effective_scope(
+                realm_id,
+                None,
+                group_id,
+                0,
+                phantom_event_id.clone(),
+            )
+            .unwrap();
+        store.save_realm_tree_projection(
+            realm_id,
+            json!({
+                "state": {
+                    "events": [{
+                        "event_id": accepted_event_id,
+                        "realm_id": realm_id,
+                        "kind": "ak.mls.genesis",
+                        "target_ref": group_id,
+                        "payload": {
+                            "mls_group_id": group_id,
+                            "epoch": 0,
+                            "effective_scope": {
+                                "kind": "realm",
+                                "realm_id": realm_id
+                            }
+                        }
+                    }]
+                }
+            }),
+        );
+
+        assert!(
+            store
+                .reconcile_mls_genesis_group_state_ref_from_projection(realm_id, None)
+                .unwrap()
+        );
+        assert_eq!(
+            store
+                .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
+                .unwrap(),
+            accepted_event_id
+        );
+        let restored = LocalStateStore::with_path(&path);
+        assert_eq!(
+            restored
+                .mls_snapshot_for(realm_id)
+                .unwrap()
+                .group_state_event_id,
+            Some(accepted_event_id)
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn contested_genesis_projection_still_fails_closed() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-mls-projection-genesis-contested-{}-{}.json",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let group_id = "010203";
+        let local_event_id =
+            arkret_sdk::EventId::new("ak:event:ASeq_1SMGFgL0OgySv7t3u5l9Sr1eV_HZwUb7tMFwZON")
+                .unwrap();
+        let genesis_event = |event_id: &str| {
+            json!({
+                "event_id": event_id,
+                "realm_id": realm_id,
+                "kind": "ak.mls.genesis",
+                "target_ref": group_id,
+                "payload": {
+                    "mls_group_id": group_id,
+                    "epoch": 0,
+                    "effective_scope": {
+                        "kind": "realm",
+                        "realm_id": realm_id
+                    }
+                }
+            })
+        };
+        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+            realm_id: realm_id.to_owned(),
+            group_id: group_id.to_owned(),
+            epoch: 0,
+            group_state_event_id: None,
+            salt_hex: "00".repeat(16),
+            ciphertext_hex: "11".repeat(32),
+            mac_hex: "22".repeat(12),
+            recorded_at: chrono::Utc::now(),
+            epoch_started_at: chrono::Utc::now(),
+            app_messages_observed: 0,
+            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        };
+        let mut store = LocalStateStore::with_path(&path);
+        store.save_mls_snapshot(realm_id, snapshot);
+        store
+            .record_mls_group_state_ref_for_effective_scope(
+                realm_id,
+                None,
+                group_id,
+                0,
+                local_event_id.clone(),
+            )
+            .unwrap();
+        // Two accepted genesis events for the same scope: the genesis cell is
+        // contested, so the local reference must NOT be silently rewritten.
+        store.save_realm_tree_projection(
+            realm_id,
+            json!({
+                "state": {
+                    "events": [
+                        genesis_event("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk"),
+                        genesis_event("ak:event:AbDgdKpIr6eCN_pZGaRIGogOAMC2eqTqmN_mgOVTZ4Oh"),
+                    ]
+                }
+            }),
+        );
+
+        assert!(
+            store
+                .reconcile_mls_genesis_group_state_ref_from_projection(realm_id, None)
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
+                .unwrap(),
+            local_event_id
         );
         let _ = std::fs::remove_file(path);
     }

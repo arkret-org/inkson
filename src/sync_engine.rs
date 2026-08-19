@@ -1129,18 +1129,35 @@ async fn run_circle_scope_rotate_pass(
                         .map_err(anyhow::Error::msg)?;
                     let post_commit_snapshot = draft.post_commit_snapshot;
                     let removed_principals = draft.removed_principals;
-                    let commit_event_id = draft
+                    if !draft
                         .events
                         .iter()
-                        .find(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
-                        .map(|event| event.event_id.clone())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("Realm scope rotate has no MLS commit Event")
-                        })?;
-                    let submitter = api.event_submitter()?;
-                    for event in draft.events {
-                        submitter.submit_sdk_event(&event).await?;
+                        .any(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
+                    {
+                        return Err(anyhow::anyhow!("Realm scope rotate has no MLS commit Event"));
                     }
+                    let submitter = api.event_submitter()?;
+                    // The recorded reference must be the ACCEPTED commit id.
+                    // Submission re-authors the envelope (actor chain, HLC,
+                    // CBA basis), so the draft's build-time id is not on the
+                    // wire.
+                    let mut commit_event_id = None;
+                    for event in draft.events {
+                        let is_commit = event.kind.as_str() == event_kind_str::MLS_COMMIT;
+                        let result = submitter.submit_sdk_event(&event).await?;
+                        if is_commit {
+                            commit_event_id = Some(
+                                arkret_sdk::EventId::new(result.event_id).map_err(|error| {
+                                    anyhow::anyhow!(
+                                        "accepted MLS commit returned an invalid Event id: {error}"
+                                    )
+                                })?,
+                            );
+                        }
+                    }
+                    let commit_event_id = commit_event_id.ok_or_else(|| {
+                        anyhow::anyhow!("Realm scope rotate has no MLS commit Event")
+                    })?;
                     Ok::<_, anyhow::Error>((
                         post_commit_snapshot,
                         removed_principals,
@@ -1325,25 +1342,21 @@ async fn run_circle_scope_rotate_pass(
                 }
             };
             let events = draft.events;
-            let commit_event_id = match events
+            if !events
                 .iter()
-                .find(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
-                .map(|event| event.event_id.clone())
+                .any(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
             {
-                Some(event_id) => event_id,
-                None => {
-                    tracing::error!(
-                        %realm_id,
-                        %circle_id,
-                        "sync_engine: Circle scope-rotate has no MLS commit Event",
-                    );
-                    continue;
-                }
-            };
+                tracing::error!(
+                    %realm_id,
+                    %circle_id,
+                    "sync_engine: Circle scope-rotate has no MLS commit Event",
+                );
+                continue;
+            }
             let post_commit_snapshot = draft.post_commit_snapshot;
             let removed_leaves = draft.removed_leaves;
             let removed_principals = draft.removed_principals;
-            let outcome =
+            let (outcome, submitted_commit_ref) =
                 match crate::transport::auth::with_event_submitter(&base, token.clone(), {
                     let circle_id = circle_id.clone();
                     move |sub| async move {
@@ -1373,6 +1386,16 @@ async fn run_circle_scope_rotate_pass(
             if generation.get() != start_generation {
                 return;
             }
+            // Record the on-wire commit id from batch preparation; the draft's
+            // build-time id never reaches the server.
+            let Some(commit_event_id) = submitted_commit_ref else {
+                tracing::error!(
+                    %realm_id,
+                    %circle_id,
+                    "sync_engine: accepted Circle scope-rotate exposed no submitted MLS commit id",
+                );
+                return;
+            };
             let persisted = ctx.state_store.write(|store| {
                 store.record_mls_group_state_ref_for_effective_scope(
                     realm_id.clone(),
@@ -1495,18 +1518,30 @@ async fn run_idle_self_update_pass(
         // way the epoch advances, so a rejection is fine — we simply do NOT
         // persist the local snapshot (persist-on-accept).
         let submit_token = token.clone();
-        let commit_event_id = commit_event.event_id.clone();
         match crate::transport::auth::with_authed_api(&base, submit_token, |api| async move {
             api.event_submitter()?.submit_sdk_event(&commit_event).await
         })
         .await
         {
-            Ok(_) => {
+            Ok(result) => {
                 if generation.get() != start_generation {
                     // A late accept under a stale generation must not write the
                     // snapshot into the new generation's store.
                     return;
                 }
+                // The accepted commit id from the submit outcome; the
+                // build-time draft id is re-derived away during authoring.
+                let commit_event_id = match arkret_sdk::EventId::new(result.event_id) {
+                    Ok(event_id) => event_id,
+                    Err(error) => {
+                        tracing::error!(
+                            %realm_id,
+                            %error,
+                            "sync_engine: accepted idle MLS commit returned an invalid Event id",
+                        );
+                        return;
+                    }
+                };
                 let persisted = ctx.state_store.write(|store| {
                     store.record_mls_group_state_ref_for_effective_scope(
                         realm_id.clone(),

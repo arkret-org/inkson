@@ -1,4 +1,3 @@
-use arkret_wire::event_kind_str;
 
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
@@ -318,18 +317,16 @@ pub async fn submit_circle_scope_rotate_draft(
     circle_id: &str,
     draft: CircleScopeRotateDraft,
 ) -> anyhow::Result<arkret_sdk::CircleScopeRotateOutcome> {
-    let outcome = crate::transport::circle::submit_circle_scope_rotate_events(
+    let (outcome, submitted_commit_ref) = crate::transport::circle::submit_circle_scope_rotate_events(
         &api.event_submitter()?,
         circle_id,
         &draft.events,
         None,
     )
     .await?;
-    let accepted_commit_ref = draft
-        .events
-        .iter()
-        .find(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
-        .map(|event| event.event_id.clone())
+    // The on-wire commit id from batch preparation — the draft's build-time id
+    // is re-derived away during authoring and never reaches the server.
+    let accepted_commit_ref = submitted_commit_ref
         .ok_or_else(|| anyhow::anyhow!("Circle scope rotate has no MLS commit Event"))?;
     state_store
         .record_mls_group_state_ref_for_effective_scope(

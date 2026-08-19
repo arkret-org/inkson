@@ -3256,10 +3256,24 @@ async fn ensure_mls_genesis_frontier_for_invite(
         .submit_sdk_event(&genesis_event)
         .await
     {
-        Ok(_) => {
+        Ok(result) => {
+            // The accepted Event id, not the build-time one: submit re-authors
+            // the envelope and the content-bound id changes with it.
+            let accepted_event_id = match arkret_sdk::EventId::new(result.event_id) {
+                Ok(event_id) => event_id,
+                Err(_) => api
+                    .event_submitter()?
+                    .find_mls_genesis_event_id(realm_id)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "MLS genesis was accepted but its Event id is unavailable; sync this Realm before inviting"
+                        )
+                    })?,
+            };
             state_store
                 .write()
-                .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &genesis_event.event_id);
+                .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &accepted_event_id);
             Ok(())
         }
         Err(err) => {

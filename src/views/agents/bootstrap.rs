@@ -1242,9 +1242,25 @@ pub(crate) async fn bootstrap_provisioned_agent(
             .await
             .map_err(|error| anyhow::anyhow!(error.user_message()))?;
         match submitter.submit_sdk_event(&genesis).await {
-            Ok(_) => state_store
-                .write()
-                .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &genesis.event_id),
+            // Persist the ACCEPTED Event id, never the build-time one: the
+            // submit pipeline re-authors the envelope, which re-derives the
+            // content-bound id.
+            Ok(result) => {
+                let accepted_event_id = match arkret_sdk::EventId::new(result.event_id) {
+                    Ok(event_id) => event_id,
+                    Err(_) => submitter
+                        .find_mls_genesis_event_id(realm_id)
+                        .await?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Agent PCR MLS genesis was accepted but its Event id is unavailable"
+                            )
+                        })?,
+                };
+                state_store
+                    .write()
+                    .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &accepted_event_id);
+            }
             Err(error)
                 if crate::ephemeral::events_submit_rejected_for_reason(
                     &error,
