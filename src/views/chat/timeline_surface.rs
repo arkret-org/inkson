@@ -847,12 +847,17 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 if msg.failed && !message_is_read_only_shared {
                                     div { class: "message-error-row", "data-testid": "chat-message-error",
                                         span { class: "message-error-mark", "!" }
-                                        span {
-                                            if let Some(error) = &msg.error {
+                                        if let Some(error) = &msg.error {
+                                            span {
+                                                class: "message-error-text",
+                                                // The row can be clipped inside
+                                                // narrow embedded panels; keep
+                                                // the full error on the tooltip.
+                                                title: "{error}",
                                                 "{error}"
-                                            } else {
-                                                "Message send failed"
                                             }
+                                        } else {
+                                            span { "Message send failed" }
                                         }
                                         Button {
                                             variant: ButtonVariant::Secondary,

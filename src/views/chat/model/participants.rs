@@ -250,7 +250,25 @@ pub(crate) fn display_label_for_actor(
 
 pub(crate) fn is_own_message_sender(sender: &str, account_did: &str) -> bool {
     let sender = sender.trim();
-    !sender.is_empty() && (sender == "inkson" || sender == account_did.trim())
+    if sender.is_empty() {
+        return false;
+    }
+    let account_did = account_did.trim();
+    if sender == "inkson" || sender == account_did {
+        return true;
+    }
+    // The synced envelope's `actor_id` and the account's `account.did` can
+    // spell the same principal in different Arkret id forms (full
+    // `did:webvh:…` vs stable core `ak:did_core:…`). Compare the projected
+    // core ids so the author's own echoed message still renders on the
+    // author's side instead of jumping to the incoming side.
+    match (
+        crate::mls_api_helpers::principal_core_id(sender),
+        crate::mls_api_helpers::principal_core_id(account_did),
+    ) {
+        (Ok(sender_core), Ok(account_core)) => sender_core == account_core,
+        _ => false,
+    }
 }
 
 pub(crate) fn short_principal_label(value: &str) -> String {
