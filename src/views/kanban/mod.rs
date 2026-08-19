@@ -84,6 +84,15 @@ fn CardMarkdownEditor(
     let host_id = format!("card-detail-{slot}-toast-editor");
     let fallback_id = format!("card-detail-{slot}-input");
 
+    use_drop({
+        let host_id = host_id.clone();
+        move || {
+            if let Some(script) = toast_editor_cleanup_script(&host_id) {
+                let _ = document::eval(&script);
+            }
+        }
+    });
+
     use_effect({
         let host_id = host_id.clone();
         let fallback_id = fallback_id.clone();
@@ -550,8 +559,8 @@ fn toast_editor_bootstrap_script(
     }}
 
     const registry = window.__inksonToastEditors || (window.__inksonToastEditors = new Map());
-    const existing = registry.get(config.hostId);
-    if (existing && existing.host === host && host.childElementCount > 0) {{
+    const initialExisting = registry.get(config.hostId);
+    if (initialExisting && initialExisting.host === host && host.childElementCount > 0) {{
         releaseBridge();
         return;
     }}
@@ -605,20 +614,43 @@ fn toast_editor_bootstrap_script(
         return;
     }}
 
+    // The component can be unmounted while the shared editor bundle is still
+    // loading. Never attach an editor (and its wasm-backed input listener) to
+    // a detached host retained only by this async closure.
+    if (!host.isConnected || !fallback.isConnected
+        || document.getElementById(config.hostId) !== host
+        || document.getElementById(config.fallbackId) !== fallback) {{
+        releaseBridge();
+        return;
+    }}
+
+    const existing = registry.get(config.hostId);
+    if (existing && existing.host === host && host.childElementCount > 0) {{
+        releaseBridge();
+        return;
+    }}
     if (existing) {{
         // The registry can outlive the Dioxus component that created this
         // editor. Its old eval bridge belongs to an already-reclaimed WASM
         // scope, so calling it here can invoke a stale wasm-bindgen closure
         // and corrupt the whole tab. The scope-bound Rust task is cancelled
         // on unmount; only the detached JS editor needs explicit teardown.
-        try {{ existing.editor.destroy(); }} catch (_) {{}}
         registry.delete(config.hostId);
+        try {{ existing.editor.off("change", existing.sync); }} catch (_) {{}}
+        try {{ existing.editor.destroy(); }} catch (_) {{}}
     }}
 
     host.innerHTML = "";
     fallback.classList.add("toast-fallback-hidden");
 
-    const sync = (editor) => {{
+    let editor = null;
+
+    const sync = () => {{
+        const current = registry.get(config.hostId);
+        if (!current || current.editor !== editor || current.host !== host
+            || !host.isConnected || !fallback.isConnected) {{
+            return;
+        }}
         fallback.value = editor.getMarkdown();
         const event = typeof InputEvent === "function"
             ? new InputEvent("input", {{
@@ -691,7 +723,7 @@ fn toast_editor_bootstrap_script(
         return false;
     }};
 
-    const editor = new window.toastui.Editor({{
+    editor = new window.toastui.Editor({{
         el: host,
         height: "240px",
         initialEditType: "wysiwyg",
@@ -710,9 +742,28 @@ fn toast_editor_bootstrap_script(
         }} : {{}}
     }});
 
-    editor.on("change", () => sync(editor));
-    registry.set(config.hostId, {{ editor, host }});
+    registry.set(config.hostId, {{ editor, host, sync }});
+    editor.on("change", sync);
 }})();"##
+    ))
+}
+
+fn toast_editor_cleanup_script(host_id: &str) -> Option<String> {
+    let host_id = serde_json::to_string(host_id).ok()?;
+    Some(format!(
+        r#"(() => {{
+    const registry = window.__inksonToastEditors;
+    if (!registry) return;
+    const host = document.getElementById({host_id});
+    const existing = registry.get({host_id});
+    if (!existing || existing.host !== host) return;
+    // Delete first: even if the third-party teardown emits a late change or
+    // throws, the callback's registry guard prevents it from dispatching an
+    // input event into a Dioxus listener whose wasm scope is being reclaimed.
+    registry.delete({host_id});
+    try {{ existing.editor.off("change", existing.sync); }} catch (_) {{}}
+    try {{ existing.editor.destroy(); }} catch (_) {{}}
+}})();"#
     ))
 }
 
@@ -887,13 +938,13 @@ pub fn KanbanPanel(
             let board_id = selected_board_space_id();
             let decrypt_store = state_store.read();
             let raw_operations = decrypt_store.load().raw_operations;
-            let decrypt_ctx = MlsDecryptCtx {
-                state_store: &decrypt_store,
-                realm_id: &decrypt_realm_id,
-                actor_id: &decrypt_actor,
-                device_id: &decrypt_device,
-                circle_id: None,
-            };
+            let decrypt_ctx = mls_decrypt_ctx_if_ready(
+                &decrypt_store,
+                &decrypt_realm_id,
+                &decrypt_actor,
+                &decrypt_device,
+                None,
+            );
             if raw_operations.is_empty() && !seed_columns.is_empty() {
                 // Demo / seed-fallback columns: layer local optimistic ops on top.
                 let cols = overlay_local_card_create_records(
@@ -902,14 +953,14 @@ pub fn KanbanPanel(
                     &board_id,
                 );
                 let cols =
-                    overlay_local_card_update_records(cols, &raw_operations, Some(&decrypt_ctx));
+                    overlay_local_card_update_records(cols, &raw_operations, decrypt_ctx.as_ref());
                 return overlay_local_card_assignment_records(cols, &raw_operations);
             }
             let (cols, ..) = project_board(
                 &raw_operations,
                 &board_id,
                 &seed_realm_id,
-                Some(&decrypt_ctx),
+                decrypt_ctx.as_ref(),
             );
             cols
         }
@@ -970,21 +1021,17 @@ pub fn KanbanPanel(
                 realm_id: &realm_context,
                 member_rows: &member_rows,
             };
-            let decrypt_ctx = MlsDecryptCtx {
-                state_store: &store,
-                realm_id: &memo_realm_id,
-                actor_id: &memo_account_did,
-                device_id: &memo_device_id,
-                circle_id: None,
-            };
+            let decrypt_ctx = mls_decrypt_ctx_if_ready(
+                &store,
+                &memo_realm_id,
+                &memo_account_did,
+                &memo_device_id,
+                None,
+            );
             let _active_sidecar = hosted_sidecar_state().filter(|session| {
                 session.source_realm_id == memo_realm_id
                     && session.source_strand_id == card.primary_strand_id
             });
-            let sidecar_decrypt_ctx = MlsDecryptCtx {
-                circle_id: None,
-                ..decrypt_ctx
-            };
             let private_card: Option<KanbanCard> = None;
             let projected_card = private_card.as_ref().unwrap_or(&card);
             card_synthesis_track_entries_with_author_context_and_decrypt(
@@ -992,7 +1039,7 @@ pub fn KanbanPanel(
                 &snapshot.raw_operations,
                 &store,
                 Some(author_context),
-                Some(&sidecar_decrypt_ctx),
+                decrypt_ctx.as_ref(),
             )
         })
     };

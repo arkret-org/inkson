@@ -614,6 +614,11 @@ pub struct PendingAccountHandoff {
     pub principal_server_url: String,
     pub gate_account_base: String,
     pub request_id: String,
+    /// OIDC state whose authenticated callback created this handoff. This is
+    /// used only to resume the exact same callback after response loss; a new
+    /// Coauth interaction must always observe its newly selected account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_state: Option<String>,
     /// Account Authority handle used only for UI display and artifact naming.
     /// The protocol defines this as an unsigned UX hint, so it never proves
     /// handoff continuity or principal identity.

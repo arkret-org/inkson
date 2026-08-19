@@ -703,12 +703,28 @@ impl LocalStateStore {
         let operation_id = operation_id.into();
         let incoming_event_id = raw_payload_string(&payload, "event_id");
         let incoming_payload_operation_id = raw_payload_string(&payload, "operation_id");
+        let incoming_local_operation_alias =
+            raw_payload_string(&payload, "local_operation_idempotency_alias");
         let incoming_message_id = raw_payload_string(&payload, "message_id")
             .filter(|_| raw_payload_is_message_create(&payload));
         let existing_index = self.cached.raw_operations.iter().position(|record| {
             record.operation_id == operation_id
+                // An optimistic Event is keyed by its local operation alias.
+                // Once accepted, `update_raw_operation_write_state` records the
+                // final content-bound Event id in `payload.event_id`; realm
+                // backfill is keyed by that final id. Join those two identities
+                // here so the canonical row replaces the optimistic row instead
+                // of surviving beside it as a second create.
+                || raw_payload_string(&record.payload, "event_id")
+                    .as_deref()
+                    == Some(operation_id.as_str())
+                || incoming_local_operation_alias
+                    .as_deref()
+                    .is_some_and(|alias| record.operation_id == alias)
                 || incoming_event_id.as_deref().is_some_and(|event_id| {
-                    raw_payload_string(&record.payload, "event_id").as_deref() == Some(event_id)
+                    record.operation_id == event_id
+                        || raw_payload_string(&record.payload, "event_id").as_deref()
+                            == Some(event_id)
                 })
                 || incoming_message_id.as_deref().is_some_and(|message_id| {
                     raw_payload_is_message_create(&record.payload)
@@ -718,8 +734,11 @@ impl LocalStateStore {
                 || incoming_payload_operation_id
                     .as_deref()
                     .is_some_and(|payload_operation_id| {
-                        raw_payload_string(&record.payload, "operation_id").as_deref()
-                            == Some(payload_operation_id)
+                        record.operation_id == payload_operation_id
+                            || raw_payload_string(&record.payload, "operation_id").as_deref()
+                                == Some(payload_operation_id)
+                            || raw_payload_string(&record.payload, "event_id").as_deref()
+                                == Some(payload_operation_id)
                     })
         });
         if let Some(index) = existing_index {
@@ -924,6 +943,7 @@ mod durable_inbox_tests {
     use arkret_models_collaboration::sync_frames::account_sync::{
         NotificationDelta, NotificationDeltaAction,
     };
+    use serde_json::json;
 
     use super::LocalStateStore;
 
@@ -992,6 +1012,96 @@ mod durable_inbox_tests {
                 .unwrap()
                 .is_empty()
         );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn canonical_event_backfill_replaces_accepted_optimistic_alias_row() {
+        let path = temp_path();
+        let realm_id = "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6";
+        let operation_alias = "ak:operation:01904100-0000-7000-8000-000000000099";
+        let event_id = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let temporary_target = "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
+        let canonical_target = "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let mut store = LocalStateStore::with_path(&path);
+
+        assert!(store.upsert_raw_operation(
+            operation_alias,
+            Some(realm_id.to_owned()),
+            json!({
+                "kind": "ak.space.create",
+                "operation_id": operation_alias,
+                "local_target_ref": temporary_target,
+                "write_state": "queued",
+                "body": { "object": { "kind": "list", "title": "Todo", "realm_id": realm_id } }
+            }),
+        ));
+        assert!(store.update_raw_operation_write_state(
+            operation_alias,
+            "accepted",
+            Some(event_id.to_owned()),
+            None,
+        ));
+
+        assert!(store.upsert_raw_operation(
+            event_id,
+            Some(realm_id.to_owned()),
+            json!({
+                "kind": "ak.space.create",
+                "operation_id": event_id,
+                "local_target_ref": canonical_target,
+                "write_state": "synced",
+                "body": { "object": { "kind": "list", "title": "Todo", "realm_id": realm_id } }
+            }),
+        ));
+
+        let rows = store.load().raw_operations;
+        assert_eq!(rows.len(), 1, "backfill must replace the alias row");
+        assert_eq!(rows[0].operation_id, operation_alias);
+        assert_eq!(rows[0].payload["write_state"], json!("synced"));
+        assert_eq!(rows[0].payload["local_target_ref"], json!(canonical_target));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn canonical_event_alias_reconciles_pre_fix_optimistic_row_without_receipt_id() {
+        let path = temp_path();
+        let realm_id = "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6";
+        let operation_alias = "ak:operation:01904100-0000-7000-8000-000000000098";
+        let event_id = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let mut store = LocalStateStore::with_path(&path);
+        store.upsert_raw_operation(
+            operation_alias,
+            Some(realm_id.to_owned()),
+            json!({
+                "kind": "ak.space.create",
+                "operation_id": operation_alias,
+                "local_target_ref": "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR",
+                "write_state": "queued",
+                "body": { "object": { "kind": "list", "title": "Todo", "realm_id": realm_id } }
+            }),
+        );
+
+        store.upsert_raw_operation(
+            event_id,
+            Some(realm_id.to_owned()),
+            json!({
+                "kind": "ak.space.create",
+                "operation_id": event_id,
+                "local_operation_idempotency_alias": operation_alias,
+                "local_target_ref": "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                "write_state": "synced",
+                "body": { "object": { "kind": "list", "title": "Todo", "realm_id": realm_id } }
+            }),
+        );
+
+        let rows = store.load().raw_operations;
+        assert_eq!(
+            rows.len(),
+            1,
+            "the signed Event's local alias heals old rows"
+        );
+        assert_eq!(rows[0].payload["write_state"], json!("synced"));
         let _ = std::fs::remove_file(path);
     }
 }

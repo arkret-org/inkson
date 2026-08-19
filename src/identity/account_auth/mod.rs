@@ -81,24 +81,26 @@ pub struct PersistedOidcScaffold {
     /// own challenge transcript trust domain.
     #[serde(default)]
     pub principal_trust_domain: String,
-    /// A locally retained, resolvable principal identity for a returning-device
-    /// sign-in. When present, the callback exchanges the OIDC code for a
-    /// principal-bound session grant instead of creating an account handoff.
-    ///
-    /// This is an assertion to be checked by the Account Authority, not a
-    /// login hint: the user still selects/authenticates the account at the
-    /// issuer, and a different account must fail closed.
+    /// Optional local returning-account candidate. It never selects the
+    /// Account Authority account or the callback endpoint. The callback first
+    /// obtains a server-authoritative handoff and compares this candidate only
+    /// after that handoff reports `Bound`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_principal_full_id: Option<arkret_sdk::DidFullId>,
+    /// Durable device belonging to [`Self::expected_principal_full_id`]. The
+    /// OIDC transaction itself always uses [`Self::device_id`], a separate
+    /// pending holder namespace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_device_id: Option<arkret_sdk::DeviceId>,
 }
 
 /// The Account Authority entry point selected before leaving Inkson.
 ///
 /// This value controls only the OIDC interaction hint. Account-first creation
 /// and recovery follow the typed handoff returned by the Account Authority.
-/// A returning device may separately carry an expected principal assertion in
-/// [`PersistedOidcScaffold`], which the session-grant endpoint verifies against
-/// the account the user actually authenticates.
+/// A returning device may separately carry a local account candidate in
+/// [`PersistedOidcScaffold`], but only a server-authored Bound handoff may
+/// select the returning-session branch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OidcEntryPoint {
     CreateIdentity,

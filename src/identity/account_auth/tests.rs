@@ -245,7 +245,7 @@ fn state_and_nonce_diverge_for_same_caller() {
 }
 
 #[test]
-fn persisted_scaffold_carries_returning_principal_assertion() {
+fn persisted_scaffold_carries_returning_account_candidate() {
     let bundle = build_oidc_authorize_scaffold(
         &test_discovery(),
         &test_oidc_method(),
@@ -269,19 +269,29 @@ fn persisted_scaffold_carries_returning_principal_assertion() {
         "https://issuer.example",
         &trust_domain,
         Some(&expected),
+        Some(
+            &arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000009".to_owned())
+                .unwrap(),
+        ),
     );
 
     assert_eq!(
         scaffold.expected_principal_full_id.as_ref(),
         Some(&expected)
     );
+    assert!(scaffold.expected_device_id.is_some());
     let mut old_payload = serde_json::to_value(scaffold).unwrap();
     old_payload
         .as_object_mut()
         .unwrap()
         .remove("expected_principal_full_id");
+    old_payload
+        .as_object_mut()
+        .unwrap()
+        .remove("expected_device_id");
     let restored: PersistedOidcScaffold = serde_json::from_value(old_payload).unwrap();
     assert_eq!(restored.expected_principal_full_id, None);
+    assert_eq!(restored.expected_device_id, None);
 }
 
 /// `code_challenge` MUST be S256(code_verifier) when discovery supports S256.

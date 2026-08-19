@@ -139,8 +139,30 @@ fn toast_editor_bootstrap_uses_asset_pipeline_urls() {
     assert_eq!(config["cssUrl"], TOAST_EDITOR_CSS.to_string());
     assert!(!script.contains("/assets/vendor/"));
     assert!(script.contains("existing.host === host"));
-    assert!(script.contains("registry.set(config.hostId, { editor, host })"));
+    assert!(script.contains("host.isConnected"));
+    assert!(script.contains("fallback.isConnected"));
+    assert!(script.contains("current.editor !== editor"));
+    assert!(script.contains("registry.set(config.hostId, { editor, host, sync })"));
+    assert!(script.contains("existing.editor.off(\"change\", existing.sync)"));
+    assert!(
+        script.find("const uploadImage").expect("upload callback")
+            < script
+                .find("editor = new window.toastui.Editor")
+                .expect("editor construction")
+    );
     assert!(!script.contains("existing.dispose()"));
+}
+
+#[test]
+fn toast_editor_cleanup_revokes_callback_before_destroying_editor() {
+    let script = toast_editor_cleanup_script("editor-host").expect("cleanup script");
+    let delete = script.find("registry.delete").expect("registry deletion");
+    let off = script.find("editor.off").expect("change callback removal");
+    let destroy = script.find("editor.destroy").expect("editor destroy");
+
+    assert!(delete < off);
+    assert!(off < destroy);
+    assert!(script.contains("existing.host !== host"));
 }
 
 /// Canonical `encrypted_content` envelope fixture.

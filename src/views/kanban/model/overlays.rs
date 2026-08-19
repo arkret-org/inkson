@@ -668,14 +668,22 @@ pub(crate) fn overlay_local_card_create_records(
         return columns;
     }
 
+    let aliases = event_derived_target_aliases(raw_operations);
+    let board_space_id = resolve_event_derived_target_alias(&aliases, board_space_id);
     let mut existing_card_ids = columns
         .iter()
         .flat_map(|column| column.cards.iter().map(|card| card.id.clone()))
         .collect::<BTreeSet<_>>();
-    for local_create in raw_operations
+    for mut local_create in raw_operations
         .iter()
         .filter_map(local_card_create_from_raw_operation)
     {
+        local_create.board_space_id =
+            resolve_event_derived_target_alias(&aliases, &local_create.board_space_id);
+        local_create.list_space_id =
+            resolve_event_derived_target_alias(&aliases, &local_create.list_space_id);
+        local_create.card.id = resolve_event_derived_target_alias(&aliases, &local_create.card.id);
+        local_create.card.primary_strand_id = local_create.card.id.clone();
         if local_create.board_space_id != board_space_id {
             continue;
         }
@@ -712,7 +720,8 @@ pub(crate) fn local_card_create_from_raw_operation(
     let effect = payload.get("effect");
     let body = payload.get("body").or_else(|| payload.get("payload"));
     let position_component = strand_position_component(body);
-    let strand_id = json_path_string(effect, &["strand_id"])
+    let strand_id = raw_operation_create_target_id(payload)
+        .or_else(|| json_path_string(effect, &["strand_id"]))
         .or_else(|| json_path_string(body, &["strand_id"]))
         .or_else(|| json_path_string(body, &["object", "id"]))?;
     let board_space_id = json_path_string(effect, &["board_space_id"])
@@ -770,7 +779,7 @@ pub(crate) fn local_space_create_from_raw_operation(
     // Space is `retype(create.event_id)`, published on the record by the ingest
     // funnel. `object.id` stays as a fallback for records captured before the
     // id became Event-derived.
-    let id = json_path_string(Some(payload), &["local_target_ref"])
+    let id = raw_operation_create_target_id(payload)
         .or_else(|| json_path_string(Some(object), &["id"]))
         .or_else(|| json_path_string(Some(body), &["space_id"]))?;
     let space_kind = json_path_string(Some(object), &["kind"])
@@ -800,6 +809,90 @@ pub(crate) fn local_space_create_from_raw_operation(
         parent_space_id,
         rank,
     })
+}
+
+/// Resolve the object named by an event-derived create.
+///
+/// Before acceptance an optimistic row only knows `local_target_ref`, derived
+/// from the draft Event id. Final authoring changes content-bound identity when
+/// it attaches actor-chain/HLC/CBA fields; the submit receipt is persisted as
+/// `event_id`. Prefer that accepted id, or the canonical backfill row's
+/// `operation_id`, and fall back to the temporary handle while the write is in
+/// flight.
+pub(crate) fn raw_operation_create_target_id(payload: &Value) -> Option<String> {
+    let kind = json_path_string(Some(payload), &["kind"])
+        .or_else(|| json_path_string(Some(payload), &["wire_kind"]))?;
+    if kind != event_kind_str::SPACE_CREATE && kind != event_kind_str::STRAND_CREATE {
+        return None;
+    }
+    let final_event_id = json_path_string(Some(payload), &["event_id"]).or_else(|| {
+        let operation_id = json_path_string(Some(payload), &["operation_id"])?;
+        operation_id
+            .starts_with("ak:event:")
+            .then_some(operation_id)
+    });
+    final_event_id
+        .and_then(|event_id| arkret_sdk::EventId::new(event_id).ok())
+        .and_then(|event_id| {
+            arkret_sdk::schema::derived_object_id_for_kind(kind.as_str(), &event_id)
+        })
+        .or_else(|| json_path_string(Some(payload), &["local_target_ref"]))
+}
+
+/// Map temporary optimistic object ids to their accepted content-bound ids.
+pub(crate) fn event_derived_target_aliases(
+    raw_operations: &[RawOperationRecord],
+) -> BTreeMap<String, String> {
+    let mut aliases = raw_operations
+        .iter()
+        .filter_map(|record| {
+            let temporary = json_path_string(Some(&record.payload), &["local_target_ref"])?;
+            let canonical = raw_operation_create_target_id(&record.payload)?;
+            (temporary != canonical).then_some((temporary, canonical))
+        })
+        .collect::<BTreeMap<_, _>>();
+    // Backfilled Events retain the producer's local operation alias as an
+    // unsigned reconciliation hint. It is never used to derive canonical
+    // protocol identity; it only joins an already-local optimistic row to the
+    // server-accepted Event. This also heals rows written by builds that did
+    // not persist the submit receipt's final event id.
+    for canonical in raw_operations {
+        let Some(operation_alias) = json_path_string(
+            Some(&canonical.payload),
+            &["local_operation_idempotency_alias"],
+        ) else {
+            continue;
+        };
+        let Some(temporary) = raw_operations
+            .iter()
+            .find(|record| record.operation_id == operation_alias)
+            .and_then(|record| json_path_string(Some(&record.payload), &["local_target_ref"]))
+        else {
+            continue;
+        };
+        let Some(canonical_target) = raw_operation_create_target_id(&canonical.payload) else {
+            continue;
+        };
+        if temporary != canonical_target {
+            aliases.insert(temporary, canonical_target);
+        }
+    }
+    aliases
+}
+
+pub(crate) fn resolve_event_derived_target_alias(
+    aliases: &BTreeMap<String, String>,
+    target: &str,
+) -> String {
+    let mut current = target.to_owned();
+    let mut seen = BTreeSet::new();
+    while seen.insert(current.clone()) {
+        let Some(next) = aliases.get(&current) else {
+            break;
+        };
+        current = next.clone();
+    }
+    current
 }
 
 pub(crate) fn strand_position_component(body: Option<&Value>) -> Option<&Value> {

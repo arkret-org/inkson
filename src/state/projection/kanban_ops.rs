@@ -104,6 +104,9 @@ impl LocalKanbanEvent {
                     write_state: "synced",
                     body: $payload,
                     local_target_ref: metadata.local_target_ref.as_deref(),
+                    local_operation_idempotency_alias: metadata
+                        .local_operation_idempotency_alias
+                        .as_deref(),
                 })
                 .ok()
             };
@@ -135,6 +138,8 @@ struct LocalKanbanRecord<'a, T> {
     body: &'a T,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_target_ref: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_operation_idempotency_alias: Option<&'a str>,
 }
 
 struct LocalRecordMetadata {
@@ -142,6 +147,7 @@ struct LocalRecordMetadata {
     actor_id: String,
     created_at: String,
     local_target_ref: Option<String>,
+    local_operation_idempotency_alias: Option<String>,
 }
 
 /// Normalize a batch of canonical realm events (from `backfill` /
@@ -177,6 +183,11 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
         actor_id: event.actor_id.as_str().to_owned(),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
         local_target_ref: arkret_sdk::schema::derived_object_id(event),
+        local_operation_idempotency_alias: event
+            .unsigned
+            .get("local_operation_idempotency_alias")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
     };
     let payload = local_event.record_value(&metadata)?;
     Some(RawOperationRecord {

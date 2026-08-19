@@ -828,13 +828,21 @@ async fn issue_recovery_completion_grant(
     {
         let mut store = state_store.write();
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        store.adopt_pending_login(&principal_id);
-        crate::views::login::persist_completed_login_dpop_key(
-            &mut store,
+        let prepared_keys = crate::views::login::prepare_completed_login_dpop_key(
             secure_store.as_ref(),
             &principal_id,
             &handoff.device_id,
+            &handoff.device_id,
             &dpop_record,
+        )
+        .map_err(anyhow::Error::msg)?;
+        store.adopt_pending_login(&principal_id);
+        crate::views::login::commit_completed_login_dpop_key(
+            &mut store,
+            secure_store.as_ref(),
+            &principal_id,
+            &dpop_record,
+            prepared_keys,
         )
         .map_err(anyhow::Error::msg)?;
         store.set_session_grant(Some(persisted));
@@ -1825,13 +1833,21 @@ async fn create_and_bind_identity(
             .map_err(anyhow::Error::msg)?;
         {
             let mut store = state_store.write();
-            store.adopt_pending_login(&principal_id);
-            crate::views::login::persist_completed_login_dpop_key(
-                &mut store,
+            let prepared_keys = crate::views::login::prepare_completed_login_dpop_key(
                 secure_store.as_ref(),
                 &principal_id,
                 device,
+                device,
                 &completion.dpop_device_key,
+            )
+            .map_err(anyhow::Error::msg)?;
+            store.adopt_pending_login(&principal_id);
+            crate::views::login::commit_completed_login_dpop_key(
+                &mut store,
+                secure_store.as_ref(),
+                &principal_id,
+                &completion.dpop_device_key,
+                prepared_keys,
             )
             .map_err(anyhow::Error::msg)?;
             store.set_pending_principal_registration(Some(accepted.clone()))?;
@@ -2844,6 +2860,7 @@ mod tests {
             principal_server_url: "https://principal.example".to_owned(),
             gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: request_id.to_owned(),
+            oidc_state: None,
             account_handle: "alice:auth.example".to_owned(),
             account_subject: Some(
                 arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),

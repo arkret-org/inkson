@@ -129,7 +129,7 @@ fn strand_view_from_create_op(
     // Strand is `retype(create.event_id)`, published on the record by the
     // ingest funnel. The rest stay as fallbacks for records captured before the
     // id became Event-derived.
-    let strand_id = json_path_string(Some(&record.payload), &["local_target_ref"])
+    let strand_id = raw_operation_create_target_id(&record.payload)
         .or_else(|| json_path_string(Some(object), &["id"]))
         .or_else(|| json_path_string(Some(body), &["strand_id"]))
         .or_else(|| json_path_string(Some(body), &["effect", "strand_id"]))?;
@@ -275,6 +275,7 @@ fn apply_reorder_to_view(
 pub(crate) fn strand_views_from_ops(
     ops: &[RawOperationRecord],
 ) -> Vec<crate::state::projection_views::StrandProjectionView> {
+    let aliases = event_derived_target_aliases(ops);
     // Preserve first-seen (create) order for stable output; placement/sort is
     // applied by `columns_from_lifecycle_projection`.
     let mut order: Vec<String> = Vec::new();
@@ -292,7 +293,16 @@ pub(crate) fn strand_views_from_ops(
         };
         match kind.as_str() {
             event_kind_str::STRAND_CREATE => {
-                if let Some(view) = strand_view_from_create_op(record) {
+                if let Some(mut view) = strand_view_from_create_op(record) {
+                    view.strand_id = resolve_event_derived_target_alias(&aliases, &view.strand_id);
+                    view.board_space_id = view
+                        .board_space_id
+                        .as_deref()
+                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                    view.list_space_id = view
+                        .list_space_id
+                        .as_deref()
+                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
                     if !by_id.contains_key(&view.strand_id) {
                         order.push(view.strand_id.clone());
                     }
@@ -301,20 +311,39 @@ pub(crate) fn strand_views_from_ops(
             }
             event_kind_str::STRAND_MOVE => {
                 if let Some(id) = op_strand_target_id(record)
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_move_to_view(view, record);
+                    view.board_space_id = view
+                        .board_space_id
+                        .as_deref()
+                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                    view.list_space_id = view
+                        .list_space_id
+                        .as_deref()
+                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
                 }
             }
             event_kind_str::STRAND_REORDER => {
                 if let Some(id) = op_strand_target_id(record)
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_reorder_to_view(view, record);
+                    view.board_space_id = view
+                        .board_space_id
+                        .as_deref()
+                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
+                    view.list_space_id = view
+                        .list_space_id
+                        .as_deref()
+                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
                 }
             }
             event_kind_str::STRAND_ARCHIVE => {
                 if let Some(id) = op_strand_target_id(record)
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ProjectionObjectState::Archived;
@@ -322,6 +351,7 @@ pub(crate) fn strand_views_from_ops(
             }
             event_kind_str::STRAND_RESTORE => {
                 if let Some(id) = op_strand_target_id(record)
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ProjectionObjectState::Active;
@@ -344,6 +374,7 @@ pub(crate) fn space_container_views_from_ops(
     ops: &[RawOperationRecord],
     realm_id: &str,
 ) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
+    let aliases = event_derived_target_aliases(ops);
     let mut order: Vec<String> = Vec::new();
     let mut by_id: std::collections::BTreeMap<
         String,
@@ -357,10 +388,15 @@ pub(crate) fn space_container_views_from_ops(
         // structural metadata + lifecycle on top, mirroring soland's
         // `apply_space_*`. A space op observed before its create is ignored
         // (no container to patch yet).
-        if let Some(local) = local_space_create_from_raw_operation(record) {
+        if let Some(mut local) = local_space_create_from_raw_operation(record) {
             if !local_space_create_matches_realm(&local, realm_id) {
                 continue;
             }
+            local.id = resolve_event_derived_target_alias(&aliases, &local.id);
+            local.parent_space_id = local
+                .parent_space_id
+                .as_deref()
+                .map(|id| resolve_event_derived_target_alias(&aliases, id));
             if !by_id.contains_key(&local.id) {
                 order.push(local.id.clone());
             }
@@ -384,6 +420,7 @@ pub(crate) fn space_container_views_from_ops(
         match kind.as_str() {
             event_kind_str::SPACE_UPDATE => {
                 if let Some(id) = op_space_target_id(record)
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     apply_space_update_to_view(view, record);
@@ -391,6 +428,7 @@ pub(crate) fn space_container_views_from_ops(
             }
             event_kind_str::SPACE_ARCHIVE => {
                 if let Some(id) = op_space_target_id(record)
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ProjectionSpaceState::Archived;
@@ -398,6 +436,7 @@ pub(crate) fn space_container_views_from_ops(
             }
             event_kind_str::SPACE_RESTORE => {
                 if let Some(id) = op_space_target_id(record)
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ProjectionSpaceState::Active;
@@ -422,10 +461,12 @@ pub(crate) fn project_board(
     realm_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
+    let aliases = event_derived_target_aliases(ops);
+    let preferred_board_id = resolve_event_derived_target_alias(&aliases, preferred_board_id);
     let containers = space_container_views_from_ops(ops, realm_id);
     let strands = strand_views_from_ops(ops);
     let (columns, board_options, board_id) =
-        columns_from_lifecycle_projection(&containers, &strands, preferred_board_id, decrypt_ctx);
+        columns_from_lifecycle_projection(&containers, &strands, &preferred_board_id, decrypt_ctx);
     let columns = overlay_local_card_update_records(columns, ops, decrypt_ctx);
     let columns = overlay_local_card_assignment_records(columns, ops);
     (columns, board_options, board_id)
@@ -817,6 +858,98 @@ mod tests {
             "optimistic create folds into the list"
         );
         assert_eq!(todos.cards[0].title, "queued card");
+    }
+
+    #[test]
+    fn accepted_create_identity_migration_dedupes_list_and_card_backfill() {
+        let temporary_list = LIST_A;
+        let canonical_list = LIST_B;
+        let temporary_card = "ak:strand:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
+        let canonical_card = "ak:strand:AfHHAbZEhEweHE9b7WfITgHFGzMsezbGka7mm16yesUQ";
+        let list_operation_alias = "ak:operation:01904100-0000-7000-8000-000000000091";
+        let card_operation_alias = "ak:operation:01904100-0000-7000-8000-000000000092";
+        let mut canonical_list_create =
+            space_create_event(canonical_list, "list", "Todo", Some(BOARD));
+        canonical_list_create.unsigned.insert(
+            "local_operation_idempotency_alias".to_owned(),
+            json!(list_operation_alias),
+        );
+        // The submitted card payload may still reference the optimistic List
+        // id when both creates were authored close together. The accepted List
+        // alias must migrate this relation as well as the List row itself.
+        let mut canonical_card_create = strand_create_event(
+            canonical_card,
+            "did:web:alice.example",
+            "same card",
+            BOARD,
+            temporary_list,
+            "U",
+            "2026-06-28T00:02:00.000Z",
+        );
+        canonical_card_create.unsigned.insert(
+            "local_operation_idempotency_alias".to_owned(),
+            json!(card_operation_alias),
+        );
+
+        let mut ops = kanban_operations_from_events(&[
+            space_create_event(BOARD, "board", "Board1", None),
+            canonical_list_create,
+            canonical_card_create,
+        ]);
+        ops.push(local_op(
+            list_operation_alias,
+            "2026-06-28T00:00:01.000Z",
+            json!({
+                "kind": "ak.space.create",
+                "operation_id": list_operation_alias,
+                "local_target_ref": temporary_list,
+                "write_state": "queued",
+                "body": {
+                    "object": {
+                        "kind": "list",
+                        "title": "Todo",
+                        "realm_id": REALM,
+                        "parent_space_id": BOARD,
+                    }
+                },
+            }),
+        ));
+        ops.push(local_op(
+            card_operation_alias,
+            "2026-06-28T00:01:01.000Z",
+            json!({
+                "kind": "ak.strand.create",
+                "operation_id": card_operation_alias,
+                "local_target_ref": temporary_card,
+                "write_state": "queued",
+                "body": {
+                    "object": {
+                        "schema": "ak.schema.strand.v1",
+                        "realm_id": REALM,
+                        "metadata": {
+                            "title": "same card",
+                            "fields": {
+                                "strand_kind": "card",
+                                "board_space_id": BOARD,
+                                "list_space_id": temporary_list,
+                                "rank": "U",
+                            }
+                        }
+                    }
+                },
+            }),
+        ));
+
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
+        assert_eq!(columns.len(), 1, "List alias and backfill are one List");
+        assert_eq!(columns[0].id, canonical_list);
+        assert_eq!(
+            columns[0].cards.len(),
+            1,
+            "Card alias and backfill are one Card"
+        );
+        assert_eq!(columns[0].cards[0].id, canonical_card);
+        assert_eq!(columns[0].cards[0].title, "same card");
     }
 
     /// The local CAS move op (from `submit_strand_position_cas_move`) carries

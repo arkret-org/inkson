@@ -147,6 +147,9 @@ pub(super) fn KanbanEffects(
             let Some(strand_id) = routed_strand_id.clone() else {
                 return;
             };
+            let raw_operations = state_store.read().load().raw_operations;
+            let aliases = event_derived_target_aliases(&raw_operations);
+            let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
             if selected_card()
                 .as_ref()
                 .is_some_and(|card| card_matches_strand_id(card, &strand_id))
@@ -196,6 +199,9 @@ pub(super) fn KanbanEffects(
             let Some(board_id) = routed_board_id.clone() else {
                 return;
             };
+            let raw_operations = state_store.read().load().raw_operations;
+            let aliases = event_derived_target_aliases(&raw_operations);
+            let board_id = resolve_event_derived_target_alias(&aliases, &board_id);
             if selected_board_space_id() != board_id {
                 selected_board_space_id.set(board_id);
             }
@@ -209,6 +215,8 @@ pub(super) fn KanbanEffects(
                 return;
             };
             let raw_operations = state_store.read().load().raw_operations;
+            let aliases = event_derived_target_aliases(&raw_operations);
+            let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
             let Some(strand_board) = strand_views_from_ops(&raw_operations)
                 .into_iter()
                 .find(|view| view.strand_id == strand_id)
@@ -320,19 +328,19 @@ pub(super) fn KanbanEffects(
                 Ok(projection) => {
                     let cols = {
                         let decrypt_store = state_store.read();
-                        let decrypt_ctx = MlsDecryptCtx {
-                            state_store: &decrypt_store,
-                            realm_id: &decrypt_realm_id,
-                            actor_id: &decrypt_actor,
-                            device_id: &decrypt_device,
-                            circle_id: None,
-                        };
+                        let decrypt_ctx = mls_decrypt_ctx_if_ready(
+                            &decrypt_store,
+                            &decrypt_realm_id,
+                            &decrypt_actor,
+                            &decrypt_device,
+                            None,
+                        );
                         overlay_collection_projection_with_operations(
                             &projection,
                             &decrypt_store,
                             &selected_board_space_id(),
                             &remote_update_operations,
-                            Some(&decrypt_ctx),
+                            decrypt_ctx.as_ref(),
                         )
                     };
                     if !cols.is_empty() {
@@ -461,19 +469,19 @@ pub(super) fn KanbanEffects(
                 {
                     let cols = {
                         let decrypt_store = state_store.read();
-                        let decrypt_ctx = MlsDecryptCtx {
-                            state_store: &decrypt_store,
-                            realm_id: &decrypt_realm_id,
-                            actor_id: &decrypt_actor,
-                            device_id: &decrypt_device,
-                            circle_id: None,
-                        };
+                        let decrypt_ctx = mls_decrypt_ctx_if_ready(
+                            &decrypt_store,
+                            &decrypt_realm_id,
+                            &decrypt_actor,
+                            &decrypt_device,
+                            None,
+                        );
                         overlay_collection_projection_with_operations(
                             &projection,
                             &decrypt_store,
                             &selected_board_space_id(),
                             &[],
-                            Some(&decrypt_ctx),
+                            decrypt_ctx.as_ref(),
                         )
                     };
                     // Opt-in trusted server materialization. Only overwrite when
@@ -881,19 +889,19 @@ fn refresh_projection(
             Ok(projection) => {
                 let columns = {
                     let decrypt_store = state_store.read();
-                    let decrypt_ctx = MlsDecryptCtx {
-                        state_store: &decrypt_store,
-                        realm_id: &decrypt_realm_id,
-                        actor_id: &decrypt_actor,
-                        device_id: &decrypt_device,
-                        circle_id: None,
-                    };
+                    let decrypt_ctx = mls_decrypt_ctx_if_ready(
+                        &decrypt_store,
+                        &decrypt_realm_id,
+                        &decrypt_actor,
+                        &decrypt_device,
+                        None,
+                    );
                     overlay_collection_projection_with_operations(
                         &projection,
                         &decrypt_store,
                         &selected_board_space_id(),
                         &remote_update_operations,
-                        Some(&decrypt_ctx),
+                        decrypt_ctx.as_ref(),
                     )
                 };
                 if !columns.is_empty() {

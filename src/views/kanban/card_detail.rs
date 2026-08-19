@@ -248,7 +248,9 @@ pub(super) fn save_card_detail_edit(
         && current
             .security_encrypted
             .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
-    if encrypted_realm_write && state_store.read().mls_snapshot_for(&realm_id).is_none() {
+    if encrypted_realm_write
+        && !encrypted_realm_write_mls_ready(&state_store.read(), &realm_id, &actor_id)
+    {
         let session_credential = token();
         card_detail_edit_status.set("Restoring encrypted Realm state before saving...".to_owned());
         spawn(async move {
@@ -346,7 +348,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
     device_id: &str,
     mut state_store: SyncSignal<LocalStateStore>,
 ) -> Result<(), String> {
-    if state_store.read().mls_snapshot_for(realm_id).is_some() {
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
         return Ok(());
     }
 
@@ -365,7 +367,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
         Ok(_) => {}
         Err(error) => failures.push(format!("Welcome: {error}")),
     }
-    if state_store.read().mls_snapshot_for(realm_id).is_some() {
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
         return Ok(());
     }
 
@@ -412,7 +414,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
             Err(error) => failures.push(format!("history backup: {}", error.display())),
         }
     }
-    if state_store.read().mls_snapshot_for(realm_id).is_some() {
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
         return Ok(());
     }
 
@@ -436,23 +438,41 @@ async fn recover_mls_snapshot_for_encrypted_write(
             failures.push(format!("creator bootstrap: {error}"));
         }
     }
-    if state_store.read().mls_snapshot_for(realm_id).is_some() {
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
         return Ok(());
     }
 
-    if failures.is_empty() {
-        let recovery = if has_local_account_secret {
-            "No pending Welcome or matching MLS history snapshot exists on the server for this Realm."
-        } else {
+    if !has_local_account_secret {
+        Err(
             "This device has no account MLS secret; unlock it with the Recovery Key or approve this device so it can receive a new Welcome."
-        };
-        Err(recovery.to_owned())
+                .to_owned(),
+        )
+    } else if failures.is_empty() {
+        Err(
+            "No pending Welcome or matching MLS history snapshot exists on the server for this Realm."
+                .to_owned(),
+        )
     } else {
         Err(format!(
             "Could not restore this Realm's encrypted state ({}).",
             failures.join("; ")
         ))
     }
+}
+
+fn encrypted_realm_write_mls_ready(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    actor_id: &str,
+) -> bool {
+    if state_store.mls_snapshot_for(realm_id).is_none() {
+        return false;
+    }
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    matches!(
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id),
+        Ok(Some(_))
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

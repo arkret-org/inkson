@@ -174,6 +174,7 @@ pub fn RegistrationPanel(
                                     device.trim(),
                                     crate::identity::account_auth::OidcEntryPoint::CreateIdentity,
                                     None,
+                                    None,
                                     &ui_locale,
                                 )
                                 .await

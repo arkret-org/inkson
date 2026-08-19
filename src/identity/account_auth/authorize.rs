@@ -1,4 +1,5 @@
 use anyhow::Context;
+#[cfg(any(target_arch = "wasm32", test))]
 use sha2::{Digest as _, Sha256};
 use url::Url;
 
@@ -158,6 +159,7 @@ pub fn build_persisted_oidc_scaffold(
     issuer: &str,
     principal_trust_domain: &arkret_sdk::TrustDomainId,
     expected_principal_full_id: Option<&arkret_sdk::DidFullId>,
+    expected_device_id: Option<&arkret_sdk::DeviceId>,
 ) -> PersistedOidcScaffold {
     PersistedOidcScaffold {
         expected_state: bundle.state.clone(),
@@ -173,6 +175,7 @@ pub fn build_persisted_oidc_scaffold(
         gate_account_base: gate_account_base.to_owned(),
         principal_trust_domain: principal_trust_domain.to_string(),
         expected_principal_full_id: expected_principal_full_id.cloned(),
+        expected_device_id: expected_device_id.cloned(),
     }
 }
 

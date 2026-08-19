@@ -1208,6 +1208,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         principal_server_url: "https://principal.example".to_owned(),
         gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
         request_id: "ak:request:019f0000-0000-7000-8000-000000000099".to_owned(),
+        oidc_state: None,
         account_handle: "new:auth.example".to_owned(),
         account_subject: Some(arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap()),
         holder_jkt: "holder-jkt".to_owned(),
@@ -1302,6 +1303,7 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
         principal_server_url: "https://principal.example".to_owned(),
         gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
         request_id: "ak:request:019f0000-0000-7000-8000-000000000000".to_owned(),
+        oidc_state: None,
         account_handle: "alice:auth.example".to_owned(),
         account_subject: Some(arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap()),
         holder_jkt: "holder-jkt".to_owned(),
@@ -1366,5 +1368,55 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
             .as_ref()
             .map(|pending| pending.did.as_str()),
         Some(did.as_str())
+    );
+}
+
+#[test]
+fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
+    let path = temp_state_path("returning-login-clears-anonymous-handoff");
+    let mut store = LocalStateStore::with_path(path);
+    let principal = "did:web:alice.example";
+    let device = "ak:device:019f0000-0000-7000-8000-000000000001";
+    store.switch_active_account(principal);
+    store.register_known_account(principal);
+    store.begin_pending_login(device, Some("holder-jkt"));
+    store
+        .set_pending_account_handoff(Some(PendingAccountHandoff {
+            principal_server_url: "https://principal.example".to_owned(),
+            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            request_id: "ak:request:019f0000-0000-7000-8000-000000000123".to_owned(),
+            oidc_state: Some("oidc-state".to_owned()),
+            account_handle: "alice:auth.example".to_owned(),
+            account_subject: Some(
+                arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            ),
+            holder_jkt: "holder-jkt".to_owned(),
+            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+            lease_id: None,
+            lease_fence: None,
+            lease_expires_at: None,
+            identity_creation_state: None,
+            reserved_identity: None,
+            identity_abandonment: None,
+            retry_after_ms: None,
+            device_id: device.to_owned(),
+            trust_domain: "ak:trust_domain:auth.example".to_owned(),
+            bound_principal_id: Some(principal.to_owned()),
+        }))
+        .unwrap();
+
+    let principal_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
+    assert!(!store.adopt_pending_login(&principal_id));
+    assert!(
+        store.pending_account_handoff().is_some(),
+        "handoff remains recoverable on the target account until completion commits"
+    );
+    store.set_pending_account_handoff(None).unwrap();
+
+    store.switch_active_account("anonymous");
+    assert!(
+        store.pending_account_handoff().is_none(),
+        "returning completion must remove the consumed checkpoint from anonymous storage"
     );
 }

@@ -398,6 +398,22 @@ impl PendingLocalStore {
         store: &dyn SecureKeyStore,
         user: &UserLocalStore,
     ) -> Result<(), SecureKeyStoreError> {
+        self.copy_to(store, user)?;
+        self.delete(store)?;
+        user.activate();
+        Ok(())
+    }
+
+    /// Copy pending identity material without consuming the pending namespace.
+    /// Login completion uses this as a prepare phase: every fallible secure
+    /// write finishes before the public root switches to the resolved account.
+    /// The caller deletes the pending namespace only after the account state
+    /// commit succeeds, so a failed prepare remains safely retryable.
+    pub fn copy_to(
+        &self,
+        store: &dyn SecureKeyStore,
+        user: &UserLocalStore,
+    ) -> Result<(), SecureKeyStoreError> {
         if user.load_device_id(store)?.is_none() {
             user.save_device_id(store, &self.device_id)?;
         }
@@ -413,8 +429,6 @@ impl PendingLocalStore {
         {
             store.store_secret(&user.key(GRANT_BINDING_SEED_ENTRY), &seed)?;
         }
-        self.delete(store)?;
-        user.activate();
         Ok(())
     }
 

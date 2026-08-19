@@ -52,6 +52,7 @@ pub(super) fn submit_kanban_operation_event(
     ));
     let api_token = token();
     let operation_id_for_status = operation_id.clone();
+    let operation_id_for_reconcile = operation_id.clone();
     // X13: use `spawn_forever`, NOT `spawn`. The "New board" handler calls
     // `navigator.replace(...)` to route to the new board IMMEDIATELY after
     // calling this — a `spawn`-ed task is tied to the current component scope
@@ -66,8 +67,9 @@ pub(super) fn submit_kanban_operation_event(
     // X13.6 — but a DETACHED task may outlive the scope that owns the
     // `Signal`s it captured (component unmount, or a `dx serve` hot-reload
     // tearing scopes down mid-flight). Do not touch component-owned Signals
-    // after the await from this root task; the POST already reached the server,
-    // and the next /sync reconciles local `write_state`.
+    // after the await from this root task. `state_store` is the app-owned
+    // SessionContext signal and deliberately survives route unmounts, so it is
+    // the one safe reconciliation target here.
     //
     // NOTE: `spawn_forever` is NOT in the dioxus prelude (only `spawn` is);
     // reach it via the re-exported core crate.
@@ -78,6 +80,19 @@ pub(super) fn submit_kanban_operation_event(
         .await;
         match result {
             Ok(resp) => {
+                // `build_sdk_event` names an event-derived create from its
+                // draft Event id. Final authoring attaches actor-chain/HLC/CBA
+                // fields and refreshes that content-bound id, so preserve the
+                // accepted id on the optimistic row. The projection uses it to
+                // migrate the temporary object id, and backfill can then merge
+                // the canonical Event into this row instead of appending a
+                // duplicate List/Board.
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id_for_reconcile,
+                    "accepted",
+                    Some(resp.event_id.clone()),
+                    None,
+                );
                 tracing::debug!(
                     operation_id = %short_protocol_id(&operation_id_for_status),
                     event_id = %short_protocol_id(&resp.event_id),

@@ -942,6 +942,7 @@ mod tests {
             principal_server_url: "https://principal.example".to_owned(),
             gate_account_base: "https://account.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000001".to_owned(),
+            oidc_state: None,
             account_handle: "alice:example.com".to_owned(),
             account_subject: Some(
                 arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),

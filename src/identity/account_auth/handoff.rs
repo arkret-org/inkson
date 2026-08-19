@@ -8,6 +8,8 @@ use crate::secure_key_store::{PendingLocalStore, default_secure_key_store};
 pub(crate) const ACCOUNT_HANDOFF_GRANT_SECRET_KEY_PREFIX: &str = "account_handoff_grant.v1.";
 pub(crate) const PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY_PREFIX: &str =
     "prepared_identity_creation_request.v1.";
+pub(crate) const PREPARED_RETURNING_SESSION_REQUEST_SECRET_KEY_PREFIX: &str =
+    "prepared_returning_session_request.v1.";
 pub(crate) const PENDING_IDENTITY_CREATION_RECOVERY_KEY_PREFIX: &str =
     "pending_identity_creation_recovery_key.v1.";
 
@@ -125,6 +127,26 @@ fn account_handoff_grant_secret_key(
     ))
 }
 
+fn prepared_returning_session_request_secret_key(
+    handoff: &crate::state::PendingAccountHandoff,
+) -> anyhow::Result<String> {
+    let account_subject = handoff
+        .account_subject
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("account handoff omits account subject"))?;
+    let mut digest = Sha256::new();
+    digest.update(b"inkson.prepared-returning-session-request-scope-v1\0");
+    digest.update(account_subject.as_str().as_bytes());
+    digest.update(b"\0");
+    digest.update(handoff.request_id.as_bytes());
+    digest.update(b"\0");
+    digest.update(handoff.holder_jkt.as_bytes());
+    Ok(format!(
+        "{PREPARED_RETURNING_SESSION_REQUEST_SECRET_KEY_PREFIX}{}",
+        arkret_sdk::base64url_encode(digest.finalize())
+    ))
+}
+
 fn parse_prepared_request(
     canonical: &str,
 ) -> anyhow::Result<arkret_sdk::AccountRegisterRequestBody> {
@@ -169,6 +191,52 @@ pub fn clear_account_handoff_grant(
     pending_store(handoff)?.delete_secret(
         secure_store.as_ref(),
         &account_handoff_grant_secret_key(handoff)?,
+    )?;
+    Ok(())
+}
+
+/// Persist the fully signed returning-session request before its first send.
+/// A browser reload or response-loss retry must replay these exact canonical
+/// bytes rather than authoring a new request identity.
+pub async fn persist_prepared_returning_session_request(
+    handoff: &crate::state::PendingAccountHandoff,
+    request: &arkret_sdk::SessionGrantRequestBody,
+) -> anyhow::Result<()> {
+    let canonical = String::from_utf8(arkret_sdk::canonical::canonical_json_bytes(request)?)?;
+    let secure_store = default_secure_key_store("inkson");
+    pending_store(handoff)?
+        .save_secret_durable(
+            secure_store.as_ref(),
+            &prepared_returning_session_request_secret_key(handoff)?,
+            &canonical,
+        )
+        .await?;
+    Ok(())
+}
+
+pub fn load_prepared_returning_session_request(
+    handoff: &crate::state::PendingAccountHandoff,
+) -> anyhow::Result<Option<arkret_sdk::SessionGrantRequestBody>> {
+    let secure_store = default_secure_key_store("inkson");
+    pending_store(handoff)?
+        .load_secret(
+            secure_store.as_ref(),
+            &prepared_returning_session_request_secret_key(handoff)?,
+        )?
+        .map(|canonical| {
+            arkret_sdk::canonical::from_canonical_json_slice(canonical.as_bytes())
+                .map_err(anyhow::Error::from)
+        })
+        .transpose()
+}
+
+pub fn clear_prepared_returning_session_request(
+    handoff: &crate::state::PendingAccountHandoff,
+) -> anyhow::Result<()> {
+    let secure_store = default_secure_key_store("inkson");
+    pending_store(handoff)?.delete_secret(
+        secure_store.as_ref(),
+        &prepared_returning_session_request_secret_key(handoff)?,
     )?;
     Ok(())
 }
@@ -288,6 +356,7 @@ mod tests {
             principal_server_url: "https://principal.example".to_owned(),
             gate_account_base: "https://account.example/_arkret/gate/account".to_owned(),
             request_id: request_id.to_owned(),
+            oidc_state: None,
             account_handle: "user@example".to_owned(),
             account_subject: Some(arkret_sdk::Hash::new(format!("sha256:{account}")).unwrap()),
             holder_jkt: holder_jkt.to_owned(),
@@ -324,6 +393,31 @@ mod tests {
         assert_ne!(
             baseline,
             account_handoff_grant_secret_key(&handoff(&account_a, "req-a", "jkt-b")).unwrap()
+        );
+    }
+
+    #[test]
+    fn returning_session_replay_requests_are_isolated_by_exact_handoff() {
+        let account_a = "a".repeat(64);
+        let account_b = "b".repeat(64);
+        let baseline =
+            prepared_returning_session_request_secret_key(&handoff(&account_a, "req-a", "jkt-a"))
+                .unwrap();
+
+        assert_ne!(
+            baseline,
+            prepared_returning_session_request_secret_key(&handoff(&account_b, "req-a", "jkt-a"))
+                .unwrap()
+        );
+        assert_ne!(
+            baseline,
+            prepared_returning_session_request_secret_key(&handoff(&account_a, "req-b", "jkt-a"))
+                .unwrap()
+        );
+        assert_ne!(
+            baseline,
+            prepared_returning_session_request_secret_key(&handoff(&account_a, "req-a", "jkt-b"))
+                .unwrap()
         );
     }
 

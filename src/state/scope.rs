@@ -404,14 +404,14 @@ impl LocalStateStore {
             .as_ref()
             .and_then(|state| state.pending_principal_registration.clone())
             .filter(|registration| registration.did == did);
-        let pending_account_handoff = anonymous_onboarding
+        let anonymous_account_handoff = anonymous_onboarding
             .as_ref()
-            .and_then(|state| state.pending_account_handoff.clone())
-            .filter(|handoff| {
-                pending_registration.as_ref().is_some_and(|registration| {
-                    registration.handoff_request_id == handoff.request_id
-                })
-            });
+            .and_then(|state| state.pending_account_handoff.clone());
+        let pending_account_handoff = anonymous_account_handoff.clone().filter(|handoff| {
+            pending_registration
+                .as_ref()
+                .is_some_and(|registration| registration.handoff_request_id == handoff.request_id)
+        });
         let is_returning_account = self.read_root().known_dids.iter().any(|known| known == did)
             || self.read_account_state(did).is_some();
         // Clear pending namespace pin before the seed-scope adopt re-homes it,
@@ -427,6 +427,18 @@ impl LocalStateStore {
                 && let Some(mut anonymous) = self.read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE)
             {
                 anonymous.pending_principal_registration = None;
+                anonymous.pending_account_handoff = None;
+                let _ = self.write_account_state(ANONYMOUS_ACCOUNT_NAMESPACE, &anonymous);
+            }
+        } else if let Some(handoff) = anonymous_account_handoff {
+            // Keep the returning handoff recoverable until the caller commits
+            // the account-scoped key and session state. Move it out of the
+            // anonymous namespace first; successful login completion clears it
+            // from the active account, while a mid-commit failure can resume.
+            self.cached.pending_account_handoff = Some(handoff);
+            if self.flush().is_ok()
+                && let Some(mut anonymous) = anonymous_onboarding
+            {
                 anonymous.pending_account_handoff = None;
                 let _ = self.write_account_state(ANONYMOUS_ACCOUNT_NAMESPACE, &anonymous);
             }
