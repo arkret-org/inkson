@@ -37,9 +37,12 @@ impl BrowserTimeout {
         let state = std::rc::Rc::new(std::cell::RefCell::new(BrowserTimeoutState::default()));
         let callback_state = std::rc::Rc::clone(&state);
         let timeout = gloo_timers::callback::Timeout::new(milliseconds, move || {
-            let mut state = callback_state.borrow_mut();
-            state.fired = true;
-            if let Some(waker) = state.waker.take() {
+            let waker = {
+                let mut state = callback_state.borrow_mut();
+                state.fired = true;
+                state.waker.take()
+            };
+            if let Some(waker) = waker {
                 waker.wake();
             }
         });
