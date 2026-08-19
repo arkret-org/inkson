@@ -1663,8 +1663,12 @@ pub fn ChatPanel(
         .filter(|channel| channel.is_private_sidecar)
         .map(|channel| channel.strand_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
+    // Read-only lookup. Taking a `write()` guard here mark-dirties every
+    // `state_store` subscriber on each render — including this component —
+    // which spins ChatPanel into an infinite re-render that hangs the page
+    // as soon as the panel mounts (e.g. the card-detail Discussion tab).
     let sidecar_exchange_projections = crate::sidecar::cached_sidecar_exchange_projections(
-        &mut state_store.write(),
+        &state_store.read(),
         &account_did,
         &selected_realm_id,
     );

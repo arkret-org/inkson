@@ -2286,7 +2286,7 @@ mod tests {
         );
         assert!(
             cached_sidecar_exchange_projections(
-                &mut store,
+                &store,
                 EXCHANGE_ACCOUNT,
                 session.source_realm_id.as_str()
             )
@@ -2339,7 +2339,7 @@ mod tests {
             .unwrap();
         assert!(
             cached_sidecar_exchange_projections(
-                &mut store,
+                &store,
                 EXCHANGE_ACCOUNT,
                 session.source_realm_id.as_str(),
             )
@@ -2359,7 +2359,7 @@ mod tests {
         );
 
         let cached = cached_sidecar_exchange_projections(
-            &mut store,
+            &store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         );
@@ -2475,7 +2475,7 @@ mod tests {
         assert_eq!(changed, 1);
 
         let cached = cached_sidecar_exchange_projections(
-            &mut store,
+            &store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         );
@@ -2607,7 +2607,7 @@ mod tests {
         );
         assert_eq!(changed, 0, "foreign-Circle events never enter the fold");
         let cached = cached_sidecar_exchange_projections(
-            &mut store,
+            &store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         );
@@ -2674,7 +2674,7 @@ mod tests {
         );
         assert_eq!(changed, 1);
         let cached = cached_sidecar_exchange_projections(
-            &mut store,
+            &store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         );
@@ -2713,7 +2713,7 @@ mod tests {
             1
         );
         let mut cached = cached_sidecar_exchange_projections(
-            &mut store,
+            &store,
             EXCHANGE_ACCOUNT,
             session.source_realm_id.as_str(),
         )
@@ -2750,7 +2750,7 @@ mod tests {
         assert!(outcome.backfill_required);
         assert_eq!(
             cached_sidecar_exchange_projections(
-                &mut store,
+                &store,
                 EXCHANGE_ACCOUNT,
                 session.source_realm_id.as_str(),
             )[0],
