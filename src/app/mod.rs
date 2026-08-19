@@ -1098,7 +1098,12 @@ fn AppBootstrap() -> Element {
                             }
                         },
                         AuthSurface::Register => rsx! {
-                            crate::views::register::RegistrationPanel { device_id }
+                            crate::views::register::RegistrationPanel {
+                                device_id,
+                                token,
+                                account_did,
+                                config_store,
+                            }
                         },
                         AuthSurface::Restoring => rsx! {
                             section {

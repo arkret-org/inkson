@@ -34,9 +34,15 @@ enum RegistrationFailureKind {
 }
 
 #[component]
-pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
+pub fn RegistrationPanel(
+    mut device_id: Signal<String>,
+    mut token: Signal<String>,
+    mut account_did: Signal<String>,
+    config_store: Signal<crate::config::LocalConfigStore>,
+) -> Element {
     let mut principal_server = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
+    let session = use_context::<crate::runtime::services::RuntimeServices>().session;
     let i18n = use_context::<crate::i18n::I18nSignal>();
     let mut busy = use_signal(|| false);
     let mut feedback = use_signal(RegistrationFeedback::default);
@@ -99,7 +105,21 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                         // device identity belongs to one principal, so it must
                         // never inherit the active/previous account's id.
                         let device = crate::config::new_device_id();
+                        // Explicit registration starts an anonymous account
+                        // transaction. Cancel the old account before changing
+                        // the local-state owner so no late poll/refresh can
+                        // write through the new pending scope.
+                        session.invalidate("starting a new-account registration transaction");
+                        token.set(String::new());
+                        account_did.set(String::new());
                         device_id.set(device.clone());
+                        crate::views::helpers::persist_config(
+                            config_store,
+                            server.clone(),
+                            String::new(),
+                            device.clone(),
+                            String::new(),
+                        );
                         busy.set(true);
                         feedback.set(RegistrationFeedback::Progress);
                         spawn(async move {
@@ -153,6 +173,7 @@ pub fn RegistrationPanel(mut device_id: Signal<String>) -> Element {
                                     &server,
                                     device.trim(),
                                     crate::identity::account_auth::OidcEntryPoint::CreateIdentity,
+                                    None,
                                     &ui_locale,
                                 )
                                 .await

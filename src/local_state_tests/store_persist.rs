@@ -1198,6 +1198,12 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
     let mut store = LocalStateStore::with_path(path);
     store.switch_active_account("did:web:old.example");
     store.save_sync_cursor("sx:old");
+    store.set_primary_handle("old-user");
+    store.set_dpop_device_key(Some(DpopDeviceKeyRecord {
+        seed_b64: "old-account-dpop-seed".to_owned(),
+        jkt: "old-account-jkt".to_owned(),
+        created_at: chrono::Utc::now(),
+    }));
     let handoff = PendingAccountHandoff {
         principal_server_url: "https://principal.example".to_owned(),
         gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
@@ -1239,9 +1245,36 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
     assert!(store.pending_account_handoff().is_none());
     assert!(store.pending_principal_registration().is_none());
     assert!(store.load().sync_cursor.is_none());
+    assert!(
+        store.dpop_device_key().is_none(),
+        "anonymous registration must not expose the previous account's DPoP state"
+    );
+    assert!(
+        store.primary_handle_for_did("anonymous").is_none(),
+        "anonymous registration must not inherit the previous account's profile"
+    );
+
+    let newcomer = arkret_sdk::DidFullId::new("did:web:new.example".to_owned()).unwrap();
+    assert!(store.adopt_pending_login(&newcomer));
+    assert!(store.load().sync_cursor.is_none());
+    assert!(store.pending_account_handoff().is_none());
+    assert!(store.pending_principal_registration().is_none());
+    assert!(store.dpop_device_key().is_none());
+    assert!(store.primary_handle_for_did(newcomer.as_str()).is_none());
 
     store.switch_active_account("did:web:old.example");
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:old"));
+    assert_eq!(
+        store
+            .primary_handle_for_did("did:web:old.example")
+            .as_deref(),
+        Some("old-user")
+    );
+    assert_eq!(
+        store.dpop_device_key().as_ref().map(|key| key.jkt.as_str()),
+        Some("old-account-jkt"),
+        "starting another registration must preserve the old account in its own namespace"
+    );
     assert_eq!(
         store
             .pending_account_handoff()

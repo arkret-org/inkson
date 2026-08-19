@@ -113,6 +113,9 @@ fn load_valid_retained_recovery_key(
                 return None;
             }
         };
+    let bound_continuation = checkpoint.is_some_and(|checkpoint| {
+        crate::identity::account_auth::checkpoint_continues_bound_creation(checkpoint, handoff)
+    });
     let server_accepts = match handoff.identity_creation_state {
         Some(arkret_sdk::IdentityCreationLeaseState::Active) => {
             arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
@@ -132,7 +135,15 @@ fn load_valid_retained_recovery_key(
             retained.as_str(),
         )
         .is_ok(),
-        Some(arkret_sdk::IdentityCreationLeaseState::Completed) | None => false,
+        Some(arkret_sdk::IdentityCreationLeaseState::Completed) => false,
+        None if bound_continuation => checkpoint.is_some_and(|checkpoint| {
+            crate::identity::principal_registration::validate_checkpoint_recovery_key(
+                checkpoint,
+                retained.as_str(),
+            )
+            .is_ok()
+        }),
+        None => false,
     };
     let checkpoint_accepts = checkpoint.is_none_or(|checkpoint| {
         !crate::identity::principal_registration::checkpoint_belongs_to_handoff(checkpoint, handoff)
@@ -173,6 +184,12 @@ fn onboarding_surface(
                 || handoff.reserved_identity.is_some()
             {
                 OnboardingSurface::ServerStateConflict
+            } else if checkpoint.is_some_and(|checkpoint| {
+                crate::identity::account_auth::checkpoint_continues_bound_creation(
+                    checkpoint, handoff,
+                )
+            }) {
+                OnboardingSurface::IdentityCreation
             } else {
                 OnboardingSurface::RootRecovery
             };
@@ -242,6 +259,117 @@ fn missing_creation_handoff_surface(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RepairedBoundCompletion {
+    principal_id: String,
+    device_id: String,
+    session_credential: String,
+}
+
+fn bound_completion_evidence_matches(
+    handoff: &crate::state::PendingAccountHandoff,
+    evidence: &crate::state::RecoveryMaterialEvidence,
+) -> bool {
+    handoff.bound_principal_id.as_deref() == Some(evidence.principal_id.as_str())
+        && handoff.device_id == evidence.device_id.as_str()
+}
+
+/// Repair only the narrow state produced by the old Bound reconciler: the
+/// public checkpoint is gone, but exact server-verifiable PCR evidence, this
+/// account's Standard grant, this device id and the retained Recovery Key all
+/// remain. No identity/device is recreated and no completion is inferred from
+/// Bound alone.
+async fn repair_pruned_bound_completion(
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> anyhow::Result<Option<RepairedBoundCompletion>> {
+    let (handoff, evidence, grant) = {
+        let store = state_store.peek();
+        if store.pending_principal_registration().is_some() {
+            return Ok(None);
+        }
+        let Some(handoff) = store.pending_account_handoff() else {
+            return Ok(None);
+        };
+        let Some(bound) = handoff.bound_principal_id.as_deref() else {
+            return Ok(None);
+        };
+        let Some(evidence) = store.recovery_material_evidence() else {
+            return Ok(None);
+        };
+        if !bound_completion_evidence_matches(&handoff, &evidence) {
+            anyhow::bail!("bound onboarding evidence belongs to another principal or device");
+        }
+        let principal_id = arkret_sdk::DidFullId::new(bound.to_owned())?;
+        let Some(grant) = store.session_grant().filter(|grant| {
+            crate::identity::session_refresh::grant_matches_full_principal(grant, &principal_id)
+                && grant.device_id == handoff.device_id
+        }) else {
+            return Ok(None);
+        };
+        (handoff, evidence, grant)
+    };
+    let Some(recovery_key) =
+        crate::identity::account_auth::load_pending_identity_creation_recovery_key(&handoff)?
+    else {
+        return Ok(None);
+    };
+    crate::identity::principal_registration::validate_published_identity_recovery_key(
+        &handoff.principal_server_url,
+        &evidence.principal_id,
+        &recovery_key,
+    )
+    .await?;
+
+    let evidence_for_verify = evidence.clone();
+    let recovery_key_for_policy = recovery_key.clone();
+    let actor = evidence.principal_id.to_string();
+    let actor_for_policy = actor.clone();
+    let device = evidence.device_id.to_string();
+    let device_for_policy = device.clone();
+    let realm = evidence.principal_control_realm_id.clone();
+    crate::transport::auth::with_authed_api(
+        &handoff.principal_server_url,
+        grant.grant_jwt.clone(),
+        |api| async move {
+            crate::recovery_strand::submit_principal_bootstrap_seal(
+                &api,
+                &evidence_for_verify.bootstrap_seal,
+            )
+            .await?;
+            crate::recovery_strand::ensure_recovery_policy(
+                &api,
+                &actor_for_policy,
+                &device_for_policy,
+                &realm,
+                &recovery_key_for_policy,
+            )
+            .await?;
+            crate::recovery_strand::verify_recovery_material_evidence(&api, &evidence_for_verify)
+                .await
+        },
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error.display()))?;
+
+    crate::event_submit::remember_verified_recovery_gate(&actor, &device);
+    crate::views::recovery::save_generated_recovery_key_metadata(
+        &mut state_store,
+        &actor,
+        &recovery_key,
+    )
+    .context("save repaired recovery metadata")?;
+    crate::views::recovery::local_recovery_public_key_result(&state_store.read(), &actor)
+        .map_err(|error| anyhow::anyhow!("verify repaired recovery metadata: {error}"))?;
+    state_store.read().begin_durable_flush()?.wait().await?;
+    clear_pending_principal_setup(state_store).await?;
+
+    Ok(Some(RepairedBoundCompletion {
+        principal_id: actor,
+        device_id: device,
+        session_credential: grant.grant_jwt,
+    }))
+}
+
 /// A server reservation always outranks a local draft when selecting the key
 /// entry mode. A full-page authentication callback loses the in-memory key;
 /// generating a replacement phrase at that point can never control the
@@ -289,7 +417,26 @@ pub fn OnboardingPanel(
         }
         spawn(async move {
             match crate::identity::account_auth::refresh_pending_onboarding(state_store).await {
-                Ok(()) => server_reconciliation.set(ServerReconciliationStatus::Ready),
+                Ok(()) => match repair_pruned_bound_completion(state_store).await {
+                    Ok(Some(repaired)) => {
+                        let mut repaired_token = token;
+                        let mut repaired_account_did = account_did;
+                        let mut repaired_device_id = device_id;
+                        repaired_token.set(repaired.session_credential);
+                        repaired_account_did.set(repaired.principal_id);
+                        repaired_device_id.set(repaired.device_id);
+                        server_reconciliation.set(ServerReconciliationStatus::Ready);
+                    }
+                    Ok(None) => server_reconciliation.set(ServerReconciliationStatus::Ready),
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "failed to repair pruned bound onboarding continuation"
+                        );
+                        server_reconciliation
+                            .set(ServerReconciliationStatus::Failed(error.to_string()));
+                    }
+                },
                 Err(error) => {
                     tracing::warn!(
                         error = %error,
@@ -1236,10 +1383,26 @@ fn PendingAccountIdentityCreation(
                                                                 )
                                                     });
                                                 if accepted {
-                                                    status.set(
-                                                        "The Account Authority accepted this identity setup. Authenticate again to restore its completed session."
-                                                            .to_owned(),
-                                                    );
+                                                    let can_continue = {
+                                                        let store = state_store.peek();
+                                                        store.pending_account_handoff().zip(
+                                                            store.pending_principal_registration(),
+                                                        ).is_some_and(|(handoff, checkpoint)| {
+                                                            crate::identity::account_auth::checkpoint_continues_bound_creation(
+                                                                &checkpoint,
+                                                                &handoff,
+                                                            )
+                                                        })
+                                                    };
+                                                    if can_continue {
+                                                        status.set(format!(
+                                                            "The account binding was accepted, but the recovery-material gate did not finish: {command_error}. Retry Save and continue; Inkson will resume the same transaction without creating another identity or device."
+                                                        ));
+                                                    } else {
+                                                        status.set(format!(
+                                                            "The account binding was accepted, but the local continuation could not be verified: {command_error}. No completion was assumed."
+                                                        ));
+                                                    }
                                                 } else {
                                                     status.set(format!(
                                                         "The previous request did not finish: {command_error}. The Account Authority state was refreshed; continue with the Recovery Key already held on this page."
@@ -1475,10 +1638,13 @@ async fn create_and_bind_identity(
     let stored_checkpoint = state_store.read().pending_principal_registration();
     let (checkpoint, checkpoint_changed) = match stored_checkpoint.as_ref() {
         Some(checkpoint)
-            if crate::identity::principal_registration::checkpoint_belongs_to_handoff(
+            if (crate::identity::principal_registration::checkpoint_belongs_to_handoff(
                 checkpoint, handoff,
             ) && checkpoint.device_id == device
-                && checkpoint.handoff_request_id == handoff.request_id =>
+                && checkpoint.handoff_request_id == handoff.request_id)
+                || crate::identity::account_auth::checkpoint_continues_bound_creation(
+                    checkpoint, handoff,
+                ) =>
         {
             let checkpoint = checkpoint_for_handoff(checkpoint, handoff, recovery_key)?;
             let changed = stored_checkpoint.as_ref() != Some(&checkpoint);
@@ -1765,6 +1931,15 @@ fn checkpoint_for_handoff(
             recovery_key,
         )?;
         return Ok(checkpoint.clone());
+    }
+    if crate::identity::account_auth::checkpoint_continues_bound_creation(checkpoint, handoff) {
+        crate::identity::principal_registration::validate_checkpoint_recovery_key(
+            checkpoint,
+            recovery_key,
+        )?;
+        let mut renewed = checkpoint.clone();
+        renewed.handoff_request_id = handoff.request_id.clone();
+        return Ok(renewed);
     }
     // Everything below is a *renewal*: a different request id reaching a draft
     // this device already holds. The unsigned account_handle is deliberately
@@ -2271,6 +2446,95 @@ mod tests {
             OnboardingSurface::ServerStateConflict
         );
         assert!(must_enter_reserved_recovery_key(&handoff));
+    }
+
+    #[test]
+    fn exact_bound_creation_checkpoint_finishes_on_the_creation_surface() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        for stage in [
+            crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared,
+            crate::state::PendingPrincipalRegistrationStage::Accepted,
+            crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
+        ] {
+            let mut handoff = test_handoff(
+                "ak:request:019f0000-0000-7000-8000-000000000010",
+                Some("lease-1"),
+                Some(1),
+            );
+            let checkpoint = test_checkpoint(&handoff, &recovery_key, stage);
+            handoff.lease_id = None;
+            handoff.lease_fence = None;
+            handoff.lease_expires_at = None;
+            handoff.identity_creation_state = None;
+            handoff.bound_principal_id = Some(checkpoint.did.clone());
+
+            assert_eq!(
+                onboarding_surface(Some(&handoff), Some(&checkpoint)),
+                OnboardingSurface::IdentityCreation,
+                "bound + exact {stage:?} checkpoint is the same registration transaction"
+            );
+        }
+    }
+
+    #[test]
+    fn reauthenticated_bound_creation_renews_only_the_handoff_request_fence() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let original = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000009",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &original,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::Accepted,
+        );
+        let mut reauthenticated = original;
+        reauthenticated.request_id = "ak:request:019f0000-0000-7000-8000-000000000010".to_owned();
+        reauthenticated.lease_id = None;
+        reauthenticated.lease_fence = None;
+        reauthenticated.lease_expires_at = None;
+        reauthenticated.identity_creation_state = None;
+        reauthenticated.bound_principal_id = Some(checkpoint.did.clone());
+
+        let resumed = checkpoint_for_handoff(&checkpoint, &reauthenticated, &recovery_key).unwrap();
+
+        assert_eq!(resumed.handoff_request_id, reauthenticated.request_id);
+        assert_eq!(resumed.did, checkpoint.did);
+        assert_eq!(resumed.device_id, checkpoint.device_id);
+        assert_eq!(resumed.pcr_genesis_unit, checkpoint.pcr_genesis_unit);
+    }
+
+    #[test]
+    fn bound_account_without_verified_creation_continuation_uses_recovery() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let mut handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000010",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::Accepted,
+        );
+        handoff.lease_id = None;
+        handoff.lease_fence = None;
+        handoff.lease_expires_at = None;
+        handoff.identity_creation_state = None;
+        handoff.bound_principal_id = Some(checkpoint.did.clone());
+
+        assert_eq!(
+            onboarding_surface(Some(&handoff), None),
+            OnboardingSurface::RootRecovery
+        );
+        let mut foreign = checkpoint;
+        foreign.device_id = "ak:device:019f0000-0000-7000-8000-000000000099".to_owned();
+        assert_eq!(
+            onboarding_surface(Some(&handoff), Some(&foreign)),
+            OnboardingSurface::RootRecovery,
+            "a foreign checkpoint must not inherit the first-device continuation"
+        );
     }
 
     #[test]

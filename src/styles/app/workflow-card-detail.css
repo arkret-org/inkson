@@ -261,9 +261,13 @@
   color: var(--text, var(--ak-ink));
   background: transparent;
 }
-.card-detail-tab:disabled {
-  cursor: default;
-  opacity: 0.72;
+.card-detail-tab:hover {
+  color: var(--text, var(--ak-ink));
+  background: color-mix(in srgb, var(--accent, var(--ak-brand)) 8%, transparent);
+}
+.card-detail-tab:focus-visible {
+  outline: 2px solid var(--accent, var(--ak-brand));
+  outline-offset: -2px;
 }
 .card-detail-synthesis-panel,
 .card-detail-discussion-panel {

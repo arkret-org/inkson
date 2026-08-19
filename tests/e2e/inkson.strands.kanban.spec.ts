@@ -42,6 +42,14 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   await expect(
     detailPopup.getByTestId("card-detail-cancel-edit-button"),
   ).toBeVisible();
+  const descriptionTab = detailPopup.getByTestId(
+    "card-detail-tab-description",
+  );
+  const synthesisTab = detailPopup.getByTestId("card-detail-tab-synthesis");
+  const discussionTab = detailPopup.getByTestId("card-detail-tab-discussion");
+  await expect(descriptionTab).toBeEnabled();
+  await expect(synthesisTab).toBeEnabled();
+  await expect(discussionTab).toBeEnabled();
   const saveButtonBox = await detailPopup
     .getByTestId("card-detail-save-button")
     .boundingBox();
@@ -54,6 +62,29 @@ test("kanban card detail embeds discussion without boundary copy", async ({
   expect(saveButtonBox.height).toBeLessThanOrEqual(44);
   expect(cancelButtonBox.height).toBeLessThanOrEqual(44);
   await detailPopup.getByTestId("card-detail-cancel-edit-button").click();
+
+  await descriptionTab.click();
+  await detailPopup.getByTestId("card-detail-edit-description-button").click();
+  await expect(
+    detailPopup.locator("#card-detail-description-toast-editor"),
+  ).toBeVisible();
+  await synthesisTab.click();
+  await expect(synthesisTab).toHaveAttribute("aria-selected", "true");
+  await expect(
+    detailPopup.locator("#card-detail-synthesis-toast-editor"),
+  ).toBeVisible();
+  await discussionTab.click();
+  await expect(discussionTab).toHaveAttribute("aria-selected", "true");
+  await synthesisTab.click();
+  await expect(
+    detailPopup.locator("#card-detail-synthesis-toast-editor"),
+  ).toBeVisible();
+  await descriptionTab.click();
+  await expect(
+    detailPopup.locator("#card-detail-description-toast-editor"),
+  ).toBeVisible();
+  await detailPopup.getByTestId("card-detail-cancel-edit-button").click();
+  await synthesisTab.click();
   await expect(detailPopup.getByTestId("card-synthesis-panel")).toBeVisible();
   await detailPopup.getByTestId("card-detail-sidebar-tab-members").click();
   const memberGroup = detailPopup.getByTestId("card-detail-member-group");

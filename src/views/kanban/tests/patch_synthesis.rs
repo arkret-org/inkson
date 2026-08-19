@@ -51,6 +51,50 @@ fn sidecar_transition_suspends_only_track_edits_without_mixing_drafts() {
 }
 
 #[test]
+fn content_tab_switch_retargets_only_content_editors() {
+    assert_eq!(
+        content_edit_scope_for_tab(
+            true,
+            CardEditScope::Description,
+            CardDetailContentTab::Synthesis,
+        ),
+        Some(CardEditScope::Synthesis)
+    );
+    assert_eq!(
+        content_edit_scope_for_tab(
+            true,
+            CardEditScope::Synthesis,
+            CardDetailContentTab::Description,
+        ),
+        Some(CardEditScope::Description)
+    );
+    assert_eq!(
+        content_edit_scope_for_tab(
+            true,
+            CardEditScope::Synthesis,
+            CardDetailContentTab::Discussion,
+        ),
+        None
+    );
+    assert_eq!(
+        content_edit_scope_for_tab(
+            true,
+            CardEditScope::Summary,
+            CardDetailContentTab::Synthesis,
+        ),
+        None
+    );
+    assert_eq!(
+        content_edit_scope_for_tab(
+            false,
+            CardEditScope::Description,
+            CardDetailContentTab::Synthesis,
+        ),
+        None
+    );
+}
+
+#[test]
 fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projection() {
     // Simulate: server projection returns the pre-edit card; the user
     // had queued a ak.strand.update locally that bumped summary + content.

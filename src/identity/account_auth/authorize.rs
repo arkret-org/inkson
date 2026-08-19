@@ -148,7 +148,8 @@ fn build_standard_authorize_url(
 /// Assemble the durable scaffold record from a freshly-built authorize bundle
 /// plus the resolved Account Authority routing. Persisted across the browser
 /// redirect so the callback can restore PKCE verifier / state / nonce and the
-/// `gate_account_base` to POST the account handoff to.
+/// routing needed for either a returning-device session grant or an account
+/// handoff.
 pub fn build_persisted_oidc_scaffold(
     bundle: &OidcScaffoldBundle,
     gate_account_base: &str,
@@ -156,6 +157,7 @@ pub fn build_persisted_oidc_scaffold(
     device_id: &str,
     issuer: &str,
     principal_trust_domain: &arkret_sdk::TrustDomainId,
+    expected_principal_full_id: Option<&arkret_sdk::DidFullId>,
 ) -> PersistedOidcScaffold {
     PersistedOidcScaffold {
         expected_state: bundle.state.clone(),
@@ -170,6 +172,7 @@ pub fn build_persisted_oidc_scaffold(
         issuer: issuer.to_owned(),
         gate_account_base: gate_account_base.to_owned(),
         principal_trust_domain: principal_trust_domain.to_string(),
+        expected_principal_full_id: expected_principal_full_id.cloned(),
     }
 }
 

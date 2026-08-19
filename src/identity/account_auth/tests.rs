@@ -244,6 +244,46 @@ fn state_and_nonce_diverge_for_same_caller() {
     assert_ne!(bundle_a.state, bundle_a.nonce);
 }
 
+#[test]
+fn persisted_scaffold_carries_returning_principal_assertion() {
+    let bundle = build_oidc_authorize_scaffold(
+        &test_discovery(),
+        &test_oidc_method(),
+        "https://app.example/auth/callback",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+        "ak:did_core:webvh:z6mkfixture",
+        &OidcEntryPoint::SignIn,
+        "en",
+    )
+    .unwrap();
+    let trust_domain =
+        arkret_sdk::TrustDomainId::new("ak:trust_domain:principal.example".to_owned()).unwrap();
+    let expected =
+        arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+
+    let scaffold = build_persisted_oidc_scaffold(
+        &bundle,
+        "https://auth.example/_arkret/gate/account",
+        "https://principal.example",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+        "https://issuer.example",
+        &trust_domain,
+        Some(&expected),
+    );
+
+    assert_eq!(
+        scaffold.expected_principal_full_id.as_ref(),
+        Some(&expected)
+    );
+    let mut old_payload = serde_json::to_value(scaffold).unwrap();
+    old_payload
+        .as_object_mut()
+        .unwrap()
+        .remove("expected_principal_full_id");
+    let restored: PersistedOidcScaffold = serde_json::from_value(old_payload).unwrap();
+    assert_eq!(restored.expected_principal_full_id, None);
+}
+
 /// `code_challenge` MUST be S256(code_verifier) when discovery supports S256.
 #[test]
 fn bundle_challenge_is_s256_of_verifier_when_supported() {

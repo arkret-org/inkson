@@ -48,6 +48,31 @@ pub(super) fn suspend_track_edit(
     })
 }
 
+/// Keep a content-editing session attached to the visible content tab. Drafts
+/// live in separate signals, so moving between Description and Synthesis can
+/// reveal the matching editor without discarding either draft. Summary and
+/// Calendar forms are independent of the content tabs and remain untouched.
+pub(super) fn content_edit_scope_for_tab(
+    editing: bool,
+    current_scope: CardEditScope,
+    tab: CardDetailContentTab,
+) -> Option<CardEditScope> {
+    if !editing
+        || !matches!(
+            current_scope,
+            CardEditScope::Description | CardEditScope::Synthesis
+        )
+    {
+        return None;
+    }
+
+    match tab {
+        CardDetailContentTab::Description => Some(CardEditScope::Description),
+        CardDetailContentTab::Synthesis => Some(CardEditScope::Synthesis),
+        CardDetailContentTab::Discussion => None,
+    }
+}
+
 #[component]
 fn CardMemberMentionRow(
     did: String,
@@ -840,7 +865,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "data-testid": "card-detail-tab-description",
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Description}",
-                                                        disabled: editing_card_detail(),
                                                         onclick: {
                                                             let realm_id = selected_realm_id.clone();
                                                             let strand_id = card.primary_strand_id.clone();
@@ -849,6 +873,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     &realm_id,
                                                                     &strand_id,
                                                                 );
+                                                                if let Some(scope) = content_edit_scope_for_tab(
+                                                                    editing_card_detail(),
+                                                                    card_edit_scope(),
+                                                                    CardDetailContentTab::Description,
+                                                                ) {
+                                                                    card_edit_scope.set(scope);
+                                                                }
                                                                 card_detail_tab.set(CardDetailContentTab::Description);
                                                                 replace_card_detail_tab_query(CardDetailContentTab::Description);
                                                             }
@@ -861,7 +892,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "data-testid": "card-detail-tab-synthesis",
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Synthesis}",
-                                                        disabled: editing_card_detail(),
                                                         onclick: {
                                                             let realm_id = selected_realm_id.clone();
                                                             let strand_id = card.primary_strand_id.clone();
@@ -870,6 +900,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     &realm_id,
                                                                     &strand_id,
                                                                 );
+                                                                if let Some(scope) = content_edit_scope_for_tab(
+                                                                    editing_card_detail(),
+                                                                    card_edit_scope(),
+                                                                    CardDetailContentTab::Synthesis,
+                                                                ) {
+                                                                    card_edit_scope.set(scope);
+                                                                }
                                                                 card_detail_tab.set(CardDetailContentTab::Synthesis);
                                                                 replace_card_detail_tab_query(CardDetailContentTab::Synthesis);
                                                             }
@@ -882,7 +919,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "data-testid": "card-detail-tab-discussion",
                                                         role: "tab",
                                                         "aria-selected": "{active_detail_tab == CardDetailContentTab::Discussion}",
-                                                        disabled: editing_card_detail(),
                                                         onclick: {
                                                             let strand_id = card.primary_strand_id.clone();
                                                             let realm_id = selected_realm_id.clone();

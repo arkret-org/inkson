@@ -33,9 +33,9 @@ mod due_calendar;
 /// hard-coded cards.
 mod model;
 
-#[cfg(test)]
-use card_detail_surface::suspend_track_edit;
 use card_detail_surface::{CardDetail, CardDetailContext};
+#[cfg(test)]
+use card_detail_surface::{content_edit_scope_for_tab, suspend_track_edit};
 use controller::{KanbanCommand, KanbanController, use_kanban_controller};
 use drag_drop_controller::*;
 use due_calendar::*;

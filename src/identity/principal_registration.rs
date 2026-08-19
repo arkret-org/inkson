@@ -243,6 +243,53 @@ pub fn validate_checkpoint_recovery_key(
     Ok(key_material)
 }
 
+/// Verify retained Recovery Key material against the immutable, published
+/// did:webvh inception entry. This is the fail-closed migration path for
+/// clients whose older reconciliation code deleted the public registration
+/// checkpoint after Account Authority binding had already succeeded.
+pub async fn validate_published_identity_recovery_key(
+    principal_server_url: &str,
+    principal_id: &arkret_sdk::DidFullId,
+    recovery_key: &str,
+) -> anyhow::Result<()> {
+    let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
+        recovery_key,
+        "",
+        0,
+    )?;
+    let client = arkret_sdk::http_client::ClientBuilder::new(Url::parse(principal_server_url)?)
+        .allow_insecure_localhost()
+        .build()?;
+    let history = crate::identity::history::fetch_complete_identity_history(&client, principal_id)
+        .await
+        .context("fetch published principal history for interrupted setup repair")?;
+    if history.method != arkret_sdk::DidMethodUri::Webvh || history.native_history != Some(true) {
+        anyhow::bail!("bound principal history is not a native did:webvh history");
+    }
+    let entry0 = history
+        .entries
+        .first()
+        .and_then(serde_json::Value::as_object)
+        .context("bound principal history has no object entry 0")?;
+    let did_operation = arkret_sdk::DidOperationSubmitRequestBody {
+        did: principal_id.clone(),
+        did_method: arkret_sdk::DidMethodName::Webvh,
+        seq: Some(1),
+        prev_event_digest: None,
+        operation: entry0.clone().into_iter().collect(),
+    };
+    let validated =
+        arkret_sdk::signatures::webvh::validate_principal_inception_operation(&did_operation)
+            .map_err(|error| anyhow!("validate published principal inception: {error}"))?;
+    if validated.principal_id != arkret_sdk::project_full_id_to_core_id(principal_id)?
+        || validated.root_public_key_multibase != key_material.root_public_key_multikey
+        || validated.next_root_key_hash != key_material.next_root_key_hash
+    {
+        anyhow::bail!("retained Recovery Key does not control the bound principal inception");
+    }
+    Ok(())
+}
+
 pub fn checkpoint_belongs_to_handoff(
     checkpoint: &PendingPrincipalRegistration,
     handoff: &PendingAccountHandoff,
@@ -382,6 +429,11 @@ pub async fn complete_account_handoff_binding(
     if handoff.holder_jkt != dpop.jkt() {
         anyhow::bail!("account handoff holder key does not match the current DPoP key");
     }
+    if let Some(bound) = handoff.bound_principal_id.as_deref()
+        && bound != checkpoint.did
+    {
+        anyhow::bail!("bound account principal does not match the frozen registration draft");
+    }
     let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow!("account handoff credential is unavailable; authenticate again"))?;
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
@@ -394,24 +446,6 @@ pub async fn complete_account_handoff_binding(
         .initial_session
         .clone()
         .context("checkpoint omits initial session request")?;
-    let lease = arkret_sdk::IdentityCreationLease {
-        identity_creation_lease_id: checkpoint.lease_id.clone(),
-        fence: checkpoint.lease_fence,
-        state: handoff
-            .identity_creation_state
-            .context("account handoff omits the server identity-creation state")?,
-        expires_at: handoff
-            .lease_expires_at
-            .ok_or_else(|| anyhow!("identity-creation lease expiry is unavailable"))?,
-        reserved_identity: handoff.reserved_identity.clone(),
-    };
-    let challenge_request = garth::identity_binding_challenge_request(
-        arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
-        &lease,
-        did_operation.clone(),
-        &unit,
-        &initial,
-    )?;
     let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
         &handoff.gate_account_base,
     )?;
@@ -421,17 +455,18 @@ pub async fn complete_account_handoff_binding(
             dpop.sdk_account_handoff_auth(account_handoff_grant),
         ))
         .build()?;
-    let challenge_retry_deadline = std::cmp::min(handoff.expires_at, lease.expires_at);
+    let prepared = crate::identity::account_auth::load_prepared_identity_creation_request(
+        handoff,
+        expected_account_subject,
+        &checkpoint.did,
+        &checkpoint.lease_id,
+    )
+    .await?;
+    let mut replaying_prepared_request = false;
+    let mut lease = None::<arkret_sdk::IdentityCreationLease>;
+    let mut challenge_retry_deadline = None::<DateTime<Utc>>;
 
-    let register_request = if let Some(prepared) =
-        crate::identity::account_auth::load_prepared_identity_creation_request(
-            handoff,
-            expected_account_subject,
-            &checkpoint.did,
-            &checkpoint.lease_id,
-        )
-        .await?
-    {
+    let register_request = if let Some(prepared) = prepared {
         prepared.validate()?;
         let registration = prepared
             .identity_creation
@@ -446,12 +481,48 @@ pub async fn complete_account_handoff_binding(
             anyhow::bail!("prepared identity creation request belongs to another lease or draft");
         }
         persist_register_request_prepared_checkpoint(checkpoint, state_store).await?;
+        replaying_prepared_request = true;
+        if handoff.bound_principal_id.is_none() {
+            let current_lease = arkret_sdk::IdentityCreationLease {
+                identity_creation_lease_id: checkpoint.lease_id.clone(),
+                fence: checkpoint.lease_fence,
+                state: handoff
+                    .identity_creation_state
+                    .context("account handoff omits the server identity-creation state")?,
+                expires_at: handoff
+                    .lease_expires_at
+                    .ok_or_else(|| anyhow!("identity-creation lease expiry is unavailable"))?,
+                reserved_identity: handoff.reserved_identity.clone(),
+            };
+            challenge_retry_deadline =
+                Some(std::cmp::min(handoff.expires_at, current_lease.expires_at));
+            lease = Some(current_lease);
+        }
         prepared
     } else {
+        let current_lease = arkret_sdk::IdentityCreationLease {
+            identity_creation_lease_id: checkpoint.lease_id.clone(),
+            fence: checkpoint.lease_fence,
+            state: handoff
+                .identity_creation_state
+                .context("account handoff omits the server identity-creation state")?,
+            expires_at: handoff
+                .lease_expires_at
+                .ok_or_else(|| anyhow!("identity-creation lease expiry is unavailable"))?,
+            reserved_identity: handoff.reserved_identity.clone(),
+        };
+        let retry_deadline = std::cmp::min(handoff.expires_at, current_lease.expires_at);
+        let challenge_request = garth::identity_binding_challenge_request(
+            arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
+            &current_lease,
+            did_operation.clone(),
+            &unit,
+            &initial,
+        )?;
         let challenge = issue_identity_binding_challenge_with_retry(
             &account_client,
             &challenge_request,
-            challenge_retry_deadline,
+            retry_deadline,
             &mut on_challenge_rate_limit,
         )
         .await?;
@@ -469,6 +540,8 @@ pub async fn complete_account_handoff_binding(
         )
         .await?;
         persist_register_request_prepared_checkpoint(checkpoint, state_store).await?;
+        challenge_retry_deadline = Some(retry_deadline);
+        lease = Some(current_lease);
         request
     };
     let (register_request, register_outcome) = match account_client
@@ -481,6 +554,11 @@ pub async fn complete_account_handoff_binding(
             if !crate::api_error::is_identity_creation_challenge_expired_error(&error) {
                 return Err(error);
             }
+            if replaying_prepared_request && handoff.bound_principal_id.is_some() {
+                return Err(error.context(
+                    "Account Authority did not replay the already-bound canonical registration outcome",
+                ));
+            }
             // A challenge is the sole ephemeral field in the prepared
             // request. Keep the lease, DID operation, genesis unit and
             // user-confirmed Recovery Key; replace only this terminal
@@ -488,9 +566,14 @@ pub async fn complete_account_handoff_binding(
             crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
                 checkpoint,
             )?;
+            let lease = lease
+                .as_ref()
+                .context("identity-creation lease is unavailable for challenge renewal")?;
+            let challenge_retry_deadline = challenge_retry_deadline
+                .context("identity-creation retry deadline is unavailable")?;
             let renewed_challenge_request = garth::identity_binding_challenge_request(
                 arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
-                &lease,
+                lease,
                 checkpoint.did_operation.clone(),
                 &unit,
                 &initial,

@@ -1,7 +1,11 @@
 use arkret_sdk::http_client::{Auth, ClientBuilder};
+use chrono::Utc;
 use dioxus::prelude::*;
 use dioxus_router::Link;
-use garth::{AccountHandoffDisposition, OidcAccountHandoffInput};
+use garth::{
+    AccountHandoffDisposition, LoginKind, OidcAccountHandoffInput, OidcLogin, SessionEngine,
+    SessionGrantState,
+};
 
 use crate::components::UiIcon;
 use crate::config::{
@@ -24,11 +28,27 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
 
-struct OidcCallbackOutcome {
-    /// Account-private preference returned by the authenticated, DPoP-bound
-    /// account handoff. Every callback continues through the server-authored
-    /// onboarding projection, including already-bound accounts.
-    preferred_locale: Option<crate::i18n::Locale>,
+#[derive(Clone, Debug)]
+struct CompletedLogin {
+    principal_server_url: String,
+    actor: arkret_sdk::DidFullId,
+    personal_handle: Option<String>,
+    device_id: String,
+    dpop_device_key: crate::state::DpopDeviceKeyRecord,
+    session_credential: String,
+    session_grant: PersistedSessionGrant,
+}
+
+enum OidcCallbackOutcome {
+    /// A known principal and its durable local device identity were retained,
+    /// so Account Authority issued a fresh session grant for that same device.
+    Login(Box<CompletedLogin>),
+    /// No usable local device identity was available. The Account Authority's
+    /// typed handoff decides between first creation and existing-account
+    /// recovery; Inkson does not infer either state locally.
+    Onboarding {
+        preferred_locale: Option<crate::i18n::Locale>,
+    },
 }
 
 fn recover_pending_handoff_for_sign_in(
@@ -121,7 +141,7 @@ pub fn LoginPanel(
     });
     let mut is_busy = use_signal(|| auto_capture_callback);
     let mut callback_started = use_signal(|| false);
-    let state_store_write = state_store;
+    let mut state_store_write = state_store;
     // Whether the styled Principal Server preset list is expanded. Inkson is a
     // neutral client: the field is a free-text URL input that the user can edit
     // to point at ANY server, with this custom-styled dropdown offering the
@@ -147,9 +167,62 @@ pub fn LoginPanel(
         let callback_device = device_id();
         let result = finish_oidc_callback(callback_device, state_store_write).await;
         match result {
-            Ok(outcome) => {
+            Ok(OidcCallbackOutcome::Login(completed)) => {
+                let principal_server_url = normalize_server_url(&completed.principal_server_url);
+                let actor = completed.actor.to_string();
+                let server_changed = {
+                    let previous = normalize_server_url(&base_url());
+                    !previous.trim().is_empty() && previous != principal_server_url
+                };
+                let mut persist_error = None::<String>;
+                {
+                    let mut store = state_store_write.write();
+                    let new_account = store.adopt_pending_login(&completed.actor);
+                    if server_changed && !new_account {
+                        store.clear_account_scoped();
+                        store.set_session_grant(None);
+                    }
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                    if let Err(error) = persist_completed_login_dpop_key(
+                        &mut store,
+                        secure_store.as_ref(),
+                        &completed.actor,
+                        &completed.device_id,
+                        &completed.dpop_device_key,
+                    ) {
+                        persist_error = Some(format!(
+                            "Could not persist the returning-device session key: {error}"
+                        ));
+                    } else {
+                        if let Some(handle) = completed.personal_handle.as_deref() {
+                            store.set_primary_handle(handle);
+                        }
+                        store.register_known_account(&actor);
+                        store.set_session_grant(Some(completed.session_grant.clone()));
+                    }
+                }
+                if let Some(error) = persist_error {
+                    auth_status.set(error);
+                    is_busy.set(false);
+                    return;
+                }
+                base_url.set(principal_server_url.clone());
+                account_did.set(actor.clone());
+                device_id.set(completed.device_id.clone());
+                token.set(completed.session_credential.clone());
+                persist_config(
+                    config_store,
+                    principal_server_url,
+                    actor,
+                    completed.device_id.clone(),
+                    completed.session_credential.clone(),
+                );
+                auth_status.set("Signed in on this authorized device.".to_owned());
+                on_login.call(());
+            }
+            Ok(OidcCallbackOutcome::Onboarding { preferred_locale }) => {
                 apply_authenticated_account_locale(
-                    outcome.preferred_locale,
+                    preferred_locale,
                     state_store_write,
                     &mut locale,
                 );
@@ -163,17 +236,38 @@ pub fn LoginPanel(
         is_busy.set(false);
     });
 
-    // Account selection and the resulting principal binding belong to the
-    // Account Authority. A stale local account must never constrain a new
-    // interactive sign-in. Only a verified unfinished handoff can retain its
-    // pending device id; every other account-first sign-in starts in a fresh
-    // anonymous device namespace.
+    // Coauth remains authoritative for which account the user authenticates.
+    // For a locally retained principal, Inkson carries that principal only as
+    // an assertion for the canonical session-grant exchange; coauth verifies
+    // the assertion against the selected account and the server verifies the
+    // durable device authorization. Account-first sign-in (no usable local
+    // device identity) continues through an anonymous account handoff.
     let sign_in_session = session.clone();
     let mut launch_sign_in = move || {
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
-        let device = interactive_sign_in_device_id(&state_store.read());
-        device_id.set(device.clone());
+        let loaded_config = config_store.read().load();
+        let live_actor = account_did();
+        let persisted_actor = if live_actor.trim().is_empty() {
+            loaded_config.account_did
+        } else {
+            live_actor
+        };
+        let persisted_device = if crate::config::is_valid_device_id(&loaded_config.device_id) {
+            loaded_config.device_id
+        } else {
+            device_id()
+        };
+        let returning_principal = {
+            let store = state_store.read();
+            match returning_sign_in_principal(&store, &persisted_actor) {
+                Ok(principal) => principal,
+                Err(error) => {
+                    auth_status.set(error);
+                    return;
+                }
+            }
+        };
         let mut reset_state_store = state_store;
         let session = sign_in_session.clone();
         is_busy.set(true);
@@ -191,16 +285,92 @@ pub fn LoginPanel(
                 return;
             }
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let resume_account_handoff = {
-                let mut store = reset_state_store.write();
-                recover_pending_handoff_for_sign_in(&mut store, secure_store.as_ref(), &device)
+            let returning_device = if let Some(expected) = returning_principal.as_ref() {
+                match returning_device_id(secure_store.as_ref(), expected, &persisted_device) {
+                    Ok(device) => device,
+                    Err(error) => {
+                        is_busy.set(false);
+                        auth_status.set(error);
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+            let (pending_handoff, has_pending_checkpoint, recovery_ready) = {
+                let store = reset_state_store.read();
+                let pending_handoff = store.pending_account_handoff();
+                let has_pending_checkpoint = store.pending_principal_registration().is_some();
+                let recovery_ready = returning_principal.as_ref().is_some_and(|principal| {
+                    store.recovery_material_evidence().is_some_and(|evidence| {
+                        evidence.principal_id == *principal
+                            && pending_handoff.as_ref().is_none_or(|handoff| {
+                                evidence.device_id.as_str() == handoff.device_id
+                            })
+                            && crate::views::recovery::local_recovery_public_key_result(
+                                &store,
+                                principal.as_str(),
+                            )
+                            .is_ok()
+                    })
+                });
+                (pending_handoff, has_pending_checkpoint, recovery_ready)
+            };
+            let use_returning_device = returning_principal
+                .as_ref()
+                .zip(returning_device.as_ref())
+                .is_some_and(|(principal, _)| {
+                    returning_device_can_bypass_handoff(
+                        pending_handoff.as_ref(),
+                        principal,
+                        has_pending_checkpoint,
+                        recovery_ready,
+                    )
+                });
+            let pending_device = pending_handoff
+                .as_ref()
+                .map(|handoff| handoff.device_id.clone())
+                .filter(|device| crate::config::is_valid_device_id(device));
+            let resume_account_handoff =
+                if !use_returning_device && let Some(pending_device) = pending_device.as_deref() {
+                    let mut store = reset_state_store.write();
+                    recover_pending_handoff_for_sign_in(
+                        &mut store,
+                        secure_store.as_ref(),
+                        pending_device,
+                    )
+                } else {
+                    false
+                };
+            let (device, expected_principal) = if resume_account_handoff {
+                (
+                    pending_device.expect("resumable handoff has a device id"),
+                    None,
+                )
+            } else if use_returning_device {
+                (
+                    returning_device.expect("selected returning device exists"),
+                    returning_principal,
+                )
+            } else {
+                (crate::config::new_device_id(), None)
             };
             // Stop every old-account poller before installing the anonymous
             // pending namespace. Otherwise a delayed refresh can reinstall the
             // previous account's signer while onboarding is preparing proofs.
             session.invalidate("starting an account sign-in transaction");
             token.set(String::new());
-            account_did.set(String::new());
+            device_id.set(device.clone());
+            if expected_principal.is_none() {
+                account_did.set(String::new());
+                persist_config(
+                    config_store,
+                    principal.clone(),
+                    String::new(),
+                    device.clone(),
+                    String::new(),
+                );
+            }
             if resume_account_handoff {
                 // An unfinished identity-creation lease is fenced to this DPoP
                 // holder. Rotating the key here makes the same browser look like
@@ -239,6 +409,13 @@ pub fn LoginPanel(
                     return;
                 }
             };
+            if !resume_account_handoff
+                && let Err(error) = pending_store.delete(secure_store.as_ref())
+            {
+                is_busy.set(false);
+                auth_status.set(format!("Could not rotate the pending sign-in key: {error}"));
+                return;
+            }
             pending_store.activate();
             if let Err(error) = pending_store.save_device_id(secure_store.as_ref()) {
                 tracing::warn!(%error, "persist pending device_id for sign-in failed");
@@ -247,6 +424,7 @@ pub fn LoginPanel(
                 &principal,
                 device.trim(),
                 OidcEntryPoint::SignIn,
+                expected_principal.as_ref(),
                 &ui_locale,
             )
             .await
@@ -359,8 +537,9 @@ pub fn LoginPanel(
                 }
 
                 // A single sign-in action. Account selection is delegated to the
-                // Account Authority's OIDC screen — inkson only chooses the
-                // Principal Server and does not assert a local account DID.
+                // Account Authority's OIDC screen. A browser that still owns an
+                // authorized device also binds the callback to that local principal;
+                // otherwise the server returns an account handoff for onboarding.
                 Button {
                     variant: ButtonVariant::Primary,
                     class: "auth-primary",
@@ -501,12 +680,98 @@ fn restore_oidc_callback_device_seed_scope(
     Ok(pending_store)
 }
 
-fn interactive_sign_in_device_id(store: &LocalStateStore) -> String {
-    store
-        .pending_account_handoff()
-        .map(|handoff| handoff.device_id)
-        .filter(|device| crate::config::is_valid_device_id(device))
-        .unwrap_or_else(crate::config::new_device_id)
+fn returning_sign_in_principal(
+    store: &LocalStateStore,
+    persisted_actor: &str,
+) -> Result<Option<arkret_sdk::DidFullId>, String> {
+    let actor = persisted_actor.trim();
+    if actor.is_empty() {
+        return Ok(None);
+    }
+    if let Ok(full_id) = arkret_sdk::DidFullId::new(actor.to_owned()) {
+        arkret_sdk::project_full_id_to_core_id(&full_id)
+            .map_err(|error| format!("The saved account principal cannot be projected: {error}"))?;
+        return Ok(Some(full_id));
+    }
+
+    let core_id = arkret_sdk::DidCoreId::new(actor.to_owned())
+        .map_err(|error| format!("The saved account principal is invalid: {error}"))?;
+    let Some(evidence) = store.recovery_material_evidence() else {
+        // Older profiles may contain only a stable core id. Without retained
+        // full-id evidence we cannot safely restore the event signer binding;
+        // continue as account-first recovery rather than inventing a full DID.
+        return Ok(None);
+    };
+    let evidence_core = arkret_sdk::project_full_id_to_core_id(&evidence.principal_id)
+        .map_err(|error| format!("The retained principal evidence is invalid: {error}"))?;
+    if evidence_core != core_id {
+        return Err(
+            "The saved account principal does not match this device's retained identity evidence. No local device state was used."
+                .to_owned(),
+        );
+    }
+    Ok(Some(evidence.principal_id))
+}
+
+fn principal_value_matches_full(value: &str, expected: &arkret_sdk::DidFullId) -> bool {
+    let Ok(expected_core) = arkret_sdk::project_full_id_to_core_id(expected) else {
+        return false;
+    };
+    arkret_sdk::DidCoreId::new(value.trim().to_owned()).is_ok_and(|core| core == expected_core)
+        || arkret_sdk::DidFullId::new(value.trim().to_owned())
+            .ok()
+            .and_then(|full| arkret_sdk::project_full_id_to_core_id(&full).ok())
+            .is_some_and(|core| core == expected_core)
+}
+
+fn returning_device_can_bypass_handoff(
+    pending_handoff: Option<&crate::state::PendingAccountHandoff>,
+    expected: &arkret_sdk::DidFullId,
+    has_pending_checkpoint: bool,
+    recovery_ready: bool,
+) -> bool {
+    if has_pending_checkpoint {
+        return false;
+    }
+    pending_handoff.is_none_or(|handoff| {
+        recovery_ready
+            && handoff
+                .bound_principal_id
+                .as_deref()
+                .is_some_and(|bound| principal_value_matches_full(bound, expected))
+    })
+}
+
+fn returning_device_id(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    principal_id: &arkret_sdk::DidFullId,
+    configured_device_id: &str,
+) -> Result<Option<String>, String> {
+    let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)
+        .map_err(|error| format!("Project the returning account principal: {error}"))?;
+    let user_store = crate::secure_key_store::UserLocalStore::new(principal_core_id);
+    let Some(stored_device_id) = user_store
+        .load_device_id(secure_store)
+        .map_err(|error| format!("Load the returning account device id: {error}"))?
+    else {
+        return Ok(None);
+    };
+    if user_store
+        .load_signing_seed(secure_store)
+        .map_err(|error| format!("Load the returning account device identity: {error}"))?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let configured_device_id = configured_device_id.trim();
+    if !configured_device_id.is_empty() && configured_device_id != stored_device_id.as_str() {
+        tracing::warn!(
+            configured_device_id,
+            stored_device_id = %stored_device_id,
+            "using secure-store device id instead of stale public config during returning sign-in"
+        );
+    }
+    Ok(Some(stored_device_id.to_string()))
 }
 
 pub(crate) fn persist_completed_login_dpop_key(
@@ -575,6 +840,21 @@ fn discard_failed_oidc_callback(error: String) -> String {
     {
         tracing::warn!(%clear_error, "clear failed OIDC scaffold failed");
     }
+    if error.contains("principal binding mismatch")
+        || error.contains("different principal or device")
+        || error.contains("does not match the returning principal")
+    {
+        return "The account authenticated at the Account Authority does not match this local device. No device state was changed; sign in again with the account already stored on this device."
+            .to_owned();
+    }
+    if error.contains("principal_unknown") {
+        return "The Account Authority no longer has a verified binding for this local principal. No new identity was created; use account recovery or diagnostics."
+            .to_owned();
+    }
+    if error.contains("device_revoked") || error.contains("device_revocation_pending") {
+        return "This locally retained device is no longer authorized by the principal. Use the new-device recovery flow; the old device identity was not reused."
+            .to_owned();
+    }
     format!("{error} Start sign-in again.")
 }
 
@@ -582,6 +862,7 @@ pub(crate) async fn start_oidc_strand(
     principal_server_url: &str,
     device_id: &str,
     entry_point: OidcEntryPoint,
+    expected_principal_full_id: Option<&arkret_sdk::DidFullId>,
     ui_locale: &str,
 ) -> Result<(), String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
@@ -623,6 +904,7 @@ pub(crate) async fn start_oidc_strand(
         device_id,
         &discovery.issuer,
         &resolver.principal_trust_domain,
+        expected_principal_full_id,
     );
     persist_oidc_scaffold(&scaffold)
         .map_err(|error| format!("Could not save sign-in state: {error}"))?;
@@ -756,7 +1038,96 @@ async fn finish_oidc_callback(
         .allow_insecure_localhost()
         .auth(Auth::Dpop(dpop_handle.sdk_dpop_proof_only_auth()))
         .build()
-        .map_err(|error| format!("Build Account Authority handoff client failed: {error}"))?;
+        .map_err(|error| format!("Build Account Authority OIDC client failed: {error}"))?;
+    if let Some(expected_full_id) = scaffold.expected_principal_full_id.clone() {
+        let expected_principal_id = arkret_sdk::project_full_id_to_core_id(&expected_full_id)
+            .map_err(|error| format!("invalid returning principal full_id: {error}"))?;
+        let typed_device_id = arkret_sdk::DeviceId::new(device.clone())
+            .map_err(|error| format!("invalid returning device_id: {error}"))?;
+        let signed_login = OidcLogin {
+            principal_id: expected_principal_id.clone(),
+            device_id: Some(typed_device_id.clone()),
+            requested_scope: Vec::new(),
+            challenge: String::new(),
+            audience: principal_audience.clone(),
+            issuer: scaffold.issuer.clone(),
+            client_id: scaffold.client_id.clone(),
+            redirect_uri: scaffold.callback_uri.clone(),
+            state: returned_state.clone(),
+            nonce: scaffold.expected_nonce.clone(),
+            authorization_code: authorization_code.clone(),
+            code_verifier: scaffold.code_verifier.clone(),
+        }
+        .sign(|bytes| {
+            dpop_handle
+                .sign_protocol_bytes(bytes)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        })
+        .map_err(|error| format!("OIDC session-grant request failed: {error}"))?;
+        let session_engine = SessionEngine::new(http);
+        session_engine
+            .login(LoginKind::Oidc(signed_login), Utc::now())
+            .await
+            .map_err(|error| format!("Account Authority session-grant issue failed: {error}"))?;
+        let session_grant = session_engine.current_state().ok_or_else(|| {
+            "Account Authority session-grant issue did not yield state.".to_owned()
+        })?;
+        if session_grant.principal_id != expected_principal_id
+            || session_grant.device_id.as_ref() != Some(&typed_device_id)
+        {
+            return Err(
+                "Account Authority returned a session for a different principal or device. No local account state was adopted."
+                    .to_owned(),
+            );
+        }
+        let principal = TransportClient::unauthenticated(&principal_server_url)
+            .map_err(|error| format!("Invalid principal server URL: {error}"))?;
+        let authed_principal = principal
+            .with_bearer(session_grant.grant_jwt.clone())
+            .map_err(|error| format!("Attach returning session grant: {error}"))?
+            .with_dpop_device(dpop_handle.clone())
+            .map_err(|error| format!("Attach returning DPoP key: {error}"))?;
+        let account = async {
+            crate::transport::account::account_me(&authed_principal.sdk_http_client()?).await
+        }
+        .await
+        .map_err(|error| {
+            format!("Principal server did not accept the session grant + DPoP: {error}")
+        })?;
+        let account_principal_id = arkret_sdk::DidCoreId::new(account.did.clone())
+            .map_err(|error| format!("Principal server returned an invalid account id: {error}"))?;
+        if account_principal_id != expected_principal_id {
+            return Err(
+                "Principal server account does not match the returning principal. No local account state was adopted."
+                    .to_owned(),
+            );
+        }
+        let session_private_key_pem = dpop_handle
+            .session_signing_key_pkcs8_pem()
+            .map_err(|error| format!("export device session key: {error}"))?
+            .to_string();
+        let dpop_device_key =
+            crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+                dpop_handle.seed_b64().as_str(),
+            )
+            .map_err(|error| format!("DPoP device key record failed: {error}"))?;
+        let persisted_session_grant = persisted_session_grant_from_state(
+            &session_grant,
+            &session_private_key_pem,
+            &principal_server_url,
+            &device,
+        );
+        let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
+        return Ok(OidcCallbackOutcome::Login(Box::new(CompletedLogin {
+            principal_server_url,
+            actor: expected_full_id,
+            personal_handle: crate::app::personal_handle_from_account_handle(&account.handle),
+            device_id: device,
+            dpop_device_key,
+            session_credential: session_grant.grant_jwt.clone(),
+            session_grant: persisted_session_grant,
+        })));
+    }
     let handoff_request = garth::oidc_account_handoff_request(
         OidcAccountHandoffInput {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
@@ -815,7 +1186,7 @@ async fn finish_oidc_callback(
                 .map_err(|error| format!("Persist public handoff checkpoint failed: {error}"))?;
         }
         let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
-        return Ok(OidcCallbackOutcome {
+        return Ok(OidcCallbackOutcome::Onboarding {
             preferred_locale: handoff.preferred_locale,
         });
     }
@@ -856,7 +1227,7 @@ async fn finish_oidc_callback(
                 .map_err(|error| format!("Persist busy handoff checkpoint failed: {error}"))?;
         }
         let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
-        return Ok(OidcCallbackOutcome {
+        return Ok(OidcCallbackOutcome::Onboarding {
             preferred_locale: handoff.preferred_locale,
         });
     }
@@ -895,9 +1266,28 @@ async fn finish_oidc_callback(
             .map_err(|error| format!("Persist account recovery checkpoint failed: {error}"))?;
     }
     let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
-    Ok(OidcCallbackOutcome {
+    Ok(OidcCallbackOutcome::Onboarding {
         preferred_locale: handoff.preferred_locale,
     })
+}
+
+fn persisted_session_grant_from_state(
+    grant: &SessionGrantState,
+    session_private_key_pem: &str,
+    principal_server_url: &str,
+    device_id: &str,
+) -> PersistedSessionGrant {
+    PersistedSessionGrant {
+        grant_jwt: grant.grant_jwt.clone(),
+        session_private_key_pem: session_private_key_pem.to_owned(),
+        grant_id: grant.grant_id.as_str().to_owned(),
+        audience: grant.audience.to_string(),
+        principal_id: grant.principal_id.to_string(),
+        device_id: device_id.to_owned(),
+        principal_server_url: principal_server_url.to_owned(),
+        grant_expires_at: Some(grant.expires_at),
+        stored_at: Utc::now(),
+    }
 }
 
 fn apply_authenticated_account_locale(
@@ -1125,6 +1515,27 @@ mod tests {
     }
 
     #[test]
+    fn returning_login_principal_mismatch_fails_closed_with_specific_guidance() {
+        assert_eq!(
+            discard_failed_oidc_callback(
+                "Account Authority session-grant issue failed: principal binding mismatch"
+                    .to_owned()
+            ),
+            "The account authenticated at the Account Authority does not match this local device. No device state was changed; sign in again with the account already stored on this device."
+        );
+    }
+
+    #[test]
+    fn revoked_returning_device_is_not_silently_recreated() {
+        assert_eq!(
+            discard_failed_oidc_callback(
+                "Account Authority session-grant issue failed: device_revoked".to_owned()
+            ),
+            "This locally retained device is no longer authorized by the principal. Use the new-device recovery flow; the old device identity was not reused."
+        );
+    }
+
+    #[test]
     fn oidc_callback_restores_bootstrap_device_seed_scope() {
         let _lock = seed_scope_test_lock();
         let _reset = SeedScopeReset::new();
@@ -1141,30 +1552,91 @@ mod tests {
     }
 
     #[test]
-    fn interactive_sign_in_never_reuses_an_active_accounts_device() {
+    fn account_first_sign_in_has_no_returning_principal() {
         let store = crate::state::isolated_store_for_tests("account-first-fresh-device");
-        let selected = interactive_sign_in_device_id(&store);
+        assert_eq!(returning_sign_in_principal(&store, "").unwrap(), None);
+    }
 
-        assert!(crate::config::is_valid_device_id(&selected));
-        assert_ne!(
-            selected, "ak:device:01964137-0000-7000-8000-000000000001",
-            "account-first sign-in must not inherit a device from a locally active account"
+    #[test]
+    fn returning_sign_in_keeps_the_resolvable_principal_assertion() {
+        let store = crate::state::isolated_store_for_tests("returning-principal");
+        let actor = "did:webvh:z6mkfixture:alice.example";
+
+        assert_eq!(
+            returning_sign_in_principal(&store, actor)
+                .unwrap()
+                .expect("returning principal")
+                .as_str(),
+            actor
         );
     }
 
     #[test]
-    fn interactive_sign_in_only_reuses_a_pending_handoff_device() {
-        let mut store = crate::state::isolated_store_for_tests("account-first-pending-device");
-        let handoff = pending_handoff_for_test(
+    fn returning_device_bypasses_only_a_matching_bound_handoff() {
+        let principal =
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal).unwrap();
+        let mut handoff = pending_handoff_for_test(
             "ak:request:019f0000-0000-7000-8000-000000000013",
             "alice:auth.example",
         );
-        let expected = handoff.device_id.clone();
-        store
-            .set_pending_account_handoff(Some(handoff))
-            .expect("pending handoff");
 
-        assert_eq!(interactive_sign_in_device_id(&store), expected);
+        assert!(returning_device_can_bypass_handoff(
+            None, &principal, false, false
+        ));
+        assert!(
+            !returning_device_can_bypass_handoff(Some(&handoff), &principal, false, false,),
+            "an unfinished identity creation must keep its fenced handoff"
+        );
+
+        handoff.bound_principal_id = Some(principal_core.to_string());
+        assert!(
+            returning_device_can_bypass_handoff(Some(&handoff), &principal, false, true),
+            "a matching bound handoff may be bypassed only after local recovery readiness is complete"
+        );
+        assert!(
+            !returning_device_can_bypass_handoff(Some(&handoff), &principal, true, true),
+            "a pending registration checkpoint must always resume before ordinary login"
+        );
+
+        handoff.bound_principal_id = Some("ak:did_core:web:bob.example".to_owned());
+        assert!(
+            !returning_device_can_bypass_handoff(Some(&handoff), &principal, false, true,),
+            "a foreign bound handoff must never be discarded by local account state"
+        );
+    }
+
+    #[test]
+    fn returning_sign_in_requires_the_durable_device_identity_key() {
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        let principal = arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap();
+        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal).unwrap();
+        let user_store = crate::secure_key_store::UserLocalStore::new(principal_core);
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
+                .unwrap();
+        user_store.save_device_id(&secure_store, &device).unwrap();
+
+        assert_eq!(
+            returning_device_id(&secure_store, &principal, device.as_str()).unwrap(),
+            None,
+            "a public device id without its long-term signing key is a new device"
+        );
+
+        user_store
+            .save_signing_seed(&secure_store, &[41_u8; 32])
+            .unwrap();
+        assert_eq!(
+            returning_device_id(
+                &secure_store,
+                &principal,
+                "ak:device:01964137-0000-7000-8000-000000000099",
+            )
+            .unwrap()
+            .as_deref(),
+            Some(device.as_str()),
+            "secure storage is authoritative over a stale public config"
+        );
     }
 
     #[test]

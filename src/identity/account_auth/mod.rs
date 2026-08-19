@@ -81,14 +81,24 @@ pub struct PersistedOidcScaffold {
     /// own challenge transcript trust domain.
     #[serde(default)]
     pub principal_trust_domain: String,
+    /// A locally retained, resolvable principal identity for a returning-device
+    /// sign-in. When present, the callback exchanges the OIDC code for a
+    /// principal-bound session grant instead of creating an account handoff.
+    ///
+    /// This is an assertion to be checked by the Account Authority, not a
+    /// login hint: the user still selects/authenticates the account at the
+    /// issuer, and a different account must fail closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_principal_full_id: Option<arkret_sdk::DidFullId>,
 }
 
 /// The Account Authority entry point selected before leaving Inkson.
 ///
-/// This value controls only the OIDC interaction hint. The authenticated
-/// account and its durable binding/identity-creation state come exclusively
-/// from the typed account handoff returned by the Account Authority; Inkson
-/// must not constrain that result with a principal left in local browser state.
+/// This value controls only the OIDC interaction hint. Account-first creation
+/// and recovery follow the typed handoff returned by the Account Authority.
+/// A returning device may separately carry an expected principal assertion in
+/// [`PersistedOidcScaffold`], which the session-grant endpoint verifies against
+/// the account the user actually authenticates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OidcEntryPoint {
     CreateIdentity,

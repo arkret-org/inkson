@@ -172,7 +172,12 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         }
                     },
                     Route::Register => rsx! {
-                        crate::views::register::RegistrationPanel { device_id }
+                        crate::views::register::RegistrationPanel {
+                            device_id,
+                            token,
+                            account_did,
+                            config_store,
+                        }
                     },
                     Route::Dashboard => rsx! {
                         crate::views::dashboard::DashboardPanel {
