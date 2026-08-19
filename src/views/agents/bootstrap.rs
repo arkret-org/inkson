@@ -652,8 +652,7 @@ async fn collect_current_managed_pcr_backup_items(
     current: ManagedPcrBackupItem,
 ) -> anyhow::Result<Vec<ManagedPcrBackupItem>> {
     let controller_full_id = arkret_sdk::DidFullId::new(controller_id.to_owned())?;
-    let controller_actor_id =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&controller_full_id)?);
+    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(&controller_full_id)?;
     let current_binding = current
         .binding
         .as_ref()
@@ -992,8 +991,7 @@ pub(crate) async fn seal_self_principal_event_current(
     let predecessor = submitter
         .events_frontier_realm_seal_view(realm_id.as_str())
         .await?;
-    let controller_actor_id =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
+    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(controller_id)?;
     let mut accepted = submitter
         .backfill(realm_id.as_str())
         .await?
@@ -1229,11 +1227,9 @@ pub(crate) async fn bootstrap_provisioned_agent(
             .map_err(anyhow::Error::msg)?
         }
         .ok_or_else(|| anyhow::anyhow!("Agent PCR MLS genesis was not built"))?;
-        genesis.executed_by = Some(arkret_sdk::DidCoreId::from(
-            arkret_sdk::project_full_id_to_core_id(&arkret_sdk::DidFullId::new(
-                controller_id.clone(),
-            )?)?,
-        ));
+        genesis.executed_by = Some(arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::DidFullId::new(controller_id.clone())?,
+        )?);
         genesis.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
                 .map_err(anyhow::Error::msg)?,

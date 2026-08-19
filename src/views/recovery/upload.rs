@@ -136,14 +136,14 @@ pub(crate) fn upload_recovery_key_account_backup(
                 // The caller already confirmed cold custody before invoking
                 // this function. Only public local metadata and the server fact
                 // that ciphertext exists are persisted after acceptance.
-                if let Ok(mut store) = state_store.try_write() {
-                    if let Some(configured_backup_id) = account_backup_id.as_deref() {
-                        crate::components::mark_mls_recovery_backup_configured(
-                            &mut store,
-                            &actor_for_sidecar,
-                            configured_backup_id,
-                        );
-                    }
+                if let Ok(mut store) = state_store.try_write()
+                    && let Some(configured_backup_id) = account_backup_id.as_deref()
+                {
+                    crate::components::mark_mls_recovery_backup_configured(
+                        &mut store,
+                        &actor_for_sidecar,
+                        configured_backup_id,
+                    );
                 }
                 if account_backup_id.is_some()
                     && let Some(mut needs_mls_backup) = needs_mls_backup_signal

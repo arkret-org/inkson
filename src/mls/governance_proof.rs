@@ -647,10 +647,9 @@ fn event_device_proof_pair(
     let signer = verification_method_did(&proof.verification_method)
         .map_err(|error| format!("invalid Event verification method: {error}"))?;
     let signing_actor = event.executed_by.as_ref().unwrap_or(&event.actor_id);
-    if arkret_sdk::DidCoreId::from(
-        arkret_sdk::project_full_id_to_core_id(&signer)
-            .map_err(|error| format!("project Event proof signer: {error}"))?,
-    ) != *signing_actor
+    if arkret_sdk::project_full_id_to_core_id(&signer)
+        .map_err(|error| format!("project Event proof signer: {error}"))?
+        != *signing_actor
     {
         return Err(format!(
             "MLS governance frontier Event signer {signer} does not match actor/executor {signing_actor}"
@@ -1368,7 +1367,6 @@ fn managed_agent_pcr_delegated_controller(
         .find(|full_id| {
             arkret_sdk::project_full_id_to_core_id(full_id)
                 .ok()
-                .map(arkret_sdk::DidCoreId::from)
                 .as_ref()
                 == Some(&controller)
         })
@@ -1546,12 +1544,10 @@ mod tests {
                 )
                 .unwrap(),
             },
-            arkret_sdk::DidCoreId::from(
-                arkret_sdk::project_full_id_to_core_id(
-                    &arkret_sdk::DidFullId::new(actor.to_owned()).unwrap(),
-                )
-                .unwrap(),
-            ),
+            arkret_sdk::project_full_id_to_core_id(
+                &arkret_sdk::DidFullId::new(actor.to_owned()).unwrap(),
+            )
+            .unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             1,
             arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e".to_owned()).unwrap(),
@@ -1620,12 +1616,12 @@ mod tests {
         let controller = "did:webvh:zfixture:controller.example";
         let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let mut event = frontier_event(actor);
-        event.executed_by = Some(arkret_sdk::DidCoreId::from(
+        event.executed_by = Some(
             arkret_sdk::project_full_id_to_core_id(
                 &arkret_sdk::DidFullId::new(controller.to_owned()).unwrap(),
             )
             .unwrap(),
-        ));
+        );
 
         assert_eq!(
             event_device_proof_pair(&event, &proof(&format!("{controller}#{device}")),).unwrap(),

@@ -84,7 +84,7 @@ pub fn build_appeal_submit_op(
         decision_ref: arkret_sdk::EventId::new(decision_event_id)
             .map_err(|err| anyhow::anyhow!("invalid decision_event_id: {err}"))?,
         target_ref: target_ref.to_owned(),
-        appellant: crate::mls_api_helpers::principal_core_id(&appellant)
+        appellant: crate::mls_api_helpers::principal_core_id(appellant)
             .map_err(|err| anyhow::anyhow!("invalid appellant did: {err}"))?,
         reason_text_ref: reason_text_ref.to_owned(),
         evidence_refs: Vec::new(),

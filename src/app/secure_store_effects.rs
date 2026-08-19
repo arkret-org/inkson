@@ -403,6 +403,11 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
 /// A durable signing seed identifies a key, not the account identity that
 /// authorizes that key. Rebind the freshly loaded key to the active account's
 /// full DID on every boot before session refresh or Event authoring can run.
+// The only production caller lives inside the `#[cfg(target_arch = "wasm32")]`
+// secure-store upgrade block above; the remaining callers are this file's
+// `#[cfg(test)]` tests. Gate on the union of both so native non-test builds
+// do not report it as dead code.
+#[cfg(any(target_arch = "wasm32", test))]
 fn bind_active_signer_to_account_session(
     account_scope: &str,
     device_id: &str,

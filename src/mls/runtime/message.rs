@@ -439,7 +439,7 @@ pub fn ordinary_agent_mls_author_view(
         let Ok(signer_core) = arkret_sdk::project_full_id_to_core_id(&signer_id) else {
             continue;
         };
-        let signer_actor = arkret_sdk::DidCoreId::from(signer_core);
+        let signer_actor = signer_core;
         for entry in state_store.cached_agent_signer_evidence_for_agent(&signer_actor) {
             let binding = match &entry.evidence {
                 arkret_sdk::AgentSignerEvidence::CurrentAdmission {

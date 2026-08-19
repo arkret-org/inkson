@@ -61,9 +61,7 @@ mod device_identity_proof_tests {
             jws: String::new(),
         };
         let binding_bytes = proof
-            .canonical_binding_bytes(&arkret_sdk::DidCoreId::from(
-                arkret_sdk::project_full_id_to_core_id(&did).unwrap(),
-            ))
+            .canonical_binding_bytes(&arkret_sdk::project_full_id_to_core_id(&did).unwrap())
             .unwrap();
         proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
         envelope.as_object_mut().unwrap().insert(

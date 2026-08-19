@@ -349,6 +349,10 @@ pub async fn standard_initial_submission(
 /// Unlike [`standard_initial_submission`], this preserves the fixed lease
 /// window and obtains any external Control Move Control Proposal Ack before the
 /// Event can be queued for later delivery.
+// The `expect` below asserts the invariant named in its message — this
+// constructor always holds a lease; a `?` rewrite would add an error path no
+// caller can reach.
+#[allow(clippy::expect_used)]
 pub async fn delayed_initial_submission(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
@@ -432,9 +436,7 @@ impl LocalPrincipalAuthority {
         signer: &crate::event_signer::InksonEventSigner,
     ) -> anyhow::Result<ControlProposalAuthorityAck> {
         let signer_principal = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-        if arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&signer_principal)?)
-            != self.signer_actor_id
-        {
+        if arkret_sdk::project_full_id_to_core_id(&signer_principal)? != self.signer_actor_id {
             anyhow::bail!("active signer does not project to the proposal authority actor");
         }
         let verification_method = signer.verification_method_for_principal(&signer_principal)?;
@@ -879,9 +881,7 @@ mod tests {
         let mut managed = event();
         managed.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap();
         let controller = arkret_sdk::DidFullId::new("did:web:alice.example").unwrap();
-        managed.executed_by = Some(arkret_sdk::DidCoreId::from(
-            arkret_sdk::project_full_id_to_core_id(&controller).unwrap(),
-        ));
+        managed.executed_by = Some(arkret_sdk::project_full_id_to_core_id(&controller).unwrap());
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );

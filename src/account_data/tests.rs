@@ -642,6 +642,134 @@ fn scheduled_send_key_requires_independent_scheduled_send_id() {
     assert!(scheduled_send_account_data_key("not-a-scheduled-send-id").is_err());
 }
 
+fn scheduled_send_test_payload() -> arkret_sdk::MessageCreatePayload {
+    arkret_sdk::MessageCreatePayload::with_content(
+        arkret_sdk::StrandId::new(
+            "ak:strand:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M".to_owned(),
+        )
+        .unwrap(),
+        "discussion",
+        arkret_sdk::ContentBlock::text("scheduled hello"),
+    )
+}
+
+#[test]
+fn scheduled_send_plan_value_round_trips_with_bound_digest() {
+    let value = build_scheduled_send_value(
+        "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
+        "2026-08-19T08:30:00.000Z",
+        scheduled_send_test_payload(),
+        "01970e589d21-0000-a13f9c2e",
+    )
+    .unwrap();
+    let wire = scheduled_send_account_data_value(&value).unwrap();
+    assert_eq!(wire["kind"], "scheduled_send");
+    assert_eq!(
+        wire["scheduled_send_id"].as_str().unwrap(),
+        "ak:scheduled_send:01904100-0000-7000-8000-000000000003"
+    );
+    // Spec §4: the plan MUST NOT pre-mint the future Event / Message identity.
+    let payload = wire["message_payload"].as_object().unwrap();
+    assert!(!payload.contains_key("event_id"));
+    assert!(!payload.contains_key("message_id"));
+    assert_eq!(
+        wire["message_payload_digest"].as_str().unwrap(),
+        arkret_sdk::scheduled_send_message_payload_digest(&value.message_payload).unwrap()
+    );
+    let parsed = scheduled_send_value_from_account_data(&wire).unwrap();
+    assert_eq!(scheduled_send_json(&parsed), scheduled_send_json(&value));
+}
+
+fn scheduled_send_json(value: &arkret_sdk::ScheduledSendValue) -> serde_json::Value {
+    serde_json::to_value(value).expect("scheduled_send value serializes")
+}
+
+#[test]
+fn scheduled_send_plan_rejects_preminted_event_identity_and_stale_digest() {
+    let mut wire = scheduled_send_account_data_value(
+        &build_scheduled_send_value(
+            "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
+            "2026-08-19T08:30:00.000Z",
+            scheduled_send_test_payload(),
+            "01970e589d21-0000-a13f9c2e",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    wire["message_payload"].as_object_mut().unwrap().insert(
+        "event_id".to_owned(),
+        json!("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"),
+    );
+    assert!(scheduled_send_value_from_account_data(&wire).is_err());
+
+    let mut stale_digest = scheduled_send_account_data_value(
+        &build_scheduled_send_value(
+            "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
+            "2026-08-19T08:30:00.000Z",
+            scheduled_send_test_payload(),
+            "01970e589d21-0000-a13f9c2e",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    stale_digest["message_payload_digest"] =
+        json!("sha256:0000000000000000000000000000000000000000000000000000000000000000");
+    assert!(scheduled_send_value_from_account_data(&stale_digest).is_err());
+
+    assert!(
+        build_scheduled_send_value(
+            "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
+            "2026-08-19 08:30",
+            scheduled_send_test_payload(),
+            "01970e589d21-0000-a13f9c2e",
+        )
+        .is_err(),
+        "send_at must be a canonical timestamp"
+    );
+}
+
+#[test]
+fn scheduled_send_merge_is_hlc_last_writer_wins_within_one_plan() {
+    let older = build_scheduled_send_value(
+        "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
+        "2026-08-19T08:30:00.000Z",
+        scheduled_send_test_payload(),
+        "01970e589d21-0000-a13f9c2e",
+    )
+    .unwrap();
+    let newer = build_scheduled_send_value(
+        "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
+        "2026-08-19T09:30:00.000Z",
+        scheduled_send_test_payload(),
+        "01970e589d22-0000-a13f9c2e",
+    )
+    .unwrap();
+
+    // First write of a plan has nothing to merge against.
+    assert_eq!(
+        scheduled_send_json(&merge_scheduled_send_values(older.clone(), None).unwrap()),
+        scheduled_send_json(&older)
+    );
+    // Both conflict arrival orders elect the newer updated_hlc.
+    assert_eq!(
+        scheduled_send_json(&merge_scheduled_send_values(older.clone(), Some(&newer)).unwrap()),
+        scheduled_send_json(&newer)
+    );
+    assert_eq!(
+        scheduled_send_json(&merge_scheduled_send_values(newer.clone(), Some(&older)).unwrap()),
+        scheduled_send_json(&newer)
+    );
+
+    let foreign = build_scheduled_send_value(
+        "ak:scheduled_send:01904100-0000-7000-8000-000000000004",
+        "2026-08-19T09:30:00.000Z",
+        scheduled_send_test_payload(),
+        "01970e589d22-0000-a13f9c2e",
+    )
+    .unwrap();
+    assert!(merge_scheduled_send_values(older, Some(&foreign)).is_err());
+}
+
 #[test]
 fn contact_and_realm_remarks_are_encrypted_account_data() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";

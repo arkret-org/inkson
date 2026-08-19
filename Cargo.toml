@@ -202,6 +202,12 @@ tokio-tungstenite = {workspace = true,features = ["rustls-tls-webpki-roots"]}
 # MLS, signer and platform-keystore integrations. Crypto capabilities are
 # selected directly on `arkret-crypto`.
 arkret-sdk = {workspace = true,features = ["client", "mls", "signer", "keystore-macos", "keystore-linux", "keystore-windows"]}
+# P3.2c request-layer SSRF guard for DID fetches (native only): judges the
+# derived URL, resolves the host, judges every DNS answer, and pins the
+# validated addresses into the client. wasm has no socket to pin — the
+# browser owns DNS there — so the wasm build keeps the static shared
+# classification (`host_is_safe_for_outbound`) as its whole guard.
+arkret-egress-reqwest = {version = "0.3.0",path = "../arkret-rust-sdk/crates/egress-reqwest"}
 garth = {path = "../garth",default-features = false,features = ["native"]}
 dioxus = {workspace = true,features = ["desktop", "web"]}
 notify-rust = {workspace = true}

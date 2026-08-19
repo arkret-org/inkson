@@ -43,7 +43,6 @@ pub(crate) enum UiNotificationAction {
         realm_id: String,
         invite_id: String,
         invite_token: Option<String>,
-        realm_label: Option<String>,
     },
 }
 
@@ -295,9 +294,11 @@ fn notification_from_stored(
             // Neither member is registered on the Invite object
             // (`governance-objects.md` §5.3), so the accept flow resolves the
             // Realm preview itself and the private delivery token — when a
-            // directed invite has one — arrives on the private delivery channel.
-            invite_token: None,
-            realm_label: None,
+            // directed invite has one — comes from the local private
+            // credential state the `ak.account.invite_delivery` carrier wrote.
+            invite_token: local_state
+                .invite_credential_for(invite.invite_id.as_str())
+                .map(|credential| credential.invite_token.clone()),
         });
     let timestamp = arkret_sdk::canonical::format_timestamp_canonical(value.created_at());
     let (projection_read, projection_archived) = notification_wire_state(&value);

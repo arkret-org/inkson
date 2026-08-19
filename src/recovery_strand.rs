@@ -129,9 +129,7 @@ pub async fn verify_recovery_authority_evidence(
 ) -> anyhow::Result<()> {
     evidence.pcr_genesis_unit.validate_ordered_envelopes()?;
     if evidence.pcr_genesis_unit.create().actor_id
-        != arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
-            &evidence.principal_id,
-        )?)
+        != arkret_sdk::project_full_id_to_core_id(&evidence.principal_id)?
         || evidence.pcr_genesis_unit.create().realm_id != evidence.principal_control_realm_id
         || evidence.pcr_genesis_unit.founding_authorize().realm_id
             != evidence.principal_control_realm_id
@@ -502,6 +500,9 @@ pub async fn ensure_active_recovery_policy(
     Ok(policy)
 }
 
+// The `expect` below asserts the delayed-submission lease invariant named in
+// its message; a `?` rewrite would add an error path no caller can reach.
+#[allow(clippy::expect_used)]
 async fn publish_recovery_policy(
     api: &TransportClient,
     principal_id: &str,

@@ -462,7 +462,10 @@ pub(crate) async fn execute_root_anchored_recovery(
         &recovery_material,
     )
     .await?;
-    let restore_report = {
+    // The restore report is intentionally not bound: the returned summary was
+    // only ever stored in a transaction field that was retired as never-read;
+    // the restore side effects inside the write guard are what matters here.
+    {
         let mut store = state_store.write();
         super::restore_mls_history_with_recovery_key_from_payload(
             &restore_payload,
@@ -472,8 +475,8 @@ pub(crate) async fn execute_root_anchored_recovery(
             session.requesting_device_id.as_str(),
             prepared.recovery_private_key.as_slice(),
             (session.policy_id.as_str(), session.policy_version),
-        )?
-    };
+        )?;
+    }
     {
         let store = state_store.write();
         let barrier = store.begin_durable_flush()?;
@@ -630,7 +633,7 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
         &recovery_material,
     )
     .await?;
-    let restore_report = {
+    {
         let mut store = state_store.write();
         super::restore_mls_history_with_recovery_key_from_payload(
             &restore_payload,
@@ -640,8 +643,8 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
             session.requesting_device_id.as_str(),
             &recovery_material.backup_hpke_serialized_private_key,
             (session.policy_id.as_str(), session.policy_version),
-        )?
-    };
+        )?;
+    }
     {
         let store = state_store.write();
         let barrier = store.begin_durable_flush()?;

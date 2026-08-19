@@ -390,9 +390,7 @@ mod tests {
 
     #[test]
     fn realm_links_use_fragment_for_https() {
-        let target = ShareTarget::realm(&format!(
-            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"
-        ));
+        let target = ShareTarget::realm("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU");
         let links = target.build_reference_links(LANDING, &[], AddressAction::View);
         // HTTPS landing keeps the target in the fragment.
         assert!(
@@ -409,8 +407,8 @@ mod tests {
     #[test]
     fn strand_links_ignore_via_and_roundtrip() {
         let target = ShareTarget::strand(
-            &format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"),
-            &format!("ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc"),
+            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU",
+            "ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc",
         );
         let links = target.build_reference_links(LANDING, &[VIA.to_owned()], AddressAction::View);
         assert!(links.web_arkret.contains(&format!("realm/{R}/strand/{F}")));
@@ -429,8 +427,8 @@ mod tests {
                 .unwrap();
         let message_id = arkret_sdk::MessageId::from_event_id(&event_id);
         let target = ShareTarget::message(
-            &format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"),
-            &format!("ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc"),
+            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU",
+            "ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc",
             message_id.as_str(),
         );
         let links = target.build_links(
@@ -474,8 +472,8 @@ mod tests {
     #[test]
     fn invite_link_roundtrips_token_and_binds_digest() {
         let target = ShareTarget::strand(
-            &format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"),
-            &format!("ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc"),
+            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU",
+            "ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc",
         );
         let links = target.build_links(
             LANDING,
@@ -496,8 +494,8 @@ mod tests {
     #[test]
     fn preview_link_roundtrips_token_and_binds_digest() {
         let target = ShareTarget::strand(
-            &format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"),
-            &format!("ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc"),
+            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU",
+            "ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc",
         );
         let links = target.build_preview_links(
             LANDING,
@@ -526,9 +524,7 @@ mod tests {
 
     #[test]
     fn reference_link_drops_stray_token() {
-        let target = ShareTarget::realm(&format!(
-            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU"
-        ));
+        let target = ShareTarget::realm("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU");
         // Even if a token is passed, a reference link must not carry it.
         let links = target.build_links(
             LANDING,

@@ -82,6 +82,9 @@ pub(super) fn push_read_receipt_account_data(
     });
 }
 
+// SDK preference structs are plain serializable data; the `expect` documents
+// that invariant rather than a reachable error path.
+#[allow(clippy::expect_used)]
 pub(super) fn build_presence_preference_body(preference: &PresencePreference) -> serde_json::Value {
     serde_json::to_value(preference).expect("SDK PresencePreference must serialize")
 }
@@ -149,6 +152,9 @@ pub(super) fn push_presence_preference_account_data(
     });
 }
 
+// SDK preference structs are plain serializable data; the `expect` documents
+// that invariant rather than a reachable error path.
+#[allow(clippy::expect_used)]
 pub(super) fn build_presence_visibility_body(visibility: PresenceVisibility) -> serde_json::Value {
     serde_json::to_value(arkret_sdk::PresenceVisibilityPreference {
         presence_visibility: visibility,

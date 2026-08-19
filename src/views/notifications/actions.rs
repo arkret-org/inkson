@@ -409,7 +409,6 @@ pub(crate) fn run_notification_action(
             realm_id,
             invite_id,
             invite_token,
-            realm_label,
         } => accept_invite_notification(
             base_url,
             session_credential,
@@ -420,7 +419,6 @@ pub(crate) fn run_notification_action(
             realm_id,
             invite_id,
             invite_token,
-            realm_label,
         ),
     }
 }
@@ -436,7 +434,6 @@ fn accept_invite_notification(
     realm_id: String,
     invite_id: String,
     invite_token: Option<String>,
-    realm_label: Option<String>,
 ) {
     let accepted_realm = realm_id;
     status_msg.set(format!(
@@ -449,7 +446,35 @@ fn accept_invite_notification(
         let mut accepted_status = status_msg;
         match with_authed_api(&base_url, session_credential, |api| async move {
             let account = crate::transport::account::account_me(&api.sdk_http_client()?).await?;
-            let submit = api
+            // Catch-up path: the live `ak.account_data.update` fanout may have
+            // raced ahead of this accept (or this device was offline), so when
+            // no token is in local state pull the server-held delivery cell
+            // once and use its credential directly.
+            let mut invite_token = invite_token;
+            let mut delivery_cell = None;
+            if invite_token.is_none() {
+                let snapshot = crate::transport::account::account_data_snapshot(
+                    &api.sdk_http_client()?,
+                    crate::state::invite_credentials::INVITE_DELIVERY_ACCOUNT_DATA_KEY,
+                )
+                .await?;
+                if let Some(content) = snapshot.entry.map(|entry| entry.content) {
+                    invite_token =
+                        crate::state::invite_credentials::invite_delivery_entries_from_cell(
+                            &content,
+                        )
+                        .into_iter()
+                        .find(|(entry_invite_id, credential)| {
+                            entry_invite_id == &invite_id
+                                && !credential
+                                    .expires_at
+                                    .is_some_and(|expires_at| expires_at <= chrono::Utc::now())
+                        })
+                        .map(|(_, credential)| credential.invite_token);
+                    delivery_cell = Some(content);
+                }
+            }
+            let (submit, accepted_title) = api
                 .accept_realm_invite(
                     &accepted_realm_for_api,
                     &account.did,
@@ -476,11 +501,11 @@ fn accept_invite_notification(
                 Err(error) => Err(error),
             };
             let invite_notifications = optional_invite_notifications(&read_api).await?;
-            Ok::<_, anyhow::Error>((sync, invite_notifications))
+            Ok::<_, anyhow::Error>((sync, invite_notifications, accepted_title, delivery_cell))
         })
         .await
         {
-            Ok((Ok(sync), invite_notifications)) => {
+            Ok((Ok(sync), invite_notifications, accepted_title, delivery_cell)) => {
                 let account_did = state_store.read().active_account_did().unwrap_or_default();
                 let push_rules =
                     push_rules_from_account_data(&account_did, &sync.updates.account_data);
@@ -490,12 +515,15 @@ fn accept_invite_notification(
                     JoinedRealmIds::from_realm_entries(&sync.realm_entries, &account_did)
                         .joined_now(accepted_realm.clone());
                 let mut realm_title_hints = BTreeMap::new();
-                if let Some(label) = realm_label
+                // The Realm title comes from the directory resolve the accept
+                // flow itself performed — the Invite object and the
+                // notification carry no label (`governance-objects.md` §5.3).
+                if let Some(title) = accepted_title
                     .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    realm_title_hints.insert(accepted_realm.clone(), label.to_owned());
+                    realm_title_hints.insert(accepted_realm.clone(), title.to_owned());
                 }
 
                 let mut raw_notifications = raw_notifications_from_sources(
@@ -517,6 +545,11 @@ fn accept_invite_notification(
                 }
                 let hydrated = {
                     let mut store = state_store.write();
+                    if let Some(content) = &delivery_cell {
+                        // Persist the catch-up read so future hydration and
+                        // sibling devices' accepts find the credential locally.
+                        store.save_invite_delivery_cell(content);
+                    }
                     apply_sync_projection_to_store(&mut store, &sync, &realm_title_hints);
                     store.save_notification_projection(raw_notifications.clone());
                     let local_state = store.load();
@@ -542,7 +575,7 @@ fn accept_invite_notification(
                     short_protocol_id(&accepted_realm)
                 ));
             }
-            Ok((Err(sync_err), _invite_notifications)) => {
+            Ok((Err(sync_err), ..)) => {
                 hide_accepted_invite_notification(
                     &mut state_store,
                     &mut notifications,

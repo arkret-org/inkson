@@ -424,10 +424,43 @@ fn invite_notification_carries_no_unregistered_invite_members() {
         notifications[0].action.as_ref(),
         Some(UiNotificationAction::AcceptInvite {
             invite_token: None,
-            realm_label: None,
             realm_id: action_realm_id,
             ..
         }) if action_realm_id == realm_id
+    ));
+}
+
+#[test]
+fn invite_notification_token_comes_only_from_private_credential_state() {
+    let realm_id = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
+    let invite = test_invite(0x11, realm_id);
+    let invite_id = invite.id.as_str().to_owned();
+    let mut raw = Vec::new();
+    append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
+
+    let mut local_state = ClientLocalState::default();
+    local_state.invite_credentials.insert(
+        invite_id,
+        crate::state::StoredInviteCredential {
+            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+            invite_token: "ak:invite-token:delivered".to_owned(),
+            expires_at: Some(
+                chrono::DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+            ),
+            received_at: chrono::Utc::now(),
+        },
+    );
+
+    let notifications = hydrate_notifications(raw, &local_state, None, None);
+
+    assert!(matches!(
+        notifications[0].action.as_ref(),
+        Some(UiNotificationAction::AcceptInvite {
+            invite_token: Some(token),
+            ..
+        }) if token == "ak:invite-token:delivered"
     ));
 }
 

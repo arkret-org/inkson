@@ -278,12 +278,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                 card_edit_scope(),
                 card_edit_synthesis(),
                 card_edit_synthesis_target_id(),
-            ) {
-                if !previous.source_strand_id.is_empty() {
-                    suspended_shared_track_edits
-                        .write()
-                        .insert(previous.source_strand_id, edit);
-                }
+            ) && !previous.source_strand_id.is_empty()
+            {
+                suspended_shared_track_edits
+                    .write()
+                    .insert(previous.source_strand_id, edit);
             }
             editing_card_detail.set(false);
             card_detail_actions_open.set(false);

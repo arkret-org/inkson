@@ -35,6 +35,7 @@ mod composer;
 mod controller;
 mod effects;
 mod model;
+mod scheduled_send_panel;
 mod timeline;
 mod timeline_surface;
 
@@ -219,8 +220,8 @@ fn project_visible_messages(
         }
 
         let dedupe_key = message.id.clone();
-        if !positions.contains_key(&dedupe_key) {
-            positions.insert(dedupe_key, visible.len());
+        if let std::collections::btree_map::Entry::Vacant(e) = positions.entry(dedupe_key) {
+            e.insert(visible.len());
             visible.push(message.clone());
         }
     }
@@ -491,10 +492,9 @@ fn validate_native_prepared_sidecar_binding(
     controller_id: &arkret_sdk::DidFullId,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<()> {
-    let controller_actor =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
-    if let Some(create) = create_event {
-        if create.kind != arkret_sdk::EventKind::SidecarCreate
+    let controller_actor = arkret_sdk::project_full_id_to_core_id(controller_id)?;
+    if let Some(create) = create_event
+        && (create.kind != arkret_sdk::EventKind::SidecarCreate
             || create.actor_id != controller_actor
             || create.realm_id != *source_realm_id
             || create.scope_ref
@@ -507,10 +507,9 @@ fn validate_native_prepared_sidecar_binding(
                 .get("encryption_profile")
                 .and_then(Value::as_str)
                 != Some("mls_rfc9420")
-            || arkret_sdk::SidecarId::from_event_id(&create.event_id) != *sidecar_id
-        {
-            anyhow::bail!("native Sidecar create draft differs from its reservation");
-        }
+            || arkret_sdk::SidecarId::from_event_id(&create.event_id) != *sidecar_id)
+    {
+        anyhow::bail!("native Sidecar create draft differs from its reservation");
     }
     if context_attach_event.kind != arkret_sdk::EventKind::SidecarContextAttach
         || context_attach_event.actor_id != controller_actor
@@ -536,16 +535,15 @@ fn validate_native_prepared_sidecar_binding(
     {
         anyhow::bail!("native Sidecar context attach changed its reserved source context");
     }
-    if let Some(create) = create_event {
-        if attach.version != 1
+    if let Some(create) = create_event
+        && (attach.version != 1
             || attach.predecessor_event_ref.is_some()
             || context_attach_event.refs.len() != 1
             || context_attach_event.refs[0].id != create.event_id.as_str()
             || context_attach_event.refs[0].role != "after"
-            || !context_attach_event.refs[0].critical
-        {
-            anyhow::bail!("new native Sidecar attach does not exactly follow its create Event");
-        }
+            || !context_attach_event.refs[0].critical)
+    {
+        anyhow::bail!("new native Sidecar attach does not exactly follow its create Event");
     }
     Ok(())
 }
@@ -592,8 +590,7 @@ fn sign_prepared_sidecar_event(
     device_id: &str,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    let controller_actor =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
+    let controller_actor = arkret_sdk::project_full_id_to_core_id(controller_id)?;
     if draft.kind.as_str() != expected_kind {
         anyhow::bail!(
             "prepared Sidecar Event kind mismatch: expected {expected_kind}, got {}",
@@ -682,8 +679,7 @@ async fn ensure_owned_agent_sidecar(
     let source_strand = arkret_sdk::StrandId::new(strand_id.to_owned())?;
     let mut addressed = addressed_agent_ids
         .iter()
-        .cloned()
-        .map(|agent_id| crate::mls_api_helpers::principal_core_id(&agent_id))
+        .map(|agent_id| crate::mls_api_helpers::principal_core_id(agent_id))
         .collect::<Result<Vec<_>, _>>()?;
     addressed.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     addressed.dedup();

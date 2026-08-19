@@ -177,6 +177,10 @@ fn try_account_scoped_device_key(base: &str) -> Result<String, SecureKeyStoreErr
     try_identity_storage_key(&scope, base)
 }
 
+// The `expect` below asserts the scope invariant named in its message; this
+// helper returns a key string, not a Result, so the invariant cannot be
+// propagated.
+#[allow(clippy::expect_used)]
 pub(crate) fn account_scoped_device_key_for(base: &str, scope: Option<&str>) -> String {
     let scope = scope
         .map(str::trim)
@@ -187,6 +191,9 @@ pub(crate) fn account_scoped_device_key_for(base: &str, scope: Option<&str>) -> 
     identity_storage_key(&scope, base)
 }
 
+// Callers only pass scopes already validated as a DidCoreId/DidFullId (or a
+// pending-login device scope); the `expect` documents that invariant.
+#[allow(clippy::expect_used)]
 fn identity_storage_key(scope: &str, logical_key: &str) -> String {
     try_identity_storage_key(scope, logical_key)
         .expect("identity-owned key scope is not a validated DidCoreId or DidFullId")
@@ -220,6 +227,10 @@ fn try_identity_storage_key(scope: &str, logical_key: &str) -> Result<String, Se
 /// the bootstrap key when `scope` is `None`/empty. The account segment is
 /// URL-safe-base64 encoded (the same sanitisation the MLS marker keys use) so
 /// DID characters are safe across every backend.
+// The `expect` below asserts the scope invariant named in its message; this
+// helper returns a key string, not a Result, so the invariant cannot be
+// propagated.
+#[allow(clippy::expect_used)]
 fn signing_seed_key_for(scope: Option<&str>) -> String {
     let resolved_scope = scope
         .map(str::trim)
@@ -548,6 +559,10 @@ const DEVICE_ID_LOCALSTORAGE_KEY: &str = "device_id.v1";
 /// Storage key for the `device_id` under `scope` (account DID), or the bootstrap
 /// key when `scope` is `None`/empty. The account segment is URL-safe-base64
 /// encoded, matching [`signing_seed_key_for`].
+// The `expect` below asserts the scope invariant named in its message; this
+// helper returns a key string, not a Result, so the invariant cannot be
+// propagated.
+#[allow(clippy::expect_used)]
 fn device_id_key_for(scope: Option<&str>) -> String {
     #[cfg(target_arch = "wasm32")]
     let base = DEVICE_ID_LOCALSTORAGE_KEY;

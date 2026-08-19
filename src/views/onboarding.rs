@@ -1100,7 +1100,7 @@ fn PendingAccountIdentityCreation(
                                     return;
                                 };
                                 let pending = pending_abandonment.clone();
-                                let navigator = navigator.clone();
+                                let navigator = navigator;
                                 busy.set(true);
                                 status.set("Confirming explicit abandonment…".to_owned());
                                 spawn(async move {

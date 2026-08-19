@@ -1,4 +1,7 @@
 use anyhow::Context;
+// Only the `#[cfg(any(target_arch = "wasm32", test))]` scaffold storage-key
+// helper hashes with SHA-256; on a native production build this import is
+// unused, so it carries the same cfg as its sole consumer.
 #[cfg(any(target_arch = "wasm32", test))]
 use sha2::{Digest as _, Sha256};
 use url::Url;

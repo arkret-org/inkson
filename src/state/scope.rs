@@ -665,6 +665,78 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
+    /// Stage one scheduled-send plan entry content (encrypted envelope) from
+    /// the local writer or the account-data sync projection.
+    pub fn stage_scheduled_send_account_data_entry(
+        &mut self,
+        account_data_key: impl Into<String>,
+        value: Value,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached
+            .scheduled_send_account_data
+            .insert(account_data_key.into(), value);
+        let _ = self.flush();
+    }
+
+    pub fn remove_scheduled_send_account_data_entry(&mut self, account_data_key: &str) {
+        self.ensure_cached_loaded();
+        self.cached
+            .scheduled_send_account_data
+            .remove(account_data_key);
+        if let Some(scheduled_send_id) = account_data_key
+            .strip_prefix(arkret_sdk::AccountDataKey::SCHEDULED_SEND_V1)
+            .and_then(|rest| rest.strip_prefix(':'))
+        {
+            self.cached
+                .scheduled_send_target_realms
+                .remove(scheduled_send_id);
+        }
+        let _ = self.flush();
+    }
+
+    /// The account-data sync frame carries the complete projection, so any
+    /// staged scheduled-send key absent from `seen_keys` was tombstoned or
+    /// deleted elsewhere and must be dropped locally.
+    pub fn retain_scheduled_send_account_data_keys(
+        &mut self,
+        seen_keys: &std::collections::BTreeSet<String>,
+    ) {
+        self.ensure_cached_loaded();
+        let stale: Vec<String> = self
+            .cached
+            .scheduled_send_account_data
+            .keys()
+            .filter(|key| !seen_keys.contains(*key))
+            .cloned()
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        for key in stale {
+            self.remove_scheduled_send_account_data_entry(&key);
+        }
+    }
+
+    pub fn set_scheduled_send_target_realm(
+        &mut self,
+        scheduled_send_id: impl Into<String>,
+        realm_id: impl Into<String>,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached
+            .scheduled_send_target_realms
+            .insert(scheduled_send_id.into(), realm_id.into());
+        let _ = self.flush();
+    }
+
+    pub fn scheduled_send_target_realm(&self, scheduled_send_id: &str) -> Option<String> {
+        self.load()
+            .scheduled_send_target_realms
+            .get(scheduled_send_id)
+            .cloned()
+    }
+
     pub fn preserve_encrypted_message(
         &mut self,
         message_id: impl Into<String>,

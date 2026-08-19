@@ -240,8 +240,8 @@ pub fn cached_sidecar_exchange_projections(
     }
     let mut projections = fold
         .exchanges_for_realm(&realm_id)
+        .filter(|&projection| projection.controller_id == account_core_id)
         .cloned()
-        .filter(|projection| projection.controller_id == account_core_id)
         .collect::<Vec<_>>();
     projections.sort_by(|left, right| {
         (
@@ -1016,7 +1016,6 @@ fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
         let full_id = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
         (arkret_sdk::project_full_id_to_core_id(&full_id)
             .ok()
-            .map(arkret_sdk::DidCoreId::from)
             .as_ref()
             == Some(&event.actor_id))
         .then(|| event.actor_id.clone())

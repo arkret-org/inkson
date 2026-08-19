@@ -84,6 +84,21 @@ pub struct StoredInviteNotification {
     pub created_at: DateTime<Utc>,
 }
 
+/// Private invite delivery credential received over the actor-private
+/// account-data carrier (`ak.account.invite_delivery`).
+///
+/// This is the only legitimate source of an invite-accept token: the Invite
+/// read model carries no token (`governance-objects.md` §5.3), so the accept
+/// flow MUST read it from this holder-private state and nowhere else.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredInviteCredential {
+    pub realm_id: arkret_sdk::RealmId,
+    pub invite_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+    pub received_at: DateTime<Utc>,
+}
+
 impl StoredNotification {
     pub fn notification_id(&self) -> String {
         match self {
@@ -899,6 +914,19 @@ pub struct ClientLocalState {
     /// `ak.saved.v1:<collection_key>:<target_key>`.
     #[serde(default)]
     pub saved_account_data: BTreeMap<String, Value>,
+    /// Principal-private scheduled-send plan account-data entry contents,
+    /// keyed by `ak.scheduled_send.v1:<scheduled_send_id>`; values are the
+    /// encrypted envelopes exactly as the account-data projection carries
+    /// them (spec `models/personal-productivity.md` §4).
+    #[serde(default)]
+    pub scheduled_send_account_data: BTreeMap<String, Value>,
+    /// Local dispatch aid: `scheduled_send_id` -> home Realm of the plan's
+    /// target Strand. The spec plan value carries no `realm_id`, so the
+    /// dispatch driver resolves the authoring Realm from this index (or a
+    /// projection scan fallback) when it builds the `ak.message.create`
+    /// envelope at expiry.
+    #[serde(default)]
+    pub scheduled_send_target_realms: BTreeMap<String, String>,
     pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
     #[serde(default)]
     pub notification_projection: Vec<StoredNotification>,
@@ -926,6 +954,12 @@ pub struct ClientLocalState {
     pub to_device_receipts: BTreeMap<String, DeviceMessageReceipt>,
     #[serde(default)]
     pub notification_client_state: BTreeMap<String, NotificationClientState>,
+    /// Invite-accept credentials delivered over the actor-private
+    /// account-data carrier, keyed by invite id. Entries carry their own
+    /// `expires_at`; lookup drops expired credentials, and writes cap the map
+    /// at `MAX_INVITE_CREDENTIALS` (expired first, then oldest).
+    #[serde(default)]
+    pub invite_credentials: BTreeMap<String, StoredInviteCredential>,
     /// Per-realm watch level overrides (spec
     /// `discovery/push-notifications.md` §4.3.2). Only non-default entries are
     /// stored; an absent realm resolves to `WatchLevel::MentionsOnly`.
@@ -1435,6 +1469,8 @@ impl Default for ClientLocalState {
             realm_collaboration_roles: BTreeMap::new(),
             snapshot_sync: BTreeMap::new(),
             saved_account_data: BTreeMap::new(),
+            scheduled_send_account_data: BTreeMap::new(),
+            scheduled_send_target_realms: BTreeMap::new(),
             pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
             presence_projection: Vec::new(),
@@ -1443,6 +1479,7 @@ impl Default for ClientLocalState {
             to_device_inbox: Vec::new(),
             to_device_receipts: BTreeMap::new(),
             notification_client_state: BTreeMap::new(),
+            invite_credentials: BTreeMap::new(),
             realm_watch_levels: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),
             notification_dnd_settings: None,

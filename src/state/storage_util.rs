@@ -301,6 +301,16 @@ pub(crate) fn load_session_grant_from_secure_store(
     load_session_grant_from_user_secure_store(&active_user_local_store()?, secure_store)
 }
 
+// Callers: `identity_session::set_session_grant` inside its
+// `#[cfg(not(test))]` secure-store side-effect block (any target), and
+// `app::secure_store_effects::apply_test_session_grant_expiry_override` under
+// the wasm-localstorage-secrets-test cfg. Gate on the union of both so the
+// lib-test build — where every caller is compiled out — does not report this
+// as dead code.
+#[cfg(any(
+    not(test),
+    all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+))]
 pub(crate) fn store_session_grant_in_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     grant: &PersistedSessionGrant,
@@ -308,6 +318,10 @@ pub(crate) fn store_session_grant_in_secure_store(
     store_session_grant_in_user_secure_store(&active_user_local_store()?, secure_store, grant)
 }
 
+// Callers: `store_session_grant_in_secure_store` above (non-test builds) and
+// the wasm-only `account_persist::wasm_bootstrap` hydration. On a native
+// lib-test build both are compiled out, hence this gate.
+#[cfg(any(not(test), target_arch = "wasm32"))]
 pub(crate) fn store_session_grant_in_user_secure_store(
     user_store: &crate::secure_key_store::UserLocalStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,

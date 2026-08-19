@@ -685,6 +685,9 @@ impl LocalStateStore {
         }
     }
 
+    // The `expect` asserts the scope-validation invariant named in its
+    // message; callers pass already-validated Realm/Circle coordinates.
+    #[allow(clippy::expect_used)]
     pub fn save_pending_mls_genesis_event_for_effective_scope(
         &mut self,
         realm_id: &str,
@@ -696,6 +699,9 @@ impl LocalStateStore {
         self.save_pending_mls_genesis_event_for_scope(&scope, event)
     }
 
+    // The `expect` asserts the scope/group invariant named in its message;
+    // callers pass a validated effective scope with a genesis group id.
+    #[allow(clippy::expect_used)]
     pub fn save_pending_mls_genesis_event_for_scope(
         &mut self,
         effective_scope: &arkret_sdk::ScopeRef,

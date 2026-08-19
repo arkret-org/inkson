@@ -1455,9 +1455,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .and_then(|content_value| display_body_from_value(&content_value))
     });
     let body_was_decrypted = decrypted_body.is_some();
-    let body = if is_redaction_tombstone {
-        String::new()
-    } else if late_recovery_rejection.is_some() {
+    let body = if is_redaction_tombstone || late_recovery_rejection.is_some() {
         String::new()
     } else {
         match sidecar_body.or(decrypted_body) {

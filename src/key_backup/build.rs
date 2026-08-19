@@ -277,7 +277,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         backup_kind: class,
         mixed_secret_storage: false,
         backup_version: "kb_1".to_owned(),
-        created_at: created_at.clone(),
+        created_at,
         updated_at: None,
         expires_at: None,
         encryption: arkret_sdk::KeyBackupEncryption {

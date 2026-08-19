@@ -16,6 +16,9 @@ pub struct InviteeResolution {
 }
 
 impl InviteeResolution {
+    // The DID was validated during resolution; the `expect` documents that
+    // invariant rather than a reachable error path.
+    #[allow(clippy::expect_used)]
     fn invite_address(&self) -> arkret_sdk::InviteAddress {
         arkret_sdk::InviteAddress {
             subject_id: arkret_sdk::DidCoreId::new(self.did.clone())

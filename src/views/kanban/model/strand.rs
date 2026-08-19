@@ -62,6 +62,10 @@ pub(crate) fn strand_projection_assigned_to_relations(
         .collect()
 }
 
+// The `expect` asserts the path-nesting invariant named in its message:
+// `strand_projection_synthesis_content` only yields paths under
+// `tracks.synthesis`.
+#[allow(clippy::expect_used)]
 pub(crate) fn strand_projection_security_state(
     strand: &crate::state::projection_views::StrandProjectionView,
 ) -> Option<bool> {

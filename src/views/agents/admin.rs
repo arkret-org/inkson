@@ -349,18 +349,14 @@ mod directory_refresh_tests {
         status: AgentLifecycleState,
         runtime_state: AgentRuntimeState,
     ) -> AgentView {
-        let agent_id = arkret_sdk::DidCoreId::from(
-            arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
-            )
-            .unwrap(),
-        );
-        let controller_id = arkret_sdk::DidCoreId::from(
-            arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::DidFullId::new("did:web:alice.example").unwrap(),
-            )
-            .unwrap(),
-        );
+        let agent_id = arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+        )
+        .unwrap();
+        let controller_id = arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::DidFullId::new("did:web:alice.example").unwrap(),
+        )
+        .unwrap();
         let scope = requested_scope_for_presets(
             &[AgentGrantPreset::Read],
             &AgentServiceScopePreset::DEFAULTS,
@@ -766,11 +762,9 @@ fn spawn_set_agent_enabled(
             return;
         };
         let selected_agent_actor_id = arkret_sdk::DidFullId::new(id.clone())
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-            .map(arkret_sdk::DidCoreId::from);
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id));
         let selected_controller_actor_id = arkret_sdk::DidFullId::new(controller_id.clone())
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-            .map(arkret_sdk::DidCoreId::from);
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id));
         if selected_agent_actor_id.as_ref().ok() != Some(&key_state.agent_id)
             || selected_controller_actor_id.as_ref().ok() != Some(&key_state.controller_id)
         {
@@ -940,11 +934,9 @@ fn spawn_deactivate_agent(
             return;
         };
         let selected_agent_actor_id = arkret_sdk::DidFullId::new(id.clone())
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-            .map(arkret_sdk::DidCoreId::from);
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id));
         let selected_controller_actor_id = arkret_sdk::DidFullId::new(controller_id.clone())
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id))
-            .map(arkret_sdk::DidCoreId::from);
+            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id));
         if selected_agent_actor_id.as_ref().ok() != Some(&key_state.agent_id)
             || selected_controller_actor_id.as_ref().ok() != Some(&key_state.controller_id)
         {
@@ -1401,64 +1393,57 @@ fn spawn_provision_agent(
             pairing_ttl_ms: None,
         };
         let commit_for_first_request = commit.clone();
-        let awaiting =
-            match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
-                http.agent_provision(&commit_for_first_request)
-                    .await
-                    .map_err(anyhow::Error::from)
-            })
-            .await
-            {
-                Ok(AgentProvisionOutcome::AwaitingPcrGenesis {
-                    agent_id: returned_agent_id,
-                    full_id: returned_full_id,
-                    initial_resolution: returned_resolution,
-                    principal_control_realm_id: returned_realm_id,
-                    allocation_handle: returned_allocation,
-                    controller_authorization_ref: returned_authorization,
-                    requested_scope_digest: returned_digest,
-                }) if returned_agent_id == agent_id
-                    && returned_full_id == full_id
-                    && returned_resolution == initial_resolution
-                    && returned_realm_id == principal_control_realm_id
-                    && returned_allocation == allocation_handle
-                    && returned_authorization == controller_authorization_ref
-                    && returned_digest == expected_digest =>
-                {
-                    ()
-                }
-                Ok(AgentProvisionOutcome::AwaitingPcrGenesis { .. }) => {
-                    last_op_status.set(
-                        "Create failed: commit returned mismatched PCR authoring coordinates"
-                            .to_owned(),
-                    );
-                    return;
-                }
-                Ok(AgentProvisionOutcome::Complete { .. }) => {
-                    last_op_status.set(
+        match with_authed_sdk_client(&base, api_token.clone(), move |http| async move {
+            http.agent_provision(&commit_for_first_request)
+                .await
+                .map_err(anyhow::Error::from)
+        })
+        .await
+        {
+            Ok(AgentProvisionOutcome::AwaitingPcrGenesis {
+                agent_id: returned_agent_id,
+                full_id: returned_full_id,
+                initial_resolution: returned_resolution,
+                principal_control_realm_id: returned_realm_id,
+                allocation_handle: returned_allocation,
+                controller_authorization_ref: returned_authorization,
+                requested_scope_digest: returned_digest,
+            }) if returned_agent_id == agent_id
+                && returned_full_id == full_id
+                && returned_resolution == initial_resolution
+                && returned_realm_id == principal_control_realm_id
+                && returned_allocation == allocation_handle
+                && returned_authorization == controller_authorization_ref
+                && returned_digest == expected_digest => {}
+            Ok(AgentProvisionOutcome::AwaitingPcrGenesis { .. }) => {
+                last_op_status.set(
+                    "Create failed: commit returned mismatched PCR authoring coordinates"
+                        .to_owned(),
+                );
+                return;
+            }
+            Ok(AgentProvisionOutcome::Complete { .. }) => {
+                last_op_status.set(
                     "Create failed: commit completed before the declared PCR genesis was submitted"
                         .to_owned(),
                 );
-                    return;
-                }
-                Ok(AgentProvisionOutcome::AwaitingControllerEvent { .. }) => {
-                    last_op_status
-                        .set("Create failed: commit returned another preparation".to_owned());
-                    return;
-                }
-                Ok(AgentProvisionOutcome::AwaitingDidBinding { .. }) => {
-                    last_op_status.set(
-                        "Create failed: commit requested DID binding before PCR acceptance"
-                            .to_owned(),
-                    );
-                    return;
-                }
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: {}", error.display()));
-                    return;
-                }
-            };
-        let _ = awaiting;
+                return;
+            }
+            Ok(AgentProvisionOutcome::AwaitingControllerEvent { .. }) => {
+                last_op_status.set("Create failed: commit returned another preparation".to_owned());
+                return;
+            }
+            Ok(AgentProvisionOutcome::AwaitingDidBinding { .. }) => {
+                last_op_status.set(
+                    "Create failed: commit requested DID binding before PCR acceptance".to_owned(),
+                );
+                return;
+            }
+            Err(error) => {
+                last_op_status.set(format!("Create failed: {}", error.display()));
+                return;
+            }
+        };
         let controller_realm_for_seal = controller_realm_id.clone();
         let controller_id_for_seal = controller_full_id.clone();
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {

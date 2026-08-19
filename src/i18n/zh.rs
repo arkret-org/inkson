@@ -401,6 +401,20 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.board_hint", "拖动卡片到不同列即可移动。");
     dict.set("chat.send", "发送");
     dict.set("chat.send_secure", "加密发送");
+    dict.set("chat.scheduled_send.send_at", "发送时间");
+    dict.set("chat.scheduled_send.create", "定时发送");
+    dict.set(
+        "chat.scheduled_send.needs_body",
+        "请先输入消息并选择发送时间",
+    );
+    dict.set("chat.scheduled_send.empty", "此讨论暂无定时消息。");
+    dict.set("chat.scheduled_send.created", "已创建定时消息。");
+    dict.set("chat.scheduled_send.updated", "定时消息已更新。");
+    dict.set("chat.scheduled_send.cancelled", "定时消息已取消。");
+    dict.set("chat.scheduled_send.edit", "修改");
+    dict.set("chat.scheduled_send.save", "保存");
+    dict.set("chat.scheduled_send.dismiss_edit", "取消");
+    dict.set("chat.scheduled_send.cancel_plan", "删除");
     dict.set("chat.plaintext_blocked", "先输入消息内容再加密发送");
     dict.set("realm_admin.save_profile", "保存资料");
     dict.set("realm_admin.destroy_realm", "销毁 Realm");

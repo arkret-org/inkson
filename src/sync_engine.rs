@@ -1885,9 +1885,7 @@ fn proof_bearing_sender_device(
             no_query.split_once('#').map_or(no_query, |(head, _)| head)
         };
         let controller = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
-        let controller_core = arkret_sdk::project_full_id_to_core_id(&controller)
-            .ok()
-            .map(arkret_sdk::DidCoreId::from)?;
+        let controller_core = arkret_sdk::project_full_id_to_core_id(&controller).ok()?;
         (controller_core == proof_subject).then_some(controller)
     })?;
     let device = object
@@ -2497,6 +2495,10 @@ pub(crate) fn ingest_kanban_events(
     changed
 }
 
+// Internal ingest-dispatch enum: each value is constructed from one Event and
+// consumed immediately, so boxing the larger variant would only add an
+// allocation per membership Event without changing layout anywhere durable.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 enum LocalMembershipEvent {
     MemberState(arkret_sdk::MembershipPayload),

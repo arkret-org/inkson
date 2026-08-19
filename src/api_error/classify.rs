@@ -123,6 +123,7 @@ pub fn is_authenticated_session_unavailable_error(error: &anyhow::Error) -> bool
 /// - `recovery_policy_device_unauthorized` — the recovery-policy genesis path falls back to the
 ///   projected device row's `device_public_key`; a session device that was never enrolled (no
 ///   `ak.device.authorize`) has no key there.
+///
 /// Recovery setup MUST treat both as fail-closed: a device that cannot pass
 /// the server's verified-device gate must never establish (or locally persist)
 /// a brand-new account Recovery Key root — it has to be authorized from an

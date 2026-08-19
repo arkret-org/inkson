@@ -50,7 +50,6 @@ fn actor_core_id(actor: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
     let full = arkret_sdk::DidFullId::new(actor.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid actor id {actor:?}: {err:?}"))?;
     arkret_sdk::project_full_id_to_core_id(&full)
-        .map(arkret_sdk::DidCoreId::from)
         .map_err(|err| anyhow::anyhow!("invalid actor id {actor:?}: {err:?}"))
 }
 

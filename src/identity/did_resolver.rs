@@ -503,9 +503,9 @@ impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
 /// wider (×32, matching `DidWebvhResolver::ingest_log`'s own ceiling).
 const DID_WEBVH_MAX_LOG_BYTES: usize = DID_WEB_MAX_DOCUMENT_BYTES * 32;
 
-/// P3.2c: SSRF host guard for an about-to-be-fetched `did:web` / `did:webvh`
-/// URL. Returns `false` (caller fails closed, does **not** fetch) when the
-/// URL's host is unsafe to reach from a client:
+/// P3.2c: wasm half of the SSRF host guard for an about-to-be-fetched
+/// `did:web` / `did:webvh` URL. Returns `false` (caller fails closed, does
+/// **not** fetch) when the URL's host is unsafe to reach from a client:
 ///
 /// - a **literal IP** in non-public space: IPv4 loopback `127.0.0.0/8`, unspecified `0.0.0.0`,
 ///   private `10/8` + `172.16/12` + `192.168/16`, link-local `169.254/16` (incl. the
@@ -519,17 +519,25 @@ const DID_WEBVH_MAX_LOG_BYTES: usize = DID_WEB_MAX_DOCUMENT_BYTES * 32;
 /// Only `https` is accepted; the SDK URL builders only ever emit `https://`,
 /// so a non-https scheme here means a malformed/forged URL and is rejected.
 ///
-/// ## Boundary: registered domain names are NOT DNS-resolved.
+/// ## Why wasm keeps a *static* guard while native pins DNS answers.
 ///
-/// This is a *static* host check. A registered domain (e.g. `evil.example`
-/// whose A record points at `127.0.0.1`) passes this guard — the client has no
-/// DNS in the wasm browser-fetch backend, and resolving here would both be
-/// platform-specific and open a DNS-rebinding gap (the name could resolve to a
-/// public IP at check time and a private one at fetch time). Blocking literal
-/// IPs + `localhost`/`.local` covers the dominant client-side SSRF surface
-/// (an attacker putting a raw private IP / metadata address straight into the
-/// actor DID). `std::net` parsing used by the SDK helper is pure (no syscalls)
+/// On `wasm32-unknown-unknown` the browser owns both DNS resolution and the
+/// socket: there is no address to validate and nothing to pin into a client,
+/// so this static judgment (scheme + host classification via the shared
+/// blocklist) is the entire guard the platform allows. The native half is
+/// stronger — see `locked_did_fetch_client`, which resolves the host, judges
+/// every DNS answer and pins the validated set into the request client,
+/// closing the DNS-rebinding window this static check cannot see (a registered
+/// name whose A record points at `127.0.0.1` passes here and is rejected
+/// there). `std::net` parsing used by the SDK helper is pure (no syscalls)
 /// and therefore works on `wasm32-unknown-unknown` as well.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    allow(
+        dead_code,
+        reason = "the static judgment is the wasm request-layer guard; native uses locked_did_fetch_client instead, and host tests exercise this classifier directly"
+    )
+)]
 fn url_host_is_safe(url: &str) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
@@ -558,24 +566,57 @@ fn url_host_is_safe(url: &str) -> bool {
 /// before the body is read, and the materialized body is re-checked. Returns
 /// `(content_type, body)` or `None` (fail-closed) on any transport / status /
 /// size / content-type failure.
+/// P3.2c: native half of the DID-fetch SSRF guard. Judges the derived URL,
+/// resolves the host, judges **every** DNS answer, and returns a client with
+/// the validated addresses pinned into its connector, so a second lookup
+/// between validation and connect cannot rebind the host (the gap the wasm
+/// static check in [`url_host_is_safe`] structurally cannot close). Any
+/// failure is fail-closed (`None`) before a socket is opened.
+#[cfg(not(target_arch = "wasm32"))]
+async fn locked_did_fetch_client(url: &str) -> Option<reqwest::Client> {
+    let locked = arkret_egress_reqwest::EgressGuard::public_https()
+        .lock_str_async(url, "did fetch")
+        .await
+        .ok()?;
+    locked
+        .apply_to_client_builder(
+            reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()),
+        )
+        .build()
+        .ok()
+}
+
 async fn fetch_did_bytes(
     http: &reqwest::Client,
     url: &str,
     max_bytes: usize,
 ) -> Option<(String, Vec<u8>)> {
     // P3.2c SSRF egress guard — fail-closed *before* any outbound request.
-    // The `did:web` host is taken verbatim from an untrusted actor DID, so a
-    // hostile `did:web:127.0.0.1` / `did:web:169.254.169.254` (cloud metadata)
-    // / `did:web:localhost` must never let the client reach into loopback,
-    // private, link-local or carrier-NAT address space. We re-derive the host
-    // from the constructed URL and reject it here, independently of the SDK
-    // `document_url` helper (defence in depth — even though that helper already
-    // applies the same check, this module must not rely on that internal
-    // behaviour for its own security property).
-    if !url_host_is_safe(url) {
-        return None;
+    // The `did:web` / `did:webvh` host is taken verbatim from an untrusted
+    // actor DID, so a hostile `did:web:127.0.0.1` /
+    // `did:web:169.254.169.254` (cloud metadata) / `did:web:localhost` must
+    // never let the client reach into loopback, private, link-local or
+    // carrier-NAT address space. The guard lives here, at the request layer:
+    // the SDK URL helpers are pure syntax-to-URL derivations and no longer
+    // carry this judgment.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Native: lock the target through the shared guard and dispatch on a
+        // client pinned to the validated address set. The caller's client is
+        // not reused because DNS pinning is a per-target client property.
+        let _ = http;
+        let client = locked_did_fetch_client(url).await?;
+        fetch_did_bytes_from_url(&client, url, max_bytes).await
     }
-    fetch_did_bytes_from_url(http, url, max_bytes).await
+    #[cfg(target_arch = "wasm32")]
+    {
+        // wasm: the browser owns DNS and the socket, so the static shared
+        // classification is the entire guard the platform allows.
+        if !url_host_is_safe(url) {
+            return None;
+        }
+        fetch_did_bytes_from_url(http, url, max_bytes).await
+    }
 }
 
 async fn fetch_did_bytes_from_url(
@@ -1093,5 +1134,50 @@ mod tests {
         let http = reqwest::Client::new();
         assert!(!anchor.ensure_actor_document(&http, &did).await);
         assert!(anchor.resolve_did_document(&did).is_none());
+    }
+
+    // Caller-closure gate: no production path may fetch a derived DID URL
+    // without the request-layer egress guard. The raw fetch helper has
+    // exactly four call sites — the two `fetch_did_bytes` platform halves
+    // (native locks and pins through the shared `EgressGuard`; wasm applies
+    // the static shared classification, which is all a browser client can
+    // do) and the two same-origin trusted-service fetches, whose target
+    // comes from the operator-configured server origin rather than a
+    // DID-carried host — and `.send()` appears only inside the raw fetch
+    // helper itself. A future "derive a URL, then reqwest it directly" path
+    // fails here instead of silently skipping the guard.
+    #[test]
+    fn every_did_fetch_passes_through_the_egress_guard() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/identity/did_resolver.rs");
+        let text = std::fs::read_to_string(path).expect("did_resolver.rs source");
+        // Cut at the test *module*, not the first `#[cfg(test)]`: the file
+        // carries earlier test-only helpers (`build_default_resolver`,
+        // `ingest_web_for_test`) whose attributes would otherwise truncate
+        // "production" to the first 78 lines.
+        let production = text
+            .split("\n#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap_or(&text);
+        let raw_fetch_calls = production
+            .lines()
+            .filter(|line| {
+                !line.trim_start().starts_with("//")
+                    && line.contains("fetch_did_bytes_from_url(")
+                    && !line.contains("async fn fetch_did_bytes_from_url")
+            })
+            .count();
+        assert_eq!(
+            raw_fetch_calls, 4,
+            "raw DID fetches must stay confined to the guarded fetch_did_bytes halves and the configured same-origin service path"
+        );
+        let sends = production
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//") && line.contains(".send()"))
+            .count();
+        assert_eq!(
+            sends, 1,
+            "fetch_did_bytes_from_url must remain the only dispatch point"
+        );
     }
 }

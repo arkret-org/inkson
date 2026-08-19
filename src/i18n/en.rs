@@ -357,6 +357,26 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.board_hint", "Drag cards between lists.");
     dict.set("chat.send", "Send");
     dict.set("chat.send_secure", "Send Secure");
+    dict.set("chat.scheduled_send.send_at", "Send at");
+    dict.set("chat.scheduled_send.create", "Schedule message");
+    dict.set(
+        "chat.scheduled_send.needs_body",
+        "Type a message and pick a time before scheduling",
+    );
+    dict.set(
+        "chat.scheduled_send.empty",
+        "No scheduled messages for this discussion.",
+    );
+    dict.set("chat.scheduled_send.created", "Message scheduled.");
+    dict.set("chat.scheduled_send.updated", "Scheduled message updated.");
+    dict.set(
+        "chat.scheduled_send.cancelled",
+        "Scheduled message cancelled.",
+    );
+    dict.set("chat.scheduled_send.edit", "Edit");
+    dict.set("chat.scheduled_send.save", "Save");
+    dict.set("chat.scheduled_send.dismiss_edit", "Cancel");
+    dict.set("chat.scheduled_send.cancel_plan", "Delete");
     dict.set(
         "chat.plaintext_blocked",
         "Type a message before secure send",

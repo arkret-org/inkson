@@ -46,6 +46,10 @@ fn head_eq_precondition(cell: &str, value: Value) -> anyhow::Result<Precondition
     })
 }
 
+// Callers only pass `SchemaId` registry constants; the `expect` documents
+// that invariant. Rewriting it as `?` would add an error path no caller can
+// reach.
+#[allow(clippy::expect_used)]
 fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
     EventRequirements {
         schema_profile_refs: vec![
@@ -275,10 +279,10 @@ pub fn build_realm_bootstrap_events(
         BindingScope, BindingSource, DeliveryMode, MemberDeliveryBinding, RecipientServiceKind,
         ServiceResolutionCarrier,
     };
-    let recipient_service_id = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
+    let recipient_service_id = arkret_sdk::project_full_id_to_core_id(
         &arkret_sdk::DidFullId::new(notary_did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
-    )?);
+    )?;
     let mut service_origin = url::Url::parse(notary_service_origin)
         .map_err(|err| anyhow::anyhow!("invalid creator service origin: {err}"))?;
     if service_origin.scheme() == "http"
@@ -526,6 +530,9 @@ fn build_realm_genesis_object(
 /// `object.created_at` is the single source for the envelope timestamp:
 /// `realm_create_payload` semantic validation requires
 /// `payload.object.created_at == Event.created_at`.
+// The `expect` below fires only if the fixed canonical placeholder literal
+// fails validation — an invariant, not a reachable error path.
+#[allow(clippy::expect_used)]
 fn build_realm_create_event_from_object(
     actor_id: &str,
     object: arkret_sdk::RealmGenesis,
@@ -662,8 +669,7 @@ pub fn build_direct_conversation_founding_events(
     _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<arkret_sdk::Event>> {
     let created_at = event_timestamp();
-    let founder_actor =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
+    let founder_actor = arkret_sdk::project_full_id_to_core_id(founder_id)?;
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
@@ -684,7 +690,7 @@ pub fn build_direct_conversation_founding_events(
     .build_sdk_event("inkson")?;
 
     let realm_id = create.realm_id.clone();
-    let peer_actor = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(peer_id)?);
+    let peer_actor = arkret_sdk::project_full_id_to_core_id(peer_id)?;
     let membership = arkret_sdk::direct_conversation_peer_membership_bootstrap(
         realm_id.clone(),
         &founder_actor,
@@ -706,7 +712,7 @@ pub fn build_direct_conversation_founding_events(
 
     let strand_payload = arkret_sdk::direct_conversation_main_strand_create_payload(
         realm_id,
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?),
+        arkret_sdk::project_full_id_to_core_id(founder_id)?,
         created_at,
     );
     let mut strand = TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(

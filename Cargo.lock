@@ -4303,6 +4303,7 @@ dependencies = [
  "arkret",
  "arkret-bootstrap",
  "arkret-crypto",
+ "arkret-egress-reqwest",
  "arkret-event-draft",
  "arkret-identifiers",
  "arkret-identity",

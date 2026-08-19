@@ -20,7 +20,7 @@ pub(crate) async fn fetch_complete_identity_history(
         {
             anyhow::bail!("DID history pagination changed identity or method metadata");
         }
-        method.get_or_insert(page.method.clone());
+        method.get_or_insert(page.method);
         native_history = page.native_history;
         entries.extend(page.entries);
         if !page.has_more {

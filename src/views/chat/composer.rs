@@ -147,6 +147,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let mut is_online = controller.is_online;
     let mut status_msg = controller.status_msg;
     let mut sidecar_route_pending = use_signal(|| false);
+    let mut scheduled_send_panel_open = use_signal(|| false);
     let mut mention_insert_request_seen = use_signal(String::new);
     let typing_throttle = controller.typing_throttle;
     let composer_class = "discussion-composer";
@@ -744,6 +745,26 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 "Poll"
                             }
                         }
+                        // Scheduled send (spec personal-productivity.md §4) is
+                        // offered on the plaintext composer path only: the
+                        // plan stores the future `ak.message.create` payload,
+                        // and the MLS-encrypted send path would need
+                        // dispatch-time encryption, which v1 does not wire.
+                        if !selected_channel_security_encrypted && active_sidecar_session.is_none() {
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                r#type: "button",
+                                class: "composer-tool-button",
+                                "data-testid": "open-scheduled-send-panel-button",
+                                title: "Schedule message",
+                                "aria-label": "Schedule message",
+                                onclick: move |_| {
+                                    let open = scheduled_send_panel_open();
+                                    scheduled_send_panel_open.set(!open);
+                                },
+                                UiIcon { name: "calendar" }
+                            }
+                        }
                         if attachment_menu_open() {
                             div { class: "attachment-menu",
                                 if crate::messaging::polls::polls_enabled() {
@@ -1105,6 +1126,22 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         }
                     }
                 }
+                }
+                if scheduled_send_panel_open()
+                    && !selected_channel_security_encrypted
+                    && active_sidecar_session.is_none()
+                {
+                    super::scheduled_send_panel::ScheduledSendPanel {
+                        context: super::scheduled_send_panel::ScheduledSendPanelContext {
+                            realm_id: selected_realm_id.clone(),
+                            strand_id: selected_channel(),
+                            account_did: account_did.clone(),
+                            device_id: device_id.clone(),
+                            token,
+                            draft: chat_draft,
+                            status_msg,
+                        }
+                    }
                 }
                 div { class: "actions",
                     if !selected_channel_security_encrypted && active_sidecar_session.is_none() {

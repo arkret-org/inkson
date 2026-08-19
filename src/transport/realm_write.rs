@@ -638,6 +638,12 @@ pub async fn repair_direct_conversation_self_rejoin(
 /// whole-value digest author the exact request; every ambiguous retry reuses
 /// the Garth-retained canonical bytes. No remote endpoint or resolution record
 /// is persisted by the client.
+// Spec-required Direct Conversation repair dispatch whose caller has not
+// landed yet: wiring is blocked on resolving the peer's `target_service_id`
+// from the delivery binding (see arkret-work task
+// 2026-08-18-0515-dead-code-clusters-in-soland-and-inkson, adjudication (b)
+// keep). Deleting this would orphan the already-live Welcome-consumption half.
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub async fn dispatch_direct_conversation_repair(
     submitter: &EventSubmitter,
@@ -785,6 +791,8 @@ pub async fn dispatch_direct_conversation_repair(
 /// Resume a frozen dispatch after restart or an ambiguous transport failure.
 /// The request is loaded from durable state; callers cannot supply rebuilt
 /// fields, and the planner rechecks the retained canonical bytes before send.
+// Same pending wiring as `dispatch_direct_conversation_repair` above.
+#[allow(dead_code)]
 pub async fn retry_direct_conversation_repair_dispatch(
     http: &arkret_sdk::http_client::Client,
     state_store: &mut crate::state::LocalStateStore,
@@ -831,6 +839,8 @@ pub async fn retry_direct_conversation_repair_dispatch(
 /// Author replacement-generation activation only after the exact repair
 /// Welcome was consumed and durably recorded. The predecessor remains the
 /// resolver-provided whole current-cell value digest frozen in the request.
+// Same pending wiring as `dispatch_direct_conversation_repair` above.
+#[allow(dead_code)]
 pub async fn activate_direct_conversation_repair(
     submitter: &EventSubmitter,
     state_store: &mut crate::state::LocalStateStore,

@@ -934,10 +934,9 @@ mod tests {
         );
         assert_eq!(event.payload["key_scope"]["policy_digest"], policy_digest);
         assert!(
-            event
+            !event
                 .payload
-                .get("requester_device_authorize_event_id")
-                .is_none()
+                .contains_key("requester_device_authorize_event_id")
         );
         assert_eq!(
             event.authorization_ref.as_deref(),

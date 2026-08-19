@@ -143,8 +143,7 @@ pub(crate) fn authoring_principal_server_id() -> anyhow::Result<arkret_sdk::DidC
     }
     #[cfg(test)]
     {
-        return arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example")
-            .map_err(anyhow::Error::msg);
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").map_err(anyhow::Error::msg)
     }
     #[cfg(not(test))]
     anyhow::bail!("no authoring Principal Server is selected")
@@ -226,7 +225,7 @@ impl TypedOperationBuilder {
     where
         K: arkret_sdk::EventSpec,
     {
-        let event = (|| {
+        (|| {
             let realm_id = arkret_sdk::RealmId::new(trim_realm_id(&realm_id.into()))
                 .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
             let scope_ref = if K::KIND == EventKind::RealmCreate {
@@ -244,8 +243,7 @@ impl TypedOperationBuilder {
                 .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))?
                 .author(1, hlc, crate::clock::now_utc_millis())
                 .map_err(|err| anyhow::anyhow!("typed Event authoring failed: {err}"))
-        })();
-        event
+        })()
     }
 
     fn map_event(mut self, update: impl FnOnce(&mut Event) -> anyhow::Result<()>) -> Self {

@@ -182,7 +182,7 @@ pub(super) fn test_encrypted_content_envelope(
         .expect("hidden AAD for the fixture scope");
     let payload = arkret_sdk::EncryptedPayload {
         scheme: arkret_wire::EncryptedPayloadScheme::MlsRfc9420,
-        group_id: arkret_sdk::base64url_encode(&[7u8; 32]),
+        group_id: arkret_sdk::base64url_encode([7u8; 32]),
         epoch: 1,
         content_type: KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE.to_owned(),
         ciphertext: ciphertext.to_owned(),
@@ -192,7 +192,7 @@ pub(super) fn test_encrypted_content_envelope(
         payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "ab".repeat(32)))
             .expect("fixture payload digest"),
         key_ref: Some(arkret_sdk::KeyRefObject::mls_rfc9420(
-            arkret_sdk::base64url_encode(&[7u8; 32]),
+            arkret_sdk::base64url_encode([7u8; 32]),
             1,
         )),
     };

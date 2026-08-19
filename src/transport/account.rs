@@ -98,9 +98,8 @@ pub async fn update_profile(
 
     let viewer = account_viewer(submitter.http()).await?;
     let principal_id = viewer.principal_id.clone();
-    let evidence_principal_id = arkret_sdk::DidCoreId::from(
-        arkret_sdk::project_full_id_to_core_id(&authority_evidence.principal_id)?,
-    );
+    let evidence_principal_id =
+        arkret_sdk::project_full_id_to_core_id(&authority_evidence.principal_id)?;
     authority_evidence
         .pcr_genesis_unit
         .validate_ordered_envelopes()?;
@@ -668,6 +667,13 @@ pub async fn direct_conversation_found(
 /// the authenticated Principal Server. Remote service resolution, routing and
 /// target-device fan-out remain server responsibilities; Inkson retains only
 /// the exact request and the returned durable-enqueue receipt.
+// Spec-required Direct Conversation repair half whose caller has not landed
+// yet: wiring is blocked on resolving the peer's `target_service_id` from the
+// delivery binding (see arkret-work task
+// 2026-08-18-0515-dead-code-clusters-in-soland-and-inkson, adjudication (b)
+// keep). The receiving half (`record_consumed_direct_conversation_repair_welcome`)
+// is already live in bootstrap.
+#[allow(dead_code)]
 pub async fn direct_conversation_repair_dispatch(
     http: &arkret_sdk::http_client::Client,
     request: &arkret_sdk::DirectConversationRepairDispatchRequest,
@@ -681,6 +687,9 @@ pub async fn direct_conversation_repair_dispatch(
 /// Extract the resolver's digest of the complete current active-generation
 /// cell value. Event ids and locally reconstructed payload digests are not
 /// substitutes for this CAS predecessor.
+// Part of the same pending repair-dispatch wiring as
+// `direct_conversation_repair_dispatch` above.
+#[allow(dead_code)]
 pub(crate) fn direct_conversation_current_generation_value_digest(
     outcome: &arkret_sdk::DirectConversationResolveOutcome,
 ) -> anyhow::Result<arkret_sdk::Hash> {
@@ -1487,6 +1496,43 @@ pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> 
         }
     }
     unreachable!("bounded account_data delete CAS loop always returns")
+}
+
+/// Create or update a scheduled-send plan (spec `models/personal-productivity.md`
+/// §4): the plan is validated, encrypted, and written to
+/// `ak.scheduled_send.v1:<scheduled_send_id>` through the account-data
+/// `cas_register` loop; a `cas_conflict` re-reads the authoritative entry,
+/// merges on decrypted plaintext, and retries with the new
+/// `expected_revision`.
+pub async fn put_scheduled_send_plan(
+    submitter: &EventSubmitter,
+    value: &arkret_sdk::ScheduledSendValue,
+) -> anyhow::Result<()> {
+    crate::account_data::validate_scheduled_send_value(value)?;
+    let key =
+        crate::account_data::scheduled_send_account_data_key(value.scheduled_send_id.as_str())?;
+    let actor = account_data_holder()?;
+    update_account_data_with_merge(submitter, &key, |snapshot| {
+        crate::account_data::merge_scheduled_send_account_data(
+            actor.as_str(),
+            &key,
+            value,
+            snapshot.entry.as_ref(),
+        )
+    })
+    .await?;
+    Ok(())
+}
+
+/// Cancel a scheduled-send plan by deleting its account-data entry through
+/// the same CAS binding (spec §4: a plan is principal-private state, so
+/// cancellation is the account-data delete, not a shared Event).
+pub async fn cancel_scheduled_send_plan(
+    submitter: &EventSubmitter,
+    scheduled_send_id: &str,
+) -> anyhow::Result<()> {
+    let key = crate::account_data::scheduled_send_account_data_key(scheduled_send_id)?;
+    delete_account_data(submitter, &key).await
 }
 
 pub async fn submit_read_cursor_advance(

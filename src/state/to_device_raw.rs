@@ -507,6 +507,7 @@ impl LocalStateStore {
         }
         let mut inserted = 0;
         let mut read_cursor_updated = false;
+        let mut invite_delivery_updated = false;
         let mut conflict = None;
         for message in messages {
             let Ok(message) = serde_json::to_value(message) else {
@@ -552,6 +553,7 @@ impl LocalStateStore {
                 }
             }
             read_cursor_updated |= self.ingest_read_cursor_update_message(&message);
+            invite_delivery_updated |= self.ingest_invite_delivery_update_message(&message);
             self.cached.to_device_inbox.push(message);
             inserted += 1;
         }
@@ -563,7 +565,12 @@ impl LocalStateStore {
         if overflow > 0 {
             self.cached.to_device_inbox.drain(0..overflow);
         }
-        if inserted > 0 || pruned_expired || pruned_receipts || overflow > 0 || read_cursor_updated
+        if inserted > 0
+            || pruned_expired
+            || pruned_receipts
+            || overflow > 0
+            || read_cursor_updated
+            || invite_delivery_updated
         {
             let _ = self.flush();
         }

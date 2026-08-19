@@ -237,10 +237,8 @@ impl InksonEventSigner {
     ) -> Result<DidFullId, EventSignerError> {
         let full_id = DidFullId::new(self.signer_did.clone())
             .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
-        let projected = arkret_sdk::DidCoreId::from(
-            arkret_sdk::project_full_id_to_core_id(&full_id)
-                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
-        );
+        let projected = arkret_sdk::project_full_id_to_core_id(&full_id)
+            .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
         if &projected != actor_id {
             return Err(EventSignerError::Encoding(
                 "active signer full_id does not project to Event actor_id".to_owned(),

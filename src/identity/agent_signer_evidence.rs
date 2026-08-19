@@ -946,7 +946,6 @@ async fn resolve_source_service_method_key(
         .map(|(controller, _)| controller)
         .and_then(|controller| DidFullId::new(controller.to_owned()).ok())
         .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
-        .map(DidCoreId::from)
         .as_ref()
         != Some(source_service_id)
     {
@@ -1061,9 +1060,7 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
 }
 
 fn actor_id_from_full(full_id: &DidFullId) -> Option<DidCoreId> {
-    arkret_sdk::project_full_id_to_core_id(full_id)
-        .ok()
-        .map(DidCoreId::from)
+    arkret_sdk::project_full_id_to_core_id(full_id).ok()
 }
 
 fn full_id_from_method_for_actor(method: &DidUrl, actor_id: &DidCoreId) -> Option<DidFullId> {

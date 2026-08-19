@@ -822,22 +822,6 @@ pub(super) fn KanbanEffects(
     rsx! {}
 }
 
-fn private_narrative_restore_needed(description_locked: bool, synthesis_locked: bool) -> bool {
-    description_locked || synthesis_locked
-}
-
-#[cfg(test)]
-mod private_narrative_restore_tests {
-    use super::private_narrative_restore_needed;
-
-    #[test]
-    fn description_only_lock_triggers_backup_restore() {
-        assert!(private_narrative_restore_needed(true, false));
-        assert!(private_narrative_restore_needed(false, true));
-        assert!(!private_narrative_restore_needed(false, false));
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn refresh_projection(
     base_url: String,
@@ -937,4 +921,20 @@ fn refresh_projection(
             }
         }
     });
+}
+
+fn private_narrative_restore_needed(description_locked: bool, synthesis_locked: bool) -> bool {
+    description_locked || synthesis_locked
+}
+
+#[cfg(test)]
+mod private_narrative_restore_tests {
+    use super::private_narrative_restore_needed;
+
+    #[test]
+    fn description_only_lock_triggers_backup_restore() {
+        assert!(private_narrative_restore_needed(true, false));
+        assert!(private_narrative_restore_needed(false, true));
+        assert!(!private_narrative_restore_needed(false, false));
+    }
 }

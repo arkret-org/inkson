@@ -33,8 +33,7 @@ pub fn build_agent_provision_event_draft(
     requested_scope_digest: &Hash,
 ) -> anyhow::Result<Event> {
     let created_at = crate::clock::now_utc();
-    let controller_actor_id =
-        DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_full_id)?);
+    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(controller_full_id)?;
     let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
         controller_full_id.as_str(),
         controller_realm_id.as_str(),
@@ -464,8 +463,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
     let controller_id = DidFullId::new(controller_id.trim().to_owned())?;
     let agent_id = request.agent_id.clone();
-    let controller_actor_id =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&controller_id)?);
+    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(&controller_id)?;
     let agent_actor_id = agent_id.clone();
     if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
@@ -494,8 +492,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
         anyhow::bail!("agent key_state requested_scope digest does not match its trusted scope");
     }
     let verifier_did = arkret_sdk::DidFullId::new(service_full_id.trim().to_owned())?;
-    let verifier_service_id =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&verifier_did)?);
+    let verifier_service_id = arkret_sdk::project_full_id_to_core_id(&verifier_did)?;
     if request.proof_of_possession.audience != verifier_service_id {
         anyhow::bail!("runtime request audience does not match the current service");
     }
@@ -617,6 +614,10 @@ pub struct AgentKeyAuthorizationForPairing {
     pub signing_key_binding: AgentSigningKeyBinding,
 }
 
+// The `expect` below fires only if the current UTC timestamp falls outside
+// the canonical millisecond wire range — an invariant, not a reachable error
+// path.
+#[allow(clippy::expect_used)]
 pub fn build_agent_key_authorization_for_pairing(
     controller_id: &str,
     service_id: &str,
@@ -624,8 +625,7 @@ pub fn build_agent_key_authorization_for_pairing(
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentKeyAuthorizationForPairing> {
     let controller = DidFullId::new(controller_id.trim().to_owned())?;
-    let controller_actor_id =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&controller)?);
+    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(&controller)?;
     if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }

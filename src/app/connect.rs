@@ -1340,6 +1340,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             // clears the durable local cache as well.
                             let mut blocklist_snapshot_seen = false;
                             let mut contact_remark_snapshot_keys = BTreeSet::new();
+                            let mut scheduled_send_snapshot_keys = BTreeSet::new();
                             for event in &sync.updates.account_data {
                                 let entry = &event.payload;
                                 let Some(account_data_key) =
@@ -1544,6 +1545,32 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 }
                                 if crate::account_data::private_account_data_key_prefix(
                                     account_data_key,
+                                ) == Some(arkret_sdk::AccountDataKey::SCHEDULED_SEND_V1)
+                                {
+                                    if entry.get("tombstone").and_then(serde_json::Value::as_bool)
+                                        == Some(true)
+                                    {
+                                        store.remove_scheduled_send_account_data_entry(
+                                            account_data_key,
+                                        );
+                                        continue;
+                                    }
+                                    scheduled_send_snapshot_keys
+                                        .insert(account_data_key.to_owned());
+                                    if let Some(content) = entry
+                                        .get("content")
+                                        .or_else(|| entry.get("encrypted_payload"))
+                                        .cloned()
+                                    {
+                                        store.stage_scheduled_send_account_data_entry(
+                                            account_data_key,
+                                            content,
+                                        );
+                                    }
+                                    continue;
+                                }
+                                if crate::account_data::private_account_data_key_prefix(
+                                    account_data_key,
                                 ) == Some(arkret_sdk::AccountDataKey::SAVED_V1)
                                 {
                                     if let Some(content) = entry
@@ -1646,6 +1673,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             if !blocklist_snapshot_seen {
                                 store.set_client_blocklist(0, Vec::new());
                             }
+                            store.retain_scheduled_send_account_data_keys(
+                                &scheduled_send_snapshot_keys,
+                            );
                             match crate::account_data::account_data_namespace_key(&account_did()) {
                                 Ok(namespace_key) => store.retain_contact_remarks_for_storage_keys(
                                     &namespace_key,

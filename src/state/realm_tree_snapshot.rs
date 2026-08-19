@@ -16,8 +16,7 @@ impl LocalStateStore {
                     .map(|typed| (typed.to_string(), typed))
             })
             .collect::<std::collections::BTreeMap<_, _>>()
-            .into_iter()
-            .map(|(_, realm_id)| realm_id)
+            .into_values()
             .collect()
     }
 

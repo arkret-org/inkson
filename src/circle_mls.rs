@@ -139,12 +139,12 @@ fn build_remove_scope_rotate_draft(
     // so every durable proposal must carry the same verified binding.
     let proposal_governance_binding =
         crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
-    if let Some(sidecar_binding) = sidecar_binding.as_ref() {
-        if proposal_governance_binding.sidecar_binding() != Some(sidecar_binding) {
-            return Err(
-                "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
-            );
-        }
+    if let Some(sidecar_binding) = sidecar_binding.as_ref()
+        && proposal_governance_binding.sidecar_binding() != Some(sidecar_binding)
+    {
+        return Err(
+            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
+        );
     }
     for (proposal, removed_principal) in remove
         .proposals

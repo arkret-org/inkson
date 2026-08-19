@@ -443,7 +443,7 @@ fn register_media_service_keys(
 
     let mut registered = 0usize;
     for method in document.verification_methods.keys() {
-        let resolved = resolve_verification_method_key_from_document(&document, method)
+        let resolved = resolve_verification_method_key_from_document(document, method)
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
         if resolved.did.as_str() != service_id {
             return Err(RtcClientError::TokenIssuerUnauthorised);

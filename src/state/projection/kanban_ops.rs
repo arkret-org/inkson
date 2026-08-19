@@ -10,6 +10,10 @@ use serde::Serialize;
 
 use crate::state::RawOperationRecord;
 
+// Internal ingest-dispatch enum: each value is constructed from one Event and
+// consumed immediately, so boxing the larger variant would only add an
+// allocation per kanban Event without changing layout anywhere durable.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 enum LocalKanbanEvent {
     SpaceCreate(arkret_sdk::SpaceCreatePayload),

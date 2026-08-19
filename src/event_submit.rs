@@ -226,6 +226,9 @@ impl EventOutboundSubmitter<'_> {
         Ok(())
     }
 
+    // The `expect` below asserts the queue-record invariant named in its
+    // message; a `?` rewrite would add an error path no caller can reach.
+    #[allow(clippy::expect_used)]
     async fn resume_mls_admission(
         &self,
         mut queued: QueuedSdkEvent,
@@ -790,9 +793,7 @@ fn normalized_recovery_gate_cache_key(
         .ok()
         .or_else(|| {
             let full = arkret_sdk::DidFullId::new(authority_principal.to_owned()).ok()?;
-            arkret_sdk::project_full_id_to_core_id(&full)
-                .ok()
-                .map(arkret_sdk::DidCoreId::from)
+            arkret_sdk::project_full_id_to_core_id(&full).ok()
         })?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
     Some(format!("{principal}\u{1f}{device}"))
@@ -1024,6 +1025,9 @@ impl EventSubmitter {
     /// service returns the slot-closing receipt. The receipt is frozen first;
     /// then every Event must resolve with its exact accepted covering Seal
     /// before the same queue record can become `Sent`.
+    // The `expect` below asserts the constructor invariant named in its
+    // message; a `?` rewrite would add an error path no caller can reach.
+    #[allow(clippy::expect_used)]
     pub(crate) async fn submit_direct_conversation_founding_durable(
         &self,
         submission: arkret_sdk::direct_conversation_ops::DirectConversationFoundingUnitSubmission,
@@ -1925,7 +1929,6 @@ impl EventSubmitter {
     /// any submission I/O. The caller must pass the authoring generation used
     /// to produce `signed_event`; resolving or editing the plan after this
     /// boundary is forbidden.
-    #[allow(dead_code)] // Scheduler UI is not wired yet; this is its durable transport boundary.
     pub(crate) async fn submit_scheduled_send_event(
         &self,
         scheduled_send_id: arkret_identifiers::ScheduledSendId,
@@ -2644,6 +2647,9 @@ impl EventSubmitter {
             .await
     }
 
+    // The `expect` below asserts the prepared-batch invariant named in its
+    // message; a `?` rewrite would add an error path no caller can reach.
+    #[allow(clippy::expect_used)]
     pub(crate) async fn prepare_sdk_events_batch(
         &self,
         mut events: Vec<arkret_sdk::Event>,
@@ -3147,6 +3153,9 @@ fn realm_owner_covers_event_kind(kind: &str) -> bool {
 /// Producer-chosen authorization stays untouched: an Event that already names
 /// an `authorization_ref` (applet delegation, literal grant) or that a
 /// service executes on someone's behalf keeps its own authorization story.
+// The `expect` below fires only if the fixed authority-root constant fails
+// validation — an invariant, not a reachable error path.
+#[allow(clippy::expect_used)]
 fn realm_authority_root_claim(
     event: &arkret_sdk::Event,
     authority: Option<&RealmCreateAuthority>,
@@ -3230,7 +3239,7 @@ fn data_event_auth_context(event: &arkret_sdk::Event) -> anyhow::Result<arkret_s
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active signer is required for AuthContext"))?;
     let did = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&did)?) != *actor_id {
+    if arkret_sdk::project_full_id_to_core_id(&did)? != *actor_id {
         anyhow::bail!("active signer full_id does not project to AuthContext actor");
     }
     let key_id = data_event_key_id_for(event);
@@ -3280,6 +3289,9 @@ fn opaque_key_id(value: &str) -> arkret_sdk::OpaqueLocalId {
         .unwrap_or_else(|_| fallback_key_id())
 }
 
+// `"device"` is a fixed literal; the `expect` documents that invariant rather
+// than a reachable error path.
+#[allow(clippy::expect_used)]
 fn fallback_key_id() -> arkret_sdk::OpaqueLocalId {
     arkret_sdk::OpaqueLocalId::new("device").expect("device is a valid opaque local id")
 }
@@ -4745,7 +4757,7 @@ mod tests {
             .await
             .expect_err("authoring must resolve the selected Principal Server");
         crate::operation::set_proof_mode(previous_proof_mode);
-        assert!(!draft_realm_id.as_str().is_empty());
+        assert!(!draft_realm_id.is_empty());
         assert!(format!("{error:#}").contains("server describe"));
     }
 

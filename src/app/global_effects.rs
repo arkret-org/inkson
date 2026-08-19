@@ -138,5 +138,47 @@ pub(super) fn GlobalEffects(
         }
     });
 
+    // Scheduled-send expiry trigger (spec `models/personal-productivity.md`
+    // §4): while a session is live, periodically scan the locally staged
+    // `ak.scheduled_send.v1` plans and drive every due one through the durable
+    // freeze-then-submit dispatch boundary.
+    use_future({
+        move || async move {
+            loop {
+                crate::runtime_helpers::sleep_for(crate::scheduled_send::DISPATCH_POLL_INTERVAL)
+                    .await;
+                let session = token();
+                if session.trim().is_empty() {
+                    continue;
+                }
+                let Some(actor) = crate::secure_key_store::active_device_seed_scope()
+                    .filter(|actor| !actor.trim().is_empty())
+                else {
+                    continue;
+                };
+                let base = base_url();
+                if let Err(error) = crate::transport::auth::with_event_submitter(
+                    &base,
+                    session,
+                    |submitter| async move {
+                        crate::scheduled_send::dispatch_due_scheduled_sends(
+                            &submitter,
+                            &actor,
+                            state_store,
+                        )
+                        .await
+                    },
+                )
+                .await
+                {
+                    tracing::debug!(
+                        error = %error.display(),
+                        "scheduled-send dispatch tick deferred"
+                    );
+                }
+            }
+        }
+    });
+
     rsx! {}
 }
