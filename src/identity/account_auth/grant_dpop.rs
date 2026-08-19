@@ -617,32 +617,10 @@ fn jwk_thumbprint_ed25519(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
     use super::*;
-    use crate::secure_key_store::MemorySecureKeyStore;
+    use crate::secure_key_store::{DeviceSeedScopeTestGuard, MemorySecureKeyStore};
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     use crate::state::isolated_store_for_tests as isolated_store;
-
-    fn seed_scope_test_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("seed scope test lock")
-    }
-
-    struct SeedScopeReset;
-
-    impl Drop for SeedScopeReset {
-        fn drop(&mut self) {
-            crate::secure_key_store::set_active_device_seed_scope(None);
-        }
-    }
-
-    fn set_seed_scope(scope: &str) -> SeedScopeReset {
-        crate::secure_key_store::set_active_device_seed_scope(Some(scope));
-        SeedScopeReset
-    }
 
     #[test]
     fn ensure_device_key_is_idempotent() {
@@ -799,10 +777,9 @@ mod tests {
 
     #[test]
     fn secure_store_seed_round_trips_without_plaintext_state_seed() {
-        let _lock = seed_scope_test_lock();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some("did:web:secure.example"));
         let mut store = isolated_store("secure");
         let secure = MemorySecureKeyStore::default();
-        let _scope = set_seed_scope("did:web:secure.example");
         let first = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
         let public_record = store.dpop_device_key().expect("public record");
         assert_eq!(public_record.jkt, first.jkt());
@@ -816,9 +793,7 @@ mod tests {
 
     #[test]
     fn pending_handoff_recovers_holder_without_an_active_user_scope() {
-        let _lock = seed_scope_test_lock();
-        crate::secure_key_store::set_active_device_seed_scope(None);
-        crate::secure_key_store::set_pending_login_device_id(None);
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let mut store = isolated_store("pending-handoff-holder");
         let secure = MemorySecureKeyStore::default();
         let pending_store = crate::secure_key_store::PendingLocalStore::new(
@@ -846,11 +821,10 @@ mod tests {
         // 0004 §4.2: the DPoP key is the browser-session grant-binding seed, not
         // the per-account device identity signing seed. `load_or_recover` recovers
         // the DPoP record from the grant-binding seed and ignores the signing seed.
-        let _lock = seed_scope_test_lock();
+        let actor = "did:web:alice.example";
+        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
         let mut store = isolated_store("recover-secure-dpop-record");
         let secure = MemorySecureKeyStore::default();
-        let actor = "did:web:alice.example";
-        let _scope = set_seed_scope(actor);
         // A device identity seed exists for this account but MUST NOT drive DPoP.
         let identity_seed = [9_u8; 32];
         crate::secure_key_store::store_signing_seed_scoped(&secure, Some(actor), &identity_seed)
@@ -883,11 +857,10 @@ mod tests {
         // 0004 §4.2: a stale stored DPoP record is repaired from the grant-binding
         // seed (the `cnf.jkt` credential), never from the device identity signing
         // seed. A present signing seed for the same account MUST be ignored.
-        let _lock = seed_scope_test_lock();
+        let actor = "did:web:bob.example";
+        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
         let mut store = isolated_store("repair-stale-dpop-record");
         let secure = MemorySecureKeyStore::default();
-        let actor = "did:web:bob.example";
-        let _scope = set_seed_scope(actor);
         let old_seed = [3_u8; 32];
         let identity_seed = [7_u8; 32];
         let grant_seed = [23_u8; 32];
@@ -923,11 +896,10 @@ mod tests {
     fn ensure_device_key_sources_grant_binding_not_signing_seed() {
         // 0004 §4.2: `ensure_device_key` mints/loads the DPoP key from the
         // grant-binding store, decoupled from the device identity signing seed.
-        let _lock = seed_scope_test_lock();
+        let actor = "did:web:returning.example";
+        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
         let mut store = isolated_store("ensure-sources-grant-binding");
         let secure = MemorySecureKeyStore::default();
-        let actor = "did:web:returning.example";
-        let _scope = set_seed_scope(actor);
         let identity_seed = [13_u8; 32];
         let grant_seed = [29_u8; 32];
         crate::secure_key_store::store_signing_seed_scoped(&secure, Some(actor), &identity_seed)

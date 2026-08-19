@@ -60,6 +60,11 @@ pub use local_storage::LocalStorageSecureKeyStore;
 pub use platform::AndroidKeystoreSecureKeyStore;
 #[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 pub use platform::IosKeychainSecureKeyStore;
+#[cfg(test)]
+pub(crate) use signing_seed::{
+    DeviceSeedScopeTestGuard, account_scoped_device_key_for, load_signing_seed_scoped,
+    store_signing_seed_scoped,
+};
 pub use signing_seed::{
     GRANT_BINDING_SEED_KEY, SIGNING_SEED_KEY, SigningSeedMaterial, account_scoped_device_key,
     active_device_seed_scope, delete_grant_binding_seed, ensure_grant_binding_seed,
@@ -67,10 +72,6 @@ pub use signing_seed::{
     pending_login_device_id, reset_device_seed_scope_for_signin, rotate_grant_binding_seed,
     set_active_device_seed_scope, set_pending_login_device_id, store_device_id,
     store_grant_binding_seed, store_grant_binding_seed_b64url, store_signing_seed,
-};
-#[cfg(test)]
-pub(crate) use signing_seed::{
-    account_scoped_device_key_for, load_signing_seed_scoped, store_signing_seed_scoped,
 };
 
 #[cfg(target_arch = "wasm32")]

@@ -714,6 +714,10 @@ fn local_state_store_persists_push_registration_state() {
 #[test]
 fn dpop_device_key_uses_secure_key_store() {
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};
+    // The secure-store write/read path resolves the user namespace through
+    // the process-global device-seed scope; hold the guard so a parallel
+    // test cannot clear or re-point that scope mid-test.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("dpop-secure-store");
     let mut store = LocalStateStore::with_path(path);
     let secure = MemorySecureKeyStore::default();
@@ -1131,6 +1135,8 @@ fn known_accounts_lists_each_account_with_its_handle_and_device() {
 
 #[test]
 fn adopt_pending_login_keeps_pending_device_for_new_account() {
+    // begin/adopt_pending_login mutate the process-global pending-login id.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-new");
     let mut store = LocalStateStore::with_path(path);
     store.begin_pending_login("ak:device:new-1", Some("jkt-new"));
@@ -1149,6 +1155,9 @@ fn adopt_pending_login_keeps_pending_device_for_new_account() {
 
 #[test]
 fn pending_login_clears_the_previous_accounts_process_signer() {
+    // begin_pending_login mutates the process-global pending-login id; the
+    // seed-scope guard comes first, matching the crate-wide lock order.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
     crate::event_signer::activate_device_signer_from_seed_for_device(
         [3; 32],
@@ -1167,6 +1176,8 @@ fn pending_login_clears_the_previous_accounts_process_signer() {
 
 #[test]
 fn adopt_pending_login_preserves_returning_account_entry() {
+    // begin/adopt_pending_login mutate the process-global pending-login id.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-returning");
     let mut store = LocalStateStore::with_path(path);
     // Alice already has a persisted entry on this browser.
@@ -1194,6 +1205,8 @@ fn adopt_pending_login_preserves_returning_account_entry() {
 
 #[test]
 fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
+    // begin/adopt_pending_login mutate the process-global pending-login id.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-isolates-previous-onboarding");
     let mut store = LocalStateStore::with_path(path);
     store.switch_active_account("did:web:old.example");
@@ -1296,6 +1309,8 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
 
 #[test]
 fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
+    // resume/adopt_pending_login mutate the process-global pending-login id.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-onboarding-handoff");
     let mut store = LocalStateStore::with_path(path);
     let device = "ak:device:019f0000-0000-7000-8000-000000000001";
@@ -1373,6 +1388,8 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
 
 #[test]
 fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
+    // begin/adopt_pending_login mutate the process-global pending-login id.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("returning-login-clears-anonymous-handoff");
     let mut store = LocalStateStore::with_path(path);
     let principal = "did:web:alice.example";

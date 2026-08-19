@@ -1579,38 +1579,10 @@ fn persist_pending_account_handoff(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
     use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     use super::*;
-
-    fn seed_scope_test_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("seed scope test lock")
-    }
-
-    struct SeedScopeReset {
-        _signer: crate::event_signer::ActiveSignerTestGuard,
-    }
-
-    impl SeedScopeReset {
-        fn new() -> Self {
-            Self {
-                _signer: crate::event_signer::ActiveSignerTestGuard::replace(None),
-            }
-        }
-    }
-
-    impl Drop for SeedScopeReset {
-        fn drop(&mut self) {
-            crate::secure_key_store::set_active_device_seed_scope(None);
-            crate::secure_key_store::set_pending_login_device_id(None);
-        }
-    }
 
     fn dpop_record_for_seed(seed: [u8; 32]) -> crate::state::DpopDeviceKeyRecord {
         crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
@@ -1823,9 +1795,9 @@ mod tests {
 
     #[test]
     fn oidc_callback_restores_bootstrap_device_seed_scope() {
-        let _lock = seed_scope_test_lock();
-        let _reset = SeedScopeReset::new();
-        crate::secure_key_store::set_active_device_seed_scope(Some("did:web:old.example"));
+        let _scope =
+            crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some("did:web:old.example"));
+        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(None);
 
         restore_oidc_callback_device_seed_scope("ak:device:01964137-0000-7000-8000-000000000001")
             .expect("pending local store");
@@ -1985,8 +1957,8 @@ mod tests {
 
     #[test]
     fn completed_login_dpop_key_preserves_returning_account_key_material() {
-        let _lock = seed_scope_test_lock();
-        let _reset = SeedScopeReset::new();
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(None);
         let mut store = crate::state::isolated_store_for_tests("completed-login-dpop-key");
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
         let actor = "did:web:alice.example";

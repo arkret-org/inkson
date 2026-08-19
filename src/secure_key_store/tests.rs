@@ -44,6 +44,9 @@ fn ensure_signing_seed_generates_and_is_idempotent() {
 
 #[test]
 fn pending_promotion_preserves_returning_user_device_identity() {
+    // promote_to activates the user store, mutating the process-global
+    // device-seed scope.
+    let _scope = DeviceSeedScopeTestGuard::replace(None);
     let store = MemorySecureKeyStore::new();
     let user = UserLocalStore::new(
         arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
@@ -94,6 +97,9 @@ fn identity_storage_has_no_historical_key_compatibility_paths() {
 
 #[test]
 fn pending_promotion_moves_material_for_first_time_user() {
+    // promote_to activates the user store, mutating the process-global
+    // device-seed scope.
+    let _scope = DeviceSeedScopeTestGuard::replace(None);
     let store = MemorySecureKeyStore::new();
     let user = UserLocalStore::new(
         arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),

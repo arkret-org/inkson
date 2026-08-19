@@ -51,11 +51,50 @@ static ACTIVE_DEVICE_SEED_SCOPE: RwLock<Option<String>> = RwLock::new(None);
 #[cfg(test)]
 static ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Serializes unit tests that read or write the process-global
+/// [`ACTIVE_DEVICE_SEED_SCOPE`] / [`PENDING_LOGIN_DEVICE_ID`] pair — directly
+/// or through `UserLocalStore::activate` / `PendingLocalStore::activate` /
+/// `promote_to` / `LocalStateStore::begin_pending_login` — and restores both
+/// globals on drop. Every such test MUST hold this guard; a single unguarded
+/// test reintroduces cross-test races under the parallel runner. In tests
+/// that also hold [`crate::event_signer::ActiveSignerTestGuard`], acquire
+/// this guard first so all tests agree on one lock order. Production code
+/// never takes this lock.
 #[cfg(test)]
-fn lock_active_device_seed_scope_for_test() -> std::sync::MutexGuard<'static, ()> {
-    ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+pub(crate) struct DeviceSeedScopeTestGuard {
+    previous_scope: Option<String>,
+    previous_pending: Option<String>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl DeviceSeedScopeTestGuard {
+    /// Take the scope lock, clear any pending-login device id, and install
+    /// `scope` as the active device-seed scope (`None` selects the neutral
+    /// bootstrap state). The guarded test may freely mutate both globals;
+    /// drop restores the pre-guard values.
+    pub(crate) fn replace(scope: Option<&str>) -> Self {
+        let lock = ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous_scope = active_device_seed_scope();
+        let previous_pending = pending_login_device_id();
+        set_pending_login_device_id(None);
+        set_active_device_seed_scope(scope);
+        Self {
+            previous_scope,
+            previous_pending,
+            _lock: lock,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for DeviceSeedScopeTestGuard {
+    fn drop(&mut self) {
+        set_active_device_seed_scope(self.previous_scope.as_deref());
+        set_pending_login_device_id(self.previous_pending.as_deref());
+    }
 }
 
 /// Set the active per-account device-seed scope (the account DID), or `None`
@@ -619,25 +658,13 @@ mod grant_binding_tests {
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;
 
-    struct ScopeReset;
-
-    impl Drop for ScopeReset {
-        fn drop(&mut self) {
-            set_active_device_seed_scope(None);
-            set_pending_login_device_id(None);
-        }
-    }
-
-    fn activate_test_user() -> (std::sync::MutexGuard<'static, ()>, ScopeReset) {
-        let guard = lock_active_device_seed_scope_for_test();
-        set_pending_login_device_id(None);
-        set_active_device_seed_scope(Some("ak:did_core:web:alice.example"));
-        (guard, ScopeReset)
+    fn activate_test_user() -> DeviceSeedScopeTestGuard {
+        DeviceSeedScopeTestGuard::replace(Some("ak:did_core:web:alice.example"))
     }
 
     #[test]
     fn ensure_is_idempotent_and_load_round_trips() {
-        let (_scope_guard, _reset) = activate_test_user();
+        let _scope = activate_test_user();
         let store = MemorySecureKeyStore::default();
         let first = ensure_grant_binding_seed(&store).unwrap();
         let second = ensure_grant_binding_seed(&store).unwrap();
@@ -649,7 +676,7 @@ mod grant_binding_tests {
 
     #[test]
     fn rotate_replaces_with_a_fresh_seed() {
-        let (_scope_guard, _reset) = activate_test_user();
+        let _scope = activate_test_user();
         let store = MemorySecureKeyStore::default();
         let original = ensure_grant_binding_seed(&store).unwrap();
         let rotated = rotate_grant_binding_seed(&store).unwrap();
@@ -660,7 +687,7 @@ mod grant_binding_tests {
 
     #[test]
     fn delete_clears_the_entry() {
-        let (_scope_guard, _reset) = activate_test_user();
+        let _scope = activate_test_user();
         let store = MemorySecureKeyStore::default();
         ensure_grant_binding_seed(&store).unwrap();
         delete_grant_binding_seed(&store).unwrap();
@@ -669,10 +696,7 @@ mod grant_binding_tests {
 
     #[test]
     fn missing_identity_scope_returns_an_error_instead_of_panicking() {
-        let _scope_guard = lock_active_device_seed_scope_for_test();
-        let _reset = ScopeReset;
-        set_active_device_seed_scope(None);
-        set_pending_login_device_id(None);
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         let store = MemorySecureKeyStore::default();
 
         let error = load_grant_binding_seed(&store).unwrap_err();
@@ -686,7 +710,7 @@ mod grant_binding_tests {
 
     #[test]
     fn grant_binding_key_is_independent_of_the_account_signing_seed() {
-        let (_scope_guard, _reset) = activate_test_user();
+        let _scope = activate_test_user();
         // The two subjects use different store keys, so writing one never
         // perturbs the other — the core invariant of decision 0004.
         let store = MemorySecureKeyStore::default();
@@ -705,8 +729,7 @@ mod grant_binding_tests {
 
     #[test]
     fn pending_accounts_use_distinct_device_and_grant_key_namespaces() {
-        let _lock = lock_active_device_seed_scope_for_test();
-        set_active_device_seed_scope(None);
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
         set_pending_login_device_id(Some("ak:device:01964137-0000-7000-8000-000000000001"));
         let first_device = device_id_key_for(None);
         let first_grant = account_scoped_device_key(GRANT_BINDING_SEED_KEY);
@@ -714,7 +737,6 @@ mod grant_binding_tests {
         set_pending_login_device_id(Some("ak:device:01964137-0000-7000-8000-000000000002"));
         let second_device = device_id_key_for(None);
         let second_grant = account_scoped_device_key(GRANT_BINDING_SEED_KEY);
-        set_pending_login_device_id(None);
 
         assert_ne!(first_device, second_device);
         assert_ne!(first_grant, second_grant);

@@ -1706,6 +1706,10 @@ mod tests {
 
     #[test]
     fn activate_device_signer_from_seed_b64url_persists_and_replaces_stale_signer() {
+        // Seed persistence resolves its namespace through the process-global
+        // device-seed scope; the scope guard comes before the signer guard,
+        // matching the crate-wide lock order.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let _g = reset();
         let user_store = crate::secure_key_store::UserLocalStore::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),

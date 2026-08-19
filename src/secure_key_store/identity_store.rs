@@ -480,6 +480,9 @@ mod tests {
 
     #[test]
     fn promotion_moves_only_the_selected_pending_identity() {
+        // promote_to activates the user store, mutating the process-global
+        // device-seed scope.
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let store = MemorySecureKeyStore::default();
         let pending = PendingLocalStore::new(device("000000000003"));
         pending.save_device_id(&store).unwrap();

@@ -791,6 +791,9 @@ mod rotation_resume_tests {
 
     #[tokio::test]
     async fn pending_rotation_index_round_trips_and_clears() {
+        // pending_rotation_key resolves through the process-global
+        // device-seed scope installed by activate().
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let store = garth::MemorySecureKeyStore::new();
         let user_store = crate::secure_key_store::UserLocalStore::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),

@@ -312,8 +312,19 @@ pub fn security_transaction_engine(
 mod tests {
     use super::*;
 
+    // Every storage key in this module resolves through the process-global
+    // device-seed scope (`account_scoped_device_key`), so each test installs
+    // its own scope instead of depending on whatever a neighbouring test
+    // happens to leave behind.
+    fn activate_test_scope() -> crate::secure_key_store::DeviceSeedScopeTestGuard {
+        crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some(
+            "ak:did_core:web:alice.example",
+        ))
+    }
+
     #[tokio::test]
     async fn pending_fresh_device_recovery_pointer_round_trips_and_clears() {
+        let _scope = activate_test_scope();
         let secure_store = garth::MemorySecureKeyStore::new();
         let transaction_id =
             arkret_sdk::TransactionId::new("ak:transaction:01904100-0000-7000-8000-abcdefabcda0")
@@ -339,6 +350,7 @@ mod tests {
 
     #[tokio::test]
     async fn adapter_round_trips_public_plan_without_plaintext_secret() {
+        let _scope = activate_test_scope();
         let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
             Arc::new(garth::MemorySecureKeyStore::new());
         let store = InksonSecurityTransactionStore::new(secure_store);
@@ -369,6 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn adapter_stages_and_idempotently_clears_terminal_secret_material() {
+        let _scope = activate_test_scope();
         let secure_store = Arc::new(garth::MemorySecureKeyStore::new());
         let store = InksonSecurityTransactionStore::new(secure_store.clone());
         let transaction_id =
@@ -417,6 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn adapter_rejects_forbidden_secret_fields_before_persistence() {
+        let _scope = activate_test_scope();
         let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
             Arc::new(garth::MemorySecureKeyStore::new());
         let store = InksonSecurityTransactionStore::new(secure_store);
@@ -446,6 +460,7 @@ mod tests {
 
     #[tokio::test]
     async fn adapter_rejects_recovery_mnemonic_hidden_in_public_text() {
+        let _scope = activate_test_scope();
         let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
             Arc::new(garth::MemorySecureKeyStore::new());
         let store = InksonSecurityTransactionStore::new(secure_store);
@@ -477,6 +492,7 @@ mod tests {
 
     #[tokio::test]
     async fn adapter_audits_pending_erase_request_before_persistence() {
+        let _scope = activate_test_scope();
         let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
             Arc::new(garth::MemorySecureKeyStore::new());
         let store = InksonSecurityTransactionStore::new(secure_store);
@@ -513,6 +529,7 @@ mod tests {
 
     #[tokio::test]
     async fn adapter_allows_public_digests_ciphertext_and_opaque_secret_reference() {
+        let _scope = activate_test_scope();
         let secure_store: Arc<dyn SecureKeyStore + Send + Sync> =
             Arc::new(garth::MemorySecureKeyStore::new());
         let store = InksonSecurityTransactionStore::new(secure_store);

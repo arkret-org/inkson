@@ -28,6 +28,9 @@ fn ensure_local_identity_generates_persists_and_round_trips() {
 
 #[test]
 fn secure_identity_store_keeps_seed_out_of_state_record() {
+    // The secure identity path resolves its namespace through the
+    // process-global device-seed scope installed by activate().
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("local-identity-secure");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let user_store = crate::secure_key_store::UserLocalStore::new(
@@ -98,6 +101,9 @@ fn local_identity_record_tamper_detection_regenerates() {
 
 #[test]
 fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
+    // Grant-binding and identity helpers resolve their namespace through the
+    // process-global device-seed scope installed by activate().
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("explicit-device-reset");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let account = "did:web:alice.example";
