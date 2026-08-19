@@ -766,6 +766,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         div { class: "field",
                                                             Label { html_for: "card-detail-summary-input", "Summary" }
                                                             CardMarkdownEditor {
+                                                                key: "card-markdown-summary",
                                                                 value: card_edit_description(),
                                                                 token: token(),
                                                                 realm_id: selected_realm_id.clone(),
@@ -947,6 +948,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 div { class: "field",
                                                                     Label { html_for: "card-detail-description-input", "Description" }
                                                                     CardMarkdownEditor {
+                                                                        key: "card-markdown-description",
                                                                         value: card_edit_body(),
                                                                         token: token(),
                                                                         realm_id: selected_realm_id.clone(),
@@ -1318,6 +1320,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         div { class: "field",
                                                                                             Label { html_for: "card-detail-synthesis-input", "Synthesis" }
                                                                                             CardMarkdownEditor {
+                                                                                                key: "card-markdown-synthesis-{entry.id}",
                                                                                                 value: card_edit_synthesis(),
                                                                                                 token: token(),
                                                                                                 realm_id: selected_realm_id.clone(),
@@ -1408,6 +1411,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 div { class: "field",
                                                                     Label { html_for: "card-detail-synthesis-input", "Synthesis" }
                                                                     CardMarkdownEditor {
+                                                                        key: "card-markdown-synthesis-new",
                                                                         value: card_edit_synthesis(),
                                                                         token: token(),
                                                                         realm_id: selected_realm_id.clone(),

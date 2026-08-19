@@ -551,7 +551,7 @@ fn toast_editor_bootstrap_script(
 
     const registry = window.__inksonToastEditors || (window.__inksonToastEditors = new Map());
     const existing = registry.get(config.hostId);
-    if (existing && host.childElementCount > 0) {{
+    if (existing && existing.host === host && host.childElementCount > 0) {{
         releaseBridge();
         return;
     }}
@@ -606,7 +606,11 @@ fn toast_editor_bootstrap_script(
     }}
 
     if (existing) {{
-        try {{ existing.dispose(); }} catch (_) {{}}
+        // The registry can outlive the Dioxus component that created this
+        // editor. Its old eval bridge belongs to an already-reclaimed WASM
+        // scope, so calling it here can invoke a stale wasm-bindgen closure
+        // and corrupt the whole tab. The scope-bound Rust task is cancelled
+        // on unmount; only the detached JS editor needs explicit teardown.
         try {{ existing.editor.destroy(); }} catch (_) {{}}
         registry.delete(config.hostId);
     }}
@@ -707,7 +711,7 @@ fn toast_editor_bootstrap_script(
     }});
 
     editor.on("change", () => sync(editor));
-    registry.set(config.hostId, {{ editor, dispose: releaseBridge }});
+    registry.set(config.hostId, {{ editor, host }});
 }})();"##
     ))
 }

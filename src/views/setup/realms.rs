@@ -82,6 +82,27 @@ impl BootstrapProgressStrings {
     }
 }
 
+/// Realm authoring becomes available once the session credential and secure
+/// store have finished hydrating. The async authenticated-client provider used
+/// by the submit path owns grant rotation, so UI readiness must not depend on a
+/// synchronous snapshot of the persisted grant: that snapshot can briefly be
+/// expired while the provider is rotating it in the background.
+fn realm_create_available(
+    has_session: bool,
+    basics_ready: bool,
+    boundary_ready: bool,
+    secure_store_ready: bool,
+    create_busy: bool,
+    has_created_realm: bool,
+) -> bool {
+    has_session
+        && basics_ready
+        && boundary_ready
+        && secure_store_ready
+        && !create_busy
+        && !has_created_realm
+}
+
 #[component]
 pub(super) fn RealmsSection(
     plaintext_service_id: String,
@@ -118,15 +139,6 @@ pub(super) fn RealmsSection(
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let has_session = !token().trim().is_empty();
-    let has_usable_session_grant =
-        state_store
-            .read()
-            .session_grant()
-            .as_ref()
-            .is_some_and(|grant| {
-                crate::identity::session_refresh::grant_matches_principal_server(grant, &base_url)
-                    && !crate::identity::session_refresh::grant_is_dead(grant)
-            });
 
     let realm_discoverability_selected = use_memo(move || Some(realm_discoverability()));
     let realm_policy_join_rule_selected = use_memo(move || Some(realm_policy_join_rule()));
@@ -183,8 +195,6 @@ pub(super) fn RealmsSection(
         Some(tr("setup.blocker.already_created"))
     } else if !has_session {
         Some(tr("setup.blocker.sign_in"))
-    } else if !has_usable_session_grant {
-        Some(tr("setup.blocker.session_unavailable"))
     } else if !secure_store_ready {
         Some(tr("setup.blocker.secure_store"))
     } else if realm_create_busy_value {
@@ -200,13 +210,14 @@ pub(super) fn RealmsSection(
         NewRealmStep::Seed => basics_ready && boundary_ready,
         NewRealmStep::Done => has_created_realm,
     };
-    let can_create_realm = has_session
-        && has_usable_session_grant
-        && basics_ready
-        && boundary_ready
-        && secure_store_ready
-        && !realm_create_busy_value
-        && !has_created_realm;
+    let can_create_realm = realm_create_available(
+        has_session,
+        basics_ready,
+        boundary_ready,
+        secure_store_ready,
+        realm_create_busy_value,
+        has_created_realm,
+    );
 
     rsx! {
         if pending_recovery_gate() {
@@ -1243,5 +1254,33 @@ pub(super) fn RealmsSection(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::realm_create_available;
+
+    #[test]
+    fn realm_create_does_not_wait_for_background_grant_rotation() {
+        assert!(realm_create_available(true, true, true, true, false, false));
+    }
+
+    #[test]
+    fn realm_create_still_waits_for_local_prerequisites() {
+        assert!(!realm_create_available(
+            false, true, true, true, false, false
+        ));
+        assert!(!realm_create_available(
+            true, false, true, true, false, false
+        ));
+        assert!(!realm_create_available(
+            true, true, false, true, false, false
+        ));
+        assert!(!realm_create_available(
+            true, true, true, false, false, false
+        ));
+        assert!(!realm_create_available(true, true, true, true, true, false));
+        assert!(!realm_create_available(true, true, true, true, false, true));
     }
 }

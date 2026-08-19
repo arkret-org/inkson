@@ -138,6 +138,9 @@ fn toast_editor_bootstrap_uses_asset_pipeline_urls() {
     assert_eq!(config["scriptUrl"], TOAST_EDITOR_SCRIPT.to_string());
     assert_eq!(config["cssUrl"], TOAST_EDITOR_CSS.to_string());
     assert!(!script.contains("/assets/vendor/"));
+    assert!(script.contains("existing.host === host"));
+    assert!(script.contains("registry.set(config.hostId, { editor, host })"));
+    assert!(!script.contains("existing.dispose()"));
 }
 
 /// Canonical `encrypted_content` envelope fixture.

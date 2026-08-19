@@ -197,6 +197,20 @@ fn verification_method_controller(verification_method: &str) -> &str {
         .unwrap_or(no_query)
 }
 
+fn verification_method_controller_matches_signer(
+    verification_method: &str,
+    signer_id: &str,
+) -> bool {
+    let controller = verification_method_controller(verification_method);
+    let Ok(controller_core_id) = crate::mls_api_helpers::principal_core_id(controller) else {
+        return false;
+    };
+    let Ok(signer_core_id) = crate::mls_api_helpers::principal_core_id(signer_id) else {
+        return false;
+    };
+    controller_core_id == signer_core_id
+}
+
 pub fn verify_proof_value(
     envelope_without_proof: &serde_json::Value,
     proof_value: &serde_json::Value,
@@ -256,12 +270,7 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
 ) -> Result<(), String> {
     let proof: arkret_sdk::Proof = serde_json::from_value(proof_value.clone())
         .map_err(|error| format!("decode Event proof: {error}"))?;
-    let controller = verification_method_controller(&proof.verification_method);
-    let controller_matches_signer = arkret_sdk::DidFullId::new(controller.to_owned())
-        .ok()
-        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
-        .is_some_and(|core_id| core_id.as_str() == signer_id);
-    if !controller_matches_signer {
+    if !verification_method_controller_matches_signer(&proof.verification_method, signer_id) {
         return Err("Event proof verification-method controller differs from signer".to_owned());
     }
     let actor_id = arkret_sdk::DidCoreId::new(binding_actor_id.to_owned())
@@ -365,4 +374,30 @@ pub(crate) fn seed_positive_for_test(actor: &str, device: &str, key: PublicKeyMa
 #[cfg(test)]
 pub(crate) fn seed_negative_for_test(actor: &str, device: &str) {
     store_entry(actor, device, None, None);
+}
+
+#[cfg(test)]
+mod verification_method_controller_tests {
+    use super::verification_method_controller_matches_signer;
+
+    #[test]
+    fn accepts_the_same_principal_in_full_and_core_forms() {
+        let full = "did:webvh:zfixture:alice.example";
+        let core = crate::mls_api_helpers::principal_core_id(full).expect("core id");
+        let method = format!("{full}#ak:device:01904100-0000-7000-8000-0000000000a1");
+
+        assert!(verification_method_controller_matches_signer(&method, full));
+        assert!(verification_method_controller_matches_signer(
+            &method,
+            core.as_str()
+        ));
+    }
+
+    #[test]
+    fn rejects_a_different_principal() {
+        assert!(!verification_method_controller_matches_signer(
+            "did:webvh:zfixture:alice.example#ak:device:01904100-0000-7000-8000-0000000000a1",
+            "did:webvh:zmallory:mallory.example",
+        ));
+    }
 }
