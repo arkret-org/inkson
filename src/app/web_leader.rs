@@ -195,7 +195,7 @@ mod browser {
             if let Some(acquired) = *outcome.borrow() {
                 return Ok(Some(acquired));
             }
-            gloo_timers::future::TimeoutFuture::new(10).await;
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(10)).await;
         }
         Err("navigator.locks did not resolve within one second".to_owned())
     }

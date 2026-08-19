@@ -1044,20 +1044,14 @@ async fn finish_oidc_callback(
             .map_err(|error| format!("invalid returning principal full_id: {error}"))?;
         let typed_device_id = arkret_sdk::DeviceId::new(device.clone())
             .map_err(|error| format!("invalid returning device_id: {error}"))?;
-        let signed_login = OidcLogin {
-            principal_id: expected_principal_id.clone(),
-            device_id: Some(typed_device_id.clone()),
-            requested_scope: Vec::new(),
-            challenge: String::new(),
-            audience: principal_audience.clone(),
-            issuer: scaffold.issuer.clone(),
-            client_id: scaffold.client_id.clone(),
-            redirect_uri: scaffold.callback_uri.clone(),
-            state: returned_state.clone(),
-            nonce: scaffold.expected_nonce.clone(),
-            authorization_code: authorization_code.clone(),
-            code_verifier: scaffold.code_verifier.clone(),
-        }
+        let signed_login = returning_oidc_login(
+            &scaffold,
+            expected_principal_id.clone(),
+            typed_device_id.clone(),
+            principal_audience.clone(),
+            &returned_state,
+            &authorization_code,
+        )?
         .sign(|bytes| {
             dpop_handle
                 .sign_protocol_bytes(bytes)
@@ -1268,6 +1262,36 @@ async fn finish_oidc_callback(
     let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
     Ok(OidcCallbackOutcome::Onboarding {
         preferred_locale: handoff.preferred_locale,
+    })
+}
+
+fn returning_oidc_login(
+    scaffold: &crate::identity::account_auth::PersistedOidcScaffold,
+    principal_id: arkret_sdk::DidCoreId,
+    device_id: arkret_sdk::DeviceId,
+    audience: arkret_sdk::DidCoreId,
+    returned_state: &str,
+    authorization_code: &str,
+) -> Result<OidcLogin, String> {
+    if scaffold.expected_nonce.trim().is_empty() {
+        return Err("Sign-in state is missing the OIDC nonce.".to_owned());
+    }
+    Ok(OidcLogin {
+        principal_id,
+        device_id: Some(device_id),
+        requested_scope: Vec::new(),
+        // The OIDC proof challenge is the authorization transaction nonce.
+        // Reusing it binds the holder signature to the same transaction that
+        // the Account Authority verifies during the code exchange.
+        challenge: scaffold.expected_nonce.clone(),
+        audience,
+        issuer: scaffold.issuer.clone(),
+        client_id: scaffold.client_id.clone(),
+        redirect_uri: scaffold.callback_uri.clone(),
+        state: returned_state.to_owned(),
+        nonce: scaffold.expected_nonce.clone(),
+        authorization_code: authorization_code.to_owned(),
+        code_verifier: scaffold.code_verifier.clone(),
     })
 }
 
@@ -1604,6 +1628,87 @@ mod tests {
             !returning_device_can_bypass_handoff(Some(&handoff), &principal, false, true,),
             "a foreign bound handoff must never be discarded by local account state"
         );
+    }
+
+    #[test]
+    fn returning_oidc_session_grant_binds_challenge_to_transaction_nonce() {
+        let scaffold = crate::identity::account_auth::PersistedOidcScaffold {
+            expected_state: "state".to_owned(),
+            expected_nonce: "oidc-transaction-nonce".to_owned(),
+            code_verifier: "pkce-verifier".to_owned(),
+            client_id: "inkson".to_owned(),
+            principal_server_url: "https://principal.example".to_owned(),
+            device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
+            principal_audience: "ak:did_core:webvh:z6mkfixture:principal.example".to_owned(),
+            callback_uri: "https://app.example/auth/callback".to_owned(),
+            authorize_url: "https://auth.example/authorize".to_owned(),
+            issuer: "https://auth.example".to_owned(),
+            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            principal_trust_domain: "ak:trust_domain:auth.example".to_owned(),
+            expected_principal_full_id: None,
+        };
+        let login = returning_oidc_login(
+            &scaffold,
+            arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:principal.example".to_owned(),
+            )
+            .unwrap(),
+            arkret_sdk::DeviceId::new("ak:device:019f0000-0000-7000-8000-000000000001".to_owned())
+                .unwrap(),
+            arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:principal.example".to_owned(),
+            )
+            .unwrap(),
+            "state",
+            "authorization-code",
+        )
+        .unwrap();
+
+        let request = login.into_unsigned_session_grant_request().unwrap();
+        assert_eq!(request.proof.challenge, scaffold.expected_nonce);
+        assert_eq!(
+            request.proof.nonce.as_deref(),
+            Some("oidc-transaction-nonce")
+        );
+    }
+
+    #[test]
+    fn returning_oidc_session_grant_rejects_missing_transaction_nonce() {
+        let mut scaffold = crate::identity::account_auth::PersistedOidcScaffold {
+            expected_state: "state".to_owned(),
+            expected_nonce: "nonce".to_owned(),
+            code_verifier: "pkce-verifier".to_owned(),
+            client_id: "inkson".to_owned(),
+            principal_server_url: "https://principal.example".to_owned(),
+            device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
+            principal_audience: "ak:did_core:webvh:z6mkfixture:principal.example".to_owned(),
+            callback_uri: "https://app.example/auth/callback".to_owned(),
+            authorize_url: "https://auth.example/authorize".to_owned(),
+            issuer: "https://auth.example".to_owned(),
+            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            principal_trust_domain: "ak:trust_domain:auth.example".to_owned(),
+            expected_principal_full_id: None,
+        };
+        scaffold.expected_nonce = "   ".to_owned();
+
+        let error = returning_oidc_login(
+            &scaffold,
+            arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:principal.example".to_owned(),
+            )
+            .unwrap(),
+            arkret_sdk::DeviceId::new("ak:device:019f0000-0000-7000-8000-000000000001".to_owned())
+                .unwrap(),
+            arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:principal.example".to_owned(),
+            )
+            .unwrap(),
+            "state",
+            "authorization-code",
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "Sign-in state is missing the OIDC nonce.");
     }
 
     #[test]

@@ -378,7 +378,7 @@ mod browser {
                         break;
                     }
                 }
-                gloo_timers::future::sleep(POLL).await;
+                crate::runtime_helpers::sleep_for(POLL).await;
             }
             if socket.protocol() != arkret_wire::websocket_binding::WEBSOCKET_SUBPROTOCOL {
                 return Err(garth::Error::Protocol(
@@ -410,7 +410,7 @@ mod browser {
                             return Ok(None);
                         }
                     }
-                    gloo_timers::future::sleep(POLL).await;
+                    crate::runtime_helpers::sleep_for(POLL).await;
                 }
             })
         }
