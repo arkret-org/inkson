@@ -626,6 +626,15 @@ pub(crate) fn merge_duplicate_create_message(
             && !existing_has_newer_local_revisions)
     {
         carry_create_metadata(&mut incoming, existing);
+        // An echo / re-projection that could not recover the plaintext
+        // (author sidecar not yet visible, group key not yet available)
+        // arrives with an empty body. Never blank out a body the local copy
+        // already rendered; only a redaction tombstone (handled above) may
+        // remove content. Restoring before `append_revision_body` keeps the
+        // carried body out of the edit history.
+        if incoming.body.is_empty() && !existing.body.is_empty() {
+            incoming.body = existing.body.clone();
+        }
         // Carry forward locally-tracked edit metadata. The sync projection
         // rebuilds a message from its events but does not surface the
         // per-message revision count, so a re-projection would otherwise wipe
@@ -1012,7 +1021,20 @@ fn verify_chat_envelope_proof_with_local_identity(
             // all agree, and a directory NegativeHit (revoked/absent device)
             // is never overridden.
             let local_key = local_identity.and_then(|(local_actor, local_device)| {
-                if local_actor != proof_controller || local_device != device {
+                // `actor_id` in the envelope and the local account identity
+                // can spell the same principal in different Arkret id forms
+                // (full `did:webvh:…` vs core `ak:did_core:…`); compare the
+                // projected core ids before concluding this is not the local
+                // author.
+                let same_principal = local_actor == proof_controller
+                    || match (
+                        crate::mls_api_helpers::principal_core_id(local_actor),
+                        crate::mls_api_helpers::principal_core_id(proof_controller),
+                    ) {
+                        (Ok(local_core), Ok(proof_core)) => local_core == proof_core,
+                        _ => false,
+                    };
+                if !same_principal || local_device != device {
                     return None;
                 }
                 let signer = crate::event_signer::active_signer()?;
@@ -1417,7 +1439,26 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         state_store.and_then(|store| {
             let message_id = message_protocol_message_id_from_candidates(&candidates)?;
             let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])?;
-            store.private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
+            store
+                .private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
+                .or_else(|| {
+                    // Records written before the sidecar key was aligned with
+                    // the event-derived protocol id stored the plaintext under
+                    // the pre-submit local id kept in the record's
+                    // `message_id` field. Try that legacy key so older
+                    // messages keep their body.
+                    let legacy = candidates
+                        .iter()
+                        .rev()
+                        .find_map(|candidate| value_string_at(candidate, &["message_id"]))
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty() && *value != message_id)?;
+                    store.private_plaintext_for(
+                        message_realm,
+                        strand_id,
+                        &format!("message:{legacy}"),
+                    )
+                })
         })
     };
     let body_from_sidecar = sidecar_body.is_some();

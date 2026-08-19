@@ -2591,6 +2591,104 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
 }
 
 #[test]
+fn rebuild_restores_author_body_from_event_derived_sidecar_key() {
+    // The encrypted send path keys the author plaintext sidecar by the
+    // protocol message id derived from the accepted event id
+    // (`MessageId::from_event_id` — the same id the read-side projection
+    // derives first). A record written under that convention must restore
+    // the body even though the raw_operation's `message_id` never wins
+    // candidate selection.
+    let temp = std::env::temp_dir().join(format!("inkson-derived-sidecar-key-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    let event_id = "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu";
+    let protocol_message_id = arkret_sdk::MessageId::from_event_id(
+        &arkret_sdk::EventId::new(event_id.to_owned()).expect("fixture event id"),
+    )
+    .as_str()
+    .to_owned();
+    store.save_private_plaintext(
+        "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+        &format!("message:{protocol_message_id}"),
+        "secret discussion body",
+    );
+
+    let mut state = ClientLocalState {
+        raw_operations: vec![crate::state::RawOperationRecord {
+            operation_id: "ak:operation:enc-derived".to_owned(),
+            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "event_id": event_id,
+                "kind": "ak.message.create",
+                "actor_id": "ak:did_core:web:alice.example",
+                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+                "message_id": protocol_message_id,
+                "encrypted_content": true,
+                "status": "accepted"
+            }),
+        }],
+        ..ClientLocalState::default()
+    };
+    sign_chat_fixture(&mut state.raw_operations[0].payload);
+
+    let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].body, "secret discussion body");
+    assert!(matches!(
+        restored[0].crypto_state,
+        MessageCryptoState::Plaintext
+    ));
+}
+
+#[test]
+fn rebuild_restores_author_body_from_legacy_local_id_sidecar_key() {
+    // Backwards compatibility: records written before the sidecar key was
+    // aligned with the event-derived protocol id stored the plaintext under
+    // the pre-submit local id in the record's `message_id` field. With a
+    // VALID event id the derived id wins candidate selection, so the reader
+    // must fall back to the legacy key to keep older messages readable.
+    let temp = std::env::temp_dir().join(format!("inkson-legacy-sidecar-key-{}", uuid_v7()));
+    let mut store = LocalStateStore::with_path(temp);
+    let event_id = "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu";
+    store.save_private_plaintext(
+        "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+        "message:local-message:legacy",
+        "legacy discussion body",
+    );
+
+    let mut state = ClientLocalState {
+        raw_operations: vec![crate::state::RawOperationRecord {
+            operation_id: "ak:operation:enc-legacy".to_owned(),
+            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
+            received_at: chrono::Utc::now(),
+            payload: json!({
+                "event_id": event_id,
+                "kind": "ak.message.create",
+                "actor_id": "ak:did_core:web:alice.example",
+                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
+                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
+                "message_id": "local-message:legacy",
+                "encrypted_content": true,
+                "status": "accepted"
+            }),
+        }],
+        ..ClientLocalState::default()
+    };
+    sign_chat_fixture(&mut state.raw_operations[0].payload);
+
+    let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].body, "legacy discussion body");
+    assert!(matches!(
+        restored[0].crypto_state,
+        MessageCryptoState::Plaintext
+    ));
+}
+
+#[test]
 fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-poll-content-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
@@ -2822,6 +2920,26 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
     assert_eq!(message.body, "late plaintext");
     assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
     assert_eq!(message.error, None);
+}
+
+#[test]
+fn treats_core_id_and_full_did_spellings_of_same_principal_as_own_sender() {
+    // The synced envelope's `actor_id` (core id) and `account.did` (full DID)
+    // can spell the same principal differently; both directions must count as
+    // own so the author's echo stays on the author's side.
+    assert!(is_own_message_sender(
+        "ak:did_core:web:alice.example",
+        "did:web:alice.example"
+    ));
+    assert!(is_own_message_sender(
+        "did:web:alice.example",
+        "ak:did_core:web:alice.example"
+    ));
+    assert!(!is_own_message_sender(
+        "ak:did_core:web:bob.example",
+        "did:web:alice.example"
+    ));
+    assert!(!is_own_message_sender("", "did:web:alice.example"));
 }
 
 #[test]
@@ -5058,5 +5176,28 @@ mod merge_duplicate_create_message_alignment_tests {
 
         assert!(existing.redacted);
         assert_eq!(existing.created_at, at("2026-07-07T06:19:20.000Z"));
+    }
+
+    // An echo / re-projection that could not recover the plaintext arrives
+    // with an empty body; the merge must not blank out the body the local
+    // (optimistic) copy already rendered, and the carried body must not leak
+    // into the edit history.
+    #[test]
+    fn merge_newer_incoming_with_empty_body_preserves_rendered_body() {
+        let mut existing = msg(
+            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
+            "rendered body",
+            at("2026-07-07T06:19:20.000Z"),
+        );
+        let incoming = msg(
+            "ak:event:Az44QHRciASAFcKvTeHUu3sA84dj1h1KUH4_ZULaOFck",
+            "",
+            at("2026-07-07T06:19:30.000Z"),
+        );
+
+        merge_duplicate_create_message(&mut existing, incoming);
+
+        assert_eq!(existing.body, "rendered body");
+        assert!(existing.revisions.is_empty());
     }
 }

@@ -2097,10 +2097,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 // device can render the author's own
                                 // (otherwise undecryptable) messages.
                                 let message_id_for_lookup = message_id.clone();
-                                let message_id_for_sidecar = message_id.clone();
                                 // X10.6: also persisted into the raw_operation
                                 // record below so the tab-switch / reload
                                 // rebuild can reconstruct the sidecar key.
+                                // Used as the fallback when the accepted event
+                                // id cannot derive a protocol message id.
                                 let message_id_for_record = message_id.clone();
                                 let actor_for_record = actor.clone();
                                 // The synced event carries this exact strand_id
@@ -2182,6 +2183,25 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         }
                                     };
                                     let (resp_event_id, resp_status) = resp;
+                                    // The read-side projection derives the
+                                    // protocol message id from the accepted
+                                    // event id
+                                    // (`MessageId::from_event_id`), so the
+                                    // author sidecar and the raw-op record
+                                    // must key on that same derived id.
+                                    // Keying on the pre-submit local id
+                                    // orphaned the plaintext and left the
+                                    // author's own message undecryptable on
+                                    // echo / reload.
+                                    let protocol_message_id =
+                                        arkret_sdk::EventId::new(resp_event_id.clone())
+                                            .ok()
+                                            .map(|event_id| {
+                                                arkret_sdk::MessageId::from_event_id(&event_id)
+                                                    .as_str()
+                                                    .to_owned()
+                                            })
+                                            .unwrap_or_else(|| message_id_for_record.clone());
                                     {
                                         let mut store = state_store.write();
                                         // X10.6: persist the message identity
@@ -2190,6 +2210,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         // record so the tab-switch / reload rebuild
                                         // can reconstruct the sidecar key
                                         // `message:{message_id}` under `strand_id`.
+                                        // `message_id` is the protocol id derived
+                                        // from the accepted event id, matching the
+                                        // read-side projection
+                                        // (`message_protocol_message_id_from_candidates`
+                                        // derives from `event_id` first).
                                         // The body lives only in the account-private
                                         // `mls_private_plaintext` sidecar saved just
                                         // below. `encrypted_content` marks the row as
@@ -2203,7 +2228,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 "kind": event_kind_str::MESSAGE_CREATE,
                                                 "actor_id": actor_for_record.clone(),
                                                 "strand_id": strand_id_for_record.clone(),
-                                                "message_id": message_id_for_record.clone(),
+                                                "message_id": protocol_message_id.clone(),
                                                 "encrypted_content": true,
                                                 "status": resp_status.clone(),
                                             }),
@@ -2213,14 +2238,16 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         // new device can render the author's own
                                         // encrypted messages (OpenMLS forbids an
                                         // author from decrypting their own
-                                        // ciphertext). Keyed by `message:{message_id}`
-                                        // under the discussion strand, sharing the
+                                        // ciphertext). Keyed by
+                                        // `message:{protocol_message_id}` under the
+                                        // discussion strand — the same derived id the
+                                        // read side looks up — sharing the
                                         // `mls_private_plaintext` map that the X5.3
                                         // cross-device backup already snapshots.
                                         store.save_private_plaintext(
                                             &realm_for_record,
                                             &strand_id_for_sidecar,
-                                            &format!("message:{message_id_for_sidecar}"),
+                                            &format!("message:{protocol_message_id}"),
                                             &body_for_sidecar,
                                         );
                                     }
@@ -2240,6 +2267,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         })
                                     {
                                         found.id = resp_event_id.clone();
+                                        found.protocol_message_id =
+                                            Some(protocol_message_id.clone());
                                         found.pending = false;
                                         found.failed = false;
                                         found.error = None;
@@ -2292,6 +2321,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         "data-testid": "chat-status",
                         role: "status",
                         "aria-live": "polite",
+                        // Keep the full status text discoverable even when the
+                        // embedded panel clips the line.
+                        title: "{status_msg}",
                         "{status_msg}"
                     }
                 }

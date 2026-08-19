@@ -1157,6 +1157,19 @@ async fn submit_source_routed_sidecar_message(
     };
     {
         let mut store = state_store.write();
+        // The read-side projection derives the protocol message id from the
+        // accepted event id (`MessageId::from_event_id`); the raw-op record
+        // and the author plaintext sidecar must key on that same derived id,
+        // not the pre-submit local id, or the author's own body is orphaned
+        // on echo / reload.
+        let protocol_message_id = arkret_sdk::EventId::new(event_id.clone())
+            .ok()
+            .map(|accepted_event_id| {
+                arkret_sdk::MessageId::from_event_id(&accepted_event_id)
+                    .as_str()
+                    .to_owned()
+            })
+            .unwrap_or_else(|| message_id.clone());
         store.append_raw_operation(
             local_operation_id,
             Some(source_realm_id.to_owned()),
@@ -1165,7 +1178,7 @@ async fn submit_source_routed_sidecar_message(
                 "kind": event_kind_str::MESSAGE_CREATE,
                 "actor_id": controller_id,
                 "strand_id": attached_source_strand_id,
-                "message_id": message_id,
+                "message_id": protocol_message_id,
                 "encrypted_content": true,
                 "status": status,
             }),
@@ -1173,7 +1186,7 @@ async fn submit_source_routed_sidecar_message(
         store.save_private_plaintext(
             source_realm_id,
             attached_source_strand_id,
-            &format!("message:{message_id}"),
+            &format!("message:{protocol_message_id}"),
             body,
         );
         crate::sidecar::remove_pending_sidecar_submission(
