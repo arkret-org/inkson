@@ -348,6 +348,19 @@ async fn recover_mls_snapshot_for_encrypted_write(
     device_id: &str,
     mut state_store: SyncSignal<LocalStateStore>,
 ) -> Result<(), String> {
+    // The account MLS secret is an IndexedDB-only key on wasm; before that
+    // tier finishes its async boot the sync store surface reports it missing.
+    // Await initialization first so a Save clicked early cannot misdiagnose a
+    // healthy device as "no account MLS secret".
+    #[cfg(target_arch = "wasm32")]
+    if let Err(error) =
+        crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
+    {
+        tracing::warn!(
+            %error,
+            "IndexedDB secure store unavailable before encrypted write recovery"
+        );
+    }
     if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
         return Ok(());
     }
@@ -442,21 +455,33 @@ async fn recover_mls_snapshot_for_encrypted_write(
         return Ok(());
     }
 
-    if !has_local_account_secret {
-        Err(
-            "This device has no account MLS secret; unlock it with the Recovery Key or approve this device so it can receive a new Welcome."
-                .to_owned(),
-        )
-    } else if failures.is_empty() {
-        Err(
-            "No pending Welcome or matching MLS history snapshot exists on the server for this Realm."
-                .to_owned(),
-        )
+    // Creator genesis (and a first Welcome) mint the account secret, so the
+    // pre-recovery reading above is stale by now; re-read before blaming the
+    // device, and never let the generic banner swallow the concrete failures.
+    let has_local_account_secret = matches!(
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id),
+        Ok(Some(_))
+    );
+    const NO_SECRET_HINT: &str = "This device has no account MLS secret; unlock it with the Recovery Key or approve this device so it can receive a new Welcome.";
+    if failures.is_empty() {
+        if has_local_account_secret {
+            Err(
+                "No pending Welcome or matching MLS history snapshot exists on the server for this Realm."
+                    .to_owned(),
+            )
+        } else {
+            Err(NO_SECRET_HINT.to_owned())
+        }
     } else {
-        Err(format!(
+        let mut message = format!(
             "Could not restore this Realm's encrypted state ({}).",
             failures.join("; ")
-        ))
+        );
+        if !has_local_account_secret {
+            message.push(' ');
+            message.push_str(NO_SECRET_HINT);
+        }
+        Err(message)
     }
 }
 

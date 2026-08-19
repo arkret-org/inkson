@@ -240,6 +240,51 @@ pub fn load_or_create_account_mls_secret(
     Ok(secret)
 }
 
+/// Load-or-create the account MLS secret and await its durable persistence.
+///
+/// [`load_or_create_account_mls_secret`] writes through the sync store surface;
+/// on wasm the IndexedDB commit behind that write is a detached background task
+/// that a page unload silently drops. State persisted under this secret
+/// (the creator's epoch-0 snapshot, a first applied Welcome) goes through the
+/// durable-awaiting account-state writer, so the secret could reach disk AFTER
+/// the snapshot it wraps — or never. A reload in that window leaves a snapshot
+/// no local secret can open, which reads as "no account MLS secret" and
+/// dead-locks every later encrypted write on this device. Callers that are
+/// about to persist secret-wrapped state must use this variant so the secret
+/// is durably stored first.
+pub async fn ensure_account_mls_secret_durable(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    let actor = actor_id.trim();
+    if actor.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "actor_id is required for MLS snapshot secret".to_owned(),
+        ));
+    }
+    if let Some(existing) = load_account_mls_secret(store, actor)? {
+        // Re-commit the already-visible value: if the creation-time background
+        // write was lost to an unload, this is the retry that lands it.
+        store
+            .store_secret_durable(
+                &account_mls_secret_key_for_version(actor, existing.version),
+                &existing.secret,
+            )
+            .await?;
+        return Ok(existing.secret);
+    }
+    let secret = generate_account_mls_secret()?;
+    store
+        .store_secret_durable(&account_mls_secret_key(actor), &secret)
+        .await?;
+    // Concurrent first-creation is last-write-wins on the store; re-read so
+    // every caller converges on the value that actually landed.
+    if let Some(landed) = load_account_mls_secret(store, actor)? {
+        return Ok(landed.secret);
+    }
+    Ok(secret)
+}
+
 pub fn mls_key_package_identity_state_key(
     actor_id: &str,
     device_id: &str,
