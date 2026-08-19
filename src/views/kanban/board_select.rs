@@ -44,24 +44,6 @@ pub(super) fn replace_kanban_board_url(realm_id: &str, board_id: &str) {
     let _ = document::eval(&script);
 }
 
-/// Build + sign + submit a `ak.component.strand.position.v1` Move via
-/// `api.submit_move(...)`, recording a [`BoardWriteRecord`] in the local
-/// queue regardless of submit outcome. Used by both list and card create
-/// paths - `subject` is the cell subject (Space-container id or Strand id), `kind` is
-/// the classifier the MoveSubmissionState tracker uses to decorate state
-/// pills (`ak.space.create` / `ak.strand.create`).
-pub(super) fn write_state_samples() -> Vec<CardState> {
-    vec![
-        CardState::Optimistic,
-        CardState::Queued,
-        CardState::Submitted,
-        CardState::Accepted,
-        CardState::SoftFailed,
-        CardState::Quarantined,
-        CardState::Conflict,
-    ]
-}
-
 pub(super) fn seed_columns() -> Vec<KanbanColumn> {
     vec![
         KanbanColumn {

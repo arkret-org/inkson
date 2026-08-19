@@ -114,22 +114,6 @@ pub struct AssignedToRelationProjectionView {
     pub actor_id: String,
 }
 
-pub use arkret_sdk::{CollectionProjectionView, ProjectionRow};
-
-/// Read a stable ordering key from any registered collection-position variant.
-#[must_use]
-pub fn projection_row_position_rank(item: &ProjectionRow) -> Option<String> {
-    use arkret_sdk::CollectionPosition;
-
-    match item.position.as_ref()? {
-        CollectionPosition::FieldValue(position) => Some(position.rank.as_str().to_owned()),
-        CollectionPosition::Relation(position) => Some(position.rank.as_str().to_owned()),
-        CollectionPosition::TimeWindow(position) => Some(position.sort_key.as_str().to_owned()),
-        CollectionPosition::Crosstab(position) => Some(position.sort_key.as_str().to_owned()),
-        CollectionPosition::SortKey(position) => Some(position.sort_key.as_str().to_owned()),
-    }
-}
-
 impl From<arkret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
     fn from(row: arkret_sdk::ProjectionSpaceRow) -> Self {
         Self {

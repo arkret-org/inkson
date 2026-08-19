@@ -575,6 +575,8 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
 
   await gotoAndDismissRecovery(page, `/kanban/${DEMO_REALM}`);
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
+  await expect(page.getByTestId("board-projection-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("board-queue-toggle")).toHaveCount(0);
   await expect(page.getByTestId("kanban-empty-board")).toContainText(
     "No board selected",
   );
@@ -589,16 +591,45 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
   await page.mouse.click(12, 12);
   await expect(page.getByTestId("new-board-title-input")).toHaveCount(0);
 
+  let acceptBoardCreate: (() => void) | undefined;
+  const boardCreateGate = new Promise<void>((resolve) => {
+    acceptBoardCreate = resolve;
+  });
+  await page.route("**/_arkret/self/events", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const event = submittedEvent(request.postDataJSON());
+    const object = event?.payload?.object;
+    if (
+      event?.kind === "ak.space.create" &&
+      object?.kind === "board"
+    ) {
+      await boardCreateGate;
+    }
+    await route.fallback();
+  });
+
   await page.getByTestId("new-board-toggle").click();
   await page.getByTestId("new-board-title-input").fill("Design board");
   await page.getByTestId("create-board-space-button").click();
   await expect(page.getByTestId("add-column-button")).toBeVisible();
+  await expect(page.getByTestId("add-column-button")).toBeDisabled();
   await expect(page.getByTestId("board-space-selector")).toContainText(
     "Design board",
   );
   await expect(page.getByTestId("kanban-empty-board")).toContainText(
     "No lists yet",
   );
+  expect(new URL(page.url()).pathname).not.toContain("/board/");
+
+  acceptBoardCreate?.();
+  await expect(page.getByTestId("add-column-button")).toBeEnabled();
+  await expect
+    .poll(() => decodeURIComponent(new URL(page.url()).pathname))
+    .toContain("/board/ak:space:");
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissRealmKeyMissingModal(page);
@@ -613,7 +644,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
   );
 });
 
-test("kanban queues canonical event submissions and quarantines manual replay", async ({
+test("kanban submits canonical card-create events", async ({
   page,
 }) => {
   await openKanban(page);
@@ -636,23 +667,6 @@ test("kanban queues canonical event submissions and quarantines manual replay", 
     /^ak:space:/,
   );
   expect(eventBody.payload.components).toBeUndefined();
-  await page.getByTestId("board-queue-toggle").click();
-  await expect(page.getByTestId("board-event-record").last()).toContainText(
-    "ak.strand.create",
-  );
-  await expect(page.getByTestId("board-event-record").last()).toContainText(
-    "sha256:",
-  );
-  await expect(page.getByTestId("board-event-record").last()).toContainText(
-    '"strand_kind":"card"',
-  );
-  await expect(page.getByTestId("board-conflict-alert")).toHaveCount(0);
-
-  await page.getByTestId("replay-board-queue").click();
-  await expect(page.getByTestId("board-status")).toContainText(
-    "no queued write to quarantine",
-  );
-
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissRealmKeyMissingModal(page);
   await dismissBlockingRecoveryModal(page);
@@ -683,7 +697,7 @@ test("kanban board selector swaps projected board columns", async ({
   );
 });
 
-test("kanban card drag queues a strand move", async ({ page }) => {
+test("kanban card drag submits a strand move", async ({ page }) => {
   await refreshServer(page);
   await gotoAndDismissRecovery(page, `/kanban/${DEMO_REALM}`);
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
@@ -693,10 +707,6 @@ test("kanban card drag queues a strand move", async ({ page }) => {
     .first()
     .dragTo(page.getByTestId("kanban-column").nth(1));
 
-  await page.getByTestId("board-queue-toggle").click();
-  await expect(page.getByTestId("board-event-record").last()).toContainText(
-    "ak.strand.move",
-  );
   await expect(page.getByTestId("kanban-column").nth(1)).toContainText(
     "Legal review for public beta",
   );

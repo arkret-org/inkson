@@ -3,8 +3,6 @@
 // each `tests/<sub>.rs` doing `use super::*;` (whose `super` is THIS
 // module) transitively sees the kanban symbols.
 pub(super) use super::*;
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) use crate::move_builder::StrandPositionExpectation;
 // Types the test bodies construct directly. The component-only `kanban/mod.rs`
 // no longer brings them into scope after the structural split, so re-import
 // them here for the `tests/<sub>.rs` files that reach them via `use super::*;`.
@@ -71,21 +69,6 @@ pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView)
                 serde_json::to_string_pretty(&payload).unwrap()
             )
         });
-}
-
-pub(super) fn board_write_record(state: CardState, note: &str) -> BoardWriteRecord {
-    BoardWriteRecord {
-        state,
-        move_id: "ak:operation:test".to_owned(),
-        kind: "ak.strand.create".to_owned(),
-        cell_id: "ak:cell:ak.component.test.board_write.v1:test".to_owned(),
-        effect_summary: "{}".to_owned(),
-        seal_ref: "ak:seal:test".to_owned(),
-        hlc: "000000000000-0000-00000000".to_owned(),
-        note: note.to_owned(),
-        signed_move_json: None,
-        rebase_attempts: 0,
-    }
 }
 
 /// Realm-tree projection for an encrypted Realm whose creator is `actor_id`.

@@ -393,7 +393,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("common.refresh", "Refresh");
     dict.set("common.save", "Save");
     dict.set("common.submit", "Submit");
-    dict.set("kanban.refresh_from_api", "Refresh from API");
     dict.set("kanban.add_card", "Add Card");
     dict.set("kanban.add_list", "Add List");
     dict.set("kanban.save_card", "Save");
@@ -586,9 +585,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.archived_lists_empty", "No archived lists.");
     dict.set("kanban.archived_cards_header", "Archived cards");
     dict.set("kanban.archived_cards_empty", "No archived cards.");
-    dict.set("kanban.move_queue_header", "Move Queue");
-    dict.set("kanban.move_queue_empty", "No local board Moves queued.");
-
     // Directory view (tabs share the existing `directory.tab.*` keys).
     dict.set(
         "directory.org_empty_body",

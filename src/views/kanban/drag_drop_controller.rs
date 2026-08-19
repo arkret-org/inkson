@@ -240,7 +240,7 @@ pub(super) struct KanbanCardCreateCommand {
     pub rank: String,
 }
 
-/// Build + submit a card-create event and record it in the board write queue.
+/// Build and submit a card-create event.
 pub(super) fn submit_kanban_card_create(
     base_url: String,
     token: Signal<String>,
@@ -250,7 +250,6 @@ pub(super) fn submit_kanban_card_create(
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
     mut state_store: SyncSignal<LocalStateStore>,
-    mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
     let kind = event_kind_str::STRAND_CREATE;
@@ -259,14 +258,6 @@ pub(super) fn submit_kanban_card_create(
         board_status.set("sign in before updating cards".to_owned());
         return;
     }
-    let hlc = match crate::signing_stamp::issue_protocol_hlc_for_active_device(&actor_id, &realm_id)
-    {
-        Ok(hlc) => hlc.to_string(),
-        Err(error) => {
-            board_status.set(format!("cannot update cards: {error:#}"));
-            return;
-        }
-    };
     let envelope = crate::operation::ak_ops::kanban_card_strand_create(
         &realm_id,
         &actor_id,
@@ -309,21 +300,6 @@ pub(super) fn submit_kanban_card_create(
         "strand_id": subject,
     });
     let op_id = event.local_operation_id().to_string();
-    let effect_summary =
-        serde_json::to_string(&event.payload()).unwrap_or_else(|_| "{}".to_owned());
-    let record = BoardWriteRecord {
-        state: CardState::Queued,
-        move_id: op_id.clone(),
-        kind: kind.to_owned(),
-        cell_id: cell_id.clone(),
-        effect_summary: effect_summary.clone(),
-        seal_ref: seal_ref.clone(),
-        hlc: hlc.clone(),
-        note: format!("submitting {wire_kind} event via ak.self.events.command.submit"),
-        signed_move_json: None,
-        rebase_attempts: 0,
-    };
-    write_records.write().push(record);
     state_store.write().enqueue_local_projection_command(
         op_id.clone(),
         Some(realm_id.clone()),
@@ -376,17 +352,6 @@ pub(super) fn submit_kanban_card_create(
                     None,
                     Some(seal_for_record),
                 );
-                if let Some(record) = write_records
-                    .write()
-                    .iter_mut()
-                    .find(|r| r.move_id == op_for_track)
-                {
-                    record.state = CardState::Accepted;
-                    record.note = format!(
-                        "event accepted; pending seal event_id={}",
-                        short_protocol_id(&resp.event_id)
-                    );
-                }
                 board_status.set(format!(
                     "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
                     short_protocol_id(&op_for_track),
@@ -394,9 +359,6 @@ pub(super) fn submit_kanban_card_create(
                 ));
             }
             Err(err) => {
-                // The status bar is transient and the write record lives in
-                // local state only; without this line the browser console has
-                // no trace of why a card went to quarantine.
                 tracing::warn!(
                     operation_id = %short_protocol_id(&op_for_track),
                     kind = %kind_for_record,
@@ -409,14 +371,6 @@ pub(super) fn submit_kanban_card_create(
                     None,
                     Some(err.display().to_string()),
                 );
-                if let Some(record) = write_records
-                    .write()
-                    .iter_mut()
-                    .find(|r| r.move_id == op_for_track)
-                {
-                    record.state = CardState::Quarantined;
-                    record.note = format!("submit failed: {}", err.display());
-                }
                 board_status.set(format!("quarantined event: {}", err.display()));
             }
         }
@@ -447,13 +401,11 @@ pub(super) fn dispatch_strand_position_move(
     token: Signal<String>,
     realm_id: String,
     board_space_id: String,
-    board_view_id: String,
     actor_id: String,
     dragged: DraggedCard,
     target_column_id: String,
     neighbours: ColumnNeighbours,
     state_store: SyncSignal<LocalStateStore>,
-    write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
     // Don't emit a Move when the drag and drop land on the same exact
@@ -508,14 +460,12 @@ pub(super) fn dispatch_strand_position_move(
         token,
         realm_id,
         board_space_id,
-        board_view_id,
         actor_id,
         dragged.card_id,
         kind,
         expected,
         effect,
         state_store,
-        write_records,
         board_status,
     );
 }
@@ -882,65 +832,19 @@ pub(super) fn dispatch_board_archive_cascade(
     });
 }
 
-/// Build, sign, and submit a `ak.strand.move` / `ak.strand.reorder` CAS
-/// Move via the new spec-compliant builder. Tracks the submission in
-/// `write_records` and, on failed precondition, kicks off automatic
-/// rebase via [`rebase_strand_position_after_conflict`] up to
-/// [`MAX_CONFLICT_REBASE_ATTEMPTS`] times.
+/// Build, sign, and submit a `ak.strand.move` / `ak.strand.reorder` CAS event.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn submit_strand_position_cas_move(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
     board_space_id: String,
-    board_view_id: String,
     actor_id: String,
     strand_id: String,
     kind: &'static str,
     expected: StrandPositionExpectation,
     effect: StrandPositionEffect,
-    state_store: SyncSignal<LocalStateStore>,
-    write_records: Signal<Vec<BoardWriteRecord>>,
-    board_status: Signal<String>,
-) {
-    submit_strand_position_cas_move_with_attempt(
-        base_url,
-        token,
-        realm_id,
-        board_space_id,
-        board_view_id,
-        actor_id,
-        strand_id,
-        kind,
-        expected,
-        effect,
-        0,
-        state_store,
-        write_records,
-        board_status,
-    );
-}
-
-/// Internal variant of [`submit_strand_position_cas_move`] that threads
-/// the rebase attempt counter. `attempt` is the **next** attempt number
-/// (`0` for the user-initiated drop, `1` for the first rebase, …);
-/// reaching [`MAX_CONFLICT_REBASE_ATTEMPTS`] without an Accepted /
-/// PendingSeal result quarantines the record for manual review.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn submit_strand_position_cas_move_with_attempt(
-    base_url: String,
-    token: Signal<String>,
-    realm_id: String,
-    board_space_id: String,
-    board_view_id: String,
-    actor_id: String,
-    strand_id: String,
-    kind: &'static str,
-    expected: StrandPositionExpectation,
-    effect: StrandPositionEffect,
-    attempt: u8,
     mut state_store: SyncSignal<LocalStateStore>,
-    mut write_records: Signal<Vec<BoardWriteRecord>>,
     mut board_status: Signal<String>,
 ) {
     let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
@@ -948,14 +852,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
         board_status.set("sign in before moving cards".to_owned());
         return;
     }
-    let hlc = match crate::signing_stamp::issue_protocol_hlc_for_active_device(&actor_id, &realm_id)
-    {
-        Ok(hlc) => hlc.to_string(),
-        Err(error) => {
-            board_status.set(format!("cannot move cards: {error:#}"));
-            return;
-        }
-    };
     let expected_json = match &expected {
         StrandPositionExpectation::Initial => serde_json::Value::Null,
         StrandPositionExpectation::At {
@@ -998,30 +894,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
     };
     let move_id = event.local_operation_id().to_string();
     let cell_id = strand_position_cell_id(&board_space_id, &strand_id);
-    let effect_summary = match &effect {
-        StrandPositionEffect::SetPosition {
-            list_space_id,
-            rank,
-        } => format!("set {{list_space_id={list_space_id}, rank={rank}}}"),
-        StrandPositionEffect::Remove => "set null (remove)".to_owned(),
-    };
-    let record = BoardWriteRecord {
-        state: CardState::Submitted,
-        move_id: move_id.clone(),
-        kind: kind.to_owned(),
-        cell_id: cell_id.clone(),
-        effect_summary,
-        seal_ref: seal_ref.clone(),
-        hlc: hlc.clone(),
-        note: if attempt == 0 {
-            format!("submitting {kind} via ak.self.events.command.submit")
-        } else {
-            format!("rebase attempt {attempt} of {kind}")
-        },
-        signed_move_json: None,
-        rebase_attempts: attempt,
-    };
-    write_records.write().push(record);
     state_store.write().enqueue_local_projection_command(
         move_id.clone(),
         Some(realm_id.clone()),
@@ -1063,12 +935,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
     let kind_for_record = kind.to_owned();
     let seal_for_record = seal_ref.clone();
     let realm_for_record = realm_id.clone();
-    let base_for_rebase = base_url.clone();
-    let realm_for_rebase = realm_id.clone();
-    let board_for_rebase = board_space_id.clone();
-    let view_for_rebase = board_view_id.clone();
-    let strand_for_rebase = strand_id.clone();
-    let effect_for_rebase = effect.clone();
     let submit_event = event;
     spawn(async move {
         let submit_result = with_authed_api(&base_url, api_token, |api| async move {
@@ -1097,17 +963,6 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
                     None,
                     Some(seal_for_record),
                 );
-                if let Some(record) = write_records
-                    .write()
-                    .iter_mut()
-                    .find(|r| r.move_id == move_for_track)
-                {
-                    record.state = CardState::Accepted;
-                    record.note = format!(
-                        "event accepted; pending seal event_id={}",
-                        short_protocol_id(&resp.event_id)
-                    );
-                }
                 board_status.set(format!(
                     "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
                     short_protocol_id(&move_for_track),
@@ -1128,207 +983,8 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
                     None,
                     Some(err_text.to_string()),
                 );
-                if let Some(record) = write_records
-                    .write()
-                    .iter_mut()
-                    .find(|r| r.move_id == move_for_track)
-                {
-                    record.state = card_state;
-                    record.note = format!("events.submit failed: {err_text}");
-                }
                 board_status.set(format!("{kind_for_record} event {err_text}"));
-                // Auto-rebase the CAS event after a cas_conflict: re-fetch
-                // the cell's current head via the projection endpoint,
-                // build a fresh `expected_position`, and re-submit up to
-                // MAX_CONFLICT_REBASE_ATTEMPTS times.
-                if matches!(card_state, CardState::Conflict)
-                    && attempt + 1 < MAX_CONFLICT_REBASE_ATTEMPTS
-                {
-                    rebase_strand_position_after_conflict(
-                        base_for_rebase,
-                        token,
-                        realm_for_rebase,
-                        board_for_rebase,
-                        view_for_rebase,
-                        actor_id.clone(),
-                        strand_for_rebase,
-                        kind_for_record,
-                        effect_for_rebase,
-                        attempt + 1,
-                        state_store,
-                        write_records,
-                        board_status,
-                    );
-                } else if matches!(card_state, CardState::Conflict) {
-                    if let Some(record) = write_records
-                        .write()
-                        .iter_mut()
-                        .find(|r| r.move_id == move_for_track)
-                    {
-                        record.state = CardState::Quarantined;
-                        record.note = format!(
-                            "cas_conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
-                        );
-                    }
-                    state_store.write().update_raw_operation_write_state(
-                        &move_for_track,
-                        "quarantined",
-                        None,
-                        Some(format!(
-                            "cas_conflict exhausted {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
-                        )),
-                    );
-                    board_status.set(format!(
-                        "{kind_for_record} quarantined after {MAX_CONFLICT_REBASE_ATTEMPTS} rebase attempts"
-                    ));
-                }
             }
         }
     });
-}
-
-/// Re-fetch the kanban projection after a CAS conflict to discover the
-/// strand's current cell state, then re-submit the move with a refreshed
-/// `expected_position`. Effect (target list + rank) is preserved — the
-/// user's drop intent doesn't change just because someone else moved
-/// the card concurrently.
-///
-/// Spec ([operations-sync.md §8](../../arkret-spec/spec/v1/zh/sync/operations-sync.md)):
-/// the conflict-recovery path takes a snapshot + state witness +
-/// inclusion proof; this MVP approximation just refetches the
-/// collection projection (which the soland reducer derives from the
-/// same cell store) and reads the strand's current `list_space_id` /
-/// `rank` from it.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn rebase_strand_position_after_conflict(
-    base_url: String,
-    token: Signal<String>,
-    realm_id: String,
-    board_space_id: String,
-    board_view_id: String,
-    actor_id: String,
-    strand_id: String,
-    kind: String,
-    effect: StrandPositionEffect,
-    attempt: u8,
-    state_store: SyncSignal<LocalStateStore>,
-    write_records: Signal<Vec<BoardWriteRecord>>,
-    mut board_status: Signal<String>,
-) {
-    board_status.set(format!(
-        "rebase {kind} attempt {attempt}/{MAX_CONFLICT_REBASE_ATTEMPTS} — refetching projection"
-    ));
-    spawn(async move {
-        if board_view_id.trim().is_empty() {
-            board_status.set(
-                "rebase aborted: enter a Board View ID so projection can provide the current cell head"
-                    .to_owned(),
-            );
-            return;
-        }
-        let view_for_projection = board_view_id.clone();
-        let new_expected = match with_authed_sdk_client(&base_url, token(), |http| async move {
-            crate::transport::realm_read::collection_projection(&http, &view_for_projection).await
-        })
-        .await
-        {
-            Ok(projection) => locate_strand_position_in_projection(&projection, &strand_id),
-            Err(err) => {
-                board_status.set(format!(
-                    "rebase aborted (projection refresh failed): {}",
-                    err.display()
-                ));
-                return;
-            }
-        };
-        // The static lifetime requirement on `kind` is satisfied by
-        // mapping the dynamic String back to one of the known
-        // classifiers. Anything else falls through to ak.strand.move
-        // because that's the spec wire shape for drag operations.
-        let kind_static: &'static str = match kind.as_str() {
-            event_kind_str::STRAND_REORDER => event_kind_str::STRAND_REORDER,
-            event_kind_str::STRAND_MOVE => event_kind_str::STRAND_MOVE,
-            _ => event_kind_str::STRAND_MOVE,
-        };
-        submit_strand_position_cas_move_with_attempt(
-            base_url,
-            token,
-            realm_id,
-            board_space_id,
-            board_view_id,
-            actor_id,
-            strand_id,
-            kind_static,
-            new_expected,
-            effect,
-            attempt,
-            state_store,
-            write_records,
-            board_status,
-        );
-    });
-}
-
-/// Walk the projection groups looking for the strand's current cell
-/// pre-state. Returns `Initial` if the strand isn't on the board (i.e.
-/// the cell is in initial state) so the next CAS Move uses
-/// `head_eq null`.
-pub(super) fn locate_strand_position_in_projection(
-    projection: &crate::state::projection_views::CollectionProjectionView,
-    strand_id: &str,
-) -> StrandPositionExpectation {
-    for group in &projection.groups {
-        for item in &group.items {
-            let item_id = item.object.id.as_str();
-            if item_id == strand_id {
-                if let Some(rank) =
-                    crate::state::projection_views::projection_row_position_rank(item)
-                {
-                    return StrandPositionExpectation::At {
-                        list_space_id: group.key.as_str().to_owned(),
-                        rank,
-                    };
-                }
-                // Item present but no position metadata → treat as if
-                // the cell were initial so we use `head_eq null`. This
-                // is conservative; soland's reducer will reject if the
-                // cell actually has a non-null head.
-                return StrandPositionExpectation::Initial;
-            }
-        }
-    }
-    StrandPositionExpectation::Initial
-}
-
-/// Quarantines the first queued / soft-failed / conflicted board write for
-/// manual review.
-///
-/// This is NOT a replay yet: event submit is the only write surface now, and
-/// a failed write needs the UI to reconstruct the equivalent
-/// `ak.strand.update` / `ak.component.strand.position.v1` envelope via
-/// `ak_ops::strand_position_*` rather than replay stale bytes. That
-/// reconstruction is tracked by **YOU-07-002 (kanban write replay)**; until it
-/// lands, the matching toolbar control is labelled "Quarantine for Review"
-/// (not "Replay") so the UI never promises a replay it can't perform.
-pub(super) fn quarantine_first_failed_write(
-    mut write_records: Signal<Vec<BoardWriteRecord>>,
-    mut board_status: Signal<String>,
-) {
-    let Some(idx) = write_records.read().iter().position(|record| {
-        record.state == CardState::Queued
-            || record.state == CardState::SoftFailed
-            || record.state == CardState::Conflict
-    }) else {
-        board_status.set("no queued write to quarantine".to_owned());
-        return;
-    };
-    if let Some(record) = write_records.write().get_mut(idx) {
-        record.state = CardState::Quarantined;
-        record.note =
-            "automatic replay not wired (YOU-07-002); quarantined for manual review".to_owned();
-    }
-    board_status.set(
-        "write quarantined for manual review — automatic replay not yet available (YOU-07-002)"
-            .to_owned(),
-    );
 }

@@ -40,9 +40,7 @@ use drag_drop_controller::*;
 use due_calendar::*;
 use effects::KanbanEffects;
 use model::*;
-pub(crate) use model::{
-    calendar_schedule_revision_heads, strand_update_operations_from_events, strand_views_from_ops,
-};
+pub(crate) use model::{calendar_schedule_revision_heads, strand_views_from_ops};
 
 #[cfg(test)]
 pub(crate) use crate::state::projection::kanban_ops::kanban_operations_from_events;
@@ -811,16 +809,12 @@ pub fn KanbanPanel(
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
     let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
-    // T20 — synchronous init cannot fetch a projection: the real read is
-    // `transport::realm_read::collection_projection`, which the async refresh
-    // effects await before promoting the source signal to `ApiDerived`. So the
-    // board starts either on the explicit demo seed or on nothing at all, and
-    // the source signal lets the header say which.
+    // Demo seed fallback remains explicit; normal boards derive from events.
     let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
-    let (initial_source, initial_columns) = if seed_fallback_allowed {
-        (BoardProjectionSource::SeedFallback, seed_columns())
+    let initial_columns = if seed_fallback_allowed {
+        seed_columns()
     } else {
-        (BoardProjectionSource::Unavailable, Vec::new())
+        Vec::new()
     };
     let navigator = use_navigator();
     let route = use_route::<Route>();
@@ -846,17 +840,14 @@ pub fn KanbanPanel(
     let controller = use_kanban_controller(
         initial_board_options.clone(),
         initial_board_space_id.clone(),
-        initial_source,
+        seed_fallback_allowed,
         event_write_ready,
     );
     let KanbanController {
-        board_space_options,
+        mut board_space_options,
         mut selected_board_space_id,
-        collection_view_columns,
-        mut board_view_id,
         lifecycle_container_projection: _,
         lifecycle_strand_projection,
-        projection_source: _,
         mut new_board_title,
         mut new_column_title,
         mut new_card_title,
@@ -905,15 +896,10 @@ pub fn KanbanPanel(
         mut drop_target_column,
         mut editing_column_id,
         mut editing_column_title,
-        write_records,
         mut board_status,
         command_queue: _,
     } = controller;
     let selected_board_space_id_selected = use_memo(move || Some(selected_board_space_id()));
-    // Opt-in trusted server materialization (`collection_projection` View path,
-    // `board_view_id` set manually via the Projection popover). When present it
-    // takes precedence over the event-sourced projection; `None` (the default)
-    // means the board derives purely from the local op log.
     // `columns` is a PURE derivation of the realm op log: it folds
     // `raw_operations` (remote backfill / subscribe events + local optimistic
     // ops) for the selected board via the single event-sourced `project_board`,
@@ -929,11 +915,6 @@ pub fn KanbanPanel(
         let decrypt_device = device_id.clone();
         let seed_columns = initial_columns.clone();
         move || {
-            if let Some(view_columns) = collection_view_columns()
-                && !view_columns.is_empty()
-            {
-                return view_columns;
-            }
             let board_id = selected_board_space_id();
             let decrypt_store = state_store.read();
             let raw_operations = decrypt_store.load().raw_operations;
@@ -965,9 +946,8 @@ pub fn KanbanPanel(
         }
     });
     let selected_board_space_id_value = selected_board_space_id();
-    let selected_board_space_id_label = short_protocol_id(&selected_board_space_id_value);
-    let board_view_id_value = board_view_id();
-    let board_view_id_label = short_protocol_id(&board_view_id_value);
+    let selected_board_accepts_children =
+        board_space_id_accepts_children(&selected_board_space_id_value);
     let board_status_text = board_status();
     let board_select_label = format!("{}:", crate::i18n::tr("kanban.board_header"));
     let selected_board_title = if selected_board_space_id_value.trim().is_empty() {
@@ -1043,11 +1023,6 @@ pub fn KanbanPanel(
         })
     };
 
-    let write_record_count = write_records().len();
-    let manual_conflict_review_count = write_records()
-        .iter()
-        .filter(|record| record.needs_manual_conflict_review())
-        .count();
     let board_selected = !selected_board_space_id().trim().is_empty();
     // Pre-wrapped Realm id for building board / card URLs inside event
     // handlers (the raw selected Realm String can't be moved into more
@@ -1098,7 +1073,6 @@ pub fn KanbanPanel(
                 local_realm_id: local_realm_id.clone(),
                 base_url: base_url.clone(),
                 token,
-                seed_fallback_allowed,
                 selected_realm_id: selected_realm_id.clone(),
                 projection_realm_id: projection_realm_id.clone(),
                 account_did: account_did.clone(),
@@ -1252,6 +1226,12 @@ pub fn KanbanPanel(
                                     size: ButtonSize::Sm,
                                     class: "btn",
                                     "data-testid": "add-column-button",
+                                    disabled: !selected_board_accepts_children,
+                                    title: if selected_board_accepts_children {
+                                        "Add a list to this board"
+                                    } else {
+                                        "Waiting for the board to be accepted"
+                                    },
                                     onclick: {
                                         // Lists are Space containers in v1. The local column is
                                         // visible but remains in sending/failed state
@@ -1271,6 +1251,13 @@ pub fn KanbanPanel(
                                             let board_space_id = selected_board_space_id();
                                             if board_space_id.trim().is_empty() {
                                                 board_status.set("select or create a Board Space before adding lists".to_owned());
+                                                return;
+                                            }
+                                            if !board_space_id_accepts_children(&board_space_id) {
+                                                board_status.set(
+                                                    "Board is still being created; add a list after server confirmation."
+                                                        .to_owned(),
+                                                );
                                                 return;
                                             }
                                             let col_count = columns().len();
@@ -1415,6 +1402,20 @@ pub fn KanbanPanel(
                                                 // `event_derived_target_aliases` migrates it to the
                                                 // accepted id when the receipt lands.
                                                 let board_space_id = op.local_object_handle().to_owned();
+                                                // Keep the user-entered title visible while the
+                                                // create is in flight. The temporary holder-local
+                                                // id is a UI key only; the Add List action stays
+                                                // disabled until receipt reconciliation replaces
+                                                // it with the accepted `ak:space:...` id.
+                                                let mut options = board_space_options();
+                                                options.retain(|option| option.id != board_space_id);
+                                                options.push(BoardSpaceOption {
+                                                    id: board_space_id.clone(),
+                                                    title: title.clone(),
+                                                    state: SpaceContainerLifecycleState::Active,
+                                                });
+                                                sort_board_space_options(&mut options);
+                                                board_space_options.set(options);
                                                 // Select the new board now;`ak.space.creatempty) columns
                                                 // derive from the appended `ak.space.create` op via the
                                                 // options-sync effect and the `columns` memo.
@@ -1427,141 +1428,15 @@ pub fn KanbanPanel(
                                                     op,
                                                     selected_scope_security_encrypted,
                                                 );
-                                                board_status.set("Creating Board; waiting for server confirmation.".to_owned());
-                                                let _ = navigator
-                                                    .replace(kanban_board_route(&realm, &board_space_id));
+                                                board_status.set(
+                                                    "Creating Board; lists will be available after server confirmation."
+                                                        .to_owned(),
+                                                );
                                                 new_board_title.set("Board".to_owned());
                                                 board_popover.set(BoardToolbarPopover::None);
                                             }
                                         },
                                         "Create Board"
-                                    }
-                                }
-                            }
-                        }
-                        div {
-                            class: if board_popover() == BoardToolbarPopover::Projection { "board-popover-host is-open" } else { "board-popover-host" },
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                size: ButtonSize::Sm,
-                                class: "btn board-popover-trigger",
-                                "data-testid": "board-projection-toggle",
-                                onclick: move |_| {
-                                    let next = if board_popover() == BoardToolbarPopover::Projection {
-                                        BoardToolbarPopover::None
-                                    } else {
-                                        BoardToolbarPopover::Projection
-                                    };
-                                    board_popover.set(next);
-                                },
-                                "Projection"
-                            }
-                            if board_popover() == BoardToolbarPopover::Projection {
-                                div {
-                                    class: "board-popover-panel board-projection-panel",
-                                    onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
-                                    Label { html_for: "board-view-id-input-input", class: "field board-inline-field",
-                                        span { "View ID" }
-                                        Input {
-                                            id: "board-view-id-input-input",
-                                            "data-testid": "board-view-id-input",
-                                            value: "{board_view_id}",
-                                            placeholder: "ak:view:...",
-                                            oninput: move |event: FormEvent| board_view_id.set(event.value()),
-                                        }
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "board-projection-refresh",
-                                        onclick: move |_| {
-                                            board_popover.set(BoardToolbarPopover::None);
-                                            controller.refresh_projection();
-                                        },
-                                        {crate::i18n::tr("kanban.refresh_from_api")}
-                                    }
-                                    details { class: "board-diagnostics", "data-testid": "board-diagnostics",
-                                        summary { "Diagnostics" }
-                                        div { class: "actions", "data-testid": "board-write-states",
-                                            for state in write_state_samples() {
-                                                WriteStateBadge { state }
-                                            }
-                                        }
-                                        div { class: "metric-grid", "data-testid": "board-projection-model",
-                                            div { class: "metric", strong { "Board" } span { title: "{selected_board_space_id_value}", "{selected_board_space_id_label}" } div { class: "muted", "renderer: kanban" } }
-                                            div { class: "metric", strong { "View" } span { title: "{board_view_id_value}", "{board_view_id_label}" } div { class: "muted", "collection projection" } }
-                                            div { class: "metric", strong { "Relation" } span { "contains" } div { class: "muted", "List contains Card by rank" } }
-                                            div { class: "metric", strong { "Sync" } span { "{frontier_state}" } div { class: "muted", "rebases moves" } }
-                                            div { class: "metric", strong { "Writes" } span { if event_write_ready { "Online" } else { "Queued" } } div { class: "muted", "server when online" } }
-                                        }
-                                        div { class: "muted",
-                                            "View lifecycle: create, update, reconcile. Refresh uses server projection; demo seed requires INKSON_ALLOW_KANBAN_SEED_FALLBACK=1."
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        div {
-                            class: if board_popover() == BoardToolbarPopover::Queue { "board-popover-host is-open" } else { "board-popover-host" },
-                            "data-testid": "board-offline-queue",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                size: ButtonSize::Sm,
-                                class: "btn board-popover-trigger",
-                                "data-testid": "board-queue-toggle",
-                                onclick: move |_| {
-                                    let next = if board_popover() == BoardToolbarPopover::Queue {
-                                        BoardToolbarPopover::None
-                                    } else {
-                                        BoardToolbarPopover::Queue
-                                    };
-                                    board_popover.set(next);
-                                },
-                                "Queue {write_record_count}"
-                            }
-                            if board_popover() == BoardToolbarPopover::Queue {
-                                div {
-                                    class: "board-popover-panel board-queue-panel",
-                                    onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
-                                    div { class: "actions board-queue-actions",
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "replay-board-queue",
-                                            onclick: move |_| {
-                                                // Automatic replay is not wired yet
-                                                // (YOU-07-002): this quarantines the
-                                                // first failed write for manual review.
-                                                quarantine_first_failed_write(
-                                                    write_records,
-                                                    board_status,
-                                                );
-                                            },
-                                            "Quarantine for Review"
-                                        }
-                                        span { class: "muted", "{manual_conflict_review_count} review / {write_record_count} total" }
-                                    }
-                                    div { class: "muted", "Queue stays quiet unless a CAS conflict exhausts automatic rebase and needs a board admin." }
-                                    for record in write_records() {
-                                        {
-                                            let move_id_label = short_protocol_id(&record.move_id);
-                                            let cell_id_label = short_protocol_id(&record.cell_id);
-                                            let seal_ref_label = short_protocol_id(&record.seal_ref);
-                                            rsx! {
-                                                div { class: "event", "data-testid": "board-event-record",
-                                                    div { class: "event-head",
-                                                        span { "{record.kind}" }
-                                                        WriteStateBadge { state: record.state }
-                                                    }
-                                                    div { class: "muted", title: "{record.move_id}", "move_id {move_id_label}" }
-                                                    div { class: "muted", title: "{record.cell_id}", "cell {cell_id_label} / hlc {record.hlc}" }
-                                                    div { class: "muted", title: "{record.seal_ref}", "seal_ref {seal_ref_label}" }
-                                                    div { class: "muted", "effect {record.effect_summary}" }
-                                                    div { class: "muted", "{record.note}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if write_records().is_empty() {
-                                        div { class: "muted", {crate::i18n::tr("kanban.move_queue_empty")} }
                                     }
                                 }
                             }
@@ -1574,15 +1449,6 @@ pub fn KanbanPanel(
                 class: "muted board-status",
                 "data-testid": "board-status",
                 "{board_status_text}"
-            }
-
-            if manual_conflict_review_count > 0 {
-                div { class: "event board-conflict-alert", "data-testid": "board-conflict-alert",
-                    div {
-                        strong { "Board conflict review required" }
-                        div { class: "muted", "{manual_conflict_review_count} queued write(s) hit a CAS conflict and need manual resolution before replay." }
-                    }
-                }
             }
 
             // F-KANBAN-DRAG-VFX-1: derive a dragging snapshot once per
@@ -1710,19 +1576,16 @@ pub fn KanbanPanel(
                                     prev_rank: last_rank.clone(),
                                     next_rank: None,
                                 };
-                                let view_id_for_rebase = board_view_id();
                                 dispatch_strand_position_move(
                                     base.clone(),
                                     token,
                                     realm.clone(),
                                     board_space_id,
-                                    view_id_for_rebase,
                                     actor.clone(),
                                     dragged,
                                     target_column_id.clone(),
                                     neighbours,
                                     state_store,
-                                    write_records,
                                     board_status,
                                 );
                             }
@@ -1948,19 +1811,16 @@ pub fn KanbanPanel(
                                             prev_rank: prev_rank.clone(),
                                             next_rank: Some(this_rank.clone()),
                                         };
-                                        let view_id_for_rebase = board_view_id();
                                         dispatch_strand_position_move(
                                             base.clone(),
                                             token,
                                             realm.clone(),
                                             board_space_id,
-                                            view_id_for_rebase,
                                             actor.clone(),
                                             dragged,
                                             target_column_id.clone(),
                                             neighbours,
                                             state_store,
-                                            write_records,
                                             board_status,
                                         );
                                     }
@@ -2245,7 +2105,6 @@ pub fn KanbanPanel(
                                                     command,
                                                     selected_scope_security_encrypted,
                                                     state_store,
-                                                    write_records,
                                                     board_status,
                                                 );
                                                 // Continuous-create (design/kanban-baseline.md M1):

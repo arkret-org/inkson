@@ -234,6 +234,7 @@ fn typed_id_prefix(id: &str) -> Option<&str> {
     id.rsplit_once(':').map(|(prefix, _)| prefix)
 }
 
+#[cfg(test)]
 pub(crate) fn strand_update_operation_from_event(
     event: &arkret_sdk::Event,
 ) -> Option<RawOperationRecord> {

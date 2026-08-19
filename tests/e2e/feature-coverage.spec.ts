@@ -93,11 +93,8 @@ test.describe("feature coverage placeholders", () => {
     // The drag-drop pipeline is exercised end-to-end by
     // inkson.strands.spec.ts::"kanban card drag queues a strand move".
     // This placeholder pins the structural contract the drop relies
-    // on: the move-queue + write-records data-testids MUST
-    // exist on /kanban so soland can dispatch ak.strand.move /
-    // ak.strand.reorder write records through them. The HLC tiebreak
-    // assertion called out in the spec is exercised in the SDK's
-    // reducer unit tests (`strand_position_cas_*`), not at the UI layer.
+    // on: the board and its drag targets must render so strand move/reorder
+    // submission remains reachable without the removed diagnostics toolbar.
     await page.goto("/kanban", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
@@ -105,7 +102,6 @@ test.describe("feature coverage placeholders", () => {
     await expect(page.getByTestId("kanban-panel")).toBeVisible({
       timeout: 60_000,
     });
-    await expect(page.getByTestId("board-offline-queue")).toBeVisible();
     // At least one card MUST render so the drop target exists; the
     // fully-mocked server returns persisted board projections.
     await page

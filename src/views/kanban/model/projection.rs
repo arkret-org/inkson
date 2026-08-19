@@ -38,6 +38,35 @@ pub(crate) fn generated_board_fallback_title(board_id: &str) -> String {
     format!("Board {}", short_protocol_id(board_id))
 }
 
+/// Whether a selected Board handle is a protocol Space id that downstream
+/// writes may reference.
+///
+/// A freshly-created Board is selected optimistically by its holder-local
+/// operation id. That UUID is useful as a UI key, but it is deliberately not
+/// an Arkret identifier and must never be passed to a List create as
+/// `parent_space_id`. The accepted create receipt later migrates the selection
+/// to `retype(event_id)`, at which point child writes are safe to enable.
+pub(crate) fn board_space_id_accepts_children(board_id: &str) -> bool {
+    arkret_sdk::SpaceId::new(board_id).is_ok()
+}
+
+pub(crate) fn preserve_pending_board_space_options(
+    mut projected: Vec<BoardSpaceOption>,
+    current: &[BoardSpaceOption],
+    aliases: &BTreeMap<String, String>,
+) -> Vec<BoardSpaceOption> {
+    for pending in current.iter().filter(|option| {
+        !board_space_id_accepts_children(&option.id)
+            && resolve_event_derived_target_alias(aliases, &option.id) == option.id
+    }) {
+        if !projected.iter().any(|option| option.id == pending.id) {
+            projected.push(pending.clone());
+        }
+    }
+    sort_board_space_options(&mut projected);
+    projected
+}
+
 pub(crate) fn should_replace_projected_container_title(
     existing_title: &str,
     container_id: &str,
@@ -164,176 +193,6 @@ pub(crate) fn overlay_local_board_space_options(
     }
     sort_board_space_options(&mut options);
     options
-}
-
-/// T20 / YOU-01-009 subtask 3 - Map a spec-registered
-/// [`crate::state::projection_views::CollectionProjectionView`]
-/// (`view.schema.json#/$defs/collection_projection_view`) into the inkson
-/// renderer's [`Vec<KanbanColumn>`] shape.
-///
-/// Pure adapter so it's unit-testable without a live HTTP client.
-/// Position rank, when present, drives stable ordering inside a column.
-pub(crate) fn collection_projection_to_columns(
-    projection: &crate::state::projection_views::CollectionProjectionView,
-    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-) -> Vec<KanbanColumn> {
-    projection
-        .groups
-        .iter()
-        .map(|group| KanbanColumn {
-            id: group.key.as_str().to_owned(),
-            title: group.title.as_str().to_owned(),
-            rank: group.rank.clone().unwrap_or_default(),
-            cards: group
-                .items
-                .iter()
-                .map(|item| card_from_projection_item(item, decrypt_ctx))
-                .collect(),
-            state: SpaceContainerLifecycleState::Active,
-        })
-        .collect()
-}
-
-/// Map a single registered `projection_item` to a [`KanbanCard`].
-///
-/// Discussion lock metadata is read leniently from the item's free-form
-/// `state.discussion` object (`{enabled, visibility, lazy_link}` — the
-/// registered `projection_item.state` is an open object; the dedicated
-/// `discussion` field of the SDK's draft DTO is not on the registered
-/// wire shape): `visibility="locked"` produces a [`LockedStrand`] with an
-/// opaque hash; `lazy_link=true` is surfaced via `history_visibility`
-/// without leaking room contents.
-pub(crate) fn card_from_projection_item(
-    item: &crate::state::projection_views::ProjectionRow,
-    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-) -> KanbanCard {
-    let object = serde_json::to_value(&item.object).unwrap_or(Value::Null);
-    let id = item.object.id.clone();
-    let title = item
-        .object
-        .title
-        .as_deref()
-        .unwrap_or("(untitled)")
-        .to_owned();
-    let primary_strand_id = id.clone();
-    let discussion = item.state.get("discussion").filter(|d| d.is_object());
-    let (external_visibility, history_visibility) = discussion
-        .map(|d| {
-            let visibility = d.get("visibility").and_then(Value::as_str).unwrap_or("");
-            let enabled = d.get("enabled").and_then(Value::as_bool).unwrap_or(false);
-            let lazy_link = d.get("lazy_link").and_then(Value::as_bool).unwrap_or(false);
-            let ext = match visibility {
-                "locked" => "Locked discussion (lazy_link)".to_owned(),
-                "readable" => "Discussion readable to current member".to_owned(),
-                other => format!("discussion: {other}"),
-            };
-            let hist = if lazy_link {
-                "lazy_link (cross-Space)".to_owned()
-            } else if enabled {
-                // Tracks do not carry independent access; a private
-                // discussion uses a Circle-scoped Strand.
-                "Circle-scoped discussion".to_owned()
-            } else {
-                "synthesis-only".to_owned()
-            };
-            (ext, hist)
-        })
-        .unwrap_or_else(|| {
-            (
-                "No external discussions linked".to_owned(),
-                "synthesis-only".to_owned(),
-            )
-        });
-    let locked_strand = discussion.and_then(|d| {
-        if d.get("visibility").and_then(Value::as_str) == Some("locked") {
-            Some(LockedStrand {
-                strand_id_hash: format!("sha256:{}", id),
-                reason: "Locked discussion: title and members are not disclosed.".to_owned(),
-            })
-        } else {
-            None
-        }
-    });
-    // Registered `collection_position` rank: the card's authoritative rank
-    // in the column from the API's view of the cas-register cell. Falls
-    // back to "" so the seed-conversion path still works when the
-    // projection omits position metadata (e.g. group-level rank only).
-    let rank =
-        crate::state::projection_views::projection_row_position_rank(item).unwrap_or_default();
-    let object_fields = &item.object.fields;
-    let object_str = |keys: &[&str]| -> String {
-        for key in keys {
-            if let Some(value) = object_fields.get(*key).and_then(Value::as_str) {
-                return value.to_owned();
-            }
-        }
-        String::new()
-    };
-    let created_by = object_str(&["created_by", "actor_id", "author"]);
-    let created_at = object_str(&["created_at", "timestamp"]);
-    let updated_by = object_str(&["updated_by"]);
-    let updated_at = object_str(&["updated_at", "edited_at"]);
-    KanbanCard {
-        id,
-        rank,
-        title,
-        description: object_str(&["summary", "description"]),
-        description_body: String::new(),
-        description_locked: false,
-        // The registered `projection_item.object`
-        // (`view.schema.json#/$defs/projection_item`) carries id / title /
-        // fields only — never Strand `content` or `encrypted_content`. The
-        // Strand projection read (`card_from_strand_projection`) is the single
-        // source for Description or Synthesis content; a collection row simply has neither.
-        synthesis: String::new(),
-        synthesis_locked: false,
-        created_by,
-        created_at,
-        updated_by,
-        updated_at,
-        labels: object_fields
-            .get("labels")
-            .and_then(|labels| labels.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(ToOwned::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        assignee: "—".to_owned(),
-        assigned_to_relations: Vec::new(),
-        due: object_fields
-            .get("due_at")
-            .or_else(|| object_fields.get("due"))
-            .or_else(|| object_fields.get("due_date"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("—")
-            .to_owned(),
-        calendar_rsvp: CalendarRsvpDisplay::default(),
-        calendar_schedule_basis_refs: object_fields
-            .get("schedule_revision_heads")
-            .and_then(Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default(),
-        calendar: object
-            .get("fields")
-            .and_then(Value::as_object)
-            .map(|fields| calendar_fields_from_metadata(fields, decrypt_ctx, &primary_strand_id))
-            .unwrap_or_default(),
-        primary_strand_id,
-        locked_strand,
-        external_visibility,
-        history_visibility,
-        security_encrypted: crate::security_state::strand_projection_security_state(&object),
-        state: CardState::Synced,
-        lifecycle: StrandLifecycleState::Active,
-    }
 }
 
 pub(crate) fn columns_from_lifecycle_projection(

@@ -1,178 +1,44 @@
 use super::*;
 
-/// T20 wire-up — `collection_projection_to_columns` adapter maps the
-/// spec-registered `collection_projection_view` response
-/// (`view.schema.json`) into the renderer's KanbanColumn vec. This
-/// is the core integration point; if the spec wire shape changes,
-/// this test fails and points at the renderer adapter.
 #[test]
-fn collection_projection_maps_to_kanban_columns() {
-    let projection: arkret_sdk::CollectionProjectionView =
-        serde_json::from_value(serde_json::json!({
-            "projection": "collection",
-            "renderer": "board",
-            "view_id": "ak:view:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "frontier": {
-                "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-                "event_ids": ["ak:event:AWaw3_J06Ml7_fh-rnNBMJ3WJ6cLKzz1DvKyRhPSuJs0"]
-            },
-            "groups": [
-                {
-                    "key": "ak:space:AbcZEhO9Z42zBuSbwKbcWbon61s--EjZCMaWO5Ibgz_B",
-                    "title": "Review",
-                    "rank": "mV",
-                    "items": [{
-                        "object": {
-                            "id": "ak:strand:ARO6sshXyY_8aIrsd0F5-zoAcfxTRnG5n7zA6tFwGX2l",
-                            "kind": "strand",
-                            "title": "Legal review",
-                            "fields": {
-                                "summary": "ensure GDPR sign-off"
-                            }
-                        },
-                        "state": {
-                        "discussion": {
-                            "enabled": true,
-                            "visibility": "locked",
-                            "lazy_link": true
-                        }
-                    }}],
-                    "limited": false
-                },
-                {
-                    "key": "ak:space:Aa5chVG-4dxTy5sBQLuc7faYg5r3Odrl_3Q7uLf7FY_Y",
-                    "title": "To do",
-                    "rank": "aA",
-                    "items": [],
-                    "limited": false
-                }
-            ]
-        }))
-        .unwrap();
-
-    let cols = collection_projection_to_columns(&projection, None);
-    assert_eq!(cols.len(), 2, "two groups → two columns");
-    assert_eq!(
-        cols[0].id,
-        "ak:space:AbcZEhO9Z42zBuSbwKbcWbon61s--EjZCMaWO5Ibgz_B"
-    );
-    assert_eq!(cols[0].title, "Review");
-    assert_eq!(cols[0].rank, "mV");
-    assert_eq!(cols[0].cards.len(), 1);
-    let card = &cols[0].cards[0];
-    assert_eq!(
-        card.id,
-        "ak:strand:ARO6sshXyY_8aIrsd0F5-zoAcfxTRnG5n7zA6tFwGX2l"
-    );
-    assert_eq!(card.title, "Legal review");
-    assert_eq!(card.description, "ensure GDPR sign-off");
-    // The registered `projection_item.object` has no Strand content slot, so a
-    // collection row never carries synthesis content.
-    assert_eq!(card.synthesis, "");
-    assert!(!card.synthesis_locked);
-    // Locked discussion + lazy_link should populate locked_strand
-    // and the cross-Space hint without leaking room contents.
-    assert!(
-        card.locked_strand.is_some(),
-        "locked discussion → LockedStrand"
-    );
-    assert_eq!(
-        card.history_visibility, "lazy_link (cross-Space)",
-        "lazy_link=true must be reflected without exposing members"
-    );
-    assert!(matches!(card.state, CardState::Synced));
-    // Empty group still produces an empty-cards column (board renders it).
-    assert_eq!(cols[1].cards.len(), 0);
+fn pending_board_handle_cannot_be_used_as_a_list_parent() {
+    assert!(!board_space_id_accepts_children(
+        "01a01bdd-804b-7ad0-bee8-194898437ad7"
+    ));
+    assert!(board_space_id_accepts_children(
+        "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR"
+    ));
 }
 
 #[test]
-fn collection_projection_overlay_applies_remote_encrypted_strand_updates() {
-    let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
-    let projection: arkret_sdk::CollectionProjectionView = serde_json::from_value(json!({
-        "projection": "collection",
-        "renderer": "board",
-        "view_id": "ak:view:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "frontier": {
-            "state_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-        },
-        "groups": [{
-            "key": board_id,
-            "title": "Todo",
-            "rank": "U",
-            "items": [{
-                "object": {
-                    "id": strand_id,
-                    "kind": "strand",
-                    "title": "Encrypted card"
-                }
-            }],
-            "limited": false
-        }]
-    }))
-    .unwrap();
-    let envelope = json!({
-        "scheme": "mls_rfc9420",
-        "ciphertext": "AAAA",
-        "content_type": KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
-        "group_id": "g",
-        "epoch": 0,
-    });
-    let events = vec![json!({
-        "event_id": "ak:event:ARq0N2BRkK7h3xduSOgAymIoN9vCfxsuQ50AW3ajRd2L",
-        "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000f003",
-        "event_kind": "ak.strand.update",
-        "actor_id": "ak:did_core:web:alice.example",
-        "created_at": "2026-05-22T10:00:00.000Z",
-        "realm_id": TEST_REALM_ID,
-        "payload": {
-            "target_ref": strand_id,
-            "patch": {
-                "tracks.synthesis.encrypted_content": { "$op": "set", "value": envelope }
-            }
-        }
-    })];
-    let events = crate::state::projection::kanban_ops::sdk_events_from_values(&events);
-    let remote_operations = strand_update_operations_from_events(&events);
-    let store = LocalStateStore::default();
-    let ctx = MlsDecryptCtx {
-        state_store: &store,
-        realm_id: TEST_REALM_ID,
-        actor_id: "did:web:alice.example",
-        device_id: "ak:device:0196419b-0000-7000-8000-000000000001",
-        circle_id: None,
+fn pending_board_keeps_its_title_until_the_accepted_alias_arrives() {
+    let pending_id = "01a01bdd-804b-7ad0-bee8-194898437ad7";
+    let accepted_id = "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
+    let pending = BoardSpaceOption {
+        id: pending_id.to_owned(),
+        title: "Design board".to_owned(),
+        state: SpaceContainerLifecycleState::Active,
     };
 
-    let cols = overlay_collection_projection_with_operations(
-        &projection,
-        &store,
-        board_id,
-        &remote_operations,
-        Some(&ctx),
+    let waiting = preserve_pending_board_space_options(
+        Vec::new(),
+        std::slice::from_ref(&pending),
+        &BTreeMap::new(),
     );
+    assert_eq!(waiting, vec![pending.clone()]);
 
-    let card = &cols[0].cards[0];
-    assert_eq!(card.synthesis, "");
-    assert!(card.synthesis_locked);
-}
-
-/// T20 — when no `state.discussion` metadata is present on the
-/// registered projection item, the card renders as synthesis-only
-/// without a locked_strand.
-#[test]
-fn projection_item_without_discussion_renders_synthesis_only() {
-    let item: arkret_sdk::ProjectionRow = serde_json::from_value(serde_json::json!({
-        "object": {
-            "id": "ak:strand:AdymfEYKFegRsXpyi5Or3ormR7igvbwtXIp8HyMfOvWE",
-            "kind": "strand",
-            "title": "DID method allowlist"
-        }
-    }))
-    .unwrap();
-    let card = card_from_projection_item(&item, None);
-    assert!(card.locked_strand.is_none());
-    assert_eq!(card.history_visibility, "synthesis-only");
-    assert_eq!(card.external_visibility, "No external discussions linked");
+    let accepted = BoardSpaceOption {
+        id: accepted_id.to_owned(),
+        title: "Design board".to_owned(),
+        state: SpaceContainerLifecycleState::Active,
+    };
+    let aliases = BTreeMap::from([(pending_id.to_owned(), accepted_id.to_owned())]);
+    let reconciled = preserve_pending_board_space_options(
+        vec![accepted.clone()],
+        std::slice::from_ref(&pending),
+        &aliases,
+    );
+    assert_eq!(reconciled, vec![accepted]);
 }
 
 #[test]

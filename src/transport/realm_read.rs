@@ -1,7 +1,7 @@
 //! Typed Realm read transport.
 //!
 //! These are the pure-passthrough realm read operations (authz checks,
-//! effective grants, collection / strand projections, and realm-organization
+//! effective grants, strand projections, and realm-organization
 //! relationships) that used to live as thin inherent methods
 //! on [`crate::transport::TransportClient`]. They build a typed SDK request body (and do
 //! small projections) and call the shared SDK `http-client::Client` directly.
@@ -16,7 +16,6 @@
 
 use crate::models::{AuthzCheckOutcome, GrantList};
 use crate::operation::trim_realm_id;
-use crate::state::projection_views::CollectionProjectionView;
 
 pub async fn authz_check_resource(
     http: &arkret_sdk::http_client::Client,
@@ -63,28 +62,6 @@ pub async fn effective_grants(
     http.authz_effective_grants(realm_id, subject, subject_principal_server_id, None)
         .await
         .map_err(anyhow::Error::from)
-}
-
-// ── Views — collection projection (T20 / YOU-01-009 subtask 3) ──────
-//
-// Spec-registered operation `ak.self.views.collection_projection.command.materialize`
-// (`POST /_arkret/self/views/{view_id}/projection`, spec commit
-// b0cfa89). The request body is the registered
-// `view_projection_request_body` (`{cursor?, limit?}` — an empty
-// object is valid) and the response is parsed as the registered
-// `collection_projection_view` shape.
-pub async fn collection_projection(
-    http: &arkret_sdk::http_client::Client,
-    view_id: &str,
-) -> anyhow::Result<CollectionProjectionView> {
-    let body =
-        arkret_models_collaboration::objects::query_projection::ViewProjectionRequestBody::default(
-        );
-    let view: arkret_sdk::CollectionProjectionView = http
-        .collection_projection(view_id, &body)
-        .await
-        .map_err(anyhow::Error::from)?;
-    Ok(view)
 }
 
 /// Read the verified Realm ↔ organization relationships projection

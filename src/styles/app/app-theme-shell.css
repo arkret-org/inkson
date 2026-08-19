@@ -327,8 +327,7 @@ body {
 }
 
 .board-toolbar-controls,
-.board-list-compose,
-.board-queue-actions {
+.board-list-compose {
   align-items: center;
   gap: 6px;
 }
@@ -552,30 +551,6 @@ body {
   box-shadow: var(--shadow-md, var(--ak-shadow));
 }
 
-.board-projection-panel {
-  width: min(520px, calc(100vw - 48px));
-}
-
-.board-queue-panel {
-  width: min(520px, calc(100vw - 48px));
-  max-height: min(460px, calc(100vh - 170px));
-  overflow: auto;
-}
-
-.board-inline-field {
-  margin: 0;
-}
-
-.board-conflict-alert {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-color: color-mix(in srgb, var(--warning) 46%, var(--border));
-  background: color-mix(in srgb, var(--warning-soft) 72%, var(--surface));
-}
-
 .board-maintenance.is-empty {
   display: none;
 }
@@ -605,21 +580,6 @@ body {
 }
 .board-header .entity-title {
   margin-bottom: 0;
-}
-.board-diagnostics {
-  width: 100%;
-}
-.board-diagnostics > summary {
-  width: max-content;
-  cursor: pointer;
-  color: var(--ak-muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-.board-diagnostics > .metric-grid,
-.board-diagnostics > .actions,
-.board-diagnostics > .muted {
-  margin-top: 8px;
 }
 .event.board-column {
   flex: 0 0 300px;

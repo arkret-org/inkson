@@ -46,43 +46,19 @@ pub(crate) fn local_created_card(
     }
 }
 
-pub(crate) fn overlay_local_card_creates(
-    columns: Vec<KanbanColumn>,
-    state_store: &LocalStateStore,
-    board_space_id: &str,
-) -> Vec<KanbanColumn> {
-    overlay_local_card_creates_with_decrypt(columns, state_store, board_space_id, None)
-}
-
-pub(crate) fn overlay_local_card_creates_with_decrypt(
-    columns: Vec<KanbanColumn>,
-    state_store: &LocalStateStore,
-    board_space_id: &str,
-    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-) -> Vec<KanbanColumn> {
-    overlay_card_projection_with_operations_and_decrypt(
-        columns,
-        state_store,
-        board_space_id,
-        &[],
-        decrypt_ctx,
-    )
-}
-
-pub(crate) fn overlay_collection_projection_with_operations(
-    projection: &crate::state::projection_views::CollectionProjectionView,
-    state_store: &LocalStateStore,
-    board_space_id: &str,
-    remote_operations: &[RawOperationRecord],
-    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
-) -> Vec<KanbanColumn> {
-    overlay_card_projection_with_operations_and_decrypt(
-        collection_projection_to_columns(projection, decrypt_ctx),
-        state_store,
-        board_space_id,
-        remote_operations,
-        decrypt_ctx,
-    )
+pub(crate) fn sync_selected_card_from_columns(
+    mut selected_card: Signal<Option<KanbanCard>>,
+    columns: &[KanbanColumn],
+) {
+    let Some(current) = selected_card.read().clone() else {
+        return;
+    };
+    let Some(next) = find_card_by_strand_id(columns, &current.id) else {
+        return;
+    };
+    if next != current {
+        selected_card.set(Some(next));
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +77,7 @@ pub(crate) fn overlay_card_projection_with_operations(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn overlay_card_projection_with_operations_and_decrypt(
     columns: Vec<KanbanColumn>,
     state_store: &LocalStateStore,
@@ -115,35 +92,14 @@ pub(crate) fn overlay_card_projection_with_operations_and_decrypt(
     overlay_local_card_assignment_records(columns, &state.raw_operations)
 }
 
+#[cfg(test)]
 pub(crate) fn strand_update_operations_from_events(
     events: &[arkret_sdk::Event],
 ) -> Vec<RawOperationRecord> {
     events
         .iter()
-        .filter_map(strand_update_operation_from_event)
+        .filter_map(crate::state::projection::kanban_ops::strand_update_operation_from_event)
         .collect()
-}
-
-pub(crate) fn strand_update_operation_from_event(
-    event: &arkret_sdk::Event,
-) -> Option<RawOperationRecord> {
-    // Single source in the projection layer (YGN-ARCH-01 step 3).
-    crate::state::projection::kanban_ops::strand_update_operation_from_event(event)
-}
-
-pub(crate) fn sync_selected_card_from_columns(
-    mut selected_card: Signal<Option<KanbanCard>>,
-    columns: &[KanbanColumn],
-) {
-    let Some(current) = selected_card.read().clone() else {
-        return;
-    };
-    let Some(next) = find_card_by_strand_id(columns, &current.id) else {
-        return;
-    };
-    if next != current {
-        selected_card.set(Some(next));
-    }
 }
 
 pub(crate) fn raw_operation_allows_overlay(payload: &Value) -> bool {

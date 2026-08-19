@@ -805,30 +805,42 @@ impl LocalStateStore {
         #[cfg(not(test))]
         {
             let mut state = state;
-            let secure_grant = active_did.as_deref().and_then(|principal| {
-                let user_store = match user_local_store_for_principal(principal) {
-                    Ok(user_store) => user_store,
-                    Err(error) => {
-                        tracing::warn!(
-                            ?error,
-                            "secure session grant restore skipped for invalid principal"
-                        );
-                        return None;
-                    }
-                };
-                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                load_session_grant_from_user_secure_store(&user_store, secure_store.as_ref())
-                    .map_err(|error| {
-                        tracing::warn!(?error, "secure session grant restore failed");
-                        error
-                    })
-                    .ok()
-                    .flatten()
-            });
-            if let Some(grant) = secure_grant {
-                state.session_grant = Some(grant);
-            } else {
-                state.session_grant = None;
+            // On wasm the grant lives in the IndexedDB tier; before its async
+            // init completes the localStorage fallback refuses grant reads
+            // (fail closed). Skip the restore quietly in that window instead
+            // of warning on every persist-path read and overwriting the grant
+            // with None; identity_session's deferred persist repopulates the
+            // store once it is ready.
+            #[cfg(target_arch = "wasm32")]
+            let secure_store_ready = crate::secure_key_store::wasm_secure_store_ready();
+            #[cfg(not(target_arch = "wasm32"))]
+            let secure_store_ready = true;
+            if secure_store_ready {
+                let secure_grant = active_did.as_deref().and_then(|principal| {
+                    let user_store = match user_local_store_for_principal(principal) {
+                        Ok(user_store) => user_store,
+                        Err(error) => {
+                            tracing::warn!(
+                                ?error,
+                                "secure session grant restore skipped for invalid principal"
+                            );
+                            return None;
+                        }
+                    };
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                    load_session_grant_from_user_secure_store(&user_store, secure_store.as_ref())
+                        .map_err(|error| {
+                            tracing::warn!(?error, "secure session grant restore failed");
+                            error
+                        })
+                        .ok()
+                        .flatten()
+                });
+                if let Some(grant) = secure_grant {
+                    state.session_grant = Some(grant);
+                } else {
+                    state.session_grant = None;
+                }
             }
             Some(state)
         }

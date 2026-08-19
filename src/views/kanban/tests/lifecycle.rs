@@ -1,26 +1,5 @@
 use super::*;
 
-#[test]
-fn board_write_manual_review_is_only_for_conflicts() {
-    let transient_failure = board_write_record(
-        CardState::Quarantined,
-        "submit failed: projection still pending",
-    );
-    assert!(
-        !transient_failure.needs_manual_conflict_review(),
-        "ordinary submit failures should not show the board admin review banner"
-    );
-
-    let exhausted_conflict = board_write_record(
-        CardState::Quarantined,
-        "cas_conflict exhausted 3 rebase attempts",
-    );
-    assert!(exhausted_conflict.needs_manual_conflict_review());
-
-    let active_conflict = board_write_record(CardState::Conflict, "server returned cas_conflict");
-    assert!(active_conflict.needs_manual_conflict_review());
-}
-
 /// SDK projection lifecycle values map exhaustively into renderer enums.
 #[test]
 fn projection_lifecycle_values_map_to_renderer_enums() {

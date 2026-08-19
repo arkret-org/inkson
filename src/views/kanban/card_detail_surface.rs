@@ -202,11 +202,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let KanbanController {
         board_space_options: _,
         selected_board_space_id,
-        collection_view_columns: _,
-        board_view_id: _,
         lifecycle_container_projection: _,
         lifecycle_strand_projection: _,
-        projection_source: _,
         new_board_title: _,
         new_column_title: _,
         new_card_title: _,
@@ -255,7 +252,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         drop_target_column: _,
         editing_column_id: _,
         editing_column_title: _,
-        write_records: _,
         mut board_status,
         command_queue: _,
     } = controller;

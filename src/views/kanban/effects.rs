@@ -8,7 +8,6 @@ pub(super) fn KanbanEffects(
     local_realm_id: String,
     base_url: String,
     token: Signal<String>,
-    seed_fallback_allowed: bool,
     selected_realm_id: String,
     projection_realm_id: String,
     account_did: String,
@@ -17,12 +16,10 @@ pub(super) fn KanbanEffects(
     realm_live_epoch: Signal<u64>,
 ) -> Element {
     let mut state_store = crate::app::SessionContext::get().state_store;
+    let navigator = use_navigator();
     let KanbanController {
         mut board_space_options,
         mut selected_board_space_id,
-        mut collection_view_columns,
-        board_view_id,
-        mut projection_source,
         mut lifecycle_container_projection,
         mut lifecycle_strand_projection,
         mut selected_card,
@@ -66,6 +63,17 @@ pub(super) fn KanbanEffects(
             let containers = space_container_views_from_ops(&raw_operations, &realm);
             let strands = strand_views_from_ops(&raw_operations);
             let options = board_space_options_from_projection(&containers);
+            // The click handler inserts a holder-local Board option before the
+            // command queue has projected its optimistic op. Preserve that
+            // titled option across this short gap (including when other Boards
+            // already exist), then drop it as soon as receipt reconciliation
+            // exposes a canonical alias.
+            let aliases = event_derived_target_aliases(&raw_operations);
+            let options = preserve_pending_board_space_options(
+                options,
+                &board_space_options.peek(),
+                &aliases,
+            );
             if *lifecycle_container_projection.peek() != containers {
                 lifecycle_container_projection.set(containers);
             }
@@ -83,11 +91,6 @@ pub(super) fn KanbanEffects(
         });
     }
 
-    let refresh_base_url = base_url.clone();
-    let refresh_lifecycle_realm_id = local_realm_id.clone();
-    let refresh_decrypt_realm_id = selected_realm_id.clone();
-    let refresh_decrypt_actor = account_did.clone();
-    let refresh_decrypt_device = device_id.clone();
     use_effect(move || {
         let commands = command_queue();
         if commands.is_empty() {
@@ -96,21 +99,6 @@ pub(super) fn KanbanEffects(
         command_queue.set(std::collections::VecDeque::new());
         for command in commands {
             match command {
-                KanbanCommand::RefreshProjection => refresh_projection(
-                    refresh_base_url.clone(),
-                    token(),
-                    board_view_id(),
-                    refresh_lifecycle_realm_id.clone(),
-                    refresh_decrypt_realm_id.clone(),
-                    refresh_decrypt_actor.clone(),
-                    refresh_decrypt_device.clone(),
-                    seed_fallback_allowed,
-                    state_store,
-                    selected_board_space_id,
-                    collection_view_columns,
-                    projection_source,
-                    board_status,
-                ),
                 KanbanCommand::SubmitOperation {
                     base_url,
                     token,
@@ -208,6 +196,29 @@ pub(super) fn KanbanEffects(
         });
     }
 
+    // A Board create is selected immediately by its holder-local operation id
+    // so the optimistic empty-board surface can render. Once the submit receipt
+    // records the final Event id, migrate both selection and URL to the derived
+    // protocol Space id. Never put the UUID handle in the URL: it is not a
+    // parent id and a refresh must restore the canonical Board identity.
+    {
+        let route_realm_id = selected_realm_id.clone();
+        use_effect(move || {
+            let temporary = selected_board_space_id();
+            if temporary.trim().is_empty() {
+                return;
+            }
+            let raw_operations = state_store.read().load().raw_operations;
+            let aliases = event_derived_target_aliases(&raw_operations);
+            let accepted = resolve_event_derived_target_alias(&aliases, &temporary);
+            if accepted == temporary || !board_space_id_accepts_children(&accepted) {
+                return;
+            }
+            selected_board_space_id.set(accepted.clone());
+            let _ = navigator.replace(kanban_board_route(&route_realm_id, &accepted));
+        });
+    }
+
     {
         let routed_strand_id = route_card_strand_id(&route);
         use_effect(move || {
@@ -230,30 +241,15 @@ pub(super) fn KanbanEffects(
         });
     }
 
-    // T20 — auto-refresh-on-mount. The component renders empty or explicit
-    // SeedFallback synchronously, then fires an async fetch against soland's
-    // `/_arkret/self/views/:id/projection` when a View id is provided. Success
-    // promotes the board to ApiDerived; failure leaves the current server
-    // projection / empty state in place with a status note.
-    // The `bootstrapped` guard ensures we run this only once per mount —
-    // matching the login view's `auto_capture_bootstrapped` pattern so a
-    // second render (e.g. from a parent signal) doesn't re-trigger the
-    // fetch.
+    // One-shot durable event backfill. Board rendering is event-sourced; there
+    // is no user-selected collection View or manual projection refresh path.
     let mut bootstrapped = use_signal(|| false);
     let auto_base = base_url.clone();
     let auto_token = token;
-    let auto_seed_fallback_allowed = seed_fallback_allowed;
-    let auto_board_view_id = board_view_id;
     let auto_lifecycle_realm_id = local_realm_id.clone();
-    let auto_decrypt_realm_id = selected_realm_id.clone();
-    let auto_decrypt_actor = account_did.clone();
-    let auto_decrypt_device = device_id.clone();
     use_future(move || {
         let base = auto_base.clone();
         let lifecycle_realm_id = auto_lifecycle_realm_id.clone();
-        let decrypt_realm_id = auto_decrypt_realm_id.clone();
-        let decrypt_actor = auto_decrypt_actor.clone();
-        let decrypt_device = auto_decrypt_device.clone();
         async move {
             if bootstrapped() {
                 return;
@@ -263,8 +259,7 @@ pub(super) fn KanbanEffects(
             if api_token.trim().is_empty() {
                 return;
             }
-            // Backfill the realm's durable events into the op log FIRST, before the
-            // materialized-board-View gate below. This is how the event-sourced
+            // Backfill the realm's durable events into the op log. This is how the event-sourced
             // Space-container / Strand projections (and therefore the board
             // switcher) discover content created by OTHER members — including a
             // board an invited member deep-links into before its create arrives on
@@ -285,12 +280,7 @@ pub(super) fn KanbanEffects(
             };
             // Ingest the backfilled events into `raw_operations` so the event-
             // sourced board/list/card projection sees cross-member content.
-            // Previously the bootstrap used these events ONLY for the strand
-            // overlay (`strand_update_operations_from_events`) and never folded
-            // them into `raw_operations`; combined with the empty-View early-return
-            // below skipping the backfill entirely, a joined member who deep-linked
-            // to another member's board ingested nothing and saw an empty board
-            // switcher. `ingest_kanban_events` handles the backfill event shape
+            // `ingest_kanban_events` handles the backfill event shape
             // (`event_kind`/`kind`, `operation_id`/`event_id`) and dedups by id.
             let complete_events = match events_res.as_ref() {
                 Some(response) => match response.complete_events("kanban event projection") {
@@ -310,68 +300,6 @@ pub(super) fn KanbanEffects(
                     &complete_events,
                 );
             }
-
-            let view = auto_board_view_id();
-            if view.trim().is_empty() {
-                board_status.set(
-                    "No board View selected; using Space-container/Strand projections and local queue only"
-                        .to_owned(),
-                );
-                return;
-            }
-            let remote_update_operations = strand_update_operations_from_events(&complete_events);
-            match with_authed_sdk_client(&base, api_token, |http| async move {
-                crate::transport::realm_read::collection_projection(&http, &view).await
-            })
-            .await
-            {
-                Ok(projection) => {
-                    let cols = {
-                        let decrypt_store = state_store.read();
-                        let decrypt_ctx = mls_decrypt_ctx_if_ready(
-                            &decrypt_store,
-                            &decrypt_realm_id,
-                            &decrypt_actor,
-                            &decrypt_device,
-                            None,
-                        );
-                        overlay_collection_projection_with_operations(
-                            &projection,
-                            &decrypt_store,
-                            &selected_board_space_id(),
-                            &remote_update_operations,
-                            decrypt_ctx.as_ref(),
-                        )
-                    };
-                    if !cols.is_empty() {
-                        // Opt-in trusted server materialization: hand the
-                        // overlaid View columns to the `columns` memo, which
-                        // prefers them over the event-sourced projection.
-                        collection_view_columns.set(Some(cols));
-                    }
-                    projection_source.set(BoardProjectionSource::ApiDerived);
-                    board_status.set(format!(
-                        "Board view loaded: {} group(s) · view={}",
-                        projection.groups.len(),
-                        projection.view_id.as_str()
-                    ));
-                }
-                Err(err) => {
-                    if auto_seed_fallback_allowed {
-                        projection_source.set(BoardProjectionSource::SeedFallback);
-                        board_status.set(format!(
-                            "Board data unavailable on mount: {}; showing sample fallback",
-                            err.display()
-                        ));
-                    } else {
-                        projection_source.set(BoardProjectionSource::Unavailable);
-                        board_status.set(format!(
-                            "Board view unavailable on mount: {}; keeping lifecycle projection",
-                            err.display()
-                        ));
-                    }
-                }
-            }
         }
     });
 
@@ -382,7 +310,6 @@ pub(super) fn KanbanEffects(
     let mut live_refresh_key_seen = use_signal({
         let initial_realm_id = local_realm_id.clone();
         move || {
-            let initial_view = board_view_id.peek().clone();
             let initial_cursor = sync_cursor.peek().clone();
             let initial_sync_ready = crate::app::account_sync_ready(&initial_cursor);
             let initial_epoch = *realm_live_epoch.peek();
@@ -395,7 +322,6 @@ pub(super) fn KanbanEffects(
             };
             kanban_projection_refresh_key(
                 &initial_realm_id,
-                &initial_view,
                 initial_sync_ready,
                 initial_epoch,
                 &initial_mls_unlock,
@@ -404,21 +330,13 @@ pub(super) fn KanbanEffects(
     });
     let live_base = base_url.clone();
     let live_token = token;
-    let live_board_view_id = board_view_id;
     let live_lifecycle_realm_id = local_realm_id.clone();
     let live_lifecycle_local_realm_id = local_realm_id.clone();
-    let live_decrypt_realm_id = selected_realm_id.clone();
-    let live_decrypt_actor = account_did.clone();
-    let live_decrypt_device = device_id.clone();
     use_effect(move || {
         let base = live_base.clone();
         let lifecycle_realm_id = live_lifecycle_realm_id.clone();
         let lifecycle_local_realm_id = live_lifecycle_local_realm_id.clone();
-        let decrypt_realm_id = live_decrypt_realm_id.clone();
-        let decrypt_actor = live_decrypt_actor.clone();
-        let decrypt_device = live_decrypt_device.clone();
         let api_token = live_token();
-        let view = live_board_view_id();
         if api_token.trim().is_empty() {
             return;
         }
@@ -449,7 +367,6 @@ pub(super) fn KanbanEffects(
         let Some(refresh_key) = next_kanban_projection_refresh_key(
             live_refresh_key_seen.peek().as_str(),
             &lifecycle_realm_id,
-            &view,
             account_sync_ready,
             live_epoch,
             &mls_unlock,
@@ -458,78 +375,33 @@ pub(super) fn KanbanEffects(
         };
         live_refresh_key_seen.set(refresh_key);
         spawn(async move {
-            if !view.trim().is_empty() {
-                let view_for_call = view.clone();
-                if let Ok(projection) =
-                    with_authed_sdk_client(&base, api_token, |http| async move {
-                        crate::transport::realm_read::collection_projection(&http, &view_for_call)
-                            .await
-                    })
-                    .await
-                {
-                    let cols = {
-                        let decrypt_store = state_store.read();
-                        let decrypt_ctx = mls_decrypt_ctx_if_ready(
-                            &decrypt_store,
-                            &decrypt_realm_id,
-                            &decrypt_actor,
-                            &decrypt_device,
-                            None,
-                        );
-                        overlay_collection_projection_with_operations(
-                            &projection,
-                            &decrypt_store,
-                            &selected_board_space_id(),
-                            &[],
-                            decrypt_ctx.as_ref(),
-                        )
-                    };
-                    // Opt-in trusted server materialization. Only overwrite when
-                    // the server returned a non-empty projection — an empty
-                    // response shouldn't wipe the event-sourced board.
-                    if !cols.is_empty() {
-                        collection_view_columns.set(Some(cols));
-                        projection_source.set(BoardProjectionSource::ApiDerived);
-                    }
-                }
-            } else {
-                // Event-sourced live reconcile.
-                // The per-session server strand/space projections are
-                // visibility-filtered and, for an encrypted realm, never carry
-                // another member's card content (title in `encrypted_metadata`,
-                // unreadable to the server). Pull the durable event log — the
-                // only source carrying every member's space/strand creates —
-                // and fold it into `raw_operations`. The `columns` memo + the
-                // container/selection sync effect re-project the board purely
-                // from events; this branch ONLY ingests. This is what makes
-                // cross-member cards appear.
-                collection_view_columns.set(None);
-                let events_res = {
-                    let realm_id = lifecycle_realm_id.clone();
-                    with_authed_api(&base, api_token, |api| async move {
-                        api.event_submitter()?.backfill(&realm_id).await
-                    })
-                    .await
-                };
-                if events_res
-                    .as_ref()
-                    .err()
-                    .is_some_and(|err| err.is_auth_expired())
-                {
+            // Event-sourced live reconcile. Pull the durable event log and fold
+            // it into `raw_operations`; the columns memo renders that log.
+            let events_res = {
+                let realm_id = lifecycle_realm_id.clone();
+                with_authed_api(&base, api_token, |api| async move {
+                    api.event_submitter()?.backfill(&realm_id).await
+                })
+                .await
+            };
+            if events_res
+                .as_ref()
+                .err()
+                .is_some_and(|err| err.is_auth_expired())
+            {
+                return;
+            }
+            if let Ok(backfill) = events_res {
+                let Ok(events) = backfill.complete_events("kanban live reconciliation") else {
+                    tracing::warn!("kanban backfill contains non-reducer event rows");
                     return;
-                }
-                if let Ok(backfill) = events_res {
-                    let Ok(events) = backfill.complete_events("kanban live reconciliation") else {
-                        tracing::warn!("kanban backfill contains non-reducer event rows");
-                        return;
-                    };
-                    let mut store = state_store.write();
-                    crate::sync_engine::ingest_kanban_projection_events(
-                        &mut store,
-                        &lifecycle_local_realm_id,
-                        &events,
-                    );
-                }
+                };
+                let mut store = state_store.write();
+                crate::sync_engine::ingest_kanban_projection_events(
+                    &mut store,
+                    &lifecycle_local_realm_id,
+                    &events,
+                );
             }
         });
     });
@@ -820,107 +692,6 @@ pub(super) fn KanbanEffects(
     }
 
     rsx! {}
-}
-
-#[allow(clippy::too_many_arguments)]
-fn refresh_projection(
-    base_url: String,
-    api_token: String,
-    view: String,
-    lifecycle_realm_id: String,
-    decrypt_realm_id: String,
-    decrypt_actor: String,
-    decrypt_device: String,
-    seed_fallback_allowed: bool,
-    state_store: SyncSignal<LocalStateStore>,
-    selected_board_space_id: Signal<String>,
-    mut collection_view_columns: Signal<Option<Vec<KanbanColumn>>>,
-    mut projection_source: Signal<BoardProjectionSource>,
-    mut board_status: Signal<String>,
-) {
-    if view.trim().is_empty() {
-        board_status
-            .set("enter a Board View ID before refreshing collection projection".to_owned());
-        return;
-    }
-
-    spawn(async move {
-        let events_res = if lifecycle_realm_id.trim().is_empty() {
-            None
-        } else {
-            let realm_id = lifecycle_realm_id.clone();
-            with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.event_submitter()?.backfill(&realm_id).await
-            })
-            .await
-            .ok()
-        };
-        let remote_update_operations = match events_res.as_ref() {
-            Some(response) => match response.complete_events("kanban projection refresh") {
-                Ok(events) => strand_update_operations_from_events(&events),
-                Err(error) => {
-                    board_status.set(error.to_string());
-                    return;
-                }
-            },
-            None => Vec::new(),
-        };
-        match with_authed_sdk_client(&base_url, api_token, |http| async move {
-            crate::transport::realm_read::collection_projection(&http, &view).await
-        })
-        .await
-        {
-            Ok(projection) => {
-                let columns = {
-                    let decrypt_store = state_store.read();
-                    let decrypt_ctx = mls_decrypt_ctx_if_ready(
-                        &decrypt_store,
-                        &decrypt_realm_id,
-                        &decrypt_actor,
-                        &decrypt_device,
-                        None,
-                    );
-                    overlay_collection_projection_with_operations(
-                        &projection,
-                        &decrypt_store,
-                        &selected_board_space_id(),
-                        &remote_update_operations,
-                        decrypt_ctx.as_ref(),
-                    )
-                };
-                if !columns.is_empty() {
-                    collection_view_columns.set(Some(columns));
-                }
-                projection_source.set(BoardProjectionSource::ApiDerived);
-                board_status.set(format!(
-                    "API projection · {} groups · view={}",
-                    projection.groups.len(),
-                    projection.view_id.as_str()
-                ));
-            }
-            Err(err) => {
-                if seed_fallback_allowed {
-                    let columns = overlay_local_card_creates(
-                        seed_columns(),
-                        &state_store.read(),
-                        &selected_board_space_id(),
-                    );
-                    collection_view_columns.set(Some(columns));
-                    projection_source.set(BoardProjectionSource::SeedFallback);
-                    board_status.set(format!(
-                        "Board data unavailable: {}; showing sample fallback",
-                        err.display()
-                    ));
-                } else {
-                    projection_source.set(BoardProjectionSource::Unavailable);
-                    board_status.set(format!(
-                        "Board view unavailable: {}; keeping lifecycle projection",
-                        err.display()
-                    ));
-                }
-            }
-        }
-    });
 }
 
 fn private_narrative_restore_needed(description_locked: bool, synthesis_locked: bool) -> bool {

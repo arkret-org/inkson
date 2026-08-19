@@ -2,7 +2,6 @@ use super::*;
 
 #[derive(Clone)]
 pub(super) enum KanbanCommand {
-    RefreshProjection,
     SubmitOperation {
         base_url: String,
         token: Signal<String>,
@@ -16,13 +15,10 @@ pub(super) enum KanbanCommand {
 pub(super) struct KanbanController {
     pub board_space_options: Signal<Vec<BoardSpaceOption>>,
     pub selected_board_space_id: Signal<String>,
-    pub collection_view_columns: Signal<Option<Vec<KanbanColumn>>>,
-    pub board_view_id: Signal<String>,
     pub lifecycle_container_projection:
         Signal<Vec<crate::state::projection_views::SpaceContainerProjectionView>>,
     pub lifecycle_strand_projection:
         Signal<Vec<crate::state::projection_views::StrandProjectionView>>,
-    pub projection_source: Signal<BoardProjectionSource>,
     pub new_board_title: Signal<String>,
     pub new_column_title: Signal<String>,
     pub new_card_title: Signal<String>,
@@ -71,18 +67,11 @@ pub(super) struct KanbanController {
     pub drop_target_column: Signal<Option<String>>,
     pub editing_column_id: Signal<Option<String>>,
     pub editing_column_title: Signal<String>,
-    pub write_records: Signal<Vec<BoardWriteRecord>>,
     pub board_status: Signal<String>,
     pub command_queue: Signal<std::collections::VecDeque<KanbanCommand>>,
 }
 
 impl KanbanController {
-    pub fn refresh_projection(mut self) {
-        self.command_queue
-            .write()
-            .push_back(KanbanCommand::RefreshProjection);
-    }
-
     pub fn enqueue_operation(
         mut self,
         base_url: String,
@@ -106,17 +95,14 @@ impl KanbanController {
 pub(super) fn use_kanban_controller(
     initial_board_options: Vec<BoardSpaceOption>,
     initial_board_space_id: String,
-    initial_source: BoardProjectionSource,
+    seed_fallback_allowed: bool,
     event_write_ready: bool,
 ) -> KanbanController {
     KanbanController {
         board_space_options: use_signal(move || initial_board_options),
         selected_board_space_id: use_signal(move || initial_board_space_id),
-        collection_view_columns: use_signal(|| None),
-        board_view_id: use_signal(String::new),
         lifecycle_container_projection: use_signal(Vec::new),
         lifecycle_strand_projection: use_signal(Vec::new),
-        projection_source: use_signal(|| initial_source),
         new_board_title: use_signal(|| "Board".to_owned()),
         new_column_title: use_signal(String::new),
         new_card_title: use_signal(String::new),
@@ -165,9 +151,8 @@ pub(super) fn use_kanban_controller(
         drop_target_column: use_signal(|| None),
         editing_column_id: use_signal(|| None),
         editing_column_title: use_signal(String::new),
-        write_records: use_signal(Vec::new),
         board_status: use_signal(move || {
-            if initial_source == BoardProjectionSource::Unavailable {
+            if !seed_fallback_allowed {
                 "Board data unavailable; sample fallback disabled for this server".to_owned()
             } else if event_write_ready {
                 "Event write plane ready".to_owned()

@@ -232,8 +232,6 @@ pub(crate) enum BoardToolbarPopover {
     None,
     SelectBoard,
     CreateBoard,
-    Projection,
-    Queue,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -366,68 +364,4 @@ pub(crate) fn card_state_from_write_state(write_state: &str) -> CardState {
         Some(WriteState::CasConflict) => CardState::Conflict,
         None => CardState::Queued,
     }
-}
-
-/// Board write records track a Move pipeline submission. The Move's
-/// canonical body lives in `cell_id` + `effect_summary` (string preview);
-/// `move_id` is the content-addressed `sha256:...` id. `kind`
-/// mirrors the MoveSubmissionState classifier (`ak.space.create` /
-/// `ak.strand.create` /
-/// `ak.strand.position`) so the tracker UI can decorate state pills.
-///
-/// `signed_move_json` is the typed [`arkret_sdk::Move`] serialised to
-/// JSON. We persist it on the queued record so that Replay can re-POST
-/// the exact same signed payload — server-side dedup is content-addressed
-/// on `move_id`, making replay idempotent. None means the record cannot
-/// be replayed idempotently.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct BoardWriteRecord {
-    pub(crate) state: CardState,
-    pub(crate) move_id: String,
-    pub(crate) kind: String,
-    pub(crate) cell_id: String,
-    pub(crate) effect_summary: String,
-    pub(crate) seal_ref: String,
-    pub(crate) hlc: String,
-    pub(crate) note: String,
-    pub(crate) signed_move_json: Option<serde_json::Value>,
-    /// Number of CAS-conflict rebase attempts so far. The submit path
-    /// auto-retries up to [`MAX_CONFLICT_REBASE_ATTEMPTS`] before
-    /// surfacing the record as Quarantined for manual review.
-    pub(crate) rebase_attempts: u8,
-}
-
-impl BoardWriteRecord {
-    pub(crate) fn needs_manual_conflict_review(&self) -> bool {
-        match self.state {
-            CardState::Conflict => true,
-            CardState::Quarantined => {
-                self.note.contains("cas_conflict")
-                    || self.note.contains("manual conflict")
-                    || self.note.contains("manual review")
-            }
-            _ => false,
-        }
-    }
-}
-
-/// T20 — Where the board projection data comes from.
-///
-/// The UI prefers API-derived board state from either the collection view
-/// projection or the server's Space-container / Strand projection endpoints.
-/// The local seed path is explicit demo-only so hard-coded cards are never
-/// mistaken for persisted board data.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BoardProjectionSource {
-    /// Sourced from the Principal Server's collection projection response.
-    /// Conditions: the API exposes the view-projection endpoint AND the
-    /// reducer has caught up to the current sync frontier.
-    ApiDerived,
-    /// Sourced from local `seed_columns()` demo data. Conditions: API
-    /// unavailable, the view is not yet defined in the spec, or the client
-    /// is offline.
-    SeedFallback,
-    /// No projection was available and demo seed fallback is disabled for
-    /// this server profile.
-    Unavailable,
 }

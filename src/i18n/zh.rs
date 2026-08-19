@@ -428,7 +428,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("common.refresh", "刷新");
     dict.set("common.save", "保存");
     dict.set("common.submit", "提交");
-    dict.set("kanban.refresh_from_api", "从 API 刷新");
     dict.set("kanban.add_card", "添加卡片");
     dict.set("kanban.add_list", "添加列表");
     dict.set("kanban.save_card", "保存");
@@ -712,9 +711,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.archived_lists_empty", "暂无已归档列表。");
     dict.set("kanban.archived_cards_header", "已归档卡片");
     dict.set("kanban.archived_cards_empty", "暂无已归档卡片。");
-    dict.set("kanban.move_queue_header", "Move 队列");
-    dict.set("kanban.move_queue_empty", "本地没有排队的 Move。");
-
     // Directory view
     dict.set("directory.org_empty_body", "未找到组织，可尝试搜索。");
     dict.set("directory.actors_empty_body", "未找到 actor，可尝试搜索。");
