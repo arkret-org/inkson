@@ -1,9 +1,5 @@
 use dioxus::prelude::*;
 
-/// AKP-0007 P3B.4 — multi-account avatar dropdown switcher.
-/// Lists every profile in [`crate::config::MultiProfileConfig`] and
-/// fires typed `on_switch` plus `on_add_account` handlers.
-pub mod account_switcher;
 pub mod agent_runtime_approval_prompt;
 pub mod avatar_uploader;
 /// D3 — generic single-flight / debounce / backoff / digest-dedupe backup-job
@@ -32,11 +28,6 @@ pub mod empty_state;
 /// Entry-time auto-acknowledgement for accounts whose visible PCR / Realm
 /// projections do not yet show the recommended metadata+content E2EE floor.
 pub mod encryption_floor_prompt;
-/// P5 — recoverable error display + retry affordance. Pairs with the
-/// passive `ErrorBanner` below: this one carries a request_id and a
-/// retry callback so users can copy the soland trace ID into bug
-/// reports without leaving the failing surface.
-pub mod error_boundary;
 /// Unified feedback surface (docs/design/unified-feedback-system.md
 /// Wave 0): process-wide toast queue + `ToastHost` (stacked toasts,
 /// drains the policy-deny and circle-error queues too) + `AppBanner`
@@ -62,13 +53,11 @@ pub mod recovery_key_setup_prompt;
 /// G3.Y3 — global policy-deny event queue. Producers (the HTTP layer)
 /// push denies; the unified `feedback::ToastHost` mounted near the app
 /// shell surfaces them so no view needs to thread its own error UI.
-/// P3B.8 — "Report a problem" dialog + crash telemetry opt-in
-/// toggle. Crash reports are off by default.
+/// P3B.8 — crash telemetry opt-in preference. Crash reports are off
+/// by default.
 pub mod report_problem;
 pub mod self_attribution;
 pub mod shortcut_help;
-/// P5 — skeleton loaders for feed / agent list / key-backup history.
-pub mod skeleton;
 pub mod sync_badge;
 /// P5 — three-mode theme switcher (light / dark / follow system) with
 /// persistence routed through the caller's local-state path.
@@ -78,7 +67,6 @@ pub mod verify_badges;
 pub mod visibility_pill;
 pub mod write_state;
 
-pub use account_switcher::AccountSwitcher;
 pub use agent_runtime_approval_prompt::AgentRuntimeApprovalPrompt;
 pub use avatar_uploader::{AvatarUploader, AvatarUploaderProps};
 pub use circle_scope_picker::{
@@ -91,7 +79,6 @@ pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
 pub use durability_banner::DurabilityDisclosureBanner;
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use encryption_floor_prompt::EncryptionFloorPrompt;
-pub use error_boundary::{ErrorBoundary, RetryableError};
 pub use feedback::{
     AppBanner, AppBannerKind, FeedbackSeverity, Toast, ToastHost, is_policy_deny_code,
     maybe_dispatch_circle_error, push_policy_deny_toast, push_toast, toast_error, toast_info,
@@ -115,23 +102,18 @@ pub(crate) use mls_history_backup::{
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
 pub use qr_share_panel::QrSharePanel;
 pub use recovery_key_setup_prompt::RecoveryKeySetupPrompt;
-pub use report_problem::{
-    CrashTelemetryPrefs, CrashTelemetryToggle, ReportProblemButton, build_report_body,
-};
+pub use report_problem::CrashTelemetryPrefs;
 pub use self_attribution::{ActorIdentityLabel, SelfAttributionBadge};
 pub use shortcut_help::{
     ShortcutHelpOverlay, default_shortcuts, key_event_is_help_trigger, target_is_text_input,
 };
-pub use skeleton::{SkeletonCard, SkeletonLine, SkeletonList};
 pub use sync_badge::{SyncBadge, SyncBadgeState};
 pub use theme_switcher::{ThemeMode, ThemeSwitcher};
-pub use verify_badges::{
-    NeedsVerificationBadge, TrustCacheBadge, TrustCacheState, trust_cache_state,
-};
+pub use verify_badges::{TrustCacheBadge, TrustCacheState, trust_cache_state};
 pub use visibility_pill::{
     Discoverability, HistoryVisibility, JoinRule, VisibilityPill, VisibilityPillRow,
 };
-pub use write_state::{WriteState, WriteStateExplainer, WriteStateIcon, WriteStatePill};
+pub use write_state::{WriteState, WriteStateIcon};
 
 // LazyLinkBadge is declared below.
 

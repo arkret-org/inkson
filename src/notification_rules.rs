@@ -1,9 +1,10 @@
 //! Decryption adapter for actor-private notification account data.
 
+pub use arkret_sdk::push_rule_core::WatchLevel;
 use arkret_wire::AccountDataKey;
 pub use chime::{
     DndPeriod, DndSchedule, DndSettings, NotificationDecision, NotificationEvalContext,
-    NotificationSound, PushCondition, PushRule, PushRulesConfig, PushRulesRejection, WatchLevel,
+    NotificationSound, PushCondition, PushRule, PushRulesConfig, PushRulesRejection,
     evaluate_notification, parse_dnd_settings, parse_push_rules,
 };
 use serde_json::Value;

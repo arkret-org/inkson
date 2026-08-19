@@ -1,45 +1,21 @@
-//! Visual indicators for crypto and identity-cache state.
+//! Visual indicators for identity-cache state.
 //!
-//! Two small surfaces:
-//!
-//! - [`NeedsVerificationBadge`] — rendered next to a message when its crypto state is
-//!   `NeedsVerification`. Red dot + tooltip warning the reader the sender's device hasn't been
-//!   authorized yet.
-//!
-//! The badges are intentionally pure — they take a single typed prop
-//! and render an `<span>` with a stable `data-testid` for the e2e
+//! The badge is intentionally pure — it takes a single typed prop
+//! and renders an `<span>` with a stable `data-testid` for the e2e
 //! harness.
 
 use arkret_sdk::identity::{CachedResolution, DidResolutionCache, Freshness};
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
-// TRUST-CACHE: `NeedsVerificationBadge` is a
-// cache-allowed surfaces per AKP B-E §1 / identity-handles §6. They
-// render the locally-cached binding state but MUST downgrade to the
-// "needs verification" tint on a cache miss or any §6.1.2 trigger.
+// TRUST-CACHE: `TrustCacheBadge` is a cache-allowed surface per AKP
+// B-E §1 / identity-handles §6. It renders the locally-cached binding
+// state but MUST downgrade to the degraded tint on a cache miss or
+// any §6.1.2 trigger.
 // Authority surfaces (wallet disclosure / accept invite / audit-trail
 // review) MUST go through `crate::identity::did_resolver::build_default_resolver`
 // and verify the DID Document inline before granting trust — they
 // MUST NOT consult these cached badges as a source of truth.
-
-/// Renders a small "Needs verification" badge. Hidden when `active` is
-/// `false` so call sites can unconditionally include the badge in
-/// message-card rsx without an `if` branch.
-#[component]
-pub fn NeedsVerificationBadge(active: bool) -> Element {
-    if !active {
-        return rsx! {};
-    }
-    rsx! {
-        span {
-            class: "badge needs-verification-badge red",
-            "data-testid": "needs-verification-badge",
-            title: "Sender device hasn't been verified. Cross-sign or scan a QR before trusting this message.",
-            "⚠ Needs verification"
-        }
-    }
-}
 
 /// Y3 - TRUST-CACHE display degradation state.
 ///

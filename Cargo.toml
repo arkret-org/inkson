@@ -227,11 +227,11 @@ tracing-subscriber = {workspace = true,features = ["env-filter", "fmt"]}
 # warning.
 # Round 26 (A3): web-sys feature flags expanded so the WebPushTokenProvider
 # can drive `navigator.serviceWorker.register` + `pushManager.subscribe(...)`
-# end-to-end. The Crypto/SubtleCrypto features back the R5 WebCryptoBoundary
-# so the WASM build can encrypt/decrypt against the browser's WebCrypto
-# implementation while signing material stays in Rust (the SDK's
-# MoveSigner / ed25519-dalek path is process-local and never leaves the
-# wasm linear memory boundary).
+# end-to-end. The Crypto/SubtleCrypto/CryptoKey features back the
+# IndexedDB + non-extractable SubtleCrypto secure key store
+# (`src/secure_key_store/indexed_db.rs`) while signing material stays in
+# Rust (the SDK's MoveSigner / ed25519-dalek path is process-local and
+# never leaves the wasm linear memory boundary).
 # `tokio::time` is unsupported on wasm32-unknown-unknown — it calls
 # `std::time::Instant::now()` and panics with "time not implemented on this
 # platform". `gloo-timers` routes through `setTimeout` instead, which is what

@@ -4,8 +4,6 @@ pub(crate) mod authoring_generation;
 pub(crate) mod device_directory;
 pub(crate) mod device_name;
 pub(crate) mod device_pairing;
-#[cfg(test)]
-pub(crate) mod device_revoke;
 pub(crate) mod did_binding;
 pub(crate) mod did_key;
 pub(crate) mod did_resolver;

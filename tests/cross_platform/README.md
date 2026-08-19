@@ -9,8 +9,8 @@ before it reaches release.
 This harness sits alongside the existing `tests/e2e/` suite (which is
 chromium-only and exercises full app strands). The cross-platform matrix
 is intentionally narrow: it only validates the platform APIs the
-round-26 `WebCryptoBoundary` / `web_push_subscribe` paths depend on.
-The Rust unit tests in `src/crypto_boundary.rs`, `src/push/`,
+SubtleCrypto secure key store / `web_push_subscribe` paths depend on.
+The Rust unit tests in `src/secure_key_store/`, `src/push/`,
 `src/state/`, and `src/transport/` cover the in-Rust logic;
 this matrix only checks the contract on real engines. Local developer
 runs do not exercise real APNs/FCM provider delivery; the receive smoke
@@ -49,7 +49,7 @@ The matrix self-skips when:
 
 | Scenario              | Chromium | Firefox | WebKit (Safari) | Maps to Rust |
 |-----------------------|----------|---------|-----------------|--------------|
-| `subtle_crypto.spec`  | full     | full    | full *           | `crypto_boundary::WebCryptoBoundary` (round 26 R5) |
+| `subtle_crypto.spec`  | full     | full    | full *           | `secure_key_store::IndexedDbSecureKeyStore` AES-GCM path |
 | `push_subscribe.spec` | full     | full    | partial **       | `push::WebPushTokenProvider` (round 26 A3) |
 | `push_receive.spec`   | full     | full    | partial **       | Push service-worker receive privacy contract |
 | `local_storage.spec`  | full     | full    | partial ***      | `local_state::LocalStateStore` (round 23) |
@@ -77,7 +77,7 @@ error rather than reporting a flake.
 * **Safari `KeyAlgorithm` strict naming.** `crypto.subtle.importKey`
   requires the algorithm `name` to be exactly `"AES-GCM"` —
   lowercase or `"AES_GCM"` fails with `OperationError`. The Rust
-  `WebCryptoBoundary` already passes the canonical form; the matrix
+  SubtleCrypto callers already pass the canonical form; the matrix
   pins this so a refactor to lowercase canon would be caught here
   rather than at deploy.
 
@@ -138,7 +138,7 @@ tests/cross_platform/
   README.md                  this file
   playwright.config.ts       per-engine project list + dx serve hook
   _helpers.ts                shared skip-on-missing helpers
-  subtle_crypto.spec.ts      WebCryptoBoundary platform contract
+  subtle_crypto.spec.ts      SubtleCrypto AES-GCM platform contract
   push_subscribe.spec.ts     PushManager + VAPID platform contract
   push_receive.spec.ts       service-worker opaque wakeup contract
   local_storage.spec.ts      LocalIdentity round-trip

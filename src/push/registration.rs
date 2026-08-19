@@ -362,30 +362,22 @@ fn build_request(
     };
     let binding = GatewayBinding::new(PushGatewayType::Standard, push_gateway);
     // AKP-0007 P3B.2.9 — forward the active Circle id (when present)
-    // into the chime subscribe request. The chime crate carries the
-    // value out-of-band by stamping it onto the idempotency key
-    // (so re-registration after a Circle switch produces a distinct
-    // subscription record) and by registering it as a muted
-    // exclusion so the gateway does not re-deliver Realm-only
-    // wakeups for that Circle. When no Circle is active the build
-    // falls back to the prior Realm-wide subscription behaviour.
+    // into the chime subscribe request by stamping it onto the
+    // idempotency key, so re-registration after a Circle switch
+    // produces a distinct subscription record. When no Circle is
+    // active the build falls back to the prior Realm-wide
+    // subscription behaviour. (The former `muted_circle_ids`
+    // preference field was persisted-only and never consumed by the
+    // request builder; chime removed it.)
     let active_circle = ctx
         .active_circle_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let mut muted_circle_ids = std::collections::BTreeSet::new();
-    if let Some(circle) = active_circle {
-        // Subscribing to a Circle implicitly opts the device out of
-        // Realm-wide duplicate wakeups for the same Circle by adding
-        // it to the muted set.
-        muted_circle_ids.insert(circle.to_owned());
-    }
     let prefs = PushPreferences {
         enabled: true,
         allow_insecure_loopback_push_gateway: true,
         gateways: vec![binding.clone()],
-        muted_circle_ids,
         ..Default::default()
     };
     let idempotency_key = match active_circle {

@@ -1,10 +1,10 @@
 // Round 27 cross-platform scenario: SubtleCrypto AES-GCM round-trip.
 //
-// Mirrors `WebCryptoBoundary::encrypt_async` / `decrypt_async`
-// (round 26 R5) — those Rust bindings call `subtle.importKey` +
-// `subtle.encrypt` / `subtle.decrypt` with `AesGcmParams`. This test
-// drives the same call sequence directly from the page so we catch
-// per-engine quirks:
+// Mirrors the wasm secure key store's SubtleCrypto path
+// (`src/secure_key_store/indexed_db.rs`) — those Rust bindings call
+// `subtle.importKey` + `subtle.encrypt` / `subtle.decrypt` with
+// `AesGcmParams`. This test drives the same call sequence directly
+// from the page so we catch per-engine quirks:
 //   * Safari requires the `name` field on the imported key algorithm
 //     to be exactly "AES-GCM" (case-sensitive); a lowercase form
 //     fails with `OperationError`.
@@ -13,7 +13,7 @@
 //     the assertions below normalise both shapes.
 //
 // The scenario does NOT exercise the wasm bundle's Rust side — the
-// Rust-level test suite in `src/crypto_boundary.rs` already covers
+// Rust-level test suite in `src/secure_key_store/` already covers
 // that. The matrix only validates that the browser's native crypto
 // produces the same ciphertext shape across engines.
 

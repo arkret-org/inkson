@@ -21,14 +21,12 @@ pub mod account_data;
 pub mod account_health;
 pub mod api_error;
 pub mod app;
-pub mod audit;
 pub mod authorization_lease;
 pub mod avatar_crop;
 pub mod blob;
 pub mod build_info;
 pub mod calendar;
 pub mod canonical;
-pub mod card_comments;
 /// AKP-0007 P3B.2 — Circle UX types, scope picker, error-code mapping.
 /// `Circle` is the intra-Realm cryptographic sub-boundary (strict
 /// subset of Realm membership + independent MLS group). This module is
@@ -42,7 +40,6 @@ pub mod components;
 pub mod config;
 pub mod conformance;
 pub mod content;
-pub mod crypto_boundary;
 pub(crate) mod directory_helpers;
 pub(crate) mod ephemeral;
 pub mod event_builders;

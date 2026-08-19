@@ -191,60 +191,6 @@ pub fn WriteStateIcon(state: WriteState) -> Element {
     }
 }
 
-/// A single pill-shaped write-state marker, suitable for KanbanCard,
-/// Message, or Strand row decorations.
-#[component]
-pub fn WriteStatePill(state: String, icon_only: Option<bool>) -> Element {
-    let parsed = parse_write_state(&state);
-    let icon_only = icon_only.unwrap_or(false);
-    let base_class = parsed.map(WriteState::class_name).unwrap_or("badge");
-    let class = if icon_only {
-        format!("{base_class} write-state-badge is-icon-only")
-    } else {
-        format!("{base_class} write-state-badge")
-    };
-    let label = parsed.map(WriteState::label).unwrap_or(state.as_str());
-    let data_state = parsed.map(WriteState::data_state).unwrap_or("unknown");
-    let title = parsed
-        .map(|state| format!("{} - {}", state.label(), state.explanation()))
-        .unwrap_or_else(|| "Unknown write state".to_owned());
-    rsx! {
-        span {
-            class: "{class}",
-            "data-testid": "write-state-pill",
-            "data-write-state": "{data_state}",
-            title: "{title}",
-            if let Some(parsed) = parsed {
-                WriteStateIcon { state: parsed }
-            }
-            span { class: "write-state-label", "{label}" }
-        }
-    }
-}
-
-/// Detailed explainer card, used in the audit / debug drawer.
-#[component]
-pub fn WriteStateExplainer(state: String) -> Element {
-    let parsed = parse_write_state(&state);
-    let class = parsed.map(WriteState::class_name).unwrap_or("badge");
-    let label = parsed.map(WriteState::label).unwrap_or(state.as_str());
-    let explanation = parsed
-        .map(WriteState::explanation)
-        .unwrap_or("unknown state");
-    rsx! {
-        div {
-            class: "event",
-            "data-testid": "write-state-explainer",
-            div { class: "event-head", span { "Write state" } span { class: "{class}", "{label}" } }
-            div { class: "muted", "{explanation}" }
-        }
-    }
-}
-
-fn parse_write_state(s: &str) -> Option<WriteState> {
-    WriteState::from_wire(s)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,14 +237,14 @@ mod tests {
     #[test]
     fn write_state_parses_display_label_strings() {
         assert_eq!(
-            parse_write_state("CAS conflict"),
+            WriteState::from_wire("CAS conflict"),
             Some(WriteState::CasConflict)
         );
         assert_eq!(
-            parse_write_state("soft failed"),
+            WriteState::from_wire("soft failed"),
             Some(WriteState::SoftFailed)
         );
-        assert_eq!(parse_write_state("synced"), Some(WriteState::Synced));
-        assert_eq!(parse_write_state("garbage"), None);
+        assert_eq!(WriteState::from_wire("synced"), Some(WriteState::Synced));
+        assert_eq!(WriteState::from_wire("garbage"), None);
     }
 }

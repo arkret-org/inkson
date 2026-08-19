@@ -3,8 +3,8 @@
 /// AKP-0007 P3B.8.1 — initialise the opt-in Sentry client.
 ///
 /// The init is gated on TWO conditions:
-///   1. `prefs.enabled == true` — the user explicitly opted in via
-///      [`crate::components::CrashTelemetryToggle`]. Off by default.
+///   1. `prefs.enabled == true` — the user explicitly opted in
+///      ([`crate::components::CrashTelemetryPrefs`]). Off by default.
 ///   2. The build-time `SENTRY_DSN` env var is non-empty. When unset, we log a debug breadcrumb and
 ///      return `None` silently — never panic. This makes the function safe to call unconditionally
 ///      from `main` / `App::default` without leaking a guard into every test binary.

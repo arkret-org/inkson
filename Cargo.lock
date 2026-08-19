@@ -201,7 +201,6 @@ dependencies = [
  "getrandom 0.4.3",
  "serde",
  "serde_json",
- "subtle",
  "thiserror 2.0.18",
  "uuid",
 ]
@@ -218,7 +217,6 @@ dependencies = [
  "arkret-state",
  "arkret-wire",
  "chrono",
- "serde",
  "serde_json",
 ]
 
@@ -245,7 +243,6 @@ dependencies = [
  "argon2",
  "arkret-canonical",
  "arkret-models-crypto",
- "arkret-models-identity",
  "arkret-signatures",
  "arkret-wire",
  "bip39",
@@ -363,7 +360,6 @@ version = "0.3.0"
 dependencies = [
  "arkret-canonical",
  "arkret-egress-policy",
- "arkret-identifiers",
  "arkret-keystore",
  "arkret-models-identity",
  "arkret-signatures",
@@ -463,7 +459,6 @@ name = "arkret-models-crypto"
 version = "0.3.0"
 dependencies = [
  "arkret-canonical",
- "arkret-models-identity",
  "arkret-wire",
  "chrono",
  "hex",
@@ -498,7 +493,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "subtle",
  "url",
 ]
 
@@ -567,10 +561,8 @@ name = "arkret-signatures"
 version = "0.3.0"
 dependencies = [
  "arkret-canonical",
- "arkret-event-draft",
  "arkret-models-collaboration",
  "arkret-models-crypto",
- "arkret-models-discovery",
  "arkret-models-identity",
  "arkret-state",
  "arkret-wire",
@@ -1354,13 +1346,10 @@ name = "chime"
 version = "0.3.0"
 dependencies = [
  "arkret-canonical",
- "arkret-models-discovery",
  "arkret-models-integration",
  "arkret-push-policy",
  "arkret-retry",
- "arkret-signatures",
  "arkret-wire",
- "base64",
  "chrono",
  "gloo-timers 0.4.0",
  "httpdate",

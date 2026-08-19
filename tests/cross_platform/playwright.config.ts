@@ -1,9 +1,9 @@
 // Round 27: cross-platform deployment test harness for the inkson
 // wasm bundle. Drives the same scenario set across Chromium, Firefox,
 // and WebKit (Safari) so we catch the SubtleCrypto / PushManager /
-// service-worker push receive / LocalStorage / OIDC PKCE divergences that the round 26
-// `WebCryptoBoundary` and round 24 `open_oidc_authorize_url` paths
-// have to cope with.
+// service-worker push receive / LocalStorage / OIDC PKCE divergences
+// that the SubtleCrypto secure key store and round 24
+// `open_oidc_authorize_url` paths have to cope with.
 //
 // Each project is gated by a per-browser env flag so the matrix can
 // run in CI on a host that only has one engine installed without

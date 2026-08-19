@@ -15,7 +15,7 @@
 // scenario uses `page.evaluate` to drive the browser API directly
 // rather than reaching through the dioxus router. That keeps the
 // matrix focused on the platform contract — the Rust unit tests in
-// `src/crypto_boundary.rs` / `src/push.rs` / `src/local_state.rs`
+// `src/secure_key_store/` / `src/push/` / `src/state/`
 // already cover the in-Rust logic.
 
 import { test, type Page } from "@playwright/test";

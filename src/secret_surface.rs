@@ -87,14 +87,6 @@ pub(crate) fn find_text_violation(path: &str, text: &str) -> Option<SecretSurfac
     None
 }
 
-pub(crate) fn sanitize_log_line(line: &str) -> &str {
-    if find_text_violation("log", line).is_some() {
-        "[redacted:secret-bearing-line]"
-    } else {
-        line
-    }
-}
-
 fn is_forbidden_secret_field(name: &str) -> bool {
     FORBIDDEN_SECRET_FIELD_NAMES
         .iter()
@@ -182,13 +174,9 @@ mod tests {
 
     #[test]
     fn log_sanitizer_never_returns_secret_bearing_input() {
-        assert_eq!(
-            sanitize_log_line("operation failed private_key=sentinel-private"),
-            "[redacted:secret-bearing-line]"
+        assert!(
+            find_text_violation("log", "operation failed private_key=sentinel-private").is_some()
         );
-        assert_eq!(
-            sanitize_log_line("operation failed safely"),
-            "operation failed safely"
-        );
+        assert_eq!(find_text_violation("log", "operation failed safely"), None);
     }
 }

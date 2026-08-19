@@ -35,10 +35,10 @@ tools can ingest inkson output without schema work.
 `crate::telemetry::sentry_init` is the only place Sentry is touched.
 The init is gated on **both** of the following:
 
-1. `CrashTelemetryPrefs::enabled == true`. The user must flip the
-   toggle in **Settings → Privacy → Crash telemetry**. The
-   `CrashTelemetryToggle` component writes the preference into
-   `LocalStateStore`. Default is `false`.
+1. `CrashTelemetryPrefs::enabled == true`. Default is `false`; the
+   boot-time override is the `INKSON_CRASH_TELEMETRY_OPT_IN` env var
+   (`CrashTelemetryPrefs::load_from_env`). The settings toggle UI has
+   not been wired yet.
 2. The build-time `SENTRY_DSN` environment variable is non-empty.
    When unset, the init function logs a debug breadcrumb and returns
    `None`. No panic, no payload, no network call.
@@ -49,8 +49,7 @@ flush + close the transport.
 
 On wasm builds the `sentry` crate is **not** compiled in at all. Crash
 capture for the web target depends on the browser's reporting hooks
-(`window.onerror`, `unhandledrejection`) which `report_problem.rs`
-collects on demand when the user submits a bug.
+(`window.onerror`, `unhandledrejection`).
 
 ### Turning it on (developer)
 
