@@ -7,7 +7,7 @@ pub(super) enum KanbanCommand {
         base_url: String,
         token: Signal<String>,
         realm_id: String,
-        operation: Box<arkret_sdk::Event>,
+        operation: Box<crate::operation::LocalOperation>,
         scope_security_encrypted: Option<bool>,
     },
 }
@@ -88,7 +88,7 @@ impl KanbanController {
         base_url: String,
         token: Signal<String>,
         realm_id: String,
-        operation: arkret_sdk::Event,
+        operation: crate::operation::LocalOperation,
         scope_security_encrypted: Option<bool>,
     ) {
         self.command_queue

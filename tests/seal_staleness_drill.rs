@@ -22,7 +22,9 @@
 use ed25519_dalek::SigningKey;
 use inkson::canonical::hex_encode;
 use inkson::event_builders;
-use inkson::operation::{Event, EventExt};
+use inkson::operation::{AuthoredEventExt, Event, LocalOperation};
+
+mod common;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
@@ -54,29 +56,47 @@ fn signing_key() -> SigningKey {
 /// own kind. We deliberately do NOT use the zero hash, so the test
 /// catches a downstream regression that would forget to mint a real
 /// seal.
-fn stamp_real_proof_and_anchor(envelope: &mut Event) {
-    // Seal ref: SHA-256 of the envelope kind plus a "test" salt.
-    // Stable across runs, non-zero, and tied to the event we're about
-    // to sign — that's exactly the property a real notary guarantees.
+fn author_with_real_proof_and_anchor(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
+    author_intent_with_real_proof_and_anchor(operation.into_intent())
+}
+
+fn author_intent_with_real_proof_and_anchor(
+    intent: inkson::operation::EventIntent,
+) -> arkret_sdk::AuthoredEvent {
+    // The seal ref is producer-signed content, so it has to be in place before
+    // the identity is derived from it. Stamping it onto a finished envelope
+    // would leave that envelope carrying an id its own content no longer
+    // derives, which is exactly what the signer now refuses.
+    let seal_ref = test_seal_ref(intent.kind().as_str());
+    sign_real(common::author_intent_at_seq(
+        intent.with_seal_ref(seal_ref),
+        1,
+    ))
+}
+
+/// The stand-in seal ref for `kind`, derived so it is stable and non-zero.
+fn test_seal_ref(kind: &str) -> arkret_sdk::SealId {
     let mut hasher = Sha256::new();
-    hasher.update(envelope.kind.as_str().as_bytes());
+    hasher.update(kind.as_bytes());
     hasher.update(b":seal_staleness_drill");
     let digest = hasher.finalize();
-    envelope.seal_ref = Some(
-        arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", hex_encode(&digest)))
-            .expect("test seal ref is valid"),
-    );
+    arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", hex_encode(&digest)))
+        .expect("test seal ref is valid")
+}
 
+/// Attach the producer proof to an authored envelope.
+fn sign_real(mut envelope: arkret_sdk::AuthoredEvent) -> arkret_sdk::AuthoredEvent {
     let signer_did = TEST_ACTOR_ID;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, &signing_key())
         .expect("real Ed25519 sign succeeds");
+    envelope
 }
 
 #[test]
 fn realm_create_envelope_carries_real_proof_and_real_anchor() {
-    let mut envelope = event_builders::build_realm_create_event(
+    let envelope = event_builders::build_realm_create_event(
         test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
@@ -95,7 +115,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
     )
     .expect("build_realm_create_event succeeds");
 
-    stamp_real_proof_and_anchor(&mut envelope);
+    let envelope = author_with_real_proof_and_anchor(envelope);
 
     assert_jws_is_real_signature(&envelope);
     assert_event_digest_is_sha256(&envelope);
@@ -104,28 +124,32 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
 
 #[test]
 fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
-    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
-        test_genesis_salt(),
-        TEST_ACTOR_ID,
-        TEST_SERVICE_ID,
-        "https://server.example",
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &["ak:did_core:web:bob.example".to_owned()],
-        &["did:web:server.example".to_owned()],
-        None,
-        None,
-    )
-    .expect("build_realm_bootstrap_events succeeds");
+    // Every stage of the unit is authored in order, so a later member can name
+    // an earlier one — which is what the seal stamp then rides on.
+    let events = common::author_unit(
+        event_builders::build_realm_bootstrap_steps(
+            test_genesis_salt(),
+            TEST_ACTOR_ID,
+            TEST_SERVICE_ID,
+            "https://server.example",
+            "Engineering",
+            None,
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:server.example",
+            &["ak:did_core:web:bob.example".to_owned()],
+            &["did:web:server.example".to_owned()],
+            None,
+            None,
+        )
+        .expect("build_realm_bootstrap_steps succeeds"),
+    );
 
     assert!(
         events.len() >= 5,
@@ -133,8 +157,12 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
         events.len()
     );
 
-    for mut envelope in events {
-        stamp_real_proof_and_anchor(&mut envelope);
+    for envelope in events {
+        // The unit's members are authored together, so each is re-authored here
+        // with the drill's seal ref in place before the identity is derived.
+        let envelope = author_intent_with_real_proof_and_anchor(
+            inkson::operation::EventIntent::from_authored(&envelope),
+        );
         assert_jws_is_real_signature(&envelope);
         assert_event_digest_is_sha256(&envelope);
         assert_seal_ref_is_real(&envelope);

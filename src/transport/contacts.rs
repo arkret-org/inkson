@@ -123,7 +123,7 @@ fn prepared_contact_request(
 
 pub(crate) fn sign_prepared_contact_event(
     draft: &ContactPreparedEventDraft,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
     let mut event = draft.unsigned_event()?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Contact commit"))?;
@@ -206,7 +206,7 @@ impl crate::transport::TransportClient {
             operation_id,
             idempotency_key,
             reservation_handle,
-            signed_event: signed_event.clone(),
+            signed_event: signed_event.event().clone(),
             control_proposal_ack: None,
         });
         let outcome = http

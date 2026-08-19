@@ -784,6 +784,29 @@ impl LocalStateStore {
         true
     }
 
+    /// Fill in an optimistic row's `body` once the write it stands for exists.
+    ///
+    /// An encrypted write cannot be built until the epoch's Event is authored,
+    /// so its row is enqueued by holder-local operation id first and the body
+    /// lands here.
+    pub fn update_raw_operation_body(&mut self, operation_id: &str, body: Value) -> bool {
+        self.ensure_cached_loaded();
+        let Some(record) = self
+            .cached
+            .raw_operations
+            .iter_mut()
+            .find(|record| record.operation_id == operation_id)
+        else {
+            return false;
+        };
+        let Some(payload) = record.payload.as_object_mut() else {
+            return false;
+        };
+        payload.insert("body".to_owned(), body);
+        let _ = self.flush();
+        true
+    }
+
     pub fn update_raw_operation_write_state(
         &mut self,
         operation_id: &str,

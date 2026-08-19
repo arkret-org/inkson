@@ -22,7 +22,7 @@ pub async fn list_circles(
 /// Add or move a Circle member by submitting the caller-signed
 /// `ak.circle.member.state`. Spec OpenAPI `ak.self.circle.member.command.add`.
 pub async fn add_circle_member(
-    http: &arkret_sdk::http_client::Client,
+    submitter: &EventSubmitter,
     realm_id: &str,
     actor: &str,
     circle_id: &str,
@@ -38,16 +38,23 @@ pub async fn add_circle_member(
     )?
     .build_sdk_event("inkson")?;
     let body = arkret_sdk::CircleMemberRequestBody {
-        member_event: arkret_wire::EventInitialSubmission::online(event),
+        member_event: arkret_wire::EventInitialSubmission::online(
+            submitter
+                .author_for_direct_submission(&event)
+                .await?
+                .into_event(),
+        ),
     };
-    http.circle_member_add(circle_id, &body)
+    submitter
+        .http()
+        .circle_member_add(circle_id, &body)
         .await
         .map_err(anyhow::Error::from)
 }
 
 /// Remove an active Circle member with a caller-signed, CAS-guarded leave Event.
 pub async fn remove_circle_member(
-    http: &arkret_sdk::http_client::Client,
+    submitter: &EventSubmitter,
     realm_id: &str,
     actor: &str,
     circle_id: &str,
@@ -63,16 +70,23 @@ pub async fn remove_circle_member(
     )?
     .build_sdk_event("inkson")?;
     let body = arkret_sdk::CircleMemberDeleteRequestBody {
-        member_event: arkret_wire::EventInitialSubmission::online(event),
+        member_event: arkret_wire::EventInitialSubmission::online(
+            submitter
+                .author_for_direct_submission(&event)
+                .await?
+                .into_event(),
+        ),
     };
-    http.circle_member_remove(circle_id, target_actor, &body)
+    submitter
+        .http()
+        .circle_member_remove(circle_id, target_actor, &body)
         .await
         .map_err(anyhow::Error::from)
 }
 
 /// Archive a Circle by submitting the caller-signed `ak.circle.archive`.
 pub async fn archive_circle(
-    http: &arkret_sdk::http_client::Client,
+    submitter: &EventSubmitter,
     realm_id: &str,
     actor: &str,
     circle_id: &str,
@@ -80,21 +94,25 @@ pub async fn archive_circle(
 ) -> anyhow::Result<arkret_sdk::CircleView> {
     let body = arkret_sdk::CircleArchiveRequestBody {
         lifecycle_event: circle_lifecycle_submission(
+            submitter,
             realm_id,
             actor,
             circle_id,
             arkret_sdk::EventKind::CircleArchive,
             reason,
-        )?,
+        )
+        .await?,
     };
-    http.circle_archive(circle_id, &body)
+    submitter
+        .http()
+        .circle_archive(circle_id, &body)
         .await
         .map_err(anyhow::Error::from)
 }
 
 /// Restore an archived Circle by submitting the caller-signed `ak.circle.restore`.
 pub async fn restore_circle(
-    http: &arkret_sdk::http_client::Client,
+    submitter: &EventSubmitter,
     realm_id: &str,
     actor: &str,
     circle_id: &str,
@@ -102,19 +120,24 @@ pub async fn restore_circle(
 ) -> anyhow::Result<arkret_sdk::CircleView> {
     let body = arkret_sdk::CircleRestoreRequestBody {
         lifecycle_event: circle_lifecycle_submission(
+            submitter,
             realm_id,
             actor,
             circle_id,
             arkret_sdk::EventKind::CircleRestore,
             reason,
-        )?,
+        )
+        .await?,
     };
-    http.circle_restore(circle_id, &body)
+    submitter
+        .http()
+        .circle_restore(circle_id, &body)
         .await
         .map_err(anyhow::Error::from)
 }
 
-fn circle_lifecycle_submission(
+async fn circle_lifecycle_submission(
+    submitter: &EventSubmitter,
     realm_id: &str,
     actor: &str,
     circle_id: &str,
@@ -124,41 +147,42 @@ fn circle_lifecycle_submission(
     let event =
         crate::operation::ak_ops::circle_lifecycle(realm_id, actor, circle_id, kind, reason)?
             .build_sdk_event("inkson")?;
-    Ok(arkret_wire::EventInitialSubmission::online(event))
+    Ok(arkret_wire::EventInitialSubmission::online(
+        submitter
+            .author_for_direct_submission(&event)
+            .await?
+            .into_event(),
+    ))
 }
 
-/// Returns the outcome together with the id of the `ak.mls.commit` Event as it
-/// was actually submitted. Batch preparation re-authors every unsigned Event
-/// (actor chain, HLC, CBA basis are all in the digest preimage), so the
-/// caller's draft ids are NOT the on-wire ids — group-state references must be
-/// recorded against the returned id, never the draft's.
-pub async fn submit_circle_scope_rotate_events(
+pub async fn submit_circle_scope_rotate_unit(
     submitter: &EventSubmitter,
     circle_id: &str,
-    events: &[arkret_sdk::Event],
+    steps: Vec<crate::event_submit::EventUnitStep>,
     idempotency_key: Option<String>,
 ) -> anyhow::Result<(
     arkret_sdk::CircleScopeRotateOutcome,
-    Option<arkret_sdk::EventId>,
+    Vec<arkret_sdk::AuthoredEvent>,
 )> {
     let circle_id = circle_id.trim();
     if circle_id.is_empty() {
         anyhow::bail!("circle_id is required for scope rotate");
     }
-    let signed_events = submitter.prepare_sdk_events_batch(events.to_vec()).await?;
-    let submitted_commit_event_id = signed_events
-        .iter()
-        .find(|event| event.kind == arkret_sdk::EventKind::MlsCommit)
-        .map(|event| event.event_id.clone());
+    let signed_events = submitter.author_event_unit(steps).await?;
     let idem = idempotency_key.unwrap_or_else(uuid_v7);
     let body = arkret_sdk::CircleScopeRotateRequestBody {
-        events: signed_events,
+        events: signed_events
+            .iter()
+            .map(|event| event.event().clone())
+            .collect(),
         idempotency_key: Some(idem.clone()),
     };
+    // The authored Events travel back with the outcome: the caller needs the
+    // Commit's FINAL id to record the group-state reference, and that id only
+    // exists once the unit has been authored here.
     let outcome = submitter
         .http()
         .circle_scope_rotate(circle_id, &idem, &body)
-        .await
-        .map_err(anyhow::Error::from)?;
-    Ok((outcome, submitted_commit_event_id))
+        .await?;
+    Ok((outcome, signed_events))
 }

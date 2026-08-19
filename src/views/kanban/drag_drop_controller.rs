@@ -9,7 +9,6 @@ use super::*;
 use crate::move_builder::{
     StrandPositionEffect, StrandPositionExpectation, strand_position_cell_id,
 };
-use crate::operation::sdk_event_local_operation_id;
 use crate::rank::RankError;
 use crate::state::MoveSubmissionState;
 
@@ -17,7 +16,7 @@ pub(super) fn submit_kanban_operation_event(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
-    operation: arkret_sdk::Event,
+    operation: crate::operation::LocalOperation,
     // R4: three-state security signal (see `kanban_plaintext_block_reason`).
     scope_security_encrypted: Option<bool>,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -27,10 +26,10 @@ pub(super) fn submit_kanban_operation_event(
         board_status.set(reason);
         return;
     }
-    let operation_id = sdk_event_local_operation_id(&operation).to_owned();
-    let kind = operation.kind.as_str().to_owned();
-    let actor_id = operation.actor_id.to_string();
-    let created_at = arkret_sdk::canonical::format_timestamp_canonical(operation.created_at);
+    let operation_id = operation.local_operation_id().to_string();
+    let kind = operation.kind().as_str().to_owned();
+    let actor_id = operation.actor_id().to_string();
+    let created_at = arkret_sdk::canonical::format_timestamp_canonical(operation.created_at());
     state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id),
@@ -40,10 +39,10 @@ pub(super) fn submit_kanban_operation_event(
             "actor_id": actor_id,
             "created_at": created_at,
             "write_state": "queued",
-            "body": operation.payload.clone(),
-            // A create payload carries no object id, so the record has to say
-            // which object this Event names or the projection cannot key it.
-            "local_target_ref": operation.local_target_ref(),
+            "body": operation.payload().clone(),
+            // A create names its object only once accepted, so until then the
+            // record keys it by the write's holder-local handle.
+            "local_target_ref": operation.local_object_handle(),
         }),
     );
     board_status.set(format!(
@@ -294,13 +293,12 @@ pub(super) fn submit_kanban_card_create(
         board_status.set(reason);
         return;
     }
-    let wire_kind = event.kind.as_str().to_owned();
-    // A create names its Strand by `retype(event_id)`; the builder stamped
-    // that id as the local handle.
-    let Some(subject) = event.local_target_ref().map(str::to_owned) else {
-        board_status.set(format!("cannot submit {kind}: no derived Strand id"));
-        return;
-    };
+    let wire_kind = event.kind().as_str().to_owned();
+    // A create names its Strand by `retype(event_id)` of the FINAL Event, which
+    // does not exist yet. Until the receipt lands, the optimistic row is keyed
+    // by the write's holder-local operation id; `event_derived_target_aliases`
+    // migrates it to the accepted event-derived id.
+    let subject = event.local_object_handle().to_owned();
     let cell_id = strand_position_cell_id(&command.board_space_id, &subject);
     let value = json!({
         "board_space_id": command.board_space_id,
@@ -310,8 +308,9 @@ pub(super) fn submit_kanban_card_create(
         "strand_kind": "card",
         "strand_id": subject,
     });
-    let op_id = sdk_event_local_operation_id(&event).to_owned();
-    let effect_summary = serde_json::to_string(&event.payload).unwrap_or_else(|_| "{}".to_owned());
+    let op_id = event.local_operation_id().to_string();
+    let effect_summary =
+        serde_json::to_string(&event.payload()).unwrap_or_else(|_| "{}".to_owned());
     let record = BoardWriteRecord {
         state: CardState::Queued,
         move_id: op_id.clone(),
@@ -332,14 +331,15 @@ pub(super) fn submit_kanban_card_create(
             "kind": kind,
             "operation_id": op_id,
             "actor_id": actor_id.clone(),
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
             "cell": cell_id,
             "effect": value,
             "wire_kind": wire_kind.clone(),
-            "body": event.payload.clone(),
+            "body": event.payload().clone(),
             // A create payload carries no object id, so the record has to say
-            // which object this Event names or the projection cannot key it.
-            "local_target_ref": event.local_target_ref(),
+            // which handle this write's object is keyed by until the accepted
+            // Event names it.
+            "local_target_ref": subject,
             "write_state": "queued",
         }),
     );
@@ -587,8 +587,8 @@ pub(super) fn dispatch_space_container_lifecycle(
             return;
         }
     };
-    let kind = event.kind.as_str().to_owned();
-    let operation_id = sdk_event_local_operation_id(&event).to_owned();
+    let kind = event.kind().as_str().to_owned();
+    let operation_id = event.local_operation_id().to_string();
     // Append the lifecycle op so the `columns` `use_memo` folds the optimistic
     // state immediately via `project_board` (`apply_space_*`). On submit
     // failure we mark the op `dropped`, which `raw_operation_allows_overlay`
@@ -600,9 +600,9 @@ pub(super) fn dispatch_space_container_lifecycle(
             "kind": kind,
             "operation_id": operation_id,
             "actor_id": actor_id,
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
             "write_state": "queued",
-            "body": event.payload.clone(),
+            "body": event.payload().clone(),
         }),
     );
     let base = base_url.clone();
@@ -678,8 +678,8 @@ pub(super) fn dispatch_strand_lifecycle(
             return;
         }
     };
-    let kind = event.kind.as_str().to_owned();
-    let operation_id = sdk_event_local_operation_id(&event).to_owned();
+    let kind = event.kind().as_str().to_owned();
+    let operation_id = event.local_operation_id().to_string();
     // Append the lifecycle op so the `columns` `use_memo` folds the optimistic
     // flip via `project_board` (`ak.strand.archive` / `ak.strand.restore`). On
     // submit failure we mark it `dropped` to revert — no direct signal write.
@@ -690,9 +690,9 @@ pub(super) fn dispatch_strand_lifecycle(
             "kind": kind,
             "operation_id": operation_id,
             "actor_id": actor_id,
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
             "write_state": "queued",
-            "body": event.payload.clone(),
+            "body": event.payload().clone(),
         }),
     );
     let base = base_url.clone();
@@ -777,7 +777,7 @@ pub(super) fn dispatch_board_archive_cascade(
 
     // Build every archive event up front so a build error aborts before any
     // optimistic op is appended.
-    let mut events: Vec<arkret_sdk::Event> = Vec::new();
+    let mut events: Vec<crate::operation::LocalOperation> = Vec::new();
     for strand_id in &active_card_ids {
         match crate::operation::ak_ops::strand_archive(&realm_id, &actor_id, strand_id)
             .and_then(|builder| builder.build_sdk_event("inkson"))
@@ -811,19 +811,19 @@ pub(super) fn dispatch_board_archive_cascade(
         events
             .iter()
             .map(|event| {
-                let operation_id = sdk_event_local_operation_id(event).to_owned();
+                let operation_id = event.local_operation_id().to_string();
                 store.enqueue_local_projection_command(
                     operation_id.clone(),
                     Some(realm_id.clone()),
                     json!({
-                        "kind": event.kind.as_str(),
+                        "kind": event.kind().as_str(),
                         "operation_id": operation_id,
                         "actor_id": actor_id,
                         "created_at": arkret_sdk::canonical::format_timestamp_canonical(
-                            event.created_at
+                            event.created_at()
                         ),
                         "write_state": "queued",
-                        "body": event.payload.clone(),
+                        "body": event.payload_value(),
                     }),
                 );
                 operation_id
@@ -996,7 +996,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
             return;
         }
     };
-    let move_id = sdk_event_local_operation_id(&event).to_owned();
+    let move_id = event.local_operation_id().to_string();
     let cell_id = strand_position_cell_id(&board_space_id, &strand_id);
     let effect_summary = match &effect {
         StrandPositionEffect::SetPosition {
@@ -1050,7 +1050,7 @@ pub(super) fn submit_strand_position_cas_move_with_attempt(
             // `apply_reorder_to_view`) folds the optimistic move immediately —
             // `columns` is a pure `use_memo` over `raw_operations`, so the
             // relocation must live in the op log, not a direct signal mutation.
-            "body": event.payload.clone(),
+            "body": event.payload().clone(),
             "write_state": "submitted",
         }),
     );

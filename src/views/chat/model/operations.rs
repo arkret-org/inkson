@@ -68,7 +68,7 @@ pub(crate) fn shared_message_pin_add_operation(
     pin_scope: &SharedPinScope,
     target_ref: &str,
     rank: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let payload = arkret_sdk::PinAddPayload {
         pin_scope: sdk_pin_scope(pin_scope)?,
         target_ref: target_ref.to_owned(),
@@ -87,7 +87,7 @@ pub(crate) fn shared_message_pin_remove_operation(
     actor: &str,
     pin_scope: &SharedPinScope,
     target_ref: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let payload = arkret_sdk::PinRemovePayload {
         pin_scope: sdk_pin_scope(pin_scope)?,
         target_ref: target_ref.to_owned(),
@@ -143,7 +143,7 @@ pub(crate) fn chat_message_revise_operation(
     actor: &str,
     event_id: &str,
     body: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     // Route through the SDK-typed `message_revise_payload` builder rather than a
     // hand-rolled `json!` body: it validates ids at build time and addresses a
     // `ak:message:` target via the payload's `message_id` field (falling back to
@@ -162,7 +162,7 @@ pub(crate) fn chat_message_redact_operation(
     actor: &str,
     target_id: &str,
     reason: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     // `message_id` is the single registered target carrier; an `ak:event:`
     // create token is retyped to `ak:message:` (`common-fields.md` §6.0).
     let target_id = target_id.trim();
@@ -190,7 +190,7 @@ pub(crate) fn chat_reaction_add_operation(
     actor: &str,
     event_id: &str,
     key: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let payload = arkret_sdk::ReactionPayload {
         target_ref: event_id.into(),
         key: key.to_owned(),
@@ -214,7 +214,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
     event_id: &str,
     routing_tag: &str,
     encrypted_payload: &arkret_sdk::EncryptedEnvelope,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let payload = arkret_sdk::ReactionPayload {
         target_ref: event_id.into(),
         key: routing_tag.to_owned(),
@@ -268,7 +268,7 @@ pub(crate) fn build_chat_reaction_add_operation(
     event_id: &str,
     emoji: &str,
     channel_encrypted: bool,
-) -> anyhow::Result<Option<arkret_sdk::Event>> {
+) -> anyhow::Result<Option<crate::operation::LocalOperation>> {
     if !channel_encrypted {
         return chat_reaction_add_operation(realm_id, actor, event_id, emoji).map(Some);
     }
@@ -384,7 +384,7 @@ pub(crate) fn chat_message_create_operation_with_content(
     content: arkret_sdk::ContentBlock,
     mentions: &[MentionNode],
     reply_to: Option<&str>,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     chat_message_create_operation_with_content_inner(
         realm_id, actor, strand_id, message_id, body, content, mentions, reply_to,
     )
@@ -403,7 +403,7 @@ pub(crate) fn confirmed_sidecar_publish_message_operation(
     target_shared_strand_id: &str,
     message_id: &str,
     allowlisted_body: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     privacy_gate.validate_shared_publish(
         controller_confirmed,
         target_shared_strand_id,
@@ -421,9 +421,9 @@ pub(crate) fn confirmed_sidecar_publish_message_operation(
         None,
     )?;
     // A shared publish is also the only Sidecar-derived value eligible for a
-    // later public export. Validate the complete ordinary Event rather than
+    // later public export. Validate the complete ordinary write rather than
     // assuming the allowlisted body alone makes its envelope safe.
-    privacy_gate.validate_public_export(&event)?;
+    privacy_gate.validate_public_export(event.intent())?;
     Ok(event)
 }
 
@@ -436,7 +436,7 @@ fn chat_message_create_operation_with_content_inner(
     mut content: arkret_sdk::ContentBlock,
     mentions: &[MentionNode],
     reply_to: Option<&str>,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     if let Some(error) = public_update_policy_error(body) {
         anyhow::bail!(error);
     }
@@ -505,7 +505,7 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
     realm_id: &str,
     actor_id: &str,
     plaintext_visible_services: &[String],
-    operation: &arkret_sdk::Event,
+    operation: &crate::operation::LocalOperation,
 ) -> anyhow::Result<SubmitEventResult> {
     match api.event_submitter()?.submit_sdk_event(operation).await {
         Ok(response) => Ok(response),
@@ -529,12 +529,7 @@ pub(crate) async fn submit_chat_operation_with_plaintext_retry(
                     services,
                 )
                 .await;
-            let mut retry_operation = operation.clone();
-            retry_operation.event_id = retry_operation.derive_event_id()?;
-            retry_operation.unsigned.insert(
-                "local_operation_idempotency_alias".to_owned(),
-                serde_json::Value::String(format!("ak:operation:{}", crate::operation::uuid_v7())),
-            );
+            let retry_operation = crate::operation::LocalOperation::new(operation.intent().clone());
             let retry = api
                 .event_submitter()?
                 .submit_sdk_event(&retry_operation)
@@ -561,7 +556,7 @@ pub(crate) async fn submit_chat_operation_with_auth_refresh(
     session_credential: String,
     wait_for_sync_token: Option<String>,
     plaintext_visible_services: &[String],
-    operation: &arkret_sdk::Event,
+    operation: &crate::operation::LocalOperation,
 ) -> anyhow::Result<SubmitEventResult> {
     let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token.clone())?;
     submit_chat_operation_with_plaintext_retry(

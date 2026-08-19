@@ -1,4 +1,3 @@
-use arkret_sdk::EventPayloadExt as _;
 use serde_json::Value;
 
 use super::model::*;
@@ -91,8 +90,10 @@ fn strand_create_has_plaintext(payload: &arkret_sdk::StrandCreatePayload) -> boo
         .is_some_and(value_is_plaintext_private_content)
 }
 
-pub(super) fn kanban_event_carries_plaintext_private_content(event: &arkret_sdk::Event) -> bool {
-    match &event.kind {
+pub(super) fn kanban_event_carries_plaintext_private_content(
+    event: &crate::operation::LocalOperation,
+) -> bool {
+    match event.kind() {
         arkret_sdk::EventKind::StrandCreate => {
             let Ok(payload) = event.typed_payload::<arkret_wire::event_spec::StrandCreate>() else {
                 return true;
@@ -143,7 +144,7 @@ pub(super) const SECURITY_STATE_NOT_READY_REASON: &str =
 ///   projection is still in flight.
 pub(super) fn kanban_plaintext_block_reason(
     scope_security_encrypted: Option<bool>,
-    event: &arkret_sdk::Event,
+    event: &crate::operation::LocalOperation,
 ) -> Option<String> {
     match scope_security_encrypted {
         // Known plaintext Realm — legitimate plaintext write, never block.
@@ -155,7 +156,7 @@ pub(super) fn kanban_plaintext_block_reason(
             if !kanban_event_carries_plaintext_private_content(event) {
                 return None;
             }
-            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind) {
+            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(event.kind()) {
                 return None;
             }
             // NB: kept as a plain string (not `i18n::tr`) so this pure guard
@@ -172,10 +173,10 @@ pub(super) fn kanban_plaintext_block_reason(
             // Container scaffold writes (board/list title, kind, parent,
             // rank) are non-secret metadata and ALWAYS submit via the normal
             // plaintext event path even in an encrypted Realm. Never block.
-            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(&event.kind) {
+            if KANBAN_PLAINTEXT_METADATA_KINDS.contains(event.kind()) {
                 return None;
             }
-            kanban_plaintext_block_reason_for_kind(true, event.kind.as_str())
+            kanban_plaintext_block_reason_for_kind(true, event.kind().as_str())
         }
     }
 }

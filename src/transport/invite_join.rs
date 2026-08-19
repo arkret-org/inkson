@@ -15,7 +15,7 @@ impl crate::transport::TransportClient {
         invite_id: &str,
         invite_token: Option<&str>,
     ) -> anyhow::Result<(SubmitEventResult, Option<String>)> {
-        let mut event = crate::operation::ak_ops::invite_accept(realm_id, actor_id, invite_id)?
+        let event = crate::operation::ak_ops::invite_accept(realm_id, actor_id, invite_id)?
             .build_sdk_event("inkson")?;
         let resolved = crate::transport::directory::resolve_realm_with_invite_token(
             &self.sdk_http_client()?,
@@ -29,7 +29,7 @@ impl crate::transport::TransportClient {
             &resolved,
             arkret_models_discovery::RealmJoinMethod::InviteAccept,
         )?;
-        stamp_invite_join_seal_basis(&mut event, candidate)?;
+        let event = stamp_invite_join_seal_basis(event, candidate)?;
         let submit = self
             .submit_built_event_via_join_candidate(candidate, &event)
             .await?;
@@ -39,7 +39,7 @@ impl crate::transport::TransportClient {
     async fn submit_built_event_via_join_candidate(
         &self,
         candidate: &RealmJoinCandidate,
-        event: &arkret_sdk::Event,
+        event: &crate::operation::LocalOperation,
     ) -> anyhow::Result<SubmitEventResult> {
         let Some(endpoint) = candidate
             .endpoint
@@ -93,27 +93,31 @@ fn invite_accept_resolve_error(error: anyhow::Error, invite_token_missing: bool)
 /// The invitee is not yet a member, so it cannot read the membership-gated
 /// Realm Seal view. The current basis is disclosed by resolve-realm and bound
 /// to the invite instead.
+/// Pin the join candidate's Seal basis on the intent.
+///
+/// A pre-join invitee cannot read the membership-gated Realm Seal view, so this
+/// is the one basis it will ever have — a producer decision, pinned before
+/// authoring, that the authoring boundary then leaves alone.
 fn stamp_invite_join_seal_basis(
-    event: &mut arkret_sdk::Event,
+    event: crate::operation::LocalOperation,
     candidate: &RealmJoinCandidate,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     // Only a reducer-input Event needs a CBA basis at all.
-    if event.seal_basis.is_some()
+    if event.seal_basis().is_some()
         || event
-            .kind
+            .kind()
             .descriptor()
             .is_none_or(|descriptor| !descriptor.reducer_input)
     {
-        return Ok(());
+        return Ok(event);
     }
-    if event.seal_ref.is_some() {
+    if event.seal_ref().is_some() {
         anyhow::bail!("invite join Control Move must use seal_basis, not seal_ref");
     }
     if candidate.seal_basis.leaves.len() != 1 {
         anyhow::bail!("resolve_realm join candidate seal_basis must have exactly one leaf");
     }
-    event.seal_basis = Some(candidate.seal_basis.clone());
-    Ok(())
+    Ok(event.with_seal_basis(candidate.seal_basis.clone()))
 }
 
 #[cfg(test)]

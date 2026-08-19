@@ -792,7 +792,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         // a snapshot no local secret can open.
         crate::mls::runtime::ensure_account_mls_secret_durable(secure_store.as_ref(), &actor_id)
             .await
-            .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
+            .map_err(|error| {
+                format!("durably persisting the account MLS secret failed: {error}")
+            })?;
     }
     let welcome_outcome = {
         let mut store = state_store.write();

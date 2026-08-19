@@ -891,21 +891,27 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &selected_strand,
                                             &draft_snapshot,
                                         ) {
-                                            Ok(op) => op,
+                                            Ok(op) => op.with_local_operation_id(
+                                                crate::operation::LocalOperationId::from_holder_key(
+                                                    poll_id.clone(),
+                                                ),
+                                            ),
                                             Err(error) => {
                                                 status_msg.set(format!("Poll send failed: {error}"));
                                                 return;
                                             }
                                         };
-                                        let message_ref = crate::messaging::polls::poll_message_ref(&op);
-                                        let poll_content_sidecar =
-                                            message_ref.clone().and_then(|message_id| {
-                                                let content = serde_json::to_string(
-                                                    op.payload.get("content")?,
-                                                )
-                                                .ok()?;
-                                                Some((message_id, content))
-                                            });
+                                        // The Message id is `retype(event_id)`, so it exists
+                                        // only once the poll Event is accepted. The optimistic
+                                        // card is keyed by the holder-local operation id until
+                                        // then, and the author-owned plaintext sidecar is keyed
+                                        // by the accepted id inside the submit arm below.
+                                        let poll_content = op
+                                            .payload()
+                                            .get("content")
+                                            .and_then(|content| serde_json::to_string(content).ok());
+                                        let poll_kind = op.kind().clone();
+                                        let message_ref: Option<String> = None;
                                         let mut card = crate::messaging::polls::PollCard::from_draft(
                                             poll_id.clone(),
                                             &draft_snapshot,
@@ -955,10 +961,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             )
                                             .await
                                             {
-                                                Ok(_) => {
-                                                    if let Some((message_id, content)) =
-                                                        poll_content_sidecar
-                                                    {
+                                                Ok(accepted) => {
+                                                    if let (Some(message_id), Some(content)) = (
+                                                        crate::messaging::polls::poll_message_ref(
+                                                            &poll_kind,
+                                                            &accepted.event_id,
+                                                        ),
+                                                        poll_content,
+                                                    ) {
                                                         state_store_for_sidecar
                                                             .write()
                                                             .save_private_plaintext(
@@ -1020,21 +1030,27 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &selected_strand,
                                             &draft_snapshot,
                                         ) {
-                                            Ok(op) => op,
+                                            Ok(op) => op.with_local_operation_id(
+                                                crate::operation::LocalOperationId::from_holder_key(
+                                                    poll_id.clone(),
+                                                ),
+                                            ),
                                             Err(error) => {
                                                 status_msg.set(format!("Poll send failed: {error}"));
                                                 return;
                                             }
                                         };
-                                        let message_ref = crate::messaging::polls::poll_message_ref(&op);
-                                        let poll_content_sidecar =
-                                            message_ref.clone().and_then(|message_id| {
-                                                let content = serde_json::to_string(
-                                                    op.payload.get("content")?,
-                                                )
-                                                .ok()?;
-                                                Some((message_id, content))
-                                            });
+                                        // The Message id is `retype(event_id)`, so it exists
+                                        // only once the poll Event is accepted. The optimistic
+                                        // card is keyed by the holder-local operation id until
+                                        // then, and the author-owned plaintext sidecar is keyed
+                                        // by the accepted id inside the submit arm below.
+                                        let poll_content = op
+                                            .payload()
+                                            .get("content")
+                                            .and_then(|content| serde_json::to_string(content).ok());
+                                        let poll_kind = op.kind().clone();
+                                        let message_ref: Option<String> = None;
                                         let mut card = crate::messaging::polls::PollCard::from_draft(
                                             poll_id.clone(),
                                             &draft_snapshot,
@@ -1080,10 +1096,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             )
                                             .await
                                             {
-                                                Ok(_) => {
-                                                    if let Some((message_id, content)) =
-                                                        poll_content_sidecar
-                                                    {
+                                                Ok(accepted) => {
+                                                    if let (Some(message_id), Some(content)) = (
+                                                        crate::messaging::polls::poll_message_ref(
+                                                            &poll_kind,
+                                                            &accepted.event_id,
+                                                        ),
+                                                        poll_content,
+                                                    ) {
                                                         state_store_for_sidecar
                                                             .write()
                                                             .save_private_plaintext(
@@ -1453,7 +1473,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         &mentions,
                                         reply_to.as_deref(),
                                     ) {
-                                        Ok(op) => op,
+                                        Ok(op) => op.with_local_operation_id(
+                                            crate::operation::LocalOperationId::from_holder_key(
+                                                local_id.clone(),
+                                            ),
+                                        ),
                                         Err(error) => {
                                             if let Some(found) = messages
                                                 .write()
@@ -1490,7 +1514,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             {
                                                 let mut store = state_store.write();
                                                 store.append_raw_operation(
-                                                    sdk_event_local_operation_id(&op).to_owned(),
+                                                    op.local_operation_id().to_string(),
                                                     Some(realm_for_record),
                                                     json!({
                                                         "event_id": resp.event_id.clone(),
@@ -2075,16 +2099,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         return;
                                     }
                                 };
-                                let mut secure_build = secure_build;
                                 // §4.5 — the sidecar rides the epoch the message
                                 // was encrypted under, which `build_secure_send`
                                 // already resolved (including any forced commit).
-                                // A `None` key means Realm policy forbids the
-                                // sidecar and the event goes out without one.
-                                apply_mention_sidecar_digestes(
-                                    &mut secure_build.message_event,
+                                // An empty digest list means Realm policy forbids
+                                // the sidecar and the event goes out without one.
+                                let mention_digests = mention_sidecar_digests(
                                     &mentions,
-                                    secure_build.mention_routing_key.clone().as_deref(),
+                                    secure_build.mention_routing_key.as_deref(),
                                 );
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
@@ -2121,10 +2143,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 // raw_operation record (X10.6 sidecar re-key) is
                                 // keyed on it.
                                 let msg_local_op_id =
-                                    crate::operation::sdk_event_local_operation_id(
-                                        &secure_build.message_event,
-                                    )
-                                    .to_owned();
+                                    secure_build.message_local_operation_id.to_string();
                                 spawn(async move {
                                     let Ok(api) = authed_api_with_sync(&base, api_token.clone(), wait_for) else {
                                         // P2: auth/API init failed — without this
@@ -2154,6 +2173,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         token_for_backup_trigger.clone(),
                                         actor_for_backup_trigger.clone(),
                                         None,
+                                        mention_digests,
                                     )
                                     .await;
                                     let resp = match outcome {

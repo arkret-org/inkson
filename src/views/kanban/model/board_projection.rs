@@ -125,14 +125,12 @@ fn strand_view_from_create_op(
     // an alternative spelling to fall back on.
     let object_fields = metadata.and_then(|metadata| metadata.get("fields"));
 
-    // `local_target_ref` first: a create payload carries no `object.id` — the
-    // Strand is `retype(create.event_id)`, published on the record by the
-    // ingest funnel. The rest stay as fallbacks for records captured before the
-    // id became Event-derived.
-    let strand_id = raw_operation_create_target_id(&record.payload)
-        .or_else(|| json_path_string(Some(object), &["id"]))
-        .or_else(|| json_path_string(Some(body), &["strand_id"]))
-        .or_else(|| json_path_string(Some(body), &["effect", "strand_id"]))?;
+    // A create payload carries no `object.id`: the Strand is
+    // `retype(event_id)` of the ACCEPTED create, or — while the write is in
+    // flight — the record's holder-local handle. Both come off the record via
+    // `raw_operation_create_target_id`; a payload member claiming to name the
+    // object would be an id the receiver never derives.
+    let strand_id = raw_operation_create_target_id(&record.payload)?;
 
     // Same rule for `title` / `summary`: both are forbidden as Strand top-level
     // fields; `metadata.*` (or `encrypted_metadata`) is the only wire home.
@@ -801,10 +799,11 @@ mod tests {
 
     /// The local `ak.strand.create` op (from `submit_kanban_card_create`) carries the
     /// canonical create body (`body.object.metadata.fields.*`) PLUS a top-level
-    /// `effect`; folding it must surface the card immediately (optimistic).
+    /// `effect`; folding it must surface the card immediately (optimistic). The
+    /// Strand is `retype(event_id)` of the FINAL create, which does not exist
+    /// yet, so the record keys the card by the write's holder-local handle.
     #[test]
     fn local_optimistic_card_create_op_projects_into_its_list() {
-        let strand = "ak:strand:ARsrCf4UUcTpMLKXFa8Ws1geEfG61cX73bhSeY851_Ns";
         let ops = [
             kanban_operations_from_events(&[
                 space_create_event(BOARD, "board", "Board1", None),
@@ -820,8 +819,9 @@ mod tests {
                     "created_at": "2026-06-28T00:05:00.000Z",
                     "wire_kind": "ak.strand.create",
                     "write_state": "queued",
+                    "local_target_ref": "op-create-1",
                     "effect": {
-                        "strand_id": strand,
+                        "strand_id": "op-create-1",
                         "board_space_id": BOARD,
                         "list_space_id": LIST_A,
                         "title": "queued card",
@@ -829,7 +829,6 @@ mod tests {
                     },
                     "body": {
                         "object": {
-                            "id": strand,
                             "realm_id": REALM,
                             "created_by": "did:web:alice.example",
                             "metadata": {
@@ -1175,7 +1174,8 @@ mod tests {
             .unwrap()
             .build_sdk_event("inkson")
             .unwrap()
-            .payload
+            .payload()
+            .clone()
         };
         let mut ops = kanban_operations_from_events(&[
             space_create_event(BOARD, "board", "Board1", None),
@@ -1217,7 +1217,8 @@ mod tests {
         .unwrap()
         .build_sdk_event("inkson")
         .unwrap()
-        .payload;
+        .payload()
+        .clone();
         let mut ops = kanban_operations_from_events(&[
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),

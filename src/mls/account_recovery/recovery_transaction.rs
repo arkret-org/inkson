@@ -225,7 +225,12 @@ pub(crate) async fn prepare_root_anchored_recovery(
         rotation.version_id.clone(),
         "did_recovery_anchor",
     ))
-    .author(frontier.next_actor_seq, reexpiry_start_hlc, created_at)?;
+    .author_with_digest_suite(
+        frontier.next_actor_seq,
+        reexpiry_start_hlc,
+        created_at,
+        digest_suite,
+    )?;
     let root_did = arkret_sdk::DidFullId::new(
         rotation
             .current_root_verification_method
@@ -243,14 +248,13 @@ pub(crate) async fn prepare_root_anchored_recovery(
         root_did,
         root_method.clone(),
     );
-    arkret_sdk::signatures::sign_event_with_digest_suite(
+    arkret_sdk::signatures::sign_event(
         &mut reanchor,
         &root_signer,
         &root_method,
-        digest_suite,
         arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
     )?;
-    let reanchor_event_id = reanchor.event_id.clone();
+    let reanchor_event_id = reanchor.event_id().clone();
 
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
@@ -260,16 +264,21 @@ pub(crate) async fn prepare_root_anchored_recovery(
             authorize_payload,
         )?
         .with_prev_refs(vec![reanchor_event_id.clone()])
-        .author(authorize_actor_seq, authorize_hlc, created_at)?;
+        .author_with_digest_suite(
+            authorize_actor_seq,
+            authorize_hlc,
+            created_at,
+            digest_suite,
+        )?;
     device_signer.sign_sdk_event_with_context(
         &mut authorize,
         crate::event_signer::EventProofContext::default().with_digest_suite(digest_suite),
     )?;
-    let authorize_event_id = authorize.event_id.clone();
+    let authorize_event_id = authorize.event_id().clone();
     let reanchor_submission = EventsSubmitBatchRequestBody {
         events: vec![
-            EventInitialSubmission::online(reanchor),
-            EventInitialSubmission::online(authorize),
+            EventInitialSubmission::online(reanchor.into_event()),
+            EventInitialSubmission::online(authorize.into_event()),
         ],
     };
 

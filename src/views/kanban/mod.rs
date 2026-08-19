@@ -8,7 +8,6 @@ use serde_json::{Map, Value, json};
 use crate::components::{
     ActorIdentityLabel, EmptyState, EmptyStateKind, SecurityStateBadge, UiIcon, WriteStateIcon,
 };
-use crate::operation::EventExt;
 use crate::rank::rank_for_drop;
 use crate::routes::Route;
 use crate::state::LocalStateStore;
@@ -1410,18 +1409,12 @@ pub fn KanbanPanel(
                                                     board_status.set(reason);
                                                     return;
                                                 }
-                                                // The Board Space is named by its create Event, not by
-                                                // this handler: the builder stamped `retype(event_id)`
-                                                // as the local handle. Anything else would be an id the
-                                                // receiver never derives.
-                                                let Some(board_space_id) =
-                                                    op.local_target_ref().map(ToOwned::to_owned)
-                                                else {
-                                                    board_status.set(
-                                                        "cannot create board: ak.space.create carries no derived Space id".to_owned(),
-                                                    );
-                                                    return;
-                                                };
+                                                // The Board Space is named by `retype(event_id)` of the
+                                                // FINAL create Event, which does not exist yet. The view
+                                                // keys the new board by the write's holder-local handle;
+                                                // `event_derived_target_aliases` migrates it to the
+                                                // accepted id when the receipt lands.
+                                                let board_space_id = op.local_object_handle().to_owned();
                                                 // Select the new board now;`ak.space.creatempty) columns
                                                 // derive from the appended `ak.space.create` op via the
                                                 // options-sync effect and the `columns` memo.

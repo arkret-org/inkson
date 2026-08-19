@@ -208,77 +208,100 @@ pub fn CallPanel(
                 CallMode::Sfu => participant_list_from_input(&group_input()),
             };
 
-            let (call, call_create_event) = if active_call_id().is_empty() {
+            let existing_call = active_call_id();
+            let call_create_operation = if existing_call.is_empty() {
                 let payload = arkret_sdk::CallCreatePayload {
                     initial_state: arkret_sdk::CallLifecycleState::Ringing,
                 };
-                let event = match crate::operation::TypedOperationBuilder::new::<
+                match crate::operation::TypedOperationBuilder::new::<
                     arkret_sdk::event_spec::CallCreate,
                 >(&realm_id, &actor, payload)
                 .build_sdk_event("inkson")
                 {
-                    Ok(event) => event,
+                    Ok(operation) => Some(operation),
                     Err(error) => {
                         last_error.set(format!("call create build failed: {error:#}"));
                         return;
                     }
-                };
-                let call_id = arkret_sdk::CallId::from_event_id(&event.event_id).to_string();
-                (call_id, Some(event))
+                }
             } else {
-                (active_call_id(), None)
+                None
             };
-            let (
-                media_dids,
-                focus_id,
-                known_actor_devices,
-                known_participant_identities,
-                known_participant_devices,
-                governance_evidence,
-                realm_mls_snapshot,
-            ) = {
-                let store = state_store.read();
-                let snapshot = store.load();
-                let (media_dids, focus_id) = media_service_selection(&snapshot, &realm_id);
-                (
+            let signal_store = signal_store.clone();
+            spawn(async move {
+                // The Call is named by `retype(create.event_id)`, so the durable
+                // genesis must be ACCEPTED before anything — participant state,
+                // the media plane, signaling — can name this Call. Its id comes
+                // from the receipt, never from a draft.
+                let call = match call_create_operation {
+                    Some(operation) => {
+                        let accepted = with_event_submitter(
+                            &base,
+                            api_token.clone(),
+                            |submitter| async move { submitter.submit_sdk_event(&operation).await },
+                        )
+                        .await;
+                        match accepted {
+                            Ok(accepted) => {
+                                match arkret_sdk::EventId::new(accepted.event_id.clone()) {
+                                    Ok(event_id) => {
+                                        arkret_sdk::CallId::from_event_id(&event_id).to_string()
+                                    }
+                                    Err(error) => {
+                                        last_error.set(format!(
+                                            "accepted call create id is invalid: {error}"
+                                        ));
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                last_error.set(format!("call create failed: {}", err.display()));
+                                return;
+                            }
+                        }
+                    }
+                    None => existing_call,
+                };
+                let (
                     media_dids,
                     focus_id,
-                    call_state_participant_actor_device_map(&snapshot, &realm_id, &call),
-                    call_state_participant_identities(&snapshot, &realm_id, &call),
-                    call_state_participant_device_map(&snapshot, &realm_id, &call),
-                    media_governance_evidence(&snapshot, &realm_id, media_plaintext_confirmed()),
-                    store.mls_snapshot_for(&realm_id),
-                )
-            };
-            active_call_id.set(call.clone());
-            call_seq.set(0);
-            let roster = match build_roster(&actor, &peers, &known_actor_devices) {
-                Ok(roster) => roster,
-                Err(error) => {
-                    last_error.set(format!("invalid call participant identity: {error}"));
-                    return;
-                }
-            };
-            participants.set(roster);
-            stage.set(CallStage::OutgoingRinging);
-            status.set("placing call".to_owned());
-            last_error.set(String::new());
-            let signal_store = signal_store.clone();
-
-            spawn(async move {
-                // The durable Call genesis must be accepted before any
-                // signaling or media-plane request references its derived id.
-                if let Some(call_create_event) = call_create_event
-                    && let Err(err) =
-                        with_event_submitter(&base, api_token.clone(), |submitter| async move {
-                            submitter.submit_sdk_event(&call_create_event).await?;
-                            Ok(())
-                        })
-                        .await
-                {
-                    last_error.set(format!("call create failed: {}", err.display()));
-                    return;
-                }
+                    known_actor_devices,
+                    known_participant_identities,
+                    known_participant_devices,
+                    governance_evidence,
+                    realm_mls_snapshot,
+                ) = {
+                    let store = state_store.read();
+                    let snapshot = store.load();
+                    let (media_dids, focus_id) = media_service_selection(&snapshot, &realm_id);
+                    (
+                        media_dids,
+                        focus_id,
+                        call_state_participant_actor_device_map(&snapshot, &realm_id, &call),
+                        call_state_participant_identities(&snapshot, &realm_id, &call),
+                        call_state_participant_device_map(&snapshot, &realm_id, &call),
+                        media_governance_evidence(
+                            &snapshot,
+                            &realm_id,
+                            media_plaintext_confirmed(),
+                        ),
+                        store.mls_snapshot_for(&realm_id),
+                    )
+                };
+                active_call_id.set(call.clone());
+                call_seq.set(0);
+                let roster = match build_roster(&actor, &peers, &known_actor_devices) {
+                    Ok(roster) => roster,
+                    Err(error) => {
+                        last_error.set(format!("invalid call participant identity: {error}"));
+                        return;
+                    }
+                };
+                participants.set(roster);
+                stage.set(CallStage::OutgoingRinging);
+                status.set("placing call".to_owned());
+                last_error.set(String::new());
 
                 // Join the media plane (token + ICE + SFrame key). P2P emits
                 // its invite only after the transport produces the real SDP

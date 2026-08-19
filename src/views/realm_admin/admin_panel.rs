@@ -979,24 +979,22 @@ pub fn RealmAdminPanel(
                                     )
                                     .await
                                     {
-                                        Ok(result) => {
-                                            // The accepted commit id — the
-                                            // build-time id is re-derived away
-                                            // during authoring.
+                                        Ok(accepted) => {
+                                            // Persist-on-accept: only advance the
+                                            // local snapshot after the server
+                                            // accepted the ak.mls.commit, and bind
+                                            // it to the id the server accepted.
                                             let commit_event_id = match arkret_sdk::EventId::new(
-                                                result.event_id,
+                                                accepted.event_id.clone(),
                                             ) {
                                                 Ok(event_id) => event_id,
                                                 Err(error) => {
                                                     status_msg.set(format!(
-                                                        "rotate accepted but the Event id is invalid: {error}"
+                                                        "rotate accepted but its Event id is invalid: {error}"
                                                     ));
                                                     return;
                                                 }
                                             };
-                                            // Persist-on-accept: only advance the
-                                            // local snapshot after the server
-                                            // accepted the ak.mls.commit.
                                             if let Err(error) = state_store
                                                 .write()
                                                 .record_mls_group_state_ref_for_effective_scope(
@@ -1346,12 +1344,7 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
-                                let op_id = envelope
-                                    .unsigned
-                                    .get("local_operation_idempotency_alias")
-                                    .and_then(|value| value.as_str())
-                                    .unwrap_or_else(|| envelope.event_id.as_str())
-                                    .to_owned();
+                                let op_id = envelope.local_operation_id().to_string();
                                 spawn(async move {
                                     match crate::transport::auth::with_authed_api(
                                         &base,
@@ -1432,12 +1425,7 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                 };
-                                let op_id = envelope
-                                    .unsigned
-                                    .get("local_operation_idempotency_alias")
-                                    .and_then(|value| value.as_str())
-                                    .unwrap_or_else(|| envelope.event_id.as_str())
-                                    .to_owned();
+                                let op_id = envelope.local_operation_id().to_string();
                                 spawn(async move {
                                     match crate::transport::auth::with_authed_api(
                                         &base,

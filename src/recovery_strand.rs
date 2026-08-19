@@ -532,9 +532,10 @@ async fn publish_recovery_policy(
     )
     .build_sdk_event("inkson-recovery-policy")?;
     let submitter = api.event_submitter()?;
-    let (event, _) = submitter.prepare_sdk_event_for_submit(&event).await?;
+    let event = submitter.author_for_direct_submission(&event).await?;
     let http = api.sdk_http_client()?;
-    crate::authorization_lease::ensure_for_events(&http, std::slice::from_ref(&event)).await?;
+    crate::authorization_lease::ensure_for_events(&http, std::slice::from_ref(event.event()))
+        .await?;
     let submission = crate::authorization_lease::delayed_initial_submission(&http, &event).await?;
     let request = arkret_sdk::RecoveryPolicyPublishRequest {
         event: submission.event,

@@ -285,7 +285,7 @@ pub fn recover_history_from_rrk_shares(
 pub enum RecipientSealOutcome {
     Sealed {
         recipient_id: String,
-        event: Box<arkret_sdk::Event>,
+        event: Box<crate::operation::LocalOperation>,
     },
     Unverified {
         recipient_id: String,

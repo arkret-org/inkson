@@ -58,7 +58,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signer as _, SigningKey};
 
-use crate::operation::{Event, EventProofAudience, ProofMode, current_proof_mode};
+use crate::operation::{AuthoredEvent, EventProofAudience, ProofMode, current_proof_mode};
 
 /// Errors produced by the active-write signing pipeline.
 #[derive(Debug, thiserror::Error)]
@@ -388,14 +388,14 @@ impl InksonEventSigner {
     /// another verification method makes the signing attempt fail closed.
     ///
     /// Updates [`Self::last_signed_at_snapshot`] on success.
-    pub fn sign_envelope(&self, event: &mut Event) -> Result<(), EventSignerError> {
+    pub fn sign_envelope(&self, event: &mut AuthoredEvent) -> Result<(), EventSignerError> {
         self.sign_envelope_with_context(event, EventProofContext::default())
     }
 
     /// Sign `event` with an explicit EventProof domain/audience binding.
     pub fn sign_envelope_with_context(
         &self,
-        event: &mut Event,
+        event: &mut AuthoredEvent,
         context: EventProofContext,
     ) -> Result<(), EventSignerError> {
         self.sign_sdk_event_with_context(event, context)
@@ -405,9 +405,20 @@ impl InksonEventSigner {
     /// modules that build `arkret_sdk::Event` through the operation builder.
     pub fn sign_sdk_event_with_context(
         &self,
-        event: &mut arkret_sdk::Event,
+        event: &mut AuthoredEvent,
         context: EventProofContext,
     ) -> Result<(), EventSignerError> {
+        // Authoring settled the digest suite when it derived the identity, and
+        // the proof must be bound under that same suite. A caller-supplied
+        // suite that disagrees would produce a proof over a digest the Event's
+        // own id does not descend from.
+        if context.digest_suite != event.digest_suite() {
+            return Err(EventSignerError::Encoding(format!(
+                "proof context digest suite {:?} does not match the suite this Event was authored under ({:?})",
+                context.digest_suite,
+                event.digest_suite()
+            )));
+        }
         let verification_method = self.verification_method_for_sdk_event(event)?;
         let proof_audience = context
             .audience
@@ -426,11 +437,10 @@ impl InksonEventSigner {
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
             verification_method: verification_method.clone(),
         };
-        arkret_sdk::signatures::sign_event_with_digest_suite(
+        arkret_sdk::signatures::sign_event(
             event,
             &signer,
             &verification_method,
-            context.digest_suite,
             arkret_sdk::signatures::SignEventOptions {
                 domain: context.domain,
                 audience: proof_audience,
@@ -1045,7 +1055,7 @@ pub fn should_auto_sign() -> bool {
 /// just before sending to the wire so envelopes built with placeholder
 /// dev proofs (or no proofs at all) get a real signature attached when
 /// the proof mode expects one.
-pub fn sign_with_active(event: &mut Event) -> Result<(), EventSignerError> {
+pub fn sign_with_active(event: &mut AuthoredEvent) -> Result<(), EventSignerError> {
     let signer = active_signer().ok_or(EventSignerError::MissingSigner {
         mode: current_proof_mode().label_en(),
     })?;
@@ -1054,7 +1064,7 @@ pub fn sign_with_active(event: &mut Event) -> Result<(), EventSignerError> {
 
 /// Sign `event` with the active signer and explicit EventProof context.
 pub fn sign_with_active_context(
-    event: &mut Event,
+    event: &mut AuthoredEvent,
     context: EventProofContext,
 ) -> Result<(), EventSignerError> {
     let signer = active_signer().ok_or(EventSignerError::MissingSigner {
@@ -1064,7 +1074,7 @@ pub fn sign_with_active_context(
 }
 
 pub fn sign_sdk_event_with_active_context(
-    event: &mut arkret_sdk::Event,
+    event: &mut AuthoredEvent,
     context: EventProofContext,
 ) -> Result<(), EventSignerError> {
     let mode = current_proof_mode();
@@ -1175,7 +1185,22 @@ mod tests {
         ActiveSignerTestGuard::replace(None)
     }
 
-    fn message_event(actor_id: &str, body: &str) -> arkret_sdk::Event {
+    fn message_event(actor_id: &str, body: &str) -> AuthoredEvent {
+        crate::operation::author_for_test(&message_operation(actor_id, body))
+    }
+
+    fn message_event_with_digest_suite(
+        actor_id: &str,
+        body: &str,
+        digest_suite: arkret_sdk::canonical::DigestSuite,
+    ) -> AuthoredEvent {
+        message_operation(actor_id, body)
+            .into_intent()
+            .author_with_digest_suite(1, crate::operation::test_authoring_hlc(), digest_suite)
+            .expect("a test intent finalizes")
+    }
+
+    fn message_operation(actor_id: &str, body: &str) -> crate::operation::LocalOperation {
         TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
             TEST_REALM_ID,
             actor_id,
@@ -1374,12 +1399,8 @@ mod tests {
         let _g = reset();
         let signer = build_ed25519_device_signer([3u8; 32], "did:web:bob.example", TEST_DEVICE_ID);
 
-        let prior_mode = current_proof_mode();
-        set_proof_mode(ProofMode::RealEd25519);
         let mut event = message_event("did:web:bob.example", "hi");
-        set_proof_mode(prior_mode);
-
-        // RealEd25519 mode skips placeholder attach.
+        // A freshly authored envelope carries no proof of its own.
         assert!(event.proofs.is_empty());
 
         signer.sign_envelope(&mut event).expect("sign");
@@ -1411,10 +1432,7 @@ mod tests {
         let signer =
             build_ed25519_device_signer([9u8; 32], "did:web:alice.example", TEST_DEVICE_ID);
 
-        let prior_mode = current_proof_mode();
-        set_proof_mode(ProofMode::RealEd25519);
         let mut event = message_event("did:web:alice.example", "actor-rooted");
-        set_proof_mode(prior_mode);
 
         signer.sign_envelope(&mut event).expect("sign");
 
@@ -1444,10 +1462,7 @@ mod tests {
             bytes: sdk_signer.verifying_key().to_bytes().to_vec(),
         };
 
-        let prior_mode = current_proof_mode();
-        set_proof_mode(ProofMode::RealEd25519);
         let mut event = message_event("did:web:carol.example", "verifiable");
-        set_proof_mode(prior_mode);
 
         signer.sign_envelope(&mut event).expect("sign");
 
@@ -1493,10 +1508,7 @@ mod tests {
             bytes: sdk_signer.verifying_key().to_bytes().to_vec(),
         };
 
-        let prior_mode = current_proof_mode();
-        set_proof_mode(ProofMode::RealEd25519);
         let mut event = message_event("did:web:carol.example", "bound");
-        set_proof_mode(prior_mode);
 
         let context = EventProofContext::new()
             .with_domain("ak:trust_domain:server.example")
@@ -1540,21 +1552,11 @@ mod tests {
     fn sign_sdk_event_with_context_attaches_typed_proof() {
         let _g = reset();
         let signer = build_ed25519_device_signer([10u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
-        let mut event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "kind": "ak.message.create",
-            "realm_id": TEST_REALM_ID,
-            "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
-            "actor_id": "ak:did_core:web:sdk.example",
-            "principal_server_id": "ak:did_core:web:principal.example",
-            "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00.000Z",
-            "hlc": "01970e589d21-0001-a13f9c2e",
-            "prev_refs": [],
-            "payload": {"kind": "ak.content.text", "body": "typed"},
-            "proofs": []
-        }))
-        .unwrap();
+        let mut event = message_event_with_digest_suite(
+            "did:web:sdk.example",
+            "typed",
+            arkret_sdk::canonical::DigestSuite::Blake3,
+        );
         let context = EventProofContext::new()
             .with_domain("did:web:server.example")
             .with_audience(EventProofAudience::Single(
@@ -1584,21 +1586,7 @@ mod tests {
     fn sign_sdk_event_is_idempotent_for_the_same_verification_method() {
         let _g = reset();
         let signer = build_ed25519_device_signer([12u8; 32], "did:web:sdk.example", TEST_DEVICE_ID);
-        let mut event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:AU2FuZ5Cmuwsb0J0xuJwH47SCEL34D7oJWb4JivTH934",
-            "kind": "ak.message.create",
-            "realm_id": TEST_REALM_ID,
-            "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
-            "actor_id": "ak:did_core:web:sdk.example",
-            "principal_server_id": "ak:did_core:web:principal.example",
-            "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00.000Z",
-            "hlc": "01970e589d21-0001-a13f9c2e",
-            "prev_refs": [],
-            "payload": {"kind": "ak.content.text", "body": "typed"},
-            "proofs": []
-        }))
-        .unwrap();
+        let mut event = message_event("did:web:sdk.example", "typed");
 
         signer
             .sign_sdk_event_with_context(&mut event, EventProofContext::default())
@@ -1623,21 +1611,7 @@ mod tests {
             "did:web:sdk.example",
             "ak:device:01904100-0000-7000-8000-000000000014",
         );
-        let mut event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu",
-            "kind": "ak.message.create",
-            "realm_id": TEST_REALM_ID,
-            "scope_ref": {"kind": "realm", "realm_id": TEST_REALM_ID},
-            "actor_id": "ak:did_core:web:sdk.example",
-            "principal_server_id": "ak:did_core:web:principal.example",
-            "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00.000Z",
-            "hlc": "01970e589d21-0001-a13f9c2e",
-            "prev_refs": [],
-            "payload": {"kind": "ak.content.text", "body": "typed"},
-            "proofs": []
-        }))
-        .unwrap();
+        let mut event = message_event("did:web:sdk.example", "typed");
 
         first
             .sign_sdk_event_with_context(&mut event, EventProofContext::default())
@@ -1749,11 +1723,8 @@ mod tests {
         ));
         install_active_signer(signer);
 
-        let prior_mode = current_proof_mode();
-        set_proof_mode(ProofMode::RealEd25519);
         let mut event = message_event("did:web:dave.example", "auto");
         sign_with_active(&mut event).expect("auto sign");
-        set_proof_mode(prior_mode);
 
         let proof = producer_proof(&event);
         assert_eq!(

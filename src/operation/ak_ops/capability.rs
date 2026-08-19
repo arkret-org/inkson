@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn aggregate_admin_grant_authorship_binds_the_registry_snapshot() {
-        let event = capability_grant_actions(
+        let operation = capability_grant_actions(
             "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
             "did:web:issuer.example",
             "did:web:subject.example",
@@ -161,12 +161,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            event.payload["grant"]["capability_action_registry_digest"],
+            operation.payload()["grant"]["capability_action_registry_digest"],
             serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
                 .unwrap()
         );
         assert_eq!(
-            event.payload["grant"]["issuer_authority_refs"],
+            operation.payload()["grant"]["issuer_authority_refs"],
             json!([{
                 "kind": "realm_root",
                 "realm_id": "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
@@ -178,10 +178,13 @@ mod tests {
         // v1 derives the OR-Set write from the registered contract instead of
         // shipping it. The dot is `<event_id>:<write_index>` and the element
         // value is the WHOLE payload (`{"field":"payload"}`), not the inner
-        // `grant` object the producer-side table used to stamp.
+        // `grant` object the producer-side table used to stamp. The cell itself
+        // is named by `retype(event_id)`, so the write only has a subject once
+        // the Event is finalized.
+        let event = crate::operation::author_for_test(&operation);
         let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
         assert_eq!(writes.len(), 1);
-        let grant_id = arkret_sdk::GrantId::from_event_id(&event.event_id);
+        let grant_id = arkret_sdk::GrantId::from_event_id(event.event_id());
         assert_eq!(
             writes[0].cell.as_str(),
             format!("ak:cell:ak.component.capability.grant.v1:{grant_id}")
@@ -189,16 +192,16 @@ mod tests {
         assert_eq!(writes[0].op.op_type, arkret_sdk::LatticeOpType::Add);
         assert_eq!(
             writes[0].op.tag.as_deref(),
-            Some(format!("{}:0", event.event_id).as_str())
+            Some(format!("{}:0", event.event_id()).as_str())
         );
-        let mut projected_payload = event.payload.clone();
+        let mut projected_payload = operation.payload().clone();
         projected_payload
             .get_mut("grant")
             .and_then(Value::as_object_mut)
             .unwrap()
             .insert(
                 "issuer_principal_server_id".to_owned(),
-                Value::String(event.principal_server_id.to_string()),
+                Value::String(operation.intent().principal_server_id().to_string()),
             );
         assert_eq!(
             writes[0].op.value.as_ref(),

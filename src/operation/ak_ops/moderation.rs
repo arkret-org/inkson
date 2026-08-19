@@ -22,7 +22,7 @@ pub fn moderation_report(
     target_ref: &str,
     report_reason_code: &str,
     description: Option<&str>,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))?;
     let report_reason_code = report_reason_code.trim();
     if !matches!(

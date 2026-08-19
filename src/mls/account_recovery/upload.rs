@@ -96,10 +96,20 @@ async fn ensure_initial_active_series(
         &frontier,
         &trust_anchor,
     )?;
-    let active_series_event_id = event.event_id.clone();
-    submitter
-        .submit_sdk_events_batch(control_realm.as_str(), vec![event], None)
+    // The active-series Event id exists once it is authored; the batch submit
+    // reports the accepted ids, so the successor Seal binds the Event that was
+    // actually accepted.
+    let accepted = submitter
+        .submit_sdk_events_batch(control_realm.as_str(), vec![event.into_intent()], None)
         .await?;
+    let active_series_event_id = accepted
+        .accepted
+        .first()
+        .or_else(|| accepted.duplicate.first())
+        .cloned()
+        .ok_or_else(|| {
+            anyhow::anyhow!("key-backup active-series submit returned no accepted Event id")
+        })?;
     let accepted_rows = http
         .events_read_all_pages(control_realm.as_str())
         .await?

@@ -599,11 +599,11 @@ fn build_account_data_set_emits_canonical_kind() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind, "ak.account_data.set");
-    assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
-    assert_eq!(op.payload["holder_id"], "ak:did_core:web:alice");
-    assert_eq!(op.payload["body"]["send"], false);
-    assert!(op.payload["updated_at"].is_string());
+    assert_eq!(op.kind(), "ak.account_data.set");
+    assert_eq!(op.payload()["key"], "ak.read_receipt.preferences");
+    assert_eq!(op.payload()["holder_id"], "ak:did_core:web:alice");
+    assert_eq!(op.payload()["body"]["send"], false);
+    assert!(op.payload()["updated_at"].is_string());
 }
 
 #[test]
@@ -798,8 +798,8 @@ fn contact_and_realm_remarks_are_encrypted_account_data() {
     )
     .unwrap()
     .build("node");
-    assert!(op.payload.contains_key("encrypted_payload"));
-    assert!(!op.payload.contains_key("body"));
+    assert!(op.payload().contains_key("encrypted_payload"));
+    assert!(!op.payload().contains_key("body"));
 }
 
 #[test]
@@ -835,8 +835,8 @@ fn private_view_and_notification_inbox_are_encrypted_account_data() {
         )
         .unwrap()
         .build("node");
-        assert!(op.payload.contains_key("encrypted_payload"), "{key}");
-        assert!(!op.payload.contains_key("body"), "{key}");
+        assert!(op.payload().contains_key("encrypted_payload"), "{key}");
+        assert!(!op.payload().contains_key("body"), "{key}");
     }
 
     assert!(
@@ -858,10 +858,10 @@ fn private_account_data_builders_emit_encrypted_payload() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind, "ak.account_data.set");
-    assert_eq!(op.payload["key"], key);
-    assert!(!op.payload.contains_key("body"));
-    assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
+    assert_eq!(op.kind(), "ak.account_data.set");
+    assert_eq!(op.payload()["key"], key);
+    assert!(!op.payload().contains_key("body"));
+    assert_eq!(op.payload()["encrypted_payload"]["ciphertext"], "opaque");
 
     let tombstone = build_private_account_data_tombstone(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
@@ -871,7 +871,7 @@ fn private_account_data_builders_emit_encrypted_payload() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(tombstone.payload["tombstone"], true);
+    assert_eq!(tombstone.payload()["tombstone"], true);
 }
 
 #[test]
@@ -892,10 +892,10 @@ fn private_account_data_builder_emits_required_revision() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind, "ak.account_data.set");
-    assert_eq!(op.payload["expected_revision"], 7);
-    assert!(!op.payload.contains_key("body"));
-    assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
+    assert_eq!(op.kind(), "ak.account_data.set");
+    assert_eq!(op.payload()["expected_revision"], 7);
+    assert!(!op.payload().contains_key("body"));
+    assert_eq!(op.payload()["encrypted_payload"]["ciphertext"], "opaque");
 }
 
 #[test]
@@ -910,8 +910,8 @@ fn generic_builder_does_not_put_private_values_under_body() {
     )
     .unwrap()
     .build("node");
-    assert!(!op.payload.contains_key("body"));
-    assert_eq!(op.payload["encrypted_payload"]["ciphertext"], "opaque");
+    assert!(!op.payload().contains_key("body"));
+    assert_eq!(op.payload()["encrypted_payload"]["ciphertext"], "opaque");
 }
 
 #[test]
@@ -924,12 +924,12 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind, "ak.account_data.set");
-    assert_eq!(op.payload["key"], "ak.read_receipt.preferences");
-    assert_eq!(op.payload["holder_id"], "ak:did_core:web:alice");
-    assert_eq!(op.payload["expected_revision"], 3);
-    assert_eq!(op.payload["tombstone"], true);
-    assert!(op.payload["updated_at"].is_string());
+    assert_eq!(op.kind(), "ak.account_data.set");
+    assert_eq!(op.payload()["key"], "ak.read_receipt.preferences");
+    assert_eq!(op.payload()["holder_id"], "ak:did_core:web:alice");
+    assert_eq!(op.payload()["expected_revision"], 3);
+    assert_eq!(op.payload()["tombstone"], true);
+    assert!(op.payload()["updated_at"].is_string());
 }
 
 #[test]

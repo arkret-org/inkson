@@ -538,7 +538,7 @@ fn build_active_mls_history_series_event(
     previous_series_ids: &[String],
     frontier: &arkret_sdk::RealmSealFrontierView,
     trust_anchor: &ControllerBackupTrustAnchor,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is required"))?;
     let verification_method =
@@ -1215,7 +1215,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
                 })?,
             }
         };
-        let mut genesis = {
+        let genesis = {
             let mut store = state_store.write();
             crate::mls::group_events::build_creator_mls_genesis_event(
                 &mut store,
@@ -1227,36 +1227,25 @@ pub(crate) async fn bootstrap_provisioned_agent(
             .map_err(anyhow::Error::msg)?
         }
         .ok_or_else(|| anyhow::anyhow!("Agent PCR MLS genesis was not built"))?;
-        genesis.executed_by = Some(arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new(controller_id.clone())?,
-        )?);
-        genesis.authorization_ref = Some(
-            arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
-                .map_err(anyhow::Error::msg)?,
-        );
+        let genesis = genesis
+            .with_executed_by(arkret_sdk::DidCoreId::from(
+                arkret_sdk::project_full_id_to_core_id(&arkret_sdk::DidFullId::new(
+                    controller_id.clone(),
+                )?)?,
+            ))
+            .with_authorization_ref(
+                arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
+                    .map_err(anyhow::Error::msg)?,
+            );
         crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
             .await
             .map_err(|error| anyhow::anyhow!(error.user_message()))?;
         match submitter.submit_sdk_event(&genesis).await {
-            // Persist the ACCEPTED Event id, never the build-time one: the
-            // submit pipeline re-authors the envelope, which re-derives the
-            // content-bound id.
-            Ok(result) => {
-                let accepted_event_id = match arkret_sdk::EventId::new(result.event_id) {
-                    Ok(event_id) => event_id,
-                    Err(_) => submitter
-                        .find_mls_genesis_event_id(realm_id)
-                        .await?
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Agent PCR MLS genesis was accepted but its Event id is unavailable"
-                            )
-                        })?,
-                };
-                state_store
-                    .write()
-                    .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &accepted_event_id);
-            }
+            // The accepted id is the only one the encrypted writes may bind to.
+            Ok(accepted) => state_store.write().mark_mls_genesis_emitted_with_event(
+                realm_id.to_owned(),
+                &arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(anyhow::Error::msg)?,
+            ),
             Err(error)
                 if crate::ephemeral::events_submit_rejected_for_reason(
                     &error,

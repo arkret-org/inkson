@@ -45,6 +45,19 @@ impl TestEventPayloadView for arkret_sdk::Event {
     }
 }
 
+/// A locally built write carries the payload the schema governs before it has an
+/// identity, so the check does not need it authored.
+#[cfg(not(target_arch = "wasm32"))]
+impl TestEventPayloadView for crate::operation::LocalOperation {
+    fn kind_for_schema(&self) -> &str {
+        self.kind().as_str()
+    }
+
+    fn payload_for_schema(&self) -> serde_json::Value {
+        serde_json::to_value(self.payload()).expect("event payload serializes")
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView) {
     let payload = event.payload_for_schema();
@@ -58,19 +71,6 @@ pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView)
                 serde_json::to_string_pretty(&payload).unwrap()
             )
         });
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn sdk_event(event: crate::operation::Event) -> arkret_sdk::Event {
-    event
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn sdk_event_local_target_ref(event: &arkret_sdk::Event) -> Option<&str> {
-    event
-        .unsigned
-        .get("local_target_ref")
-        .and_then(serde_json::Value::as_str)
 }
 
 pub(super) fn board_write_record(state: CardState, note: &str) -> BoardWriteRecord {

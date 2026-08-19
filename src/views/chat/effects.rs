@@ -37,7 +37,7 @@ pub(super) fn ChatEffects(
     let typing_next_expires_at_ms = controller.typing_next_expires_at_ms;
     let mut presence_announce_key_seen = controller.presence_announce_key_seen;
     let mut presence_heartbeat_tick = controller.presence_heartbeat_tick;
-    let mut queued_outbound_message_ids = controller.queued_outbound_message_ids;
+    let mut queued_outbound_local_operation_ids = controller.queued_outbound_local_operation_ids;
     let messages = controller.messages;
     let mut owned_agent_sync_key_seen = controller.owned_agent_sync_key_seen;
     let mut agent_participation_sync_key_seen = controller.agent_participation_sync_key_seen;
@@ -137,15 +137,15 @@ pub(super) fn ChatEffects(
                     event_sink.emit(ChatProjectionEvent::Connectivity(online));
                 }
                 let strand_for_connectivity = selected_channel();
-                if let Ok(next) = crate::event_submit::pending_chat_outbound_message_ids(
+                if let Ok(next) = crate::event_submit::pending_chat_outbound_local_operation_ids(
                     &account_for_connectivity,
                     &realm_for_connectivity,
                     &strand_for_connectivity,
                 )
                 .await
-                    && *queued_outbound_message_ids.peek() != next
+                    && *queued_outbound_local_operation_ids.peek() != next
                 {
-                    queued_outbound_message_ids.set(next);
+                    queued_outbound_local_operation_ids.set(next);
                 }
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(2_500)).await;
             }

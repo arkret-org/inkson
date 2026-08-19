@@ -3,7 +3,6 @@ use super::{
     CardAuthorDisplayContext, card_author_display_label, dispatch_card_detail_update,
     json_path_string,
 };
-use crate::operation::sdk_event_local_operation_id;
 use crate::routes::Route;
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::transport::auth::with_authed_api;
@@ -353,8 +352,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
     // Await initialization first so a Save clicked early cannot misdiagnose a
     // healthy device as "no account MLS secret".
     #[cfg(target_arch = "wasm32")]
-    if let Err(error) =
-        crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
+    if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
     {
         tracing::warn!(
             %error,
@@ -678,14 +676,8 @@ pub(super) fn dispatch_calendar_rsvp(
                 "calendar RSVP schedule projection",
             )?;
             let schedule_heads = calendar_schedule_revision_heads(&events, &strand_id)?;
-            let frontier = api
-                .event_submitter()?
-                .events_frontier_actor(&build_actor_id, &build_realm_id)
-                .await?;
-            let hlc = crate::signing_stamp::issue_protocol_hlc_for_active_device(
-                &build_actor_id,
-                &build_realm_id,
-            )?;
+            // The actor frontier and HLC belong to the authoring boundary; the
+            // builder only states what the user chose.
             calendar_rsvp_operation(
                 &build_realm_id,
                 &build_actor_id,
@@ -694,25 +686,23 @@ pub(super) fn dispatch_calendar_rsvp(
                 &occurrence,
                 &calendar,
                 schedule_heads,
-                frontier.next_actor_seq,
-                hlc,
             )
         })
         .await;
         match built {
             Ok(event) => {
-                let operation_id = sdk_event_local_operation_id(&event).to_owned();
-                let kind = event.kind.as_str().to_owned();
+                let operation_id = event.local_operation_id().to_string();
+                let kind = event.kind().as_str().to_owned();
                 state_store.write().enqueue_local_projection_command(
                     operation_id.clone(),
                     Some(realm_id.clone()),
                     serde_json::json!({
                         "kind": kind,
                         "operation_id": operation_id.clone(),
-                        "actor_id": event.actor_id.to_string(),
-                        "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
+                        "actor_id": event.actor_id().to_string(),
+                        "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
                         "write_state": "queued",
-                        "body": event.payload.clone(),
+                        "body": event.payload().clone(),
                         "activity_summary": format!("RSVP {status}"),
                     }),
                 );

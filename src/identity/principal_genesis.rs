@@ -137,11 +137,10 @@ pub fn build_genesis_unit(
         root_did,
         root_method.clone(),
     );
-    arkret_sdk::signatures::sign_event_with_digest_suite(
+    arkret_sdk::signatures::sign_event(
         &mut create,
         &root_signer,
         &root_method,
-        arkret_sdk::canonical::DigestSuite::Sha256,
         arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
     )?;
 
@@ -165,8 +164,13 @@ pub fn build_genesis_unit(
             principal_server_id,
             payload,
         )?
-        .with_prev_refs(vec![create.event_id.clone()])
-        .author(1, authorize_hlc, created_at)?;
+        .with_prev_refs(vec![create.event_id().clone()])
+        .author_with_digest_suite(
+            1,
+            authorize_hlc,
+            created_at,
+            arkret_sdk::canonical::DigestSuite::Sha256,
+        )?;
     device_signer
         .sign_sdk_event_with_context(
             &mut authorize,
@@ -175,8 +179,8 @@ pub fn build_genesis_unit(
         )
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     arkret_bootstrap::build_self_principal_pcr_genesis_unit(
-        create,
-        authorize,
+        create.into_event(),
+        authorize.into_event(),
         &crate::operation::cell_write_projector,
     )
     .map_err(Into::into)

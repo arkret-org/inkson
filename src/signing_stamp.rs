@@ -12,7 +12,15 @@ impl HostClock for InksonClock {
     }
 }
 
-pub(crate) async fn issue_event_stamp(event: &arkret_sdk::Event) -> anyhow::Result<SigningStamp> {
+/// Issue a signing stamp for the chain an Event is about to join.
+///
+/// A Realm genesis has no Realm id yet — it is a function of the create Event
+/// id, which this stamp's HLC feeds into — so genesis authoring gets its own
+/// fixed local scope instead of borrowing a placeholder that looks like a Realm.
+pub(crate) async fn issue_event_stamp_for(
+    actor_id: &arkret_sdk::DidCoreId,
+    realm_id: Option<&arkret_sdk::RealmId>,
+) -> anyhow::Result<SigningStamp> {
     let signer = crate::event_signer::active_signer().context("no active event signer")?;
     let device_id = signer
         .device_id()
@@ -28,9 +36,12 @@ pub(crate) async fn issue_event_stamp(event: &arkret_sdk::Event) -> anyhow::Resu
     let local_node_secret = [0x49; 32];
     let scope = StampScope {
         service_id: None,
-        actor_id: event.actor_id.clone(),
+        actor_id: actor_id.clone(),
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
-        realm_id: event.realm_id.clone(),
+        realm_id: match realm_id {
+            Some(realm_id) => realm_id.clone(),
+            None => genesis_authoring_stamp_realm(),
+        },
     };
 
     #[cfg(all(not(target_arch = "wasm32"), not(test)))]
@@ -42,6 +53,17 @@ pub(crate) async fn issue_event_stamp(event: &arkret_sdk::Event) -> anyhow::Resu
         .issue()
         .await
         .map_err(Into::into)
+}
+
+/// Stamp scope for Realm genesis authoring.
+///
+/// Purely local: it partitions this device's monotonic stamp counters and never
+/// reaches the wire, so it cannot be mistaken for the Realm the create derives.
+fn genesis_authoring_stamp_realm() -> arkret_sdk::RealmId {
+    arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::canonical::DigestSuite::Sha256,
+        [0; 32],
+    ))
 }
 
 pub(crate) fn issue_protocol_hlc(

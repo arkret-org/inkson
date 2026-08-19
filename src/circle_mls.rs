@@ -1,10 +1,14 @@
-
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
 
-#[derive(Clone, Debug)]
+/// One-shot: the steps are consumed by authoring, so this plan is neither
+/// `Clone` nor `Debug`.
 pub struct CircleScopeRotateDraft {
-    pub events: Vec<arkret_sdk::Event>,
+    /// The remove proposals and their commit, in authoring order.
+    ///
+    /// The commit references the proposals by their FINAL `event_id`
+    /// (`proposal_refs`), so it can only be built after they are authored.
+    pub steps: Vec<crate::event_submit::EventUnitStep>,
     pub post_commit_snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
     pub removed_leaves: Vec<u32>,
     pub removed_principals: Vec<String>,
@@ -50,7 +54,7 @@ fn build_remove_proposal_event(
     target_principal_id: &str,
     proposal: &arkret_sdk::MlsProposalEnvelope,
     governance_binding: Option<arkret_sdk::MlsGovernanceBindingPayload>,
-) -> Result<arkret_sdk::Event, String> {
+) -> Result<crate::operation::LocalOperation, String> {
     let target_principal = crate::mls_api_helpers::principal_core_id(target_principal_id)
         .map_err(|err| format!("invalid remove target principal id: {err:?}"))?;
     let proposal_payload = arkret_sdk::MlsProposalPayload {
@@ -64,22 +68,19 @@ fn build_remove_proposal_event(
         target_device_id: None,
         governance_binding,
     };
-    let mut event = crate::operation::ak_ops::mls_proposal_with_governance(
+    let mut builder = crate::operation::ak_ops::mls_proposal_with_governance(
         realm_id,
         actor_id,
         &proposal.group_id,
         &proposal_payload,
     )
-    .map_err(|err| format!("MLS proposal payload failed: {err}"))?
-    .build_sdk_event("inkson")
-    .map_err(|err| format!("MLS proposal SDK Event conversion failed: {err}"))?;
+    .map_err(|err| format!("MLS proposal payload failed: {err}"))?;
     if let Some(effective_scope) = effective_scope {
-        event.scope_ref = effective_scope.clone();
-        event.event_id = event
-            .derive_event_id()
-            .map_err(|error| format!("derive scoped MLS proposal Event id: {error}"))?;
+        builder = builder.effective_scope(effective_scope.clone());
     }
-    Ok(event)
+    builder
+        .build_sdk_event("inkson")
+        .map_err(|err| format!("MLS proposal SDK Event conversion failed: {err}"))
 }
 
 fn build_remove_scope_rotate_draft(
@@ -126,8 +127,6 @@ fn build_remove_scope_rotate_draft(
             "OpenMLS remove proposal artifacts do not align with removed principals".to_owned(),
         );
     }
-    let mut events = Vec::with_capacity(remove.proposals.len().saturating_add(1));
-    let mut proposal_refs = Vec::with_capacity(remove.proposals.len());
     let request = crate::mls::governance_proof::proof_request_for_scope(
         state_store,
         effective_scope.clone(),
@@ -146,46 +145,49 @@ fn build_remove_scope_rotate_draft(
             "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
         );
     }
+    let mut proposals = Vec::with_capacity(remove.proposals.len());
     for (proposal, removed_principal) in remove
         .proposals
         .iter()
         .zip(remove.removed_principals.iter())
     {
-        let proposal_event = build_remove_proposal_event(
-            realm_id,
-            Some(&effective_scope),
-            actor_id,
-            removed_principal.as_str(),
-            proposal,
-            Some(proposal_governance_binding.clone()),
-        )?;
-        proposal_refs.push(proposal_event.event_id.clone());
-        events.push(proposal_event);
+        proposals.push(
+            build_remove_proposal_event(
+                realm_id,
+                Some(&effective_scope),
+                actor_id,
+                removed_principal.as_str(),
+                proposal,
+                Some(proposal_governance_binding.clone()),
+            )?
+            .into_intent(),
+        );
     }
-    let commit_event = if let Some(sidecar_binding) = sidecar_binding {
-        crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope_with_proposal_refs(
-            state_store,
-            realm_id,
-            actor_id,
-            &remove.commit,
-            &previous_governance_binding,
-            proposal_refs,
-            sidecar_binding,
-        )?
-    } else {
-        crate::mls::group_events::mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
-            state_store,
-            realm_id,
-            circle_id,
-            actor_id,
-            &remove.commit,
-            &previous_governance_binding,
-            proposal_refs,
-        )?
-    };
-    events.push(commit_event);
+    // The commit is built inside the authoring chain: `proposal_refs` are the
+    // proposals' final Event ids, which only exist once they are authored. The
+    // store is read HERE, into owned values, because the step runs later and
+    // cannot borrow this stack frame.
+    let commit_basis = crate::mls::group_events::mls_commit_basis_from_store(
+        state_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        &remove.commit,
+        &previous_governance_binding,
+        sidecar_binding,
+    )?;
+    let commit_step: crate::event_submit::EventUnitStep = Box::new(move |authored| {
+        let proposal_refs = authored
+            .iter()
+            .map(|event| event.event_id().clone())
+            .collect::<Vec<_>>();
+        let commit = commit_basis
+            .build(proposal_refs)
+            .map_err(anyhow::Error::msg)?;
+        Ok(vec![commit.into_intent()])
+    });
     Ok(CircleScopeRotateDraft {
-        events,
+        steps: vec![Box::new(move |_| Ok(proposals)), commit_step],
         post_commit_snapshot,
         removed_leaves: remove.removed_leaves,
         removed_principals: remove
@@ -317,16 +319,17 @@ pub async fn submit_circle_scope_rotate_draft(
     circle_id: &str,
     draft: CircleScopeRotateDraft,
 ) -> anyhow::Result<arkret_sdk::CircleScopeRotateOutcome> {
-    let (outcome, submitted_commit_ref) = crate::transport::circle::submit_circle_scope_rotate_events(
+    let (outcome, authored) = crate::transport::circle::submit_circle_scope_rotate_unit(
         &api.event_submitter()?,
         circle_id,
-        &draft.events,
+        draft.steps,
         None,
     )
     .await?;
-    // The on-wire commit id from batch preparation — the draft's build-time id
-    // is re-derived away during authoring and never reaches the server.
-    let accepted_commit_ref = submitted_commit_ref
+    let accepted_commit_ref = authored
+        .iter()
+        .find(|event| event.kind.as_str() == arkret_wire::event_kind_str::MLS_COMMIT)
+        .map(|event| event.event_id().clone())
         .ok_or_else(|| anyhow::anyhow!("Circle scope rotate has no MLS commit Event"))?;
     state_store
         .record_mls_group_state_ref_for_effective_scope(

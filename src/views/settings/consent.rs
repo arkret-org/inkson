@@ -339,7 +339,10 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                             write_status.set("granting…".to_owned());
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                    crate::transport::account::grant_consent(&http, &holder, &peer, &scope, expires_at).await
+                                                    crate::transport::account::grant_consent(
+                                                        &crate::event_submit::EventSubmitter::new(http),
+                                                        &holder, &peer, &scope, expires_at,
+                                                    ).await
                                                 })
                                                 .await
                                                 {
@@ -549,7 +552,10 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                                                         write_status.set("granting…".to_owned());
                                                                         spawn(async move {
                                                                             match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                                                crate::transport::account::grant_consent(&http, &holder, &peer, &scope, expires_at).await
+                                                                                crate::transport::account::grant_consent(
+                                                        &crate::event_submit::EventSubmitter::new(http),
+                                                        &holder, &peer, &scope, expires_at,
+                                                    ).await
                                                                             })
                                                                             .await
                                                                             {
@@ -622,7 +628,10 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                                                 write_status.set("revoking…".to_owned());
                                                                 spawn(async move {
                                                                     match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                                        crate::transport::account::revoke_consent(&http, &holder, &peer, &scope).await
+                                                                        crate::transport::account::revoke_consent(
+                                                        &crate::event_submit::EventSubmitter::new(http),
+                                                        &holder, &peer, &scope,
+                                                    ).await
                                                                     })
                                                                     .await
                                                                     {

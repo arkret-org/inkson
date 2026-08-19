@@ -22,9 +22,7 @@ pub fn build_calendar_rsvp_event(
     occurrence: Option<&str>,
     calendar_fields: &arkret_sdk::CalendarEventFields,
     schedule_basis_refs: Vec<arkret_sdk::Hash>,
-    actor_seq: u64,
-    hlc: arkret_sdk::Hlc,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let schedule_bytes = arkret_sdk::canonical::canonical_json_bytes(calendar_fields)?;
     let schedule = if schedule_basis_refs.len() == 1 {
         arkret_sdk::CalendarScheduleProjection::from_heads(&[(
@@ -42,16 +40,17 @@ pub fn build_calendar_rsvp_event(
     };
     let mut authoring = crate::operation::ak_ops::rsvp_authoring(strand_id, status, occurrence)?;
     authoring.schedule_basis_refs = schedule_basis_refs.clone();
-    Ok(arkret_sdk::calendar::build_rsvp_set_event(
-        authoring,
-        calendar_fields,
-        &schedule,
-        arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
-        },
-        crate::mls_api_helpers::principal_core_id(actor_id)?,
-        actor_seq,
-        hlc,
-        schedule_basis_refs,
-    )?)
+    Ok(crate::operation::LocalOperation::new(
+        arkret_sdk::calendar::build_rsvp_set_intent(
+            authoring,
+            calendar_fields,
+            &schedule,
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
+            },
+            crate::mls_api_helpers::principal_core_id(actor_id)?,
+            crate::clock::now_utc_millis(),
+            schedule_basis_refs,
+        )?,
+    ))
 }

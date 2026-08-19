@@ -13,7 +13,7 @@ use crate::components::{
     UiIcon,
 };
 use crate::models::SubmitEventResult;
-use crate::operation::{EventExt, ak_ops, sdk_event_local_operation_id, trim_realm_id, uuid_v7};
+use crate::operation::{ak_ops, trim_realm_id, uuid_v7};
 use crate::payload::sdk_payload_value;
 use crate::routes::Route;
 use crate::state::{ClientLocalState, LocalStateStore};
@@ -589,8 +589,9 @@ fn sign_prepared_sidecar_event(
     controller_id: &arkret_sdk::DidFullId,
     device_id: &str,
     source_realm_id: &arkret_sdk::RealmId,
-) -> anyhow::Result<arkret_sdk::Event> {
-    let controller_actor = arkret_sdk::project_full_id_to_core_id(controller_id)?;
+) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
+    let controller_actor =
+        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
     if draft.kind.as_str() != expected_kind {
         anyhow::bail!(
             "prepared Sidecar Event kind mismatch: expected {expected_kind}, got {}",
@@ -616,7 +617,7 @@ fn sign_prepared_sidecar_event(
         anyhow::bail!("prepared Sidecar Event payload contains a non-digest field");
     }
     object.insert("proofs".to_owned(), Value::Array(Vec::new()));
-    let mut event: arkret_sdk::Event = serde_json::from_value(digest_payload)
+    let event: arkret_sdk::Event = serde_json::from_value(digest_payload)
         .map_err(|error| anyhow::anyhow!("invalid prepared Sidecar Event: {error}"))?;
     let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
     if event.event_id != draft.event_id
@@ -630,6 +631,10 @@ fn sign_prepared_sidecar_event(
     {
         anyhow::bail!("prepared Sidecar Event metadata does not match its canonical bytes");
     }
+    // Authoring finished on the preparing side. Proving that here is what makes
+    // the reservation binding meaningful: signing must not be able to move the
+    // identity the server reserved.
+    let mut event = arkret_sdk::AuthoredEvent::from_verified(event)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Sidecar commit"))?;
     let expected_verification_method =
@@ -808,8 +813,8 @@ async fn ensure_owned_agent_sidecar(
                                     operation_id: ceremony_operation_id.clone(),
                                     idempotency_key,
                                     reservation_handle,
-                                    create_event,
-                                    context_attach_event,
+                                    create_event: create_event.into_event(),
+                                    context_attach_event: context_attach_event.into_event(),
                                 },
                             );
                             let pending = PendingNativeSidecarCommit {
@@ -873,7 +878,7 @@ async fn ensure_owned_agent_sidecar(
                                     operation_id: ceremony_operation_id.clone(),
                                     idempotency_key,
                                     reservation_handle,
-                                    context_attach_event,
+                                    context_attach_event: context_attach_event.into_event(),
                                 },
                             );
                             let pending = PendingNativeSidecarCommit {
@@ -1115,7 +1120,7 @@ async fn submit_source_routed_sidecar_message(
         Some(sidecar_mls_binding(view)),
     )
     .map_err(anyhow::Error::msg)?;
-    let local_operation_id = sdk_event_local_operation_id(&build.message_event).to_owned();
+    let local_operation_id = build.message_local_operation_id.to_string();
     let pending = crate::sidecar::PendingSidecarSubmission {
         controller_id: controller_id.to_owned(),
         sidecar_id: view.sidecar.id.clone(),
@@ -1144,6 +1149,7 @@ async fn submit_source_routed_sidecar_message(
         api_token,
         controller_id.to_owned(),
         None,
+        Vec::new(),
     )
     .await;
     let (event_id, status) = match outcome {
@@ -1293,19 +1299,21 @@ fn composer_mention_nodes(
     mentions
 }
 
-/// Attach the §4.5 E2EE mention-routing sidecar to an outgoing
-/// `ak.message.create`.
+/// The §4.5 E2EE mention-routing sidecar digests this send should carry.
 ///
-/// `routing_key` is the Realm's current-epoch mention routing key. It is
-/// `None` whenever the sidecar must not be produced — a plaintext Realm, a
-/// Realm whose effective `mention_routing_hint` is `disabled`, or a device
-/// that cannot reach its MLS group — and the event then goes out with no
-/// sidecar rather than with a tag derived from anything else.
-fn apply_mention_sidecar_digestes(
-    event: &mut arkret_sdk::Event,
+/// `routing_key` is the Realm's current-epoch mention routing key. It is `None`
+/// whenever the sidecar must not be produced — a plaintext Realm, a Realm whose
+/// effective `mention_routing_hint` is `disabled`, or a device that cannot reach
+/// its MLS group — and the message then goes out with no sidecar rather than
+/// with a tag derived from anything else.
+///
+/// Returned as data rather than written onto a built Event:
+/// `mention_sidecar_digest` is a producer-signed payload member, so it has to be
+/// in place before the identity is derived from that payload.
+pub(super) fn mention_sidecar_digests(
     mentions: &[MentionNode],
     routing_key: Option<&[u8]>,
-) {
+) -> Vec<String> {
     let mention_dids = mentions
         .iter()
         .filter_map(|node| {
@@ -1314,23 +1322,13 @@ fn apply_mention_sidecar_digestes(
         })
         .collect::<Vec<_>>();
     if mention_dids.is_empty() {
-        return;
+        return Vec::new();
     }
     let Some(routing_key) = routing_key else {
-        return;
+        return Vec::new();
     };
-    let Ok(digests) =
-        crate::messaging::mentions::mention_sidecar_digestes(routing_key, &mention_dids)
-    else {
-        return;
-    };
-    // `event-payload.schema.json#/$defs/message_create_payload` puts
-    // `mention_sidecar_digest` at the payload root and closes the object, so
-    // nesting it under `content` would be a schema violation, not a variant.
-    event.payload.insert(
-        "mention_sidecar_digest".to_owned(),
-        Value::Array(digests.into_iter().map(Value::String).collect()),
-    );
+    crate::messaging::mentions::mention_sidecar_digestes(routing_key, &mention_dids)
+        .unwrap_or_default()
 }
 
 fn chat_visible_read_receipt_should_send(
@@ -1529,7 +1527,7 @@ pub fn ChatPanel(
         mut strand_watch_level,
         mut watch_level_menu_open,
         mut status_msg,
-        queued_outbound_message_ids,
+        queued_outbound_local_operation_ids,
         is_online,
         reply_to_message: _,
         editing_message: _,
@@ -2384,67 +2382,15 @@ pub fn ChatPanel(
                                             &realm,
                                             &actor,
                                             &title,
-                                        ) {
-                                            Ok(builder) => {
-                                                let mut op = match builder.build_sdk_event("inkson") {
-                                                    Ok(event) => event,
-                                                    Err(error) => {
-                                                        status_msg.set(format!(
-                                                            "Could not create Strand proof: {error}"
-                                                        ));
-                                                        return;
-                                                    }
-                                                };
-                                                let Some(object) = op
-                                                    .payload
-                                                    .get_mut("object")
-                                                    .and_then(Value::as_object_mut)
-                                                else {
-                                                    status_msg.set("Could not create Strand: payload object missing".to_owned());
-                                                    return;
-                                                };
-                                                if !object
-                                                    .get("fields")
-                                                    .is_some_and(Value::is_object)
-                                                {
-                                                    object.insert("fields".to_owned(), json!({}));
-                                                }
-                                                let Some(fields) = object
-                                                    .get_mut("fields")
-                                                    .and_then(Value::as_object_mut)
-                                                else {
-                                                    status_msg.set("Could not create Strand: fields is not an object".to_owned());
-                                                    return;
-                                                };
-                                                fields.insert("category".to_owned(), json!(category.clone()));
-                                                fields.insert("has_synthesis".to_owned(), json!(create_card));
-                                                object.insert("rank".to_owned(), json!(rank.clone()));
-                                                if !summary.is_empty() {
-                                                    object.insert("summary".to_owned(), json!(summary.clone()));
-                                                }
-                                                if let Some(circle_id) = selected_scope_circle_id.as_deref() {
-                                                    object.insert("scope_circle_id".to_owned(), json!(circle_id));
-                                                }
-                                                if !create_card
-                                                    && let Some(tracks) = object
-                                                        .get_mut("tracks")
-                                                        .and_then(Value::as_object_mut)
-                                                {
-                                                    tracks.remove("synthesis");
-                                                }
-                                                // The edits above changed the content the id is a
-                                                // function of, and the Strand this create names is a
-                                                // function of that id in turn.
-                                                if let Err(error) =
-                                                    crate::operation::rederive_event_identity(&mut op)
-                                                {
-                                                    status_msg.set(format!(
-                                                        "Could not create Strand: {error}"
-                                                    ));
-                                                    return;
-                                                }
-                                                op
-                                            }
+                                            &category,
+                                            (!summary.is_empty()).then_some(summary.as_str()),
+                                            &rank,
+                                            selected_scope_circle_id.as_deref(),
+                                            create_card,
+                                        )
+                                        .and_then(|builder| builder.build_sdk_event("inkson"))
+                                        {
+                                            Ok(op) => op,
                                             Err(error) => {
                                                 status_msg.set(format!(
                                                     "Could not create Strand: {error}"
@@ -2452,15 +2398,9 @@ pub fn ChatPanel(
                                                 return;
                                             }
                                         };
-                                        // The Strand is named by its own create Event; the builder
-                                        // stamped `retype(event_id)` as the local handle.
-                                        let Some(strand_id) = op.local_target_ref().map(ToOwned::to_owned)
-                                        else {
-                                            status_msg.set(
-                                                "Could not create Strand: ak.strand.create carries no derived Strand id".to_owned(),
-                                            );
-                                            return;
-                                        };
+                                        // The Strand is named by its own create Event, so its id
+                                        // exists only once that Event is accepted. Until then this
+                                        // write is known by its holder-local operation id.
                                         let api_token = token();
                                         let wait_for = active_sync_token(sync_cursor());
                                         let channel_topic = if summary.is_empty() { None } else { Some(summary) };
@@ -2476,6 +2416,20 @@ pub fn ChatPanel(
                                                     }
                                                     {
                                                         Ok(submitted) => {
+                                                            let strand_id = match arkret_sdk::EventId::new(
+                                                                submitted.event_id.clone(),
+                                                            ) {
+                                                                Ok(event_id) => arkret_sdk::StrandId::from_event_id(
+                                                                    &event_id,
+                                                                )
+                                                                .into_string(),
+                                                                Err(error) => {
+                                                                    status_msg.set(format!(
+                                                                        "Strand created but its accepted id is invalid: {error}"
+                                                                    ));
+                                                                    return;
+                                                                }
+                                                            };
                                                             channels.write().push(ChannelEntity {
                                                                 strand_id: strand_id.clone(),
                                                                 name: title.clone(),
@@ -2496,7 +2450,7 @@ pub fn ChatPanel(
                                                                 // account-subscribe cursor; the background sync loop
                                                                 // must resume only from /account/subscribe cursors.
                                                                 store.append_raw_operation(
-                                                                    sdk_event_local_operation_id(&sdk_op).to_owned(),
+                                                                    sdk_op.local_operation_id().to_string(),
                                                                     Some(realm.clone()),
                                                                     json!({
                                                                         "strand_id": strand_id,
@@ -2505,7 +2459,7 @@ pub fn ChatPanel(
                                                                         "category": category,
                                                                         "summary": channel_topic,
                                                                         "create_card": create_card,
-                                                                        "object": sdk_op.payload["object"].clone(),
+                                                                        "object": sdk_op.payload()["object"].clone(),
                                                                         "event_id": submitted.event_id,
                                                                     }),
                                                                 );
@@ -2813,7 +2767,7 @@ pub fn ChatPanel(
                 // Offline queue banner. Visible while the browser is offline or
                 // Garth still has pending chat events for this actor.
                 {
-                    let queued_count = queued_outbound_message_ids().len();
+                    let queued_count = queued_outbound_local_operation_ids().len();
                     let online = is_online();
                     rsx! {
                         if !online || queued_count > 0 {
@@ -3599,19 +3553,18 @@ pub fn ChatPanel(
                                             return;
                                         };
                                         let title = draft_snapshot.title.trim().to_owned();
-                                        // The ids fall out of the create
-                                        // Events, so the envelopes are built
-                                        // first — synchronously, before the
-                                        // optimistic indicator that names the
-                                        // Strand they derive.
-                                        let built = crate::messaging::discussion_promote::build_promote_ops(
+                                        // The Circle and Strand ids fall out of
+                                        // the create Events, so they exist only
+                                        // after the unit is authored. The
+                                        // promoted indicator is therefore set
+                                        // once the unit lands, not before.
+                                        let steps = match crate::messaging::discussion_promote::build_promote_steps(
                                             &realm,
                                             &actor,
                                             &source_id,
                                             &title,
-                                        );
-                                        let (ids, ops) = match built {
-                                            Ok(built) => built,
+                                        ) {
+                                            Ok(steps) => steps,
                                             Err(err) => {
                                                 status_msg.set(format!(
                                                     "Private discussion creation failed: {err}"
@@ -3619,12 +3572,6 @@ pub fn ChatPanel(
                                                 return;
                                             }
                                         };
-                                        // Optimistic UI: seal the
-                                        // promoted indicator before the
-                                        // server round-trip completes.
-                                        promoted_targets
-                                            .write()
-                                            .insert(source_id.clone(), ids.discussion_strand_id.clone());
                                         promote_discussion_draft.write().close();
 
                                         let base = base.clone();
@@ -3643,24 +3590,38 @@ pub fn ChatPanel(
                                                 &base,
                                                 api_token,
                                                 |api| async move {
-                                                    for op in ops {
-                                                        api.event_submitter()?.submit_sdk_event(&op).await?;
-                                                    }
-                                                    Ok(())
+                                                    let submitter = api.event_submitter()?;
+                                                    let authored =
+                                                        submitter.author_event_unit(steps).await?;
+                                                    let ids = crate::messaging::discussion_promote::promote_ids(
+                                                        &authored,
+                                                    )?;
+                                                    submitter
+                                                        .submit_signed_sdk_events_batch(&authored, None)
+                                                        .await?;
+                                                    Ok(ids)
                                                 },
                                             ).await;
-                                            if let Err(err) = outcome {
-                                                tracing::warn!(
-                                                    "discussion promote failed: {}",
-                                                    err.display()
-                                                );
-                                                promoted_targets
-                                                    .write()
-                                                    .remove(&source_id_for_rollback);
-                                                status_msg.set(format!(
-                                                    "Private discussion creation failed: {}",
-                                                    err.display()
-                                                ));
+                                            match outcome {
+                                                Ok(ids) => {
+                                                    promoted_targets.write().insert(
+                                                        source_id_for_rollback.clone(),
+                                                        ids.discussion_strand_id,
+                                                    );
+                                                }
+                                                Err(err) => {
+                                                    tracing::warn!(
+                                                        "discussion promote failed: {}",
+                                                        err.display()
+                                                    );
+                                                    promoted_targets
+                                                        .write()
+                                                        .remove(&source_id_for_rollback);
+                                                    status_msg.set(format!(
+                                                        "Private discussion creation failed: {}",
+                                                        err.display()
+                                                    ));
+                                                }
                                             }
                                         });
                                     }

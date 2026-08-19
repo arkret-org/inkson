@@ -907,20 +907,24 @@ mod tests {
 
     #[test]
     fn recent_strands_use_only_sync_backed_operations_for_active_realm() {
-        let operation = |id: &str, realm_id: &str| RawOperationRecord {
-            operation_id: format!("operation-{id}"),
+        // Sync-backed record shape: the ingest funnel keys the record by the
+        // ACCEPTED Event id, and the Strand is `retype(event_id)` — a create
+        // payload names no object id of its own.
+        let operation = |event_id: &str, realm_id: &str| RawOperationRecord {
+            operation_id: event_id.to_owned(),
             realm_id: Some(realm_id.to_owned()),
             received_at: chrono::DateTime::parse_from_rfc3339("2026-07-13T00:00:00.000Z")
                 .unwrap()
                 .with_timezone(&chrono::Utc),
             payload: json!({
                 "kind": "ak.strand.create",
+                "operation_id": event_id,
                 "realm_id": realm_id,
-                "payload": {
+                "write_state": "synced",
+                "body": {
                     "object": {
-                        "id": id,
                         "realm_id": realm_id,
-                        "metadata": { "title": id }
+                        "metadata": { "title": event_id }
                     }
                 }
             }),
@@ -929,11 +933,11 @@ mod tests {
         let realm_b = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
         let operations = vec![
             operation(
-                "ak:strand:AU2FuZ5Cmuwsb0J0xuJwH47SCEL34D7oJWb4JivTH934",
+                "ak:event:AU2FuZ5Cmuwsb0J0xuJwH47SCEL34D7oJWb4JivTH934",
                 realm_a,
             ),
             operation(
-                "ak:strand:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu",
+                "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu",
                 realm_b,
             ),
         ];

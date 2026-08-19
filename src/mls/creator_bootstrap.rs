@@ -215,25 +215,9 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                 )
             })?;
         let accepted = match submitter.submit_sdk_event(&genesis_event).await {
-            // The durable submit queue re-authors the frozen intent (actor
-            // chain, HLC, CBA basis are all in the digest preimage), so the
-            // accepted Event id is NOT the build-time id. Encrypted writes
-            // bind their `group_state_ref` to the accepted id; recording the
-            // build-time one poisons every later envelope and trips the
-            // sync-side genesis fork guard forever.
-            Ok(result) => match arkret_sdk::EventId::new(result.event_id) {
-                Ok(accepted_event_id) => Ok(accepted_event_id),
-                Err(_) => submitter
-                    .find_mls_genesis_event_id(realm_id)
-                    .await
-                    .and_then(|event_id| {
-                        event_id.ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "MLS genesis was accepted but its Event id is unavailable"
-                            )
-                        })
-                    }),
-            },
+            Ok(accepted) => arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(|error| {
+                anyhow::anyhow!("accepted ak.mls.genesis carries an invalid Event id: {error}")
+            }),
             // A duplicate is success only after resolving the exact
             // already-accepted Event id: encrypted writes bind their
             // `group_state_ref` to it, so merely setting the emitted flag would

@@ -205,16 +205,21 @@ pub fn AppealEntrypoint(
                                     return;
                                 }
                             };
-                            let appeal_id =
-                                arkret_sdk::TypedAppealId::from_event_id(&envelope.event_id)
-                                    .to_string();
+                            // The Appeal is named by its own create Event, so its id
+                            // exists only once that Event is accepted.
                             let result = with_authed_api(&base, token, |api| async move {
                                 api.event_submitter()?.submit_sdk_event(&envelope).await
                             })
                             .await;
                             match result {
-                                Ok(_) => {
+                                Ok(accepted) => {
                                     local_state.set(AppealState::Submitted);
+                                    let appeal_id = arkret_sdk::EventId::new(accepted.event_id)
+                                        .map(|event_id| {
+                                            arkret_sdk::TypedAppealId::from_event_id(&event_id)
+                                                .to_string()
+                                        })
+                                        .unwrap_or_default();
                                     status.set(format!(
                                         "Appeal {} submitted — server will surface status here once the review lands.",
                                         short_protocol_id(&appeal_id)
@@ -252,20 +257,20 @@ mod tests {
         )
         .expect("build appeal op")
         .build("test-node");
-        assert_eq!(op.kind, "ak.moderation.appeal.submit");
+        assert_eq!(op.kind(), "ak.moderation.appeal.submit");
         assert_eq!(
-            op.payload["realm_id"],
+            op.payload()["realm_id"],
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         );
-        assert!(!op.payload.contains_key("appeal_id"));
-        assert!(!op.payload.contains_key("schema"));
+        assert!(!op.payload().contains_key("appeal_id"));
+        assert!(!op.payload().contains_key("schema"));
         let registry = arkret_sdk::schema::schema_registry_from_default_spec_artifacts()
             .unwrap()
             .unwrap();
         registry
             .validate_value(
                 "ak.schema.moderation_appeal.v1#/$defs/submit_payload",
-                &serde_json::to_value(&op.payload).unwrap(),
+                &serde_json::to_value(&op.payload()).unwrap(),
             )
             .unwrap();
     }

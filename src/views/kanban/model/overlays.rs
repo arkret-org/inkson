@@ -813,12 +813,11 @@ pub(crate) fn local_space_create_from_raw_operation(
 
 /// Resolve the object named by an event-derived create.
 ///
-/// Before acceptance an optimistic row only knows `local_target_ref`, derived
-/// from the draft Event id. Final authoring changes content-bound identity when
-/// it attaches actor-chain/HLC/CBA fields; the submit receipt is persisted as
-/// `event_id`. Prefer that accepted id, or the canonical backfill row's
-/// `operation_id`, and fall back to the temporary handle while the write is in
-/// flight.
+/// Before acceptance an optimistic row only knows its holder-local handle in
+/// `local_target_ref` — the write's own operation id, never anything shaped
+/// like a protocol id. The submit receipt is persisted as `event_id`. Prefer
+/// that accepted id, or the canonical backfill row's `operation_id`, and fall
+/// back to the holder-local handle while the write is in flight.
 pub(crate) fn raw_operation_create_target_id(payload: &Value) -> Option<String> {
     raw_operation_accepted_create_target_id(payload).or_else(|| {
         let kind = json_path_string(Some(payload), &["kind"])
@@ -875,8 +874,8 @@ pub(crate) fn event_derived_target_aliases(
     // Backfilled Events retain the producer's local operation alias as an
     // unsigned reconciliation hint. It is never used to derive canonical
     // protocol identity; it only joins an already-local optimistic row to the
-    // server-accepted Event. This also heals rows written by builds that did
-    // not persist the submit receipt's final event id.
+    // server-accepted Event, so a live-sync backfill lands on the row the user
+    // is already looking at instead of creating a second object.
     for canonical in raw_operations {
         let Some(operation_alias) = json_path_string(
             Some(&canonical.payload),

@@ -617,7 +617,7 @@ fn production_chat_message_create_operation(
     body: &str,
     mentions: &[MentionNode],
     reply_to: Option<&str>,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     chat_message_create_operation_with_content(
         realm_id,
         actor,
@@ -643,37 +643,40 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     )
     .expect("builds");
 
-    assert_eq!(op.kind.as_str(), "ak.message.create");
-    assert!(!op.payload.contains_key("message_id"));
-    let message_id = arkret_sdk::MessageId::from_event_id(&op.event_id);
-    assert_eq!(message_id.token_bytes(), op.event_id.token_bytes());
+    assert_eq!(op.kind().as_str(), "ak.message.create");
+    assert!(!op.payload().contains_key("message_id"));
+    // The Message is named by its own create Event: the id is `retype(event_id)`
+    // of the finalized envelope, and the producer never carries one in payload.
+    let authored = crate::operation::author_for_test(&op);
+    let message_id = arkret_sdk::MessageId::from_event_id(authored.event_id());
+    assert_eq!(message_id.token_bytes(), authored.event_id().token_bytes());
     assert_eq!(
-        op.payload["strand_id"].as_str(),
+        op.payload()["strand_id"].as_str(),
         Some("ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
     );
-    assert_eq!(op.payload["track_name"].as_str(), Some("discussion"));
+    assert_eq!(op.payload()["track_name"].as_str(), Some("discussion"));
     assert_eq!(
-        op.payload["content"]["kind"].as_str(),
+        op.payload()["content"]["kind"].as_str(),
         Some("ak.content.text")
     );
     assert_eq!(
-        op.payload["content"]["body"].as_str(),
+        op.payload()["content"]["body"].as_str(),
         Some("hello from chat")
     );
-    assert!(op.payload["content"].get("blocks").is_none());
-    assert!(!op.payload.contains_key("body"));
-    assert!(!op.payload.contains_key("encrypted"));
-    assert!(!op.payload.contains_key("kind"));
-    assert!(!op.payload.contains_key("mentions"));
-    assert!(!op.payload.contains_key("audience_mentions"));
-    assert!(!op.payload.contains_key("mention_relations"));
-    assert!(!op.payload.contains_key("reply_to"));
-    assert!(!op.payload.contains_key("thread_id"));
+    assert!(op.payload()["content"].get("blocks").is_none());
+    assert!(!op.payload().contains_key("body"));
+    assert!(!op.payload().contains_key("encrypted"));
+    assert!(!op.payload().contains_key("kind"));
+    assert!(!op.payload().contains_key("mentions"));
+    assert!(!op.payload().contains_key("audience_mentions"));
+    assert!(!op.payload().contains_key("mention_relations"));
+    assert!(!op.payload().contains_key("reply_to"));
+    assert!(!op.payload().contains_key("thread_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -707,18 +710,18 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
     )
     .expect("builds");
 
-    assert!(!op.payload.contains_key("priority"));
-    assert!(op.payload["content"].get("priority").is_none());
-    assert!(op.payload["content"].get("notification").is_none());
+    assert!(!op.payload().contains_key("priority"));
+    assert!(op.payload()["content"].get("priority").is_none());
+    assert!(op.payload()["content"].get("notification").is_none());
     assert_eq!(
-        op.payload["content"]["body"].as_str(),
+        op.payload()["content"]["body"].as_str(),
         Some("SEV-1 public update: checkout latency is recovering")
     );
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -738,17 +741,17 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["content"]["audience_mentions"][0]["audience"].as_str(),
+        op.payload()["content"]["audience_mentions"][0]["audience"].as_str(),
         Some("strand_engaged")
     );
-    assert!(!op.payload.contains_key("audience_mentions"));
-    assert!(!op.payload.contains_key("mentions"));
-    assert!(!op.payload.contains_key("mention_relations"));
+    assert!(!op.payload().contains_key("audience_mentions"));
+    assert!(!op.payload().contains_key("mentions"));
+    assert!(!op.payload().contains_key("mention_relations"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -782,7 +785,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     )
     .expect("builds");
 
-    let mention = &op.payload["content"]["mentions"][0];
+    let mention = &op.payload()["content"]["mentions"][0];
     assert_eq!(mention["kind"].as_str(), Some("mention"));
     assert_eq!(
         mention["subject_id"].as_str(),
@@ -798,12 +801,12 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     );
     assert_eq!(mention["agent_slug_at_time"].as_str(), Some("summary"));
     assert!(mention.get("target").is_none());
-    assert!(!op.payload.contains_key("mentions"));
+    assert!(!op.payload().contains_key("mentions"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -817,7 +820,10 @@ fn mention_sidecar_is_omitted_without_an_epoch_routing_key() {
     let mentions = vec![MentionNode::mention(arkret_sdk::Mention::new(
         crate::mls_api_helpers::principal_core_id("did:web:agent.example").unwrap(),
     ))];
-    let mut event = production_chat_message_create_operation(
+    // The digests are an input to authoring now, so "no sidecar" is an empty
+    // digest list rather than a member missing from a built Event.
+    assert!(mention_sidecar_digests(&mentions, None).is_empty());
+    let event = production_chat_message_create_operation(
         realm,
         "did:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
@@ -827,10 +833,7 @@ fn mention_sidecar_is_omitted_without_an_epoch_routing_key() {
         None,
     )
     .expect("builds");
-
-    apply_mention_sidecar_digestes(&mut event, &mentions, None);
-
-    assert!(!event.payload.contains_key("mention_sidecar_digest"));
+    assert!(!event.payload().contains_key("mention_sidecar_digest"));
 }
 
 #[test]
@@ -847,15 +850,15 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["reply_to"].as_str(),
+        op.payload()["reply_to"].as_str(),
         Some("ak:message:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM")
     );
-    assert!(!op.payload.contains_key("thread_id"));
+    assert!(!op.payload().contains_key("thread_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -954,14 +957,14 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     )
     .expect("shared pin add builds");
 
-    assert_eq!(add.kind.as_str(), "ak.pin.add");
-    assert_eq!(add.payload["pin_scope"]["kind"], "strand");
-    assert_eq!(add.payload["pin_scope"]["id"], strand_id);
-    assert_eq!(add.payload["target_ref"], target_ref);
-    assert_eq!(add.payload["rank"], "r100");
-    assert!(!add.payload.contains_key("key"));
-    assert!(!add.payload.contains_key("encrypted_payload"));
-    assert!(!add.payload.contains_key("body"));
+    assert_eq!(add.kind().as_str(), "ak.pin.add");
+    assert_eq!(add.payload()["pin_scope"]["kind"], "strand");
+    assert_eq!(add.payload()["pin_scope"]["id"], strand_id);
+    assert_eq!(add.payload()["target_ref"], target_ref);
+    assert_eq!(add.payload()["rank"], "r100");
+    assert!(!add.payload().contains_key("key"));
+    assert!(!add.payload().contains_key("encrypted_payload"));
+    assert!(!add.payload().contains_key("body"));
 
     let remove = shared_message_pin_remove_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
@@ -970,21 +973,21 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
         target_ref,
     )
     .expect("shared pin remove builds");
-    assert_eq!(remove.kind.as_str(), "ak.pin.remove");
-    assert_eq!(remove.payload["target_ref"], target_ref);
-    assert!(!remove.payload.contains_key("key"));
+    assert_eq!(remove.kind().as_str(), "ak.pin.remove");
+    assert_eq!(remove.payload()["target_ref"], target_ref);
+    assert!(!remove.payload().contains_key("key"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            add.kind.as_str(),
-            &serde_json::to_value(&add.payload).unwrap(),
+            add.kind().as_str(),
+            &serde_json::to_value(&add.payload()).unwrap(),
         )
         .unwrap();
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            remove.kind.as_str(),
-            &serde_json::to_value(&remove.payload).unwrap(),
+            remove.kind().as_str(),
+            &serde_json::to_value(&remove.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -1004,15 +1007,15 @@ fn selected_discussion_shared_pin_uses_exact_strand_scope() {
     )
     .expect("shared pin add builds");
 
-    assert_eq!(add.kind.as_str(), "ak.pin.add");
-    assert_eq!(add.payload["pin_scope"]["kind"], "strand");
-    assert_eq!(add.payload["pin_scope"]["id"], strand_id);
-    assert_eq!(add.payload["target_ref"], target_ref);
+    assert_eq!(add.kind().as_str(), "ak.pin.add");
+    assert_eq!(add.payload()["pin_scope"]["kind"], "strand");
+    assert_eq!(add.payload()["pin_scope"]["id"], strand_id);
+    assert_eq!(add.payload()["target_ref"], target_ref);
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            add.kind.as_str(),
-            &serde_json::to_value(&add.payload).unwrap(),
+            add.kind().as_str(),
+            &serde_json::to_value(&add.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -1047,12 +1050,12 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
     )
     .unwrap()
     .build("inkson");
-    assert_eq!(op.kind, "ak.account_data.set");
-    assert_eq!(op.payload["key"], item.account_data_key);
-    assert_eq!(op.payload["expected_revision"], 0);
-    assert_eq!(op.payload["encrypted_payload"]["kind"], "saved_item");
-    assert!(!op.payload.contains_key("body"));
-    assert_ne!(op.kind, "ak.pin.add");
+    assert_eq!(op.kind(), "ak.account_data.set");
+    assert_eq!(op.payload()["key"], item.account_data_key);
+    assert_eq!(op.payload()["expected_revision"], 0);
+    assert_eq!(op.payload()["encrypted_payload"]["kind"], "saved_item");
+    assert!(!op.payload().contains_key("body"));
+    assert_ne!(op.kind(), "ak.pin.add");
 }
 
 #[test]
@@ -4644,20 +4647,20 @@ fn chat_message_revise_operation_retypes_event_target_to_message_id() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["message_id"],
+        op.payload()["message_id"],
         "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
     );
-    assert_eq!(op.payload["content"]["kind"], "ak.content.text");
-    assert_eq!(op.payload["content"]["body"], "edited");
-    assert!(!op.payload.contains_key("body"));
+    assert_eq!(op.payload()["content"]["kind"], "ak.content.text");
+    assert_eq!(op.payload()["content"]["body"], "edited");
+    assert!(!op.payload().contains_key("body"));
     for retired in ["target_ref", "target_event_id", "revision_of"] {
-        assert!(!op.payload.contains_key(retired));
+        assert!(!op.payload().contains_key(retired));
     }
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4675,17 +4678,17 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["message_id"],
+        op.payload()["message_id"],
         "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
     );
-    assert!(!op.payload.contains_key("target_ref"));
-    assert_eq!(op.payload["content"]["kind"], "ak.content.text");
-    assert_eq!(op.payload["content"]["body"], "edited");
+    assert!(!op.payload().contains_key("target_ref"));
+    assert_eq!(op.payload()["content"]["kind"], "ak.content.text");
+    assert_eq!(op.payload()["content"]["body"], "edited");
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4702,18 +4705,18 @@ fn chat_message_redact_operation_retypes_event_target_to_message_id() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["message_id"],
+        op.payload()["message_id"],
         "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
     );
-    assert_eq!(op.payload["reason"], "author_redaction");
+    assert_eq!(op.payload()["reason"], "author_redaction");
     for retired in ["target_ref", "event_id", "target_event_id"] {
-        assert!(!op.payload.contains_key(retired));
+        assert!(!op.payload().contains_key(retired));
     }
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4729,16 +4732,16 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["message_id"],
+        op.payload()["message_id"],
         "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
     );
-    assert_eq!(op.payload["reason"], "author_redaction");
-    assert!(!op.payload.contains_key("target_event_id"));
+    assert_eq!(op.payload()["reason"], "author_redaction");
+    assert!(!op.payload().contains_key("target_event_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4754,17 +4757,17 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
     .expect("builds");
 
     assert_eq!(
-        op.payload["target_ref"],
+        op.payload()["target_ref"],
         "ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo"
     );
-    assert_eq!(op.payload["key"], "+1");
-    assert!(!op.payload.contains_key("event_id"));
-    assert!(!op.payload.contains_key("actor"));
+    assert_eq!(op.payload()["key"], "+1");
+    assert!(!op.payload().contains_key("event_id"));
+    assert!(!op.payload().contains_key("actor"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
-            op.kind.as_str(),
-            &serde_json::to_value(&op.payload).unwrap(),
+            op.kind().as_str(),
+            &serde_json::to_value(&op.payload()).unwrap(),
         )
         .unwrap();
 }

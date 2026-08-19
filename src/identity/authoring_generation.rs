@@ -45,14 +45,50 @@ pub(crate) fn reset_verified_authoring_generations() {
         .clear();
 }
 
+/// The envelope facts a generation fence needs, readable from either side of
+/// the authoring boundary.
+///
+/// Nothing here depends on `event_id`, which is why the fence can run on a
+/// frozen intent as well as on an authored Event — and why it never needed an
+/// Event to be authored early just to answer this question.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EventAuthorityFacts<'a> {
+    actor_id: &'a arkret_sdk::DidCoreId,
+    executed_by: Option<&'a arkret_sdk::DidCoreId>,
+    authorization_ref: Option<&'a arkret_sdk::AuthorizationRef>,
+}
+
+impl<'a> EventAuthorityFacts<'a> {
+    pub(crate) fn from_intent(intent: &'a crate::operation::EventIntent) -> Self {
+        Self {
+            actor_id: intent.actor_id(),
+            executed_by: intent.executed_by(),
+            authorization_ref: intent.authorization_ref(),
+        }
+    }
+
+    /// The principal whose device generation authorizes this write.
+    fn authority_principal(&self) -> &str {
+        self.executed_by.unwrap_or(self.actor_id).as_str()
+    }
+
+    /// True when a managed Agent authors on a controller's behalf.
+    fn is_delegated(&self) -> bool {
+        self.executed_by
+            .is_some_and(|executed_by| executed_by != self.actor_id)
+    }
+
+    fn authorization_ref_str(&self) -> &str {
+        self.authorization_ref
+            .map(|value| value.as_str())
+            .unwrap_or_default()
+    }
+}
+
 pub(crate) fn cached_event_authoring_generation(
-    event: &arkret_sdk::Event,
+    facts: &EventAuthorityFacts<'_>,
 ) -> anyhow::Result<Option<AuthoringGeneration>> {
-    let authority_principal = event
-        .executed_by
-        .as_ref()
-        .unwrap_or(&event.actor_id)
-        .as_str();
+    let authority_principal = facts.authority_principal();
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured for generation-fenced write")
     })?;
@@ -71,11 +107,11 @@ pub(crate) fn cached_event_authoring_generation(
         return Ok(None);
     };
 
-    if event.executed_by.is_some() && authority_principal != event.actor_id.as_str() {
+    if facts.is_delegated() {
         return AuthoringGeneration::managed_agent(
             authority_principal,
             &controller_generation,
-            event.authorization_ref.as_deref().unwrap_or_default(),
+            facts.authorization_ref_str(),
         )
         .map(Some)
         .map_err(anyhow::Error::from);
@@ -85,9 +121,9 @@ pub(crate) fn cached_event_authoring_generation(
 
 pub(crate) async fn resolve_event_authoring_generation(
     http: &arkret_sdk::http_client::Client,
-    event: &arkret_sdk::Event,
+    facts: &EventAuthorityFacts<'_>,
 ) -> anyhow::Result<AuthoringGeneration> {
-    match resolve_current_event_authoring_generation(http, event).await? {
+    match resolve_current_event_authoring_generation(http, facts).await? {
         CurrentEventAuthoringGeneration::Active(generation) => Ok(generation),
         CurrentEventAuthoringGeneration::Quarantine(reason) => anyhow::bail!(reason),
     }
@@ -100,13 +136,9 @@ pub(crate) enum CurrentEventAuthoringGeneration {
 
 pub(crate) async fn resolve_current_event_authoring_generation(
     http: &arkret_sdk::http_client::Client,
-    event: &arkret_sdk::Event,
+    facts: &EventAuthorityFacts<'_>,
 ) -> anyhow::Result<CurrentEventAuthoringGeneration> {
-    let authority_principal = event
-        .executed_by
-        .as_ref()
-        .unwrap_or(&event.actor_id)
-        .as_str();
+    let authority_principal = facts.authority_principal();
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured for generation-fenced write")
     })?;
@@ -122,11 +154,11 @@ pub(crate) async fn resolve_current_event_authoring_generation(
         };
     cache_verified_principal_generation(authority_principal, device_id, &controller_generation);
 
-    if event.executed_by.is_some() && authority_principal != event.actor_id.as_str() {
+    if facts.is_delegated() {
         return AuthoringGeneration::managed_agent(
             authority_principal,
             &controller_generation,
-            event.authorization_ref.as_deref().unwrap_or_default(),
+            facts.authorization_ref_str(),
         )
         .map(CurrentEventAuthoringGeneration::Active)
         .map_err(anyhow::Error::from);

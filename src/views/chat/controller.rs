@@ -165,7 +165,11 @@ pub(super) struct ChatController {
     pub strand_watch_level: Signal<WatchLevel>,
     pub watch_level_menu_open: Signal<bool>,
     pub status_msg: Signal<String>,
-    pub queued_outbound_message_ids: Signal<std::collections::BTreeSet<String>>,
+    /// Holder-local ids of the sends still sitting in the durable queue.
+    ///
+    /// Holder-local because a queued send has no accepted Message id: the
+    /// Message is named by the create Event, and nothing has accepted it yet.
+    pub queued_outbound_local_operation_ids: Signal<std::collections::BTreeSet<String>>,
     pub is_online: Signal<bool>,
     pub reply_to_message: Signal<Option<String>>,
     pub editing_message: Signal<Option<String>>,
@@ -541,12 +545,12 @@ impl ChatController {
             match result {
                 Ok(submitted) => {
                     state_store.write().append_raw_operation(
-                        sdk_event_local_operation_id(&operation).to_owned(),
+                        operation.local_operation_id().to_string(),
                         Some(realm_id),
                         json!({
                             "event_id": submitted.event_id.clone(),
-                            "kind": operation.kind.as_str(),
-                            "payload": operation.payload.clone(),
+                            "kind": operation.kind().as_str(),
+                            "payload": operation.payload().clone(),
                         }),
                     );
                     frontier_state.set(submitted.event_id);
@@ -760,7 +764,7 @@ impl ChatController {
                     // The submitted operation itself contains the target and
                     // is folded immediately; the realm stream later upserts the
                     // same event id with its server-signed envelope.
-                    if let Ok(payload) = serde_json::to_value(&operation) {
+                    if let Ok(payload) = serde_json::to_value(operation.intent()) {
                         state_store.write().upsert_raw_operation(
                             submitted.event_id.clone(),
                             Some(realm_id),
@@ -873,7 +877,7 @@ impl ChatController {
             {
                 Ok(submitted) => {
                     state_store.write().append_raw_operation(
-                        sdk_event_local_operation_id(&operation).to_owned(),
+                        operation.local_operation_id().to_string(),
                         Some(message.realm_id.clone()),
                         json!({
                             "event_id": submitted.event_id.clone(),
@@ -1046,7 +1050,7 @@ pub(super) fn use_chat_controller(
         strand_watch_level: use_signal(|| WatchLevel::All),
         watch_level_menu_open: use_signal(|| false),
         status_msg: use_signal(String::new),
-        queued_outbound_message_ids: use_signal(std::collections::BTreeSet::<String>::new),
+        queued_outbound_local_operation_ids: use_signal(std::collections::BTreeSet::<String>::new),
         is_online: use_signal(navigator_online),
         reply_to_message: use_signal(|| None),
         editing_message: use_signal(|| None),

@@ -187,7 +187,10 @@ fn applet_install_resource(scope: &ScopeRef) -> anyhow::Result<arkret_sdk::WireR
 fn build_formal_applet_install_events(
     snapshot: &AppletInstallPreviewSnapshot,
     actor_id: &str,
-) -> anyhow::Result<(arkret_sdk::Event, Vec<arkret_sdk::Event>)> {
+) -> anyhow::Result<(
+    crate::operation::LocalOperation,
+    Vec<crate::operation::LocalOperation>,
+)> {
     let actor = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|error| anyhow::anyhow!("invalid install actor DID: {error}"))?;
     if snapshot.plan.effective_scope != snapshot.effective_scope {
@@ -699,10 +702,18 @@ pub fn AppletsPanel(
                                                 let (registration, grants) =
                                                     build_formal_applet_install_events(&snapshot, &actor_id)?;
                                                 let mut events = Vec::with_capacity(1 + grants.len());
-                                                events.push(registration);
-                                                events.extend(grants);
-                                                let mut events =
-                                                    submitter.prepare_sdk_events_batch(events).await?;
+                                                events.push(registration.into_intent());
+                                                events.extend(
+                                                    grants.into_iter().map(
+                                                        crate::operation::LocalOperation::into_intent,
+                                                    ),
+                                                );
+                                                let mut events = submitter
+                                                    .author_independent_events(events)
+                                                    .await?
+                                                    .into_iter()
+                                                    .map(arkret_sdk::AuthoredEvent::into_event)
+                                                    .collect::<Vec<_>>();
                                                 let registration_event = events.remove(0);
                                                 let body = AppletInstallRequestBody {
                                                     plan_digest: snapshot.plan.plan_digest.clone(),
@@ -861,8 +872,16 @@ pub fn AppletsPanel(
                                                                     .build_sdk_event("inkson")?,
                                                                 );
                                                             }
+                                                            let authored_revokes = submitter
+                                                                .author_independent_events(
+                                                                    revoke_events
+                                                                        .into_iter()
+                                                                        .map(crate::operation::LocalOperation::into_intent)
+                                                                        .collect(),
+                                                                )
+                                                                .await?;
                                                             let capability_revoke_events = submitter
-                                                                .prepare_initial_submissions(revoke_events)
+                                                                .prepare_initial_submissions(&authored_revokes)
                                                                 .await?;
                                                             let body = AppletRevokeRequestBody {
                                                                 revoke_plan_digest: preview.revoke_plan_digest,

@@ -17,18 +17,23 @@ fn message_builder(realm_id: &str, actor_id: &str, body: &str) -> TypedOperation
     )
 }
 
-fn assert_registered_payload_valid(event: &Event) {
+fn assert_registered_payload_valid(operation: &LocalOperation) {
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
-    let payload = serde_json::to_value(&event.payload).unwrap();
+    let payload = serde_json::to_value(operation.payload()).unwrap();
     catalog
-        .validate_payload(event.kind.as_str(), &payload)
+        .validate_payload(operation.kind().as_str(), &payload)
         .unwrap_or_else(|err| {
             panic!(
                 "{} payload violates registered spec schema: {err}\npayload: {}",
-                event.kind,
-                serde_json::to_string_pretty(&event.payload).unwrap()
+                operation.kind(),
+                serde_json::to_string_pretty(operation.payload()).unwrap()
             );
         });
+}
+
+/// Finalize a built write so a test can inspect the envelope that ships.
+fn authored(operation: &LocalOperation) -> arkret_sdk::AuthoredEvent {
+    author_for_test(operation)
 }
 
 fn assert_payload_field_names_are_spec_canonical(
@@ -93,24 +98,27 @@ fn operation_builder_generates_valid_envelope() {
     )
     .build("test_node");
 
-    assert!(!op.local_operation_id().is_empty());
+    assert!(!op.local_operation_id().as_str().is_empty());
     assert_eq!(
-        op.realm_id.as_str(),
+        op.realm_id_opt().expect("realm-scoped write").as_str(),
         "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8"
     );
-    assert_eq!(op.actor_id.as_str(), "ak:did_core:web:alice");
-    assert_eq!(op.kind.as_str(), "ak.message.create");
+    assert_eq!(op.actor_id().as_str(), "ak:did_core:web:alice");
+    assert_eq!(op.kind().as_str(), "ak.message.create");
+
+    // The authoring position and the signing stamp arrive at the finalize
+    // boundary, and nothing carries a proof before an identity exists.
+    let event = authored(&op);
     assert!(
-        !op.hlc
+        !event
+            .hlc
             .as_ref()
-            .expect("durable message event must carry HLC")
+            .expect("an authored Event carries its signing stamp")
             .as_str()
             .is_empty()
     );
-    assert!(op.actor_seq > 0);
-    // Spec compliance: build() never attaches a placeholder proof —
-    // the submit path requires an installed signer.
-    assert!(op.proofs.is_empty());
+    assert!(event.proofs.is_empty());
+    event.verify_identity().unwrap();
 }
 
 #[test]
@@ -125,7 +133,7 @@ fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
     .unwrap();
 
     assert_eq!(
-        serde_json::to_value(op).unwrap()["created_at"],
+        serde_json::to_value(authored(&op)).unwrap()["created_at"],
         json!("2026-07-18T10:20:30.987Z")
     );
 }
@@ -138,9 +146,12 @@ fn operation_round_trip_serde() {
         "hello world",
     )
     .build("node");
-    let json = serde_json::to_string(&op).unwrap();
-    let parsed: Event = serde_json::from_str(&json).unwrap();
-    assert_eq!(op, parsed);
+    // Deserializing re-derives the identity from the content it reads, so a
+    // round trip is also a proof that the two agree.
+    let event = authored(&op);
+    let json = serde_json::to_string(&event).unwrap();
+    let parsed: arkret_sdk::AuthoredEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(event, parsed);
 }
 
 #[test]
@@ -155,16 +166,19 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     .build("node");
 
     assert_eq!(
-        op.executed_by.as_ref().map(|did| did.as_str()),
+        op.intent().executed_by().as_ref().map(|did| did.as_str()),
         Some("ak:did_core:web:agent.example")
     );
     assert_eq!(
-        op.authorization_ref.as_deref(),
+        op.intent()
+            .authorization_ref()
+            .map(arkret_sdk::AuthorizationRef::as_str),
         Some("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS")
     );
-    assert!(!op.unsigned.contains_key("local_authz_ref"));
 
-    let mut canonical = serde_json::to_value(&op).unwrap();
+    let event = authored(&op);
+    assert!(!event.unsigned.contains_key("local_authz_ref"));
+    let mut canonical = serde_json::to_value(&event).unwrap();
     if let serde_json::Value::Object(object) = &mut canonical {
         object.remove("proofs");
         object.remove("unsigned");
@@ -184,7 +198,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         "hello world",
     )
     .build("node");
-    let mut value = serde_json::to_value(&op).unwrap();
+    let mut value = serde_json::to_value(authored(&op)).unwrap();
     // The top-level `effective_scope` field is deleted in v1; a wire object
     // that still carries it MUST be rejected rather than silently ignored.
     let mut with_stale_field = value.clone();
@@ -239,7 +253,7 @@ fn event_envelope_rejects_unknown_top_level_fields() {
         "hello world",
     )
     .build("node");
-    let mut value = serde_json::to_value(&op).unwrap();
+    let mut value = serde_json::to_value(authored(&op)).unwrap();
     value
         .as_object_mut()
         .unwrap()
@@ -264,42 +278,42 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind.as_str(), "ak.strand.create");
+    assert_eq!(op.kind().as_str(), "ak.strand.create");
     assert_eq!(
-        op.realm_id.as_str(),
+        op.realm_id_opt().expect("realm-scoped write").as_str(),
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
     assert_eq!(
-        op.payload["object"]["realm_id"],
+        op.payload()["object"]["realm_id"],
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
     assert_eq!(
-        op.payload["object"]["tracks"]["synthesis"]["profile"],
+        op.payload()["object"]["tracks"]["synthesis"]["profile"],
         "kanban_card"
     );
     assert_eq!(
-        op.payload["object"]["tracks"]["discussion"]["profile"],
+        op.payload()["object"]["tracks"]["discussion"]["profile"],
         "discussion"
     );
     assert_eq!(
-        op.payload["object"]["metadata"]["fields"]["board_space_id"],
+        op.payload()["object"]["metadata"]["fields"]["board_space_id"],
         "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
     );
     assert_eq!(
-        op.payload["object"]["metadata"]["fields"]["list_space_id"],
+        op.payload()["object"]["metadata"]["fields"]["list_space_id"],
         "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
     );
     assert_eq!(
-        op.payload["object"]["metadata"]["title"],
+        op.payload()["object"]["metadata"]["title"],
         "Move-backed card"
     );
-    assert!(op.payload["object"].get("fields").is_none());
-    assert!(op.payload["object"].get("title").is_none());
-    assert!(op.payload["object"].get("space_id").is_none());
-    assert!(!op.payload.contains_key("components"));
-    assert!(!op.payload.contains_key("patch"));
+    assert!(op.payload()["object"].get("fields").is_none());
+    assert!(op.payload()["object"].get("title").is_none());
+    assert!(op.payload()["object"].get("space_id").is_none());
+    assert!(!op.payload().contains_key("components"));
+    assert!(!op.payload().contains_key("patch"));
     assert_registered_payload_valid(&op);
-    assert_payload_field_names_are_spec_canonical(&op.payload);
+    assert_payload_field_names_are_spec_canonical(&op.payload());
 }
 
 #[test]
@@ -340,12 +354,12 @@ fn mls_commit_builder_matches_registered_payload_schema() {
         .unwrap()
         .build("node");
 
-    assert_eq!(op.kind.as_str(), "ak.mls.commit");
-    assert!(!op.payload.contains_key("group_id"));
-    assert!(!op.payload.contains_key("preconditions"));
-    assert!(!op.payload.contains_key("effects"));
+    assert_eq!(op.kind().as_str(), "ak.mls.commit");
+    assert!(!op.payload().contains_key("group_id"));
+    assert!(!op.payload().contains_key("preconditions"));
+    assert!(!op.payload().contains_key("effects"));
     assert_registered_payload_valid(&op);
-    assert_payload_field_names_are_spec_canonical(&op.payload);
+    assert_payload_field_names_are_spec_canonical(&op.payload());
 }
 
 #[test]
@@ -354,30 +368,38 @@ fn discussion_strand_create_emits_discussion_track() {
         "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
         "did:web:alice.example",
         "Ops",
+        "general",
+        None,
+        "a0",
+        None,
+        false,
     )
     .unwrap()
     .build("node");
-    assert_eq!(op.kind.as_str(), "ak.strand.create");
-    // The create payload carries no object id; the derived one is stamped as
-    // the client-local handle instead.
-    assert!(op.payload["object"].get("id").is_none());
+    assert_eq!(op.kind().as_str(), "ak.strand.create");
+    // The create payload carries no object id, and neither does the write: the
+    // Strand is named by `retype(event_id)` of the create, which does not exist
+    // until the create is finalized.
+    assert!(op.payload()["object"].get("id").is_none());
+    assert_eq!(op.local_target_ref(), None);
+    let event = authored(&op);
     assert_eq!(
-        op.local_target_ref(),
-        Some(arkret_sdk::StrandId::from_event_id(&op.event_id).as_str())
+        arkret_sdk::StrandId::from_event_id(event.event_id()).token_bytes(),
+        event.event_id().token_bytes()
     );
-    assert!(!op.payload.contains_key("strand_id"));
+    assert!(!op.payload().contains_key("strand_id"));
     assert_eq!(
-        op.payload["object"]["tracks"]["discussion"]["profile"],
+        op.payload()["object"]["tracks"]["discussion"]["profile"],
         "discussion"
     );
     assert_eq!(
-        op.payload["object"]["tracks"]["discussion"]["is_primary"],
+        op.payload()["object"]["tracks"]["discussion"]["is_primary"],
         true
     );
-    assert_eq!(op.payload["object"]["metadata"]["title"], "Ops");
-    assert!(op.payload["object"].get("title").is_none());
+    assert_eq!(op.payload()["object"]["metadata"]["title"], "Ops");
+    assert!(op.payload()["object"].get("title").is_none());
     assert_registered_payload_valid(&op);
-    assert!(op.payload["object"].get("kind").is_none());
+    assert!(op.payload()["object"].get("kind").is_none());
 }
 
 #[test]
@@ -391,13 +413,13 @@ fn strand_tracks_update_primary_uses_is_primary_patch_key() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(op.kind.as_str(), "ak.strand.tracks.update");
+    assert_eq!(op.kind().as_str(), "ak.strand.tracks.update");
     assert_eq!(
-        op.payload["patch"]["tracks.discussion.is_primary"]["value"],
+        op.payload()["patch"]["tracks.discussion.is_primary"]["value"],
         true
     );
     assert!(
-        op.payload["patch"]
+        op.payload()["patch"]
             .get("tracks.discussion.primary")
             .is_none()
     );
@@ -417,12 +439,12 @@ fn strand_update_patch_uses_canonical_payload_patch() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(op.kind.as_str(), "ak.strand.update");
+    assert_eq!(op.kind().as_str(), "ak.strand.update");
     assert_eq!(op.local_target_ref(), Some(strand_id));
-    assert_eq!(op.payload["target_ref"], strand_id);
-    assert!(!op.payload.contains_key("strand_id"));
-    assert_eq!(op.payload["patch"]["title"]["value"], "Launch checklist");
-    assert!(!op.payload.contains_key("fields"));
+    assert_eq!(op.payload()["target_ref"], strand_id);
+    assert!(!op.payload().contains_key("strand_id"));
+    assert_eq!(op.payload()["patch"]["title"]["value"], "Launch checklist");
+    assert!(!op.payload().contains_key("fields"));
 }
 
 #[test]
@@ -461,14 +483,14 @@ fn strand_update_builders_match_registered_object_patch_schema() {
     ];
 
     for event in &events {
-        assert_eq!(event.kind.as_str(), "ak.strand.update");
-        assert!(event.payload.contains_key("patch"));
-        assert_eq!(event.payload["target_ref"], strand_id);
-        assert!(!event.payload.contains_key("strand_id"));
-        assert!(!event.payload.contains_key("fields"));
-        assert!(!event.payload.contains_key("position"));
-        assert!(!event.payload.contains_key("board_space_id"));
-        assert!(!event.payload.contains_key("expected_position"));
+        assert_eq!(event.kind().as_str(), "ak.strand.update");
+        assert!(event.payload().contains_key("patch"));
+        assert_eq!(event.payload()["target_ref"], strand_id);
+        assert!(!event.payload().contains_key("strand_id"));
+        assert!(!event.payload().contains_key("fields"));
+        assert!(!event.payload().contains_key("position"));
+        assert!(!event.payload().contains_key("board_space_id"));
+        assert!(!event.payload().contains_key("expected_position"));
         assert_registered_payload_valid(event);
     }
 }
@@ -528,21 +550,29 @@ fn object_patch_family_builders_match_registered_payload_schema() {
     ];
 
     for event in &events {
-        assert!(event.payload.contains_key("patch"), "{}", event.kind);
-        if event.kind == "ak.space.update" {
-            assert_eq!(event.payload["space_id"], space_id);
-            assert!(!event.payload.contains_key("target_ref"), "{}", event.kind);
+        assert!(event.payload().contains_key("patch"), "{}", event.kind());
+        if event.kind() == "ak.space.update" {
+            assert_eq!(event.payload()["space_id"], space_id);
+            assert!(
+                !event.payload().contains_key("target_ref"),
+                "{}",
+                event.kind()
+            );
         } else {
             // Everything else — including `ak.strand.tracks.update`, whose
             // registered contract derives its cell subject from
             // `payload.target_ref` — single-sources the target there.
-            assert!(event.payload.contains_key("target_ref"), "{}", event.kind);
+            assert!(
+                event.payload().contains_key("target_ref"),
+                "{}",
+                event.kind()
+            );
         }
         assert_registered_payload_valid(event);
         // Every one of these is a reducer-input kind, so the registry must be
         // able to derive its writes from `kind + payload` alone.
-        crate::operation::project_registered_cell_writes(event)
-            .unwrap_or_else(|err| panic!("{} projection: {err}", event.kind));
+        crate::operation::pre_authoring_cell_writes(event.intent())
+            .unwrap_or_else(|err| panic!("{} projection: {err}", event.kind()));
     }
 }
 
@@ -566,22 +596,22 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind.as_str(), "ak.strand.move");
+    assert_eq!(op.kind().as_str(), "ak.strand.move");
     assert_eq!(
-        op.payload["board_space_id"],
+        op.payload()["board_space_id"],
         "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"
     );
     assert_eq!(
-        op.payload["target_space_id"],
+        op.payload()["target_space_id"],
         "ak:space:AeQLz_7_lGwMdENhkoPlgbKh0MqfZ-5HB8Vz5zWCeClm"
     );
-    assert_eq!(op.payload["rank"], "b1");
+    assert_eq!(op.payload()["rank"], "b1");
     assert_eq!(
-        op.payload["expected_position"]["space_id"],
+        op.payload()["expected_position"]["space_id"],
         "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc"
     );
-    assert_eq!(op.payload["expected_position"]["rank"], "a1");
-    assert!(!op.payload.contains_key("position"));
+    assert_eq!(op.payload()["expected_position"]["rank"], "a1");
+    assert!(!op.payload().contains_key("position"));
 }
 
 #[test]
@@ -604,20 +634,20 @@ fn strand_position_cas_update_emits_canonical_reorder_payload() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(op.kind.as_str(), "ak.strand.reorder");
+    assert_eq!(op.kind().as_str(), "ak.strand.reorder");
     assert_eq!(
-        op.payload["board_space_id"],
+        op.payload()["board_space_id"],
         "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"
     );
     assert_eq!(
-        op.payload["space_id"],
+        op.payload()["space_id"],
         "ak:space:ASnqpJQi0G5Ljanp7UQXjmcIaFVqDSvBNupH4kpQaTzc"
     );
-    assert_eq!(op.payload["rank"], "a2");
-    assert_eq!(op.payload["expected_position"]["rank"], "a1");
-    assert!(op.payload["expected_position"].get("space_id").is_none());
-    assert!(!op.payload.contains_key("target_space_id"));
-    assert!(!op.payload.contains_key("position"));
+    assert_eq!(op.payload()["rank"], "a2");
+    assert_eq!(op.payload()["expected_position"]["rank"], "a1");
+    assert!(op.payload()["expected_position"].get("space_id").is_none());
+    assert!(!op.payload().contains_key("target_space_id"));
+    assert!(!op.payload().contains_key("position"));
 }
 
 #[test]
@@ -632,75 +662,96 @@ fn space_create_emits_canonical_space_object() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(op.kind.as_str(), "ak.space.create");
-    // The Space id is derived from this create Event, not chosen by the caller.
+    assert_eq!(op.kind().as_str(), "ak.space.create");
+    // The Space is named by this create Event, not chosen by the caller — so the
+    // write reports no target and the id appears only once it is finalized.
+    assert_eq!(op.local_target_ref(), None);
+    let event = authored(&op);
     assert_eq!(
-        op.local_target_ref(),
-        Some(arkret_sdk::SpaceId::from_event_id(&op.event_id).as_str())
+        arkret_sdk::SpaceId::from_event_id(event.event_id()).token_bytes(),
+        event.event_id().token_bytes()
     );
-    assert_eq!(op.payload["object"]["schema"], "ak.schema.space.v1");
+    assert_eq!(op.payload()["object"]["schema"], "ak.schema.space.v1");
     // The create payload carries no object id (spec `common-fields.md` §6.0).
-    assert!(op.payload["object"].get("id").is_none());
+    assert!(op.payload()["object"].get("id").is_none());
     assert_eq!(
-        op.payload["object"]["realm_id"],
+        op.payload()["object"]["realm_id"],
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
-    assert!(op.payload["object"].get("space_id").is_none());
-    assert_eq!(op.payload["object"]["kind"], "list");
+    assert!(op.payload()["object"].get("space_id").is_none());
+    assert_eq!(op.payload()["object"]["kind"], "list");
     assert_eq!(
-        op.payload["object"]["parent_space_id"],
+        op.payload()["object"]["parent_space_id"],
         "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
     );
-    assert_eq!(op.payload["object"]["rank"], "U");
-    assert_eq!(op.payload["object"]["created_by"], "ak:did_core:web:alice");
-    let created_at = op.payload["object"]["created_at"].as_str().unwrap();
+    assert_eq!(op.payload()["object"]["rank"], "U");
+    assert_eq!(
+        op.payload()["object"]["created_by"],
+        "ak:did_core:web:alice"
+    );
+    let created_at = op.payload()["object"]["created_at"].as_str().unwrap();
     arkret_sdk::canonical::validate_timestamp_canonical(created_at).unwrap();
-    let event_wire = serde_json::to_value(&op).unwrap();
+    let event_wire = serde_json::to_value(authored(&op)).unwrap();
     arkret_sdk::canonical::validate_timestamp_canonical(event_wire["created_at"].as_str().unwrap())
         .unwrap();
 }
 
 #[test]
 fn canonical_digest_is_stable_across_key_order() {
-    let mut op_a = message_builder(
+    let op_a = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:alice",
         "hello",
     )
     .build("node");
-    op_a.event_id =
-        arkret_sdk::EventId::new("ak:event:AUD01bF1nvRNX9DV18CzK2rYYQ_JlSJq2mzqGMlz12Yf").unwrap();
-    op_a.hlc = Some(arkret_sdk::Hlc::new("000000000000-0000-00000000".to_owned()).unwrap());
-    op_a.actor_seq = 1;
+    let event_a = authored(&op_a);
 
     // Same members, different source order.
-    let mut op_b = op_a.clone();
-    op_b.payload = serde_json::from_value(json!({
-        "content": {"body": "hello", "kind": "ak.content.text"},
-        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
-        "track_name": "discussion"
-    }))
-    .unwrap();
+    let event_b = author_intent_for_test(
+        serde_json::from_value::<EventIntent>(
+            serde_json::to_value(&{
+                let mut reordered = serde_json::to_value(op_a.intent()).unwrap();
+                reordered.as_object_mut().unwrap().insert(
+                    "payload".to_owned(),
+                    serde_json::from_value(json!({
+                        "content": {"body": "hello", "kind": "ak.content.text"},
+                        "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
+                        "track_name": "discussion"
+                    }))
+                    .unwrap(),
+                );
+                reordered
+            })
+            .unwrap(),
+        )
+        .unwrap(),
+    );
 
+    assert_eq!(event_a.event_id(), event_b.event_id());
     assert_eq!(
-        op_a.canonical_digest().unwrap(),
-        op_b.canonical_digest().unwrap()
+        event_a.canonical_digest().unwrap(),
+        event_b.canonical_digest().unwrap()
     );
 }
 
 #[test]
 fn sign_ed25519_attaches_typed_proof() {
     use ed25519_dalek::SigningKey;
-    let mut op = message_builder(
+    let op = message_builder(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice",
         "hi",
     )
     .build("node");
+    // Only an authored envelope can be signed: a proof binds an identity, so
+    // there is nothing to sign until one exists.
+    let mut event = authored(&op);
+    let identity = event.event_id().clone();
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
-    op.sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
+    event
+        .sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
         .expect("sign ok");
-    let proof = op
+    let proof = event
         .proofs
         .iter()
         .find_map(arkret_sdk::EventProof::as_producer)
@@ -709,11 +760,14 @@ fn sign_ed25519_attaches_typed_proof() {
     assert!(proof.event_digest.as_str().starts_with("sha256:"));
     // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
     assert_eq!(proof.jws.matches('.').count(), 2);
-    assert!(op.require_proof().is_ok());
+    assert!(event.require_proof().is_ok());
+    // Attaching the proof does not move the identity it committed to.
+    assert_eq!(event.event_id(), &identity);
+    event.verify_identity().unwrap();
 }
 
 #[test]
-fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
+fn authoring_a_built_write_yields_an_unsigned_envelope_ready_to_sign() {
     let op = message_builder(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice.example",
@@ -721,51 +775,56 @@ fn sdk_event_conversion_accepts_unsigned_builder_for_signing() {
     )
     .build("node");
 
-    let sdk_event = op.clone();
+    let event = authored(&op);
 
-    assert!(sdk_event.proofs.is_empty());
-    assert_eq!(sdk_event.kind.as_str(), "ak.message.create");
-    assert_eq!(sdk_event.realm_id.as_str(), op.realm_id.as_str());
+    assert!(event.proofs.is_empty());
+    assert_eq!(event.kind.as_str(), "ak.message.create");
+    assert_eq!(
+        Some(&event.realm_id),
+        op.realm_id_opt(),
+        "the authored envelope stays in the write's Realm"
+    );
 }
 
 #[test]
-fn sdk_submit_event_conversion_preserves_signed_digest() {
+fn a_signed_envelope_keeps_the_digest_its_proof_committed_to() {
     use ed25519_dalek::SigningKey;
 
-    let mut op = message_builder(
+    let op = message_builder(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice.example",
         "hi",
     )
     .build("node");
+    let mut event = authored(&op);
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
-    op.sign_ed25519(
-        "did:web:alice.example",
-        "did:web:alice.example#k1",
-        &signing_key,
-    )
-    .expect("sign ok");
+    event
+        .sign_ed25519(
+            "did:web:alice.example",
+            "did:web:alice.example#k1",
+            &signing_key,
+        )
+        .expect("sign ok");
 
-    let local_digest = op.canonical_digest().unwrap();
-    let sdk_event = op.clone();
-    assert_eq!(sdk_event.event_id, op.event_id);
-    assert_eq!(sdk_event.event_digest().unwrap().as_str(), local_digest);
+    let local_digest = event.canonical_digest().unwrap();
+    assert_eq!(event.event_digest().unwrap().as_str(), local_digest);
     assert_eq!(
-        op.require_proof().unwrap().event_digest.as_str(),
+        event.require_proof().unwrap().event_digest.as_str(),
         local_digest
     );
 }
 
 #[test]
 fn require_proof_fails_when_unsigned() {
-    let mut op = message_builder(
+    let op = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:alice",
         "hi",
     )
     .build("node");
-    op.proofs.clear();
-    assert!(op.require_proof().is_err());
+    let mut event = authored(&op);
+    event.clear_proofs();
+    assert!(event.require_proof().is_err());
 }
 
 #[test]
@@ -791,42 +850,43 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(create.kind.as_str(), "ak.invite.create");
-    let derived_invite_id = arkret_sdk::InviteId::from_event_id(&create.event_id).to_string();
-    assert!(!create.payload.contains_key("invite_id"));
-    assert_eq!(create.payload["invitee"], "ak:did_core:web:bob.example");
+    assert_eq!(create.kind().as_str(), "ak.invite.create");
+    let created = authored(&create);
+    let derived_invite_id = arkret_sdk::InviteId::from_event_id(created.event_id()).to_string();
+    assert!(!create.payload().contains_key("invite_id"));
+    assert_eq!(create.payload()["invitee"], "ak:did_core:web:bob.example");
     assert_eq!(
-        create.payload["invite_delivery_target"],
+        create.payload()["invite_delivery_target"],
         serde_json::to_value(invite_delivery_target).unwrap()
     );
     assert_eq!(
-        create.payload["introduction_evidence_digest"],
+        create.payload()["introduction_evidence_digest"],
         introduction_evidence_digest
     );
     assert!(
         arkret_sdk::canonical::validate_timestamp_canonical(
-            create.payload["expires_at"].as_str().unwrap()
+            create.payload()["expires_at"].as_str().unwrap()
         )
         .is_ok()
     );
-    assert_eq!(create.payload["x_role"], "member");
+    assert_eq!(create.payload()["x_role"], "member");
     assert!(
         create
-            .payload
+            .payload()
             .get("expires_at")
             .and_then(|value| value.as_str())
             .is_some()
     );
-    assert!(!create.payload.contains_key("target"));
-    assert!(!create.payload.contains_key("role"));
-    assert!(!create.payload.contains_key("state"));
-    assert!(!create.payload.contains_key("x_member_delivery_binding"));
+    assert!(!create.payload().contains_key("target"));
+    assert!(!create.payload().contains_key("role"));
+    assert!(!create.payload().contains_key("state"));
+    assert!(!create.payload().contains_key("x_member_delivery_binding"));
     assert_registered_payload_valid(&create);
     // `validate_registered_cell_writes` also runs the CBA plane check, and
     // `ak.invite.create` is control-plane: its `seal_basis` is attached by the
     // submit gate, not by authoring. The authoring-time claim is that the
     // registry can derive the writes at all.
-    let writes = crate::operation::project_registered_cell_writes(&create)
+    let writes = crate::operation::project_registered_cell_writes(&created)
         .expect("direct invite create must carry both registered FSM writes");
     assert_eq!(
         writes
@@ -846,11 +906,11 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(accept.kind.as_str(), "ak.invite.accept");
-    assert_eq!(accept.payload["invite_id"], invite_id);
-    assert!(!accept.payload.contains_key("state"));
+    assert_eq!(accept.kind().as_str(), "ak.invite.accept");
+    assert_eq!(accept.payload()["invite_id"], invite_id);
+    assert!(!accept.payload().contains_key("state"));
     assert_registered_payload_valid(&accept);
-    let accept_writes = crate::operation::project_registered_cell_writes(&accept)
+    let accept_writes = crate::operation::pre_authoring_cell_writes(accept.intent())
         .expect("invite accept must atomically advance invite and member FSMs");
     assert_eq!(accept_writes.len(), 2);
 
@@ -864,16 +924,16 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(cancel.kind.as_str(), "ak.invite.cancel");
-    assert_eq!(cancel.payload["invite_id"], invite_id);
-    assert_eq!(cancel.payload["reason"], "expired");
-    assert_eq!(cancel.payload["invitee"], "ak:did_core:web:bob.example");
+    assert_eq!(cancel.kind().as_str(), "ak.invite.cancel");
+    assert_eq!(cancel.payload()["invite_id"], invite_id);
+    assert_eq!(cancel.payload()["reason"], "expired");
+    assert_eq!(cancel.payload()["invitee"], "ak:did_core:web:bob.example");
     // `target_state` is the signed operand of the lifecycle `transition_to`
     // projection; without it the cancel has no derivable cell write.
-    assert_eq!(cancel.payload["target_state"], "revoked");
-    assert!(!cancel.payload.contains_key("state"));
+    assert_eq!(cancel.payload()["target_state"], "revoked");
+    assert!(!cancel.payload().contains_key("state"));
     assert_registered_payload_valid(&cancel);
-    let pre_state_error = crate::operation::project_registered_cell_writes(&cancel)
+    let pre_state_error = crate::operation::pre_authoring_cell_writes(cancel.intent())
         .expect_err("direct cancel must be bound to accepted frozen invite state");
     assert_eq!(pre_state_error.reason_code(), "invite_kind_requires_revoke");
     let lifecycle_cell = arkret_sdk::CellRef::new(format!(
@@ -884,8 +944,9 @@ fn invite_helpers_emit_canonical_kinds() {
         lifecycle_cell,
         serde_json::json!({"invitee": "ak:did_core:web:bob.example"}),
     )]);
+    let cancelled = authored(&cancel);
     let cancel_writes = arkret_sdk::schema::project_registered_cell_writes_with_pre_state(
-        &cancel,
+        &cancelled,
         arkret_sdk::canonical::DigestSuite::Sha256,
         &frozen_pre_state,
     )
@@ -926,10 +987,10 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("token invite revoke builds")
     .build("node");
-    assert_eq!(revoke.kind.as_str(), "ak.invite.revoke");
-    assert_eq!(revoke.payload["target_state"], "revoked");
-    assert_eq!(revoke.payload["reason"], "admin_revoke");
-    assert!(!revoke.payload.contains_key("invitee"));
+    assert_eq!(revoke.kind().as_str(), "ak.invite.revoke");
+    assert_eq!(revoke.payload()["target_state"], "revoked");
+    assert_eq!(revoke.payload()["reason"], "admin_revoke");
+    assert!(!revoke.payload().contains_key("invitee"));
 }
 
 #[test]
@@ -942,8 +1003,8 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(archive.kind.as_str(), "ak.space.archive");
-    assert_eq!(archive.payload["space_id"], container_space_id);
+    assert_eq!(archive.kind().as_str(), "ak.space.archive");
+    assert_eq!(archive.payload()["space_id"], container_space_id);
     assert_eq!(archive.local_target_ref(), Some(container_space_id));
 
     let restore = ak_ops::space_restore(
@@ -953,8 +1014,8 @@ fn space_lifecycle_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(restore.kind.as_str(), "ak.space.restore");
-    assert_eq!(restore.payload["space_id"], container_space_id);
+    assert_eq!(restore.kind().as_str(), "ak.space.restore");
+    assert_eq!(restore.payload()["space_id"], container_space_id);
     assert_eq!(restore.local_target_ref(), Some(container_space_id));
 }
 
@@ -968,9 +1029,9 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(archive.kind.as_str(), "ak.strand.archive");
-    assert_eq!(archive.payload["target_ref"], strand_id);
-    assert!(!archive.payload.contains_key("strand_id"));
+    assert_eq!(archive.kind().as_str(), "ak.strand.archive");
+    assert_eq!(archive.payload()["target_ref"], strand_id);
+    assert!(!archive.payload().contains_key("strand_id"));
     assert_eq!(archive.local_target_ref(), Some(strand_id));
     assert_registered_payload_valid(&archive);
 
@@ -981,9 +1042,9 @@ fn strand_lifecycle_helpers_emit_canonical_kinds() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(restore.kind.as_str(), "ak.strand.restore");
-    assert_eq!(restore.payload["target_ref"], strand_id);
-    assert!(!restore.payload.contains_key("strand_id"));
+    assert_eq!(restore.kind().as_str(), "ak.strand.restore");
+    assert_eq!(restore.payload()["target_ref"], strand_id);
+    assert!(!restore.payload().contains_key("strand_id"));
     assert_eq!(restore.local_target_ref(), Some(strand_id));
     assert_registered_payload_valid(&restore);
 }
@@ -1001,14 +1062,16 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     let disc = ak_ops::applet_discovery(realm, actor, service_id, json!({"version": 1}))
         .unwrap()
         .build("node");
-    assert_eq!(disc.kind.as_str(), "ak.applet.discovery");
+    assert_eq!(disc.kind().as_str(), "ak.applet.discovery");
     // The manifest is discovery *state* inside `value`; `resource_id` is what
     // the registry turns into the cell subject.
-    assert_eq!(disc.payload["resource_id"], service_id);
-    assert_eq!(disc.payload["value"]["manifest"]["version"], 1);
+    assert_eq!(disc.payload()["resource_id"], service_id);
+    assert_eq!(disc.payload()["value"]["manifest"]["version"], 1);
     assert_eq!(disc.local_target_ref(), Some(service_id));
+    // The cell subject comes from `resource_id`, so the write is knowable before
+    // the Event has an identity.
     assert_eq!(
-        crate::operation::direct_registered_cell_writes(&disc).unwrap()[0]
+        crate::operation::pre_authoring_cell_writes(disc.intent()).unwrap()[0]
             .cell
             .as_str(),
         format!("ak:cell:ak.component.applet.discovery.v1:{service_id}")
@@ -1027,15 +1090,15 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     )
     .expect("builds")
     .build("node");
-    assert_eq!(err.kind.as_str(), "ak.applet.bridge_error");
-    assert_eq!(err.payload["applet_id"], "ak:did_core:web:applet.example");
+    assert_eq!(err.kind().as_str(), "ak.applet.bridge_error");
+    assert_eq!(err.payload()["applet_id"], "ak:did_core:web:applet.example");
     assert_eq!(
-        err.payload["failed_transaction_ref"],
+        err.payload()["failed_transaction_ref"],
         "ak:event:ASAl6MaOVSeP0yXGVmHl5fA_Ch7m5_D_PgvPyd3UP2_9"
     );
-    assert_eq!(err.payload["error_class"], "external_network");
-    assert_eq!(err.payload["error_code"], "applet_unavailable");
-    assert!(!err.payload.contains_key("session_id"));
+    assert_eq!(err.payload()["error_class"], "external_network");
+    assert_eq!(err.payload()["error_code"], "applet_unavailable");
+    assert!(!err.payload().contains_key("session_id"));
     assert_registered_payload_valid(&err);
 
     assert!(
@@ -1066,11 +1129,11 @@ fn message_revise_builder_uses_content_payload_schema() {
     .expect("builds")
     .build("node");
 
-    assert_eq!(event.kind.as_str(), "ak.message.revise");
-    assert_eq!(event.payload["message_id"], message_id);
-    assert_eq!(event.payload["content"]["kind"], "ak.content.text");
-    assert_eq!(event.payload["content"]["body"], "updated body");
-    assert!(!event.payload.contains_key("patch"));
+    assert_eq!(event.kind().as_str(), "ak.message.revise");
+    assert_eq!(event.payload()["message_id"], message_id);
+    assert_eq!(event.payload()["content"]["kind"], "ak.content.text");
+    assert_eq!(event.payload()["content"]["body"], "updated body");
+    assert!(!event.payload().contains_key("patch"));
     assert_registered_payload_valid(&event);
 }
 
@@ -1152,24 +1215,24 @@ mod realm_organization_builder_tests {
         .expect("builds")
         .build("node");
 
-        assert_eq!(event.kind.as_str(), "ak.realm.organization");
+        assert_eq!(event.kind().as_str(), "ak.realm.organization");
         // The statement binds the organization DID, not a Space/Strand id.
         assert_eq!(event.local_target_ref(), Some(ORG_DID));
         assert_eq!(
-            event.payload["organization_id"],
+            event.payload()["organization_id"],
             "ak:did_core:webvh:example.test"
         );
-        assert_eq!(event.payload["relationship"], "owner");
-        assert_eq!(event.payload["status"], "active");
-        assert!(!event.payload.contains_key("revokes_statement_id"));
+        assert_eq!(event.payload()["relationship"], "owner");
+        assert_eq!(event.payload()["status"], "active");
+        assert!(!event.payload().contains_key("revokes_statement_id"));
         // The organization proof is carried verbatim, not synthesized from the
         // local login session.
         assert_eq!(
-            event.payload["authorization"]["issuer_role"],
+            event.payload()["authorization"]["issuer_role"],
             "organization_principal_id"
         );
-        assert_eq!(event.payload["authorization"]["proof"], "c2ln");
-        assert_payload_field_names_are_spec_canonical(&event.payload);
+        assert_eq!(event.payload()["authorization"]["proof"], "c2ln");
+        assert_payload_field_names_are_spec_canonical(&event.payload());
         assert_registered_payload_valid(&event);
     }
 
@@ -1190,13 +1253,13 @@ mod realm_organization_builder_tests {
         .expect("builds")
         .build("node");
 
-        assert_eq!(event.payload["relationship"], "governance");
+        assert_eq!(event.payload()["relationship"], "governance");
         assert_eq!(
-            event.payload["authorization"]["issuer_role"],
+            event.payload()["authorization"]["issuer_role"],
             "governance_service"
         );
         assert_eq!(
-            event.payload["authorization"]["delegation_ref"],
+            event.payload()["authorization"]["delegation_ref"],
             "ak:grant:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH"
         );
         assert_registered_payload_valid(&event);
@@ -1219,8 +1282,8 @@ mod realm_organization_builder_tests {
         .expect("builds")
         .build("node");
 
-        assert_eq!(event.payload["status"], "revoked");
-        assert_eq!(event.payload["revokes_statement_id"], "org-stmt-1");
+        assert_eq!(event.payload()["status"], "revoked");
+        assert_eq!(event.payload()["revokes_statement_id"], "org-stmt-1");
         assert_registered_payload_valid(&event);
     }
 

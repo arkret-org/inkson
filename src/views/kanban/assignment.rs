@@ -3,29 +3,33 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::json;
 
 use super::model::*;
-use crate::operation::sdk_event_local_operation_id;
 use crate::state::LocalStateStore;
 use crate::transport::auth::with_authed_api;
 use crate::views::helpers::short_protocol_id;
 
 #[derive(Clone)]
 pub(super) enum CardAssignmentMutation {
+    /// A new assignment. The Relation is named by `retype(create.event_id)`, so
+    /// it has no id until the create is accepted: the optimistic row is keyed by
+    /// the write's holder-local operation id until then.
     Create {
         actor_id: String,
-        relation_id: String,
-        operation: arkret_sdk::Event,
+        operation: crate::operation::LocalOperation,
     },
+    /// Removing an existing assignment, which already has a Relation id.
     Tombstone {
         actor_id: String,
         relation_id: String,
-        operation: arkret_sdk::Event,
+        operation: crate::operation::LocalOperation,
     },
 }
 
 impl CardAssignmentMutation {
-    pub(super) fn relation_id(&self) -> &str {
+    /// The Relation this mutation acts on, when it already exists.
+    pub(super) fn relation_id(&self) -> Option<&str> {
         match self {
-            Self::Create { relation_id, .. } | Self::Tombstone { relation_id, .. } => relation_id,
+            Self::Create { .. } => None,
+            Self::Tombstone { relation_id, .. } => Some(relation_id),
         }
     }
 
@@ -35,7 +39,7 @@ impl CardAssignmentMutation {
         }
     }
 
-    pub(super) fn operation(&self) -> &arkret_sdk::Event {
+    pub(super) fn operation(&self) -> &crate::operation::LocalOperation {
         match self {
             Self::Create { operation, .. } | Self::Tombstone { operation, .. } => operation,
         }
@@ -111,13 +115,10 @@ pub(super) fn card_assignment_mutations(
         .build_sdk_event("inkson")
         .map_err(|err| format!("cannot build assigned_to relation event: {err}"))?;
         // The Relation id is derived from this create Event, not carried in the
-        // payload (spec `zh/models/common-fields.md` section 6.0).
-        let relation_id = arkret_sdk::schema::derived_object_id(&operation)
-            .ok_or_else(|| "internal: assigned_to relation create derives no object id".to_owned())?
-            .to_owned();
+        // payload (spec `zh/models/common-fields.md` section 6.0), so it exists
+        // only once the Event is accepted.
         mutations.push(CardAssignmentMutation::Create {
             actor_id: assignee_id.clone(),
-            relation_id,
             operation,
         });
     }
@@ -167,13 +168,15 @@ pub(super) fn assignment_relations_after_mutations(
     for mutation in mutations {
         if let CardAssignmentMutation::Create {
             actor_id,
-            relation_id,
-            ..
+            operation,
         } = mutation
             && selected_actor_ids.contains(actor_id)
         {
+            // A pending create has no Relation id yet; the optimistic row is
+            // keyed by the write's holder-local operation id until the accepted
+            // Event names the Relation.
             relations.push(CardAssignedToRelation {
-                relation_id: relation_id.clone(),
+                relation_id: operation.local_operation_id().to_string(),
                 actor_id: actor_id.clone(),
             });
         }
@@ -255,22 +258,25 @@ pub(super) fn dispatch_card_assignees_update(
 
     for mutation in &mutations {
         let operation = mutation.operation();
-        let operation_id = sdk_event_local_operation_id(operation).to_owned();
+        let operation_id = operation.local_operation_id().to_string();
         state_store.write().enqueue_local_projection_command(
             operation_id.clone(),
             Some(realm_id.clone()),
             json!({
-                "kind": operation.kind.as_str(),
+                "kind": operation.kind().as_str(),
                 "operation_id": operation_id,
-                "actor_id": operation.actor_id.to_string(),
+                "actor_id": operation.actor_id().to_string(),
                 "created_at": arkret_sdk::canonical::format_timestamp_canonical(
-                    operation.created_at
+                    operation.created_at()
                 ),
                 "write_state": "queued",
-                "body": operation.payload.clone(),
+                "body": operation.payload_value(),
                 "assignment_strand_id": current.id.clone(),
                 "assignment_actor_id": mutation.actor_id(),
-                "assignment_relation_id": mutation.relation_id(),
+                "assignment_relation_id": mutation
+                    .relation_id()
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| operation.local_operation_id().to_string()),
                 "activity_summary": assignment_activity_summary(mutation, &assignee_labels),
             }),
         );
@@ -287,8 +293,8 @@ pub(super) fn dispatch_card_assignees_update(
     spawn(async move {
         for mutation in mutations {
             let operation = mutation.operation().clone();
-            let operation_id = sdk_event_local_operation_id(&operation).to_owned();
-            let kind = operation.kind.as_str().to_owned();
+            let operation_id = operation.local_operation_id().to_string();
+            let kind = operation.kind().as_str().to_owned();
             match with_authed_api(&base_url, api_token.clone(), |api| async move {
                 api.event_submitter()?.submit_sdk_event(&operation).await
             })

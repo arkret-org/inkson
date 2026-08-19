@@ -95,23 +95,26 @@ mod tests {
         )
         .unwrap()
         .build("node");
-        assert_eq!(op.kind, "ak.call.recording.start");
-        assert_eq!(op.payload["recording_agent"], "ak:did_core:web:alice");
-        assert_eq!(op.payload["capture_kind"], "recording");
-        assert_eq!(op.payload["mode"], "audio_video");
-        assert_eq!(op.payload["visible_notice"], true);
+        assert_eq!(op.kind(), "ak.call.recording.start");
+        assert_eq!(op.payload()["recording_agent"], "ak:did_core:web:alice");
+        assert_eq!(op.payload()["capture_kind"], "recording");
+        assert_eq!(op.payload()["mode"], "audio_video");
+        assert_eq!(op.payload()["visible_notice"], true);
         assert!(
-            op.payload["result"]
+            op.payload()["result"]
                 .get("recording_start_event_id")
                 .is_none()
         );
         assert!(
-            op.payload["result"]
+            op.payload()["result"]
                 .get("transcript_start_event_id")
                 .is_none()
         );
-        assert_eq!(op.payload["result"]["retention"]["consent_confirmed"], true);
-        assert!(!op.payload.contains_key("consent_actors"));
+        assert_eq!(
+            op.payload()["result"]["retention"]["consent_confirmed"],
+            true
+        );
+        assert!(!op.payload().contains_key("consent_actors"));
     }
 
     #[test]
@@ -127,16 +130,16 @@ mod tests {
         )
         .unwrap()
         .build("node");
-        assert_eq!(op.kind, "ak.call.recording.start");
-        assert_eq!(op.payload["capture_kind"], "transcript");
-        assert_eq!(op.payload["mode"], "audio");
+        assert_eq!(op.kind(), "ak.call.recording.start");
+        assert_eq!(op.payload()["capture_kind"], "transcript");
+        assert_eq!(op.payload()["mode"], "audio");
         assert!(
-            op.payload["result"]
+            op.payload()["result"]
                 .get("recording_start_event_id")
                 .is_none()
         );
         assert!(
-            op.payload["result"]
+            op.payload()["result"]
                 .get("transcript_start_event_id")
                 .is_none()
         );

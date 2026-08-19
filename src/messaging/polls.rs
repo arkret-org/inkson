@@ -311,7 +311,7 @@ pub fn build_poll_create_op(
     actor: &str,
     strand_id: &str,
     draft: &PollDraft,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let answers: Vec<arkret_models_collaboration::events_payloads::PollAnswer> = draft
         .options
         .iter()
@@ -356,12 +356,21 @@ pub fn build_poll_create_op(
 }
 
 /// Derive the wire message id from a freshly built poll-create Event.
-pub fn poll_message_ref(event: &arkret_sdk::Event) -> Option<String> {
-    (event.kind == arkret_sdk::EventKind::MessageCreate).then(|| {
-        arkret_sdk::MessageId::from_event_id(&event.event_id)
-            .as_str()
-            .to_owned()
-    })
+/// The Message id an accepted `ak.message.create` names.
+///
+/// `retype(event_id)`, so it only exists once the Event is accepted: this takes
+/// the receipt's id rather than a draft.
+pub fn poll_message_ref(kind: &arkret_sdk::EventKind, accepted_event_id: &str) -> Option<String> {
+    if kind != &arkret_sdk::EventKind::MessageCreate {
+        return None;
+    }
+    arkret_sdk::EventId::new(accepted_event_id.to_owned())
+        .ok()
+        .map(|event_id| {
+            arkret_sdk::MessageId::from_event_id(&event_id)
+                .as_str()
+                .to_owned()
+        })
 }
 
 /// Build the canonical `poll_response_block`
@@ -375,7 +384,7 @@ pub fn build_poll_vote_op(
     strand_id: &str,
     poll_ref: &str,
     selections: &[String],
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     if selections.is_empty() {
         anyhow::bail!("poll response requires at least one selection");
     }
@@ -488,10 +497,10 @@ mod tests {
             &draft,
         )
         .expect("builds");
-        assert_eq!(op.kind.as_str(), "ak.message.create");
-        assert!(!op.payload.contains_key("encrypted"));
+        assert_eq!(op.kind().as_str(), "ak.message.create");
+        assert!(!op.payload().contains_key("encrypted"));
         // Canonical poll_block: nested `poll` object, no flat fields.
-        let block = op.payload.get("content").unwrap();
+        let block = op.payload().get("content").unwrap();
         assert_eq!(block["kind"], "ak.content.poll");
         assert_eq!(block["body"], "ship?");
         assert!(block.get("poll_id").is_none());
@@ -504,14 +513,16 @@ mod tests {
         assert_eq!(answers[0]["id"], "opt-0");
         assert_eq!(answers[0]["text"]["kind"], "ak.content.text");
         assert_eq!(answers[0]["text"]["body"], "yes");
-        // The stamped wire message id is readable back for poll_ref use.
-        let message_ref = poll_message_ref(&op).unwrap();
+        // The wire message id is `retype(event_id)`: it exists once the poll
+        // Event is authored, and it is what a later vote's `poll_ref` names.
+        let authored = crate::operation::author_for_test(&op);
+        let message_ref = poll_message_ref(op.kind(), authored.event_id.as_str()).unwrap();
         assert!(message_ref.starts_with("ak:message:"));
         arkret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
             .validate_payload(
-                op.kind.as_str(),
-                &serde_json::to_value(&op.payload).unwrap(),
+                op.kind().as_str(),
+                &serde_json::to_value(&op.payload()).unwrap(),
             )
             .unwrap();
     }
@@ -526,7 +537,7 @@ mod tests {
             &["opt-1".to_owned()],
         )
         .expect("builds");
-        let block = op.payload.get("content").unwrap();
+        let block = op.payload().get("content").unwrap();
         assert_eq!(block["kind"], "ak.content.poll.response");
         assert!(block.get("poll_id").is_none());
         assert!(block.get("choice").is_none());
@@ -538,8 +549,8 @@ mod tests {
         arkret_sdk::schema::event_payload_validator_catalog()
             .unwrap()
             .validate_payload(
-                op.kind.as_str(),
-                &serde_json::to_value(&op.payload).unwrap(),
+                op.kind().as_str(),
+                &serde_json::to_value(&op.payload()).unwrap(),
             )
             .unwrap();
     }

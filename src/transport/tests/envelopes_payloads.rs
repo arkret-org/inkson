@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::ephemeral::validate_outgoing_registered_event_payload;
 use crate::event_builders::{
-    build_member_state_transition_event, build_realm_bootstrap_events, build_realm_create_event,
+    build_member_state_transition_event, build_realm_bootstrap_steps, build_realm_create_event,
     build_realm_state_event, build_sas_key_verification_content,
     build_signed_device_verification_proof, build_space_create_event,
     ensure_device_verification_proof_is_signed, recommended_history_sharing_policy_for_visibility,
@@ -33,28 +33,31 @@ fn canonical_space_join_rule_keeps_v1_invite_value() {
 
 #[test]
 fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
-    let (_realm_id, events) = build_realm_bootstrap_events(
-        test_genesis_salt(),
-        "did:web:alice.example",
-        "did:web:server.example",
-        "https://server.example",
-        "Engineering",
-        Some("Roadmap work"),
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &["ak:did_core:web:bob.example".to_owned()],
-        &["did:web:server.example".to_owned()],
-        None,
-        None,
+    let events = crate::event_submit::author_event_unit_for_test(
+        build_realm_bootstrap_steps(
+            test_genesis_salt(),
+            "did:web:alice.example",
+            "did:web:server.example",
+            "https://server.example",
+            "Engineering",
+            Some("Roadmap work"),
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:server.example",
+            &["ak:did_core:web:bob.example".to_owned()],
+            &["did:web:server.example".to_owned()],
+            None,
+            None,
+        )
+        .unwrap(),
     )
-    .unwrap();
+    .expect("the Realm bootstrap unit authors");
     let kinds = events
         .iter()
         .map(|event| event.kind.as_str())
@@ -257,23 +260,23 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     )
     .unwrap();
 
-    assert_eq!(envelope.payload["object"]["encryption_profile"], "none");
+    assert_eq!(envelope.payload()["object"]["encryption_profile"], "none");
     assert!(
-        envelope.payload["object"]
+        envelope.payload()["object"]
             .get("content_encryption_floor")
             .is_none()
     );
     assert!(
-        envelope.payload["object"]
+        envelope.payload()["object"]
             .get("metadata_encryption_floor")
             .is_none()
     );
-    assert!(envelope.payload["object"].get("created_at").is_none());
+    assert!(envelope.payload()["object"].get("created_at").is_none());
 }
 
 #[test]
 fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
-    let err = build_realm_bootstrap_events(
+    let err = build_realm_bootstrap_steps(
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
@@ -294,7 +297,8 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         None,
         Some("mls_rfc9420"),
     )
-    .expect_err("pre-join history requires the history-capable content scheme");
+    .err()
+    .expect("pre-join history requires the history-capable content scheme");
 
     assert!(err.to_string().contains(
         arkret_sdk::error::ReasonCode::HISTORY_VISIBILITY_REQUIRES_HISTORY_CAPABLE_SCHEME
@@ -303,28 +307,31 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
 
 #[test]
 fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
-    let (_realm_id, events) = build_realm_bootstrap_events(
-        test_genesis_salt(),
-        "did:web:alice.example",
-        "did:web:server.example",
-        "https://server.example",
-        "Strict history",
-        None,
-        "listed",
-        "invite",
-        "joined",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &[],
-        &[],
-        None,
-        Some("mls_rfc9420"),
+    let events = crate::event_submit::author_event_unit_for_test(
+        build_realm_bootstrap_steps(
+            test_genesis_salt(),
+            "did:web:alice.example",
+            "did:web:server.example",
+            "https://server.example",
+            "Strict history",
+            None,
+            "listed",
+            "invite",
+            "joined",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:server.example",
+            &[],
+            &[],
+            None,
+            Some("mls_rfc9420"),
+        )
+        .expect("joined history with the strict scheme is authorable"),
     )
-    .expect("joined history is valid with the strict MLS content scheme");
+    .expect("the Realm bootstrap unit authors");
 
     // Index 2 is the Realm policy bundle, the only bootstrap Event that carries
     // `content_scheme`. Index 3 is the join rule, whose payload value is a bare
@@ -367,31 +374,34 @@ fn default_history_sharing_policy_matches_prejoin_visibility() {
 /// locally-signed one.
 #[test]
 fn bootstrap_envelopes_have_no_sdk_digest_drift() {
-    let (_realm_id, events) = build_realm_bootstrap_events(
-        test_genesis_salt(),
-        "did:web:alice.example",
-        "did:web:server.example",
-        "https://server.example",
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        // Seed invitees are validated as canonical Core DIDs here, but their
-        // directed `ak.invite.create` events are deliberately submitted only
-        // after this genesis unit is accepted.
-        &["ak:did_core:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn".to_owned()],
-        &["did:web:server.example".to_owned()],
-        None,
-        None,
+    let events = crate::event_submit::author_event_unit_for_test(
+        build_realm_bootstrap_steps(
+            test_genesis_salt(),
+            "did:web:alice.example",
+            "did:web:server.example",
+            "https://server.example",
+            "Engineering",
+            None,
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:server.example",
+            // Seed invitees are validated as canonical Core DIDs here, but their
+            // directed `ak.invite.create` events are deliberately submitted only
+            // after this genesis unit is accepted.
+            &["ak:did_core:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn".to_owned()],
+            &["did:web:server.example".to_owned()],
+            None,
+            None,
+        )
+        .unwrap(),
     )
-    .unwrap();
+    .expect("the Realm bootstrap unit authors");
 
     assert!(
         events
@@ -420,7 +430,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
 
 #[test]
 fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
-    let err = build_realm_bootstrap_events(
+    let err = build_realm_bootstrap_steps(
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
@@ -441,7 +451,8 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
         None,
         None,
     )
-    .expect_err("handle seed members require Directory-resolved evidence");
+    .err()
+    .expect("handle seed members require Directory-resolved evidence");
     assert!(
         err.to_string()
             .contains("handle bootstrap requires a Directory-resolved invite address")
@@ -460,23 +471,26 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     )
     .expect("ban event");
 
-    assert_eq!(event.kind.as_str(), "ak.member.state");
+    assert_eq!(event.kind().as_str(), "ak.member.state");
     assert_eq!(
-        event.payload["realm_id"],
+        event.payload()["realm_id"],
         "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"
     );
-    assert_eq!(event.payload["actor_id"], "ak:did_core:web:bob.example");
-    assert_eq!(event.payload["membership"], "ban");
-    assert_eq!(event.preconditions.len(), 1);
+    assert_eq!(event.payload()["actor_id"], "ak:did_core:web:bob.example");
+    assert_eq!(event.payload()["membership"], "ban");
+    assert_eq!(event.intent().preconditions().len(), 1);
     assert_eq!(
-        event.preconditions[0].cell.as_str(),
+        event.intent().preconditions()[0].cell.as_str(),
         "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example"
     );
-    assert_eq!(event.preconditions[0].predicate.value, Some(json!("join")));
+    assert_eq!(
+        event.intent().preconditions()[0].predicate.value,
+        Some(json!("join"))
+    );
     // `ak.member.state` registers a `transition_to` projection: `to` comes from
     // the signed payload, `from` is resolved by the reducer against the frozen
     // pre-state rather than asserted by the producer.
-    let writes = crate::operation::project_registered_cell_writes(&event).unwrap();
+    let writes = crate::operation::pre_authoring_cell_writes(event.intent()).unwrap();
     assert_eq!(writes.len(), 1);
     assert_eq!(
         writes[0].cell.as_str(),
@@ -511,7 +525,7 @@ fn outgoing_payload_schema_gate_accepts_sdk_object_patch_payload() {
     .target_ref(strand_id)
     .build("inkson");
 
-    validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload).unwrap();
+    validate_outgoing_registered_event_payload(event.kind().as_str(), &event.payload()).unwrap();
 }
 
 /// Contract test: ak.space.create payload must satisfy spec
@@ -531,22 +545,24 @@ fn space_create_payload_matches_spec_schema() {
         None,
     )
     .unwrap();
+    // `object.created_at` is the same producer-signed timestamp the envelope
+    // carries, so they have to agree before the identity is derived from both.
     assert_eq!(
-        event.payload["object"]["created_at"],
-        serde_json::to_value(&event).unwrap()["created_at"]
+        event.payload()["object"]["created_at"],
+        serde_json::to_value(event.created_at()).unwrap()
     );
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
     if catalog
-        .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
+        .missing_payload_validators_for(std::iter::once(event.kind().as_str()))
         .is_empty()
         && let Err(error) = catalog.validate_payload(
-            event.kind.as_str(),
-            &serde_json::to_value(&event.payload).expect("event payload serializes"),
+            event.kind().as_str(),
+            &serde_json::to_value(&event.payload()).expect("event payload serializes"),
         )
     {
         panic!(
             "ak.space.create payload violates spec: {error}\npayload: {}",
-            serde_json::to_string_pretty(&event.payload).unwrap_or_default()
+            serde_json::to_string_pretty(&event.payload()).unwrap_or_default()
         );
     }
 }
@@ -562,33 +578,38 @@ fn realm_bootstrap_payloads_match_spec_schema() {
         crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
             crate::event_signer::build_ed25519_signer([42_u8; 32], "did:web:alice.example"),
         )));
-    let (_realm_id, mut events) = build_realm_bootstrap_events(
-        test_genesis_salt(),
-        "did:web:alice.example",
-        "did:web:server.example",
-        "https://server.example",
-        "Engineering",
-        Some("Roadmap work"),
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &["ak:did_core:web:bob.example".to_owned()],
-        &["did:web:server.example".to_owned()],
-        None,
-        None,
+    let events = crate::event_submit::author_event_unit_for_test(
+        build_realm_bootstrap_steps(
+            test_genesis_salt(),
+            "did:web:alice.example",
+            "did:web:server.example",
+            "https://server.example",
+            "Engineering",
+            Some("Roadmap work"),
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:server.example",
+            &["ak:did_core:web:bob.example".to_owned()],
+            &["did:web:server.example".to_owned()],
+            None,
+            None,
+        )
+        .unwrap(),
     )
-    .unwrap();
+    .expect("the Realm bootstrap unit authors");
 
     let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
-    for event in &mut events {
-        crate::event_submit::attach_capability_grant_payload_proof(event)
-            .expect("wire preparation attaches the issuer grant proof");
+    for event in &events {
+        crate::event_submit::validate_capability_grant_payload(
+            &crate::operation::EventIntent::from_authored(event),
+        )
+        .expect("the inner capability artifact validates before the envelope is signed");
         if catalog
             .missing_payload_validators_for(std::iter::once(event.kind.as_str()))
             .is_empty()

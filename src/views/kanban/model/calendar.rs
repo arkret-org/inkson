@@ -416,9 +416,7 @@ pub(crate) fn calendar_rsvp_operation(
     occurrence: &str,
     calendar: &CalendarCardFields,
     schedule_basis_refs: Vec<arkret_sdk::Hash>,
-    actor_seq: u64,
-    hlc: arkret_sdk::Hlc,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let calendar_fields = calendar_event_fields_from_draft(calendar).map_err(anyhow::Error::msg)?;
     crate::calendar::build_calendar_rsvp_event(
         realm_id,
@@ -429,8 +427,6 @@ pub(crate) fn calendar_rsvp_operation(
             .then_some(occurrence.trim()),
         &calendar_fields,
         schedule_basis_refs,
-        actor_seq,
-        hlc,
     )
 }
 

@@ -1692,7 +1692,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
     api.event_submitter()?
         .submit_mls_admission_with_snapshot(
-            admission.commit,
+            &admission.commit,
             vec![admission.welcome],
             realm_id.clone(),
             actor_id.clone(),
@@ -2197,7 +2197,7 @@ pub(crate) async fn share_history_to_requester(
     )
     .map_err(|err| anyhow::anyhow!(err))?;
     api.event_submitter()?
-        .submit_sdk_events_batch(&realm_id, vec![share], None)
+        .submit_sdk_events_batch(&realm_id, vec![share.into_intent()], None)
         .await?;
     Ok(true)
 }
@@ -2333,7 +2333,14 @@ pub(crate) async fn seal_history_to_recovery_recipients(
     let sealed = events.len();
     if !events.is_empty() {
         api.event_submitter()?
-            .submit_sdk_events_batch(&realm_id, events, None)
+            .submit_sdk_events_batch(
+                &realm_id,
+                events
+                    .into_iter()
+                    .map(|event| event.into_intent())
+                    .collect(),
+                None,
+            )
             .await?;
         tracing::info!(
             sealed,
@@ -3143,7 +3150,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
     api.event_submitter()?
         .submit_mls_admission_with_snapshot(
-            admission.commit,
+            &admission.commit,
             admission.welcomes,
             realm_id,
             actor_id,
@@ -3256,24 +3263,13 @@ async fn ensure_mls_genesis_frontier_for_invite(
         .submit_sdk_event(&genesis_event)
         .await
     {
-        Ok(result) => {
-            // The accepted Event id, not the build-time one: submit re-authors
-            // the envelope and the content-bound id changes with it.
-            let accepted_event_id = match arkret_sdk::EventId::new(result.event_id) {
-                Ok(event_id) => event_id,
-                Err(_) => api
-                    .event_submitter()?
-                    .find_mls_genesis_event_id(realm_id)
-                    .await?
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "MLS genesis was accepted but its Event id is unavailable; sync this Realm before inviting"
-                        )
-                    })?,
-            };
+        Ok(accepted) => {
+            // The accepted id is the only one encrypted writes may bind to.
+            let event_id = arkret_sdk::EventId::new(accepted.event_id.clone())
+                .map_err(|error| anyhow::anyhow!("accepted MLS genesis id invalid: {error}"))?;
             state_store
                 .write()
-                .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &accepted_event_id);
+                .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id);
             Ok(())
         }
         Err(err) => {
@@ -4168,13 +4164,9 @@ pub fn RealmMembersPanel(
                                                                 return;
                                                             }
                                                         };
-                                                        let invite_id = arkret_sdk::InviteId::from_event_id(&submit_event.event_id).to_string();
-                                                        let op_id = submit_event
-                                                            .unsigned
-                                                            .get("local_operation_idempotency_alias")
-                                                            .and_then(|value| value.as_str())
-                                                            .unwrap_or_else(|| submit_event.event_id.as_str())
-                                                            .to_owned();
+                                                        // The Invite is named by its own create Event, so
+                                                        // its id arrives with the receipt.
+                                                        let op_id = submit_event.local_operation_id().to_string();
                                                         status_msg.set(format!(
                                                             "submitting invite for {}",
                                                             invitee_label
@@ -4197,6 +4189,20 @@ pub fn RealmMembersPanel(
                                                                     return;
                                                                 }
                                                                 frontier_state.set(submitted.event_id.clone());
+                                                                // The Invite is `retype(create.event_id)`, so its
+                                                                // id is read from the accepted receipt.
+                                                                let invite_id = match arkret_sdk::EventId::new(
+                                                                    submitted.event_id.clone(),
+                                                                ) {
+                                                                    Ok(event_id) => arkret_sdk::InviteId::from_event_id(&event_id)
+                                                                        .to_string(),
+                                                                    Err(error) => {
+                                                                        status_msg.set(format!(
+                                                                            "invite accepted but its Event id is invalid: {error}"
+                                                                        ));
+                                                                        return;
+                                                                    }
+                                                                };
                                                                 {
                                                                     let mut store = state_store.write();
                                                                     store.append_raw_operation(
@@ -4204,7 +4210,7 @@ pub fn RealmMembersPanel(
                                                                         Some(realm.clone()),
                                                                         json!({
                                                                             "kind": event_kind_str::INVITE_CREATE,
-                                                                            "invite_id": invite_id,
+                                                                            "invite_id": invite_id.clone(),
                                                                             "invitee": invitee_did.clone(),
                                                                             "invitee_label": invitee_label.clone(),
                                                                             "state": "pending",

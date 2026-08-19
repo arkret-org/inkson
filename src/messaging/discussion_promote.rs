@@ -65,7 +65,7 @@ pub fn build_discussion_circle_create_op(
     realm_id: &str,
     actor: &str,
     title: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     ak_ops::discussion_circle_create(realm_id, actor, title)?.build_sdk_event("inkson")
 }
 
@@ -75,7 +75,7 @@ pub fn build_discussion_strand_create_op(
     actor: &str,
     circle_id: &str,
     title: &str,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     ak_ops::scoped_discussion_strand_create(realm_id, actor, circle_id, title)?
         .build_sdk_event("inkson")
 }
@@ -87,7 +87,7 @@ pub fn build_confidential_discussion_relation_op(
     actor: &str,
     source_id: &str,
     ids: &PromoteIds,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     ak_ops::confidential_discussion_relation_create(
         realm_id,
         actor,
@@ -98,9 +98,9 @@ pub fn build_confidential_discussion_relation_op(
     .build_sdk_event("inkson")
 }
 
-/// The object id a create Event derives, or an error naming the kind that
-/// failed to derive one.
-fn derived_id(event: &arkret_sdk::Event) -> anyhow::Result<String> {
+/// The object id an authored create Event derives, or an error naming the kind
+/// that derives none.
+pub fn derived_id(event: &arkret_sdk::AuthoredEvent) -> anyhow::Result<String> {
     arkret_sdk::schema::derived_object_id(event)
         .ok_or_else(|| anyhow::anyhow!("{} derives no object id", event.kind.as_str()))
 }
@@ -111,21 +111,62 @@ fn derived_id(event: &arkret_sdk::Event) -> anyhow::Result<String> {
 /// The order is forced by the identities: the Circle id falls out of the Circle
 /// create, the Strand is scoped to that Circle and its id falls out of its own
 /// create, and only then can the Relation name both. Nothing here is chosen.
-pub fn build_promote_ops(
+pub fn build_promote_steps(
     realm_id: &str,
     actor: &str,
     source_id: &str,
     title: &str,
-) -> anyhow::Result<(PromoteIds, Vec<arkret_sdk::Event>)> {
-    let circle = build_discussion_circle_create_op(realm_id, actor, title)?;
-    let circle_id = derived_id(&circle)?;
-    let strand = build_discussion_strand_create_op(realm_id, actor, &circle_id, title)?;
-    let ids = PromoteIds {
-        discussion_strand_id: derived_id(&strand)?,
-        circle_id,
+) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
+    let (realm_id, actor, source_id, title) = (
+        realm_id.to_owned(),
+        actor.to_owned(),
+        source_id.to_owned(),
+        title.to_owned(),
+    );
+    let circle_realm = realm_id.clone();
+    let circle_actor = actor.clone();
+    let circle_title = title.clone();
+    let strand_realm = realm_id.clone();
+    let strand_actor = actor.clone();
+    let strand_title = title.clone();
+    Ok(vec![
+        Box::new(move |_| {
+            Ok(vec![
+                build_discussion_circle_create_op(&circle_realm, &circle_actor, &circle_title)?
+                    .into_intent(),
+            ])
+        }),
+        Box::new(move |authored| {
+            let circle_id = derived_id(&authored[0])?;
+            Ok(vec![
+                build_discussion_strand_create_op(
+                    &strand_realm,
+                    &strand_actor,
+                    &circle_id,
+                    &strand_title,
+                )?
+                .into_intent(),
+            ])
+        }),
+        Box::new(move |authored| {
+            let ids = promote_ids(authored)?;
+            Ok(vec![
+                build_confidential_discussion_relation_op(&realm_id, &actor, &source_id, &ids)?
+                    .into_intent(),
+            ])
+        }),
+    ])
+}
+
+/// The Circle and Strand a promote unit created, read off the authored unit.
+pub fn promote_ids(authored: &[arkret_sdk::AuthoredEvent]) -> anyhow::Result<PromoteIds> {
+    let [circle, strand, ..] = authored else {
+        anyhow::bail!("discussion promote unit is missing its create Events");
     };
-    let relation = build_confidential_discussion_relation_op(realm_id, actor, source_id, &ids)?;
-    Ok((ids, vec![circle, strand, relation]))
+    Ok(PromoteIds {
+        circle_id: derived_id(circle)?,
+        discussion_strand_id: derived_id(strand)?,
+    })
 }
 
 #[cfg(test)]
@@ -155,13 +196,17 @@ mod tests {
 
     #[test]
     fn promote_ops_emit_circle_strand_and_private_relation() {
-        let (ids, ops) = build_promote_ops(
-            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "did:web:alice.example",
-            "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
-            "Private discussion",
+        let ops = crate::event_submit::author_event_unit_for_test(
+            build_promote_steps(
+                "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                "did:web:alice.example",
+                "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
+                "Private discussion",
+            )
+            .expect("promote steps build"),
         )
-        .expect("promote ops build");
+        .expect("promote unit authors");
+        let ids = promote_ids(&ops).expect("the unit reports the ids it created");
         // Both ids are derived from the creates that make them, so the bundle
         // and the ids it reports can never disagree.
         assert_eq!(

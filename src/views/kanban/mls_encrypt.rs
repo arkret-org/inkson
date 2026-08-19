@@ -14,54 +14,9 @@ use crate::mls::group_events::{
     build_creator_mls_genesis_event, ensure_creator_mls_snapshot_for_encrypted_scope,
     mls_commit_event_from_store,
 };
-use crate::operation::sdk_event_local_operation_id;
 use crate::state::{LocalStateStore, MoveSubmissionState};
 use crate::transport::auth::with_authed_api;
 use crate::views::helpers::short_protocol_id;
-
-pub(super) fn rebind_encrypted_group_state_ref(
-    value: &mut Value,
-    provisional_ref: &arkret_sdk::EventId,
-    accepted_ref: &arkret_sdk::EventId,
-) -> Result<usize, String> {
-    let mut rebound = 0;
-    match value {
-        Value::Array(values) => {
-            for value in values {
-                rebound += rebind_encrypted_group_state_ref(value, provisional_ref, accepted_ref)?;
-            }
-        }
-        Value::Object(object) => {
-            let is_envelope = object.get("version").and_then(Value::as_str) == Some("1.0")
-                && object.get("scheme").and_then(Value::as_str).is_some()
-                && object
-                    .get("key_ref")
-                    .and_then(|key_ref| key_ref.get("group_state_ref"))
-                    .and_then(Value::as_str)
-                    == Some(provisional_ref.as_str());
-            if is_envelope {
-                let key_ref = object
-                    .get_mut("key_ref")
-                    .and_then(Value::as_object_mut)
-                    .ok_or_else(|| "encrypted envelope key_ref is invalid".to_owned())?;
-                key_ref.insert(
-                    "group_state_ref".to_owned(),
-                    Value::String(accepted_ref.to_string()),
-                );
-                serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value.clone())
-                    .map_err(|error| format!("rebound encrypted envelope is invalid: {error}"))?
-                    .validate()
-                    .map_err(|error| format!("rebound encrypted envelope is invalid: {error}"))?;
-                return Ok(1);
-            }
-            for value in object.values_mut() {
-                rebound += rebind_encrypted_group_state_ref(value, provisional_ref, accepted_ref)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(rebound)
-}
 
 /// The MLS events an encrypted write must submit, in submit order: the
 /// one-time `ak.mls.genesis` (if not yet emitted) MUST precede any forced
@@ -69,11 +24,11 @@ pub(super) fn rebind_encrypted_group_state_ref(
 /// bumps it.
 #[derive(Default, Debug)]
 pub(super) struct EncryptedWriteMlsEvents {
-    pub genesis: Option<arkret_sdk::Event>,
+    pub genesis: Option<crate::operation::LocalOperation>,
     /// Exact public epoch-0 bytes whose content-addressed refs are carried by
     /// `genesis`. Uploaded before the Event is submitted.
     pub genesis_material: Option<crate::mls::runtime::InitialMlsSnapshotSummary>,
-    pub commit: Option<arkret_sdk::Event>,
+    pub commit: Option<crate::operation::LocalOperation>,
     /// X14 — the post-commit MLS snapshot. Persisted by the caller ONLY
     /// after the server ACCEPTS `commit`, so the local snapshot epoch never
     /// races ahead of the server's accepted epoch (the root cause of
@@ -82,6 +37,108 @@ pub(super) struct EncryptedWriteMlsEvents {
     pub snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     /// Must commit before genesis/commit/content submission begins.
     pub pending_history_secrets: Option<crate::state::PendingHistorySecrets>,
+}
+
+/// An encrypted patch whose envelopes still need the epoch's group-state
+/// reference.
+///
+/// The reference is the `event_id` of the Event that established the epoch — the
+/// `ak.mls.commit` this same write carries, or the `ak.mls.genesis` for epoch 0 —
+/// so it does not exist until that Event is authored. Keeping the patch unsealed
+/// until then is what makes the reference correct instead of a draft value that
+/// a later pass has to rewrite.
+#[derive(Debug)]
+pub(super) struct EncryptedPatchPlan {
+    patch: Value,
+    paths: Vec<String>,
+    payloads: Vec<Value>,
+    group_id: String,
+    epoch: u64,
+    accepted_group_state_ref: Option<String>,
+}
+
+impl EncryptedPatchPlan {
+    /// A plaintext write: nothing to seal.
+    fn plaintext(patch: Value) -> Self {
+        Self {
+            patch,
+            paths: Vec::new(),
+            payloads: Vec::new(),
+            group_id: String::new(),
+            epoch: 0,
+            accepted_group_state_ref: Some(String::new()),
+        }
+    }
+
+    pub(super) fn is_plaintext(&self) -> bool {
+        self.payloads.is_empty()
+    }
+
+    /// The reference this plan needs, given the Events this write authored.
+    pub(super) fn resolve_group_state_ref(
+        &self,
+        commit: Option<&arkret_sdk::EventId>,
+        genesis: Option<&arkret_sdk::EventId>,
+    ) -> Result<String, String> {
+        if let Some(accepted) = self.accepted_group_state_ref.as_ref() {
+            return Ok(accepted.clone());
+        }
+        if let Some(commit) = commit {
+            return Ok(commit.to_string());
+        }
+        if self.epoch == 0
+            && let Some(genesis) = genesis
+        {
+            return Ok(genesis.to_string());
+        }
+        Err("encrypted write has no accepted group-state reference for its epoch".to_owned())
+    }
+
+    /// Seal every envelope against the accepted epoch reference.
+    pub(super) fn seal(
+        self,
+        commit: Option<&arkret_sdk::EventId>,
+        genesis: Option<&arkret_sdk::EventId>,
+    ) -> Result<Value, String> {
+        if self.is_plaintext() {
+            return Ok(self.patch);
+        }
+        let group_state_ref = self.resolve_group_state_ref(commit, genesis)?;
+        let mut sealed = Vec::with_capacity(self.payloads.len());
+        for value in &self.payloads {
+            let payload = serde_json::from_value::<arkret_sdk::EncryptedPayload>(value.clone())
+                .map_err(|error| format!("invalid encrypted patch payload: {error}"))?;
+            if payload.group_id != self.group_id || payload.epoch != self.epoch {
+                return Err(
+                    "encrypted patch values do not share one MLS group and epoch".to_owned(),
+                );
+            }
+            let aad = payload
+                .aad
+                .clone()
+                .ok_or_else(|| "encrypted patch payload is missing canonical AAD".to_owned())?;
+            let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
+                &payload,
+                aad,
+                arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+                // `hidden` is at or below every possible Realm ceiling, so the
+                // fail-closed `from_declared(None)` resolution always admits it.
+                // A caller that starts emitting `routing_digest` MUST pass the
+                // Realm's accepted `aad_visibility` component here instead.
+                arkret_sdk::AadVisibilityCeiling::from_declared(None),
+                &group_state_ref,
+            )
+            .map_err(|error| format!("build encrypted Strand patch envelope: {error}"))?;
+            sealed.push(
+                serde_json::to_value(envelope).map_err(|error| {
+                    format!("serialize encrypted Strand patch envelope: {error}")
+                })?,
+            );
+        }
+        let mut patch = self.patch;
+        replace_private_patch_values(&mut patch, &self.paths, sealed)?;
+        Ok(patch)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -99,7 +156,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_for_effective_scope(
     device_id: &str,
     mut state_store: SyncSignal<LocalStateStore>,
     sidecar: Option<&SidecarTrackWriteContext>,
-) -> Result<(Value, EncryptedWriteMlsEvents), String> {
+) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let mut store = state_store.write();
     encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
@@ -123,7 +180,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
     device_id: &str,
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-) -> Result<(Value, EncryptedWriteMlsEvents), String> {
+) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
     encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
         patch,
         realm_id,
@@ -146,7 +203,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     sidecar: Option<&SidecarTrackWriteContext>,
-) -> Result<(Value, EncryptedWriteMlsEvents), String> {
+) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
     if let Some(sidecar) = sidecar
         && (!sidecar.ready || sidecar.binding.is_none())
     {
@@ -159,7 +216,10 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
     }
     let values = collect_encryptable_private_patch_values(&patch)?;
     if values.is_empty() {
-        return Ok((patch, EncryptedWriteMlsEvents::default()));
+        return Ok((
+            EncryptedPatchPlan::plaintext(patch),
+            EncryptedWriteMlsEvents::default(),
+        ));
     }
     let plaintext_values = values
         .iter()
@@ -250,7 +310,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
     let (
         schedule_hash,
         _member_dids,
-        mut encrypted_values,
+        encrypted_values,
         prepared_commit,
         new_snapshot,
         pending_history_secrets,
@@ -299,47 +359,25 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             serde_json::from_value::<arkret_sdk::EncryptedPayload>(value)
                 .map_err(|error| format!("invalid encrypted patch payload: {error}"))
         })?;
-    let group_state_ref = if let Some(commit_event) = commit_event.as_ref() {
-        commit_event.event_id.to_string()
-    } else if first_payload.epoch == 0
-        && let Some(genesis_event) = genesis_event.as_ref()
-    {
-        genesis_event.event_id.to_string()
-    } else {
-        state_store
-            .mls_group_state_ref_for_scope(
-                &effective_scope,
-                first_payload.group_id.as_str(),
-                first_payload.epoch,
-            )?
-            .to_string()
-    };
-    for encrypted_value in &mut encrypted_values {
-        let payload =
-            serde_json::from_value::<arkret_sdk::EncryptedPayload>(encrypted_value.clone())
-                .map_err(|error| format!("invalid encrypted patch payload: {error}"))?;
-        if payload.group_id != first_payload.group_id || payload.epoch != first_payload.epoch {
-            return Err("encrypted patch values do not share one MLS group and epoch".to_owned());
-        }
-        let aad = payload
-            .aad
-            .clone()
-            .ok_or_else(|| "encrypted patch payload is missing canonical AAD".to_owned())?;
-        let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
-            &payload,
-            aad,
-            arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
-            // `hidden` is at or below every possible Realm ceiling, so the
-            // fail-closed `from_declared(None)` resolution always admits it. A
-            // caller that starts emitting `routing_digest` MUST pass the Realm's
-            // accepted `aad_visibility` component here instead.
-            arkret_sdk::AadVisibilityCeiling::from_declared(None),
-            &group_state_ref,
-        )
-        .map_err(|error| format!("build encrypted Strand patch envelope: {error}"))?;
-        *encrypted_value = serde_json::to_value(envelope)
-            .map_err(|error| format!("serialize encrypted Strand patch envelope: {error}"))?;
-    }
+    // `group_state_ref` names the Event that established this epoch. When that
+    // Event is part of this same write it has no identity yet, so the envelope
+    // is sealed by [`EncryptedPatchPlan::seal`] after the commit (or genesis)
+    // has been authored. Only an epoch that is already accepted can resolve the
+    // reference here.
+    let accepted_group_state_ref =
+        if commit_event.is_some() || (first_payload.epoch == 0 && genesis_event.is_some()) {
+            None
+        } else {
+            Some(
+                state_store
+                    .mls_group_state_ref_for_scope(
+                        &effective_scope,
+                        first_payload.group_id.as_str(),
+                        first_payload.epoch,
+                    )?
+                    .to_string(),
+            )
+        };
     // X5.1 — encryption succeeded. Persist the author's own plaintext into
     // the local-only sidecar so a later re-projection (refresh / board
     // switch / live poll) can render the author's own content, which can
@@ -364,10 +402,15 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         }
     }
     let paths = values.into_iter().map(|(path, _)| path).collect::<Vec<_>>();
-    let mut encrypted_patch = patch;
-    replace_private_patch_values(&mut encrypted_patch, &paths, encrypted_values)?;
     Ok((
-        encrypted_patch,
+        EncryptedPatchPlan {
+            patch,
+            paths,
+            payloads: encrypted_values,
+            group_id: first_payload.group_id.clone(),
+            epoch: first_payload.epoch,
+            accepted_group_state_ref,
+        },
         EncryptedWriteMlsEvents {
             genesis: genesis_event,
             genesis_material: fresh_summary,
@@ -454,7 +497,7 @@ pub(super) fn dispatch_card_detail_update(
     let calendar_changed = patch
         .as_object()
         .is_some_and(|entries| entries.contains_key(CALENDAR_SUBTREE_PATH));
-    let (patch, mls_events) = if effective_security_encrypted {
+    let (patch_plan, mls_events) = if effective_security_encrypted {
         match encrypt_private_card_detail_patch_values_for_effective_scope(
             patch,
             &realm_id,
@@ -471,7 +514,10 @@ pub(super) fn dispatch_card_detail_update(
             }
         }
     } else {
-        (patch, EncryptedWriteMlsEvents::default())
+        (
+            EncryptedPatchPlan::plaintext(patch),
+            EncryptedWriteMlsEvents::default(),
+        )
     };
     let EncryptedWriteMlsEvents {
         genesis: mls_genesis_op,
@@ -481,32 +527,6 @@ pub(super) fn dispatch_card_detail_update(
         pending_history_secrets,
     } = mls_events;
 
-    let op = match crate::operation::ak_ops::strand_update_patch(
-        &realm_id,
-        &actor_id,
-        &current.id,
-        patch,
-    ) {
-        Ok(builder) => {
-            let builder = if calendar_changed {
-                builder.causal_refs(current.calendar_schedule_basis_refs())
-            } else {
-                builder
-            };
-            builder.build_sdk_event("inkson")
-        }
-        Err(err) => {
-            board_status.set(format!("cannot update card: {err:#}"));
-            return false;
-        }
-    };
-    let mut op = match op {
-        Ok(event) => event,
-        Err(err) => {
-            board_status.set(format!("cannot update card: {err}"));
-            return false;
-        }
-    };
     let sidecar_effective_scope = match sidecar_track_write
         .as_ref()
         .and_then(|context| context.binding.as_ref())
@@ -526,16 +546,6 @@ pub(super) fn dispatch_card_detail_update(
         }
         None => None,
     };
-    if let Some(effective_scope) = sidecar_effective_scope.as_ref() {
-        op.scope_ref = effective_scope.clone();
-        op.event_id = match op.derive_event_id() {
-            Ok(event_id) => event_id,
-            Err(error) => {
-                board_status.set(format!("cannot derive Sidecar Event id: {error}"));
-                return false;
-            }
-        };
-    }
     // R4: feed the guard the three-state security signal. An explicit
     // per-card `security_encrypted` flag (`Some`) wins; otherwise fall back to
     // the scope three-state so an unknown projection fails closed.
@@ -543,10 +553,6 @@ pub(super) fn dispatch_card_detail_update(
         .security_encrypted
         .map(Some)
         .unwrap_or(scope_security_encrypted);
-    if let Some(reason) = kanban_plaintext_block_reason(guard_security_state, &op) {
-        board_status.set(reason);
-        return false;
-    }
 
     // Optimistic detail-panel feedback: apply the draft to the open card.
     // The board itself re-renders from the appended `ak.strand.update` op
@@ -558,23 +564,29 @@ pub(super) fn dispatch_card_detail_update(
         selected_card.set(Some(updated_card));
     }
 
-    let operation_id = sdk_event_local_operation_id(&op).to_owned();
+    // The holder-local identity of this write. It is allocated before the Event
+    // exists, which is exactly why the optimistic row can be keyed by it: the
+    // Event id is only known after the epoch's Event has been authored.
+    let local_operation_id = crate::operation::LocalOperationId::new();
+    let operation_id = local_operation_id.to_string();
     let synthesis_entry_id = synthesis_revision_body
         .as_ref()
         .map(|_| synthesis_entry_id.unwrap_or_else(|| operation_id.clone()));
     let local_synthesis_revision_body = synthesis_revision_body
         .clone()
         .filter(|_| !effective_security_encrypted);
+    let kind = event_kind_str::STRAND_UPDATE.to_owned();
     state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id.clone()),
         json!({
-            "kind": op.kind.as_str(),
+            "kind": kind,
             "operation_id": operation_id.clone(),
-            "actor_id": op.actor_id.to_string(),
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(op.created_at),
+            "actor_id": actor_id.clone(),
+            "created_at": arkret_sdk::canonical::format_timestamp_canonical(
+                crate::clock::now_utc_millis(),
+            ),
             "write_state": "queued",
-            "body": op.payload.clone(),
             "activity_summary": card_detail_activity_summary(&current, &draft),
             "synthesis_entry_id": synthesis_entry_id,
             "synthesis_revision_body": local_synthesis_revision_body,
@@ -582,16 +594,14 @@ pub(super) fn dispatch_card_detail_update(
         }),
     );
     board_status.set(format!(
-        "submitting {} operation {}",
-        op.kind.as_str(),
+        "submitting {kind} operation {}",
         short_protocol_id(&operation_id)
     ));
     let api_token = token();
     let strand_id = current.id.clone();
-    let kind = op.kind.as_str().to_owned();
     let mls_commit_operation_id = mls_commit_op
         .as_ref()
-        .map(|op| sdk_event_local_operation_id(op).to_owned());
+        .map(|op| op.local_operation_id().to_string());
     // X11.2 — first-write trigger. Read the context-provided
     // `needs_mls_backup` signal HERE (inside the Dioxus scope), so the
     // encrypted-write success arm can flip the backup prompt on directly,
@@ -602,7 +612,10 @@ pub(super) fn dispatch_card_detail_update(
     let actor_for_backup_trigger = actor_id.clone();
     let device_for_sidecar_backup = device_id.clone();
     let sidecar_effective_scope = sidecar_effective_scope.clone();
-    let mut submit_event = op;
+    let calendar_basis_refs = current.calendar_schedule_basis_refs();
+    let update_realm_id = realm_id.clone();
+    let update_actor_id = actor_id.clone();
+    let update_strand_id = current.id.clone();
     spawn(async move {
         if let Some(pending) = pending_history_secrets {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -623,8 +636,8 @@ pub(super) fn dispatch_card_detail_update(
         // genesis is success only after resolving the exact already-accepted
         // Event id; merely setting the emitted flag strands secure messages
         // without their mandatory group_state_ref.
+        let mut accepted_genesis_event_id = None::<arkret_sdk::EventId>;
         if let Some(genesis_op) = mls_genesis_op {
-            let provisional_genesis_event_id = genesis_op.event_id.clone();
             let realm_for_genesis_lookup = realm_id.clone();
             let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
                 let material = mls_genesis_material.ok_or_else(|| {
@@ -637,21 +650,10 @@ pub(super) fn dispatch_card_detail_update(
                     .map_err(|error| anyhow::anyhow!(error.user_message()))?;
                 let submitter = api.event_submitter()?;
                 match submitter.submit_sdk_event(&genesis_op).await {
-                    // The queue re-authors the envelope before signing, so the
-                    // accepted id is not the build-time id. Returning the
-                    // accepted id is what arms the group_state_ref rebind
-                    // below.
-                    Ok(result) => match arkret_sdk::EventId::new(result.event_id) {
-                        Ok(accepted_event_id) => Ok(accepted_event_id),
-                        Err(_) => submitter
-                            .find_mls_genesis_event_id(&realm_for_genesis_lookup)
-                            .await?
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "MLS genesis was accepted but its Event id is unavailable"
-                                )
-                            }),
-                    },
+                    Ok(accepted) => arkret_sdk::EventId::new(accepted.event_id.clone())
+                        .map_err(|error| {
+                            anyhow::anyhow!("accepted ak.mls.genesis id is invalid: {error}")
+                        }),
                     Err(error)
                         if crate::ephemeral::events_submit_rejected_for_reason(
                             &error,
@@ -672,40 +674,11 @@ pub(super) fn dispatch_card_detail_update(
             })
             .await;
             match genesis_result {
-                Ok(accepted_genesis_event_id) => {
-                    state_store.write().mark_mls_genesis_emitted_with_event(
-                        realm_id.clone(),
-                        &accepted_genesis_event_id,
-                    );
-                    if accepted_genesis_event_id != provisional_genesis_event_id {
-                        let rebound =
-                            submit_event
-                                .payload
-                                .values_mut()
-                                .try_fold(0, |count, value| {
-                                    rebind_encrypted_group_state_ref(
-                                        value,
-                                        &provisional_genesis_event_id,
-                                        &accepted_genesis_event_id,
-                                    )
-                                    .map(|rebound| count + rebound)
-                                });
-                        match rebound {
-                            Ok(rebound) if rebound > 0 => {}
-                            Ok(_) => {
-                                board_status.set(
-                                    "MLS genesis reference recovery found no encrypted Strand envelope"
-                                        .to_owned(),
-                                );
-                                return;
-                            }
-                            Err(error) => {
-                                board_status
-                                    .set(format!("MLS genesis reference recovery failed: {error}"));
-                                return;
-                            }
-                        }
-                    }
+                Ok(event_id) => {
+                    state_store
+                        .write()
+                        .mark_mls_genesis_emitted_with_event(realm_id.clone(), &event_id);
+                    accepted_genesis_event_id = Some(event_id);
                 }
                 Err(err) => {
                     let err_text = err.display().to_string();
@@ -727,6 +700,7 @@ pub(super) fn dispatch_card_detail_update(
                 }
             }
         }
+        let mut accepted_commit_event_id = None::<arkret_sdk::EventId>;
         if let Some(commit_op) = mls_commit_op {
             let snapshot_for_submit = mls_new_snapshot.clone();
             let realm_for_submit = realm_id.clone();
@@ -752,6 +726,14 @@ pub(super) fn dispatch_card_detail_update(
             .await;
             match commit_result {
                 Ok(resp) => {
+                    let commit_event_id = match arkret_sdk::EventId::new(resp.event_id.clone()) {
+                        Ok(event_id) => event_id,
+                        Err(error) => {
+                            board_status.set(format!("accepted MLS commit id is invalid: {error}"));
+                            return;
+                        }
+                    };
+                    accepted_commit_event_id = Some(commit_event_id.clone());
                     // X14 — persist-on-accept: the server accepted this commit,
                     // so NOW advance the local snapshot to the post-commit
                     // epoch. This keeps `snapshot.epoch == server.epoch` in
@@ -766,16 +748,17 @@ pub(super) fn dispatch_card_detail_update(
                             // The accepted Event id from the submit outcome —
                             // the build-time id died when the queue re-authored
                             // the envelope.
-                            let accepted_commit_ref =
-                                match arkret_sdk::EventId::new(resp.event_id.clone()) {
-                                    Ok(event_id) => event_id,
-                                    Err(error) => {
-                                        board_status.set(format!(
-                                            "accepted MLS commit returned an invalid Event id: {error}"
-                                        ));
-                                        return;
-                                    }
-                                };
+                            let accepted_commit_ref = match arkret_sdk::EventId::new(
+                                resp.event_id.clone(),
+                            ) {
+                                Ok(event_id) => event_id,
+                                Err(error) => {
+                                    board_status.set(format!(
+                                        "accepted MLS commit returned an invalid Event id: {error}"
+                                    ));
+                                    return;
+                                }
+                            };
                             if let Err(error) =
                                 state_store.write().record_mls_group_state_ref_for_scope(
                                     effective_scope,
@@ -839,6 +822,75 @@ pub(super) fn dispatch_card_detail_update(
                 }
             }
         }
+        let sealed_patch = match patch_plan.seal(
+            accepted_commit_event_id.as_ref(),
+            accepted_genesis_event_id.as_ref(),
+        ) {
+            Ok(patch) => patch,
+            Err(error) => {
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id,
+                    "failed",
+                    None,
+                    Some(error.clone()),
+                );
+                board_status.set(error);
+                return;
+            }
+        };
+        let submit_event = match crate::operation::ak_ops::strand_update_patch(
+            &update_realm_id,
+            &update_actor_id,
+            &update_strand_id,
+            sealed_patch,
+        )
+        .map(|builder| {
+            if calendar_changed {
+                builder.causal_refs(calendar_basis_refs)
+            } else {
+                builder
+            }
+        })
+        .and_then(|builder| builder.build_sdk_event("inkson"))
+        {
+            Ok(op) => {
+                let op = op.with_local_operation_id(local_operation_id);
+                match sidecar_effective_scope.as_ref() {
+                    Some(effective_scope) => op.with_effective_scope(effective_scope.clone()),
+                    None => Ok(op),
+                }
+            }
+            Err(error) => Err(error),
+        };
+        let submit_event = match submit_event {
+            Ok(op) => op,
+            Err(error) => {
+                let error = format!("cannot update card: {error:#}");
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id,
+                    "failed",
+                    None,
+                    Some(error.clone()),
+                );
+                board_status.set(error);
+                return;
+            }
+        };
+        if let Some(reason) = kanban_plaintext_block_reason(guard_security_state, &submit_event) {
+            state_store.write().update_raw_operation_write_state(
+                &operation_id,
+                "failed",
+                None,
+                Some(reason.clone()),
+            );
+            board_status.set(reason);
+            return;
+        }
+        // The optimistic row was enqueued before the patch could be sealed, so
+        // the body lands here, once it exists.
+        state_store
+            .write()
+            .update_raw_operation_body(&operation_id, submit_event.payload_value());
         match with_authed_api(&base_url, api_token.clone(), |api| async move {
             api.event_submitter()?.submit_sdk_event(&submit_event).await
         })

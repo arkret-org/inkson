@@ -227,14 +227,22 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         )?);
     }
     let mut all_events = Vec::with_capacity(1 + pointer_events.len());
-    all_events.push(revoke);
-    all_events.extend(pointer_events);
-    let signed_events = submitter.prepare_sdk_events_batch(all_events).await?;
-    crate::authorization_lease::acquire_for_events(&http, &signed_events).await?;
-    let mut submissions = Vec::with_capacity(signed_events.len());
-    for event in signed_events {
+    all_events.push(revoke.into_intent());
+    all_events.extend(
+        pointer_events
+            .into_iter()
+            .map(crate::operation::LocalOperation::into_intent),
+    );
+    let signed_events = submitter.author_independent_events(all_events).await?;
+    let envelopes = signed_events
+        .iter()
+        .map(|event| event.event().clone())
+        .collect::<Vec<_>>();
+    crate::authorization_lease::acquire_for_events(&http, &envelopes).await?;
+    let mut submissions = Vec::with_capacity(envelopes.len());
+    for event in &envelopes {
         submissions
-            .push(crate::authorization_lease::delayed_initial_submission(&http, &event).await?);
+            .push(crate::authorization_lease::delayed_initial_submission(&http, event).await?);
     }
     let revoke_submission = EventsSubmitBatchRequestBody {
         events: vec![submissions.remove(0)],
@@ -677,7 +685,7 @@ pub(super) fn build_active_series_event(
     previous_series_ids: &[BackupSeriesId],
     frontier: &arkret_sdk::RealmSealFrontierView,
     trust_anchor: &ControllerBackupTrustAnchor,
-) -> Result<arkret_sdk::Event> {
+) -> Result<crate::operation::LocalOperation> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let principal_full_id = DidFullId::new(actor_id.to_owned())?;

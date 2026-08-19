@@ -24,7 +24,6 @@
 
 use dioxus::prelude::*;
 
-use crate::operation::sdk_event_local_operation_id;
 use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 
 /// The structured MLS payload + the canonical AAD it was bound to.
@@ -191,12 +190,34 @@ fn circle_effective_scope(
 /// The built (but not yet submitted) secure-send artifacts: the optional
 /// forced MLS commit event, the encrypted `ak.message.create` event, and
 /// the metadata the caller needs to drive UI / persist-on-accept.
+/// Builds the encrypted write once the epoch's group-state reference is known.
+///
+/// The encrypted envelope binds `key_ref.group_state_ref` to the Event that
+/// established the epoch. When this send forces a commit, that Event is part of
+/// the same send and has no identity until it is accepted — so the message is
+/// built from the accepted commit id, never from a draft one.
+/// `mention_sidecar_digest` is a producer-signed payload member, so the digests
+/// travel in here rather than being written onto a built Event afterwards.
+pub(crate) type SecureMessagePlan = Box<
+    dyn FnOnce(
+            Option<&arkret_sdk::EventId>,
+            Vec<String>,
+        ) -> Result<crate::operation::LocalOperation, String>
+        + Send,
+>;
+
 pub(crate) struct SecureSendBuild {
     /// Forced `ak.mls.commit` to submit BEFORE the message, when the encrypt
     /// advanced the epoch. `None` rides the current epoch.
-    pub commit_event: Option<arkret_sdk::Event>,
-    /// The encrypted `ak.message.create` event.
-    pub message_event: arkret_sdk::Event,
+    pub commit_event: Option<crate::operation::LocalOperation>,
+    /// Builds the encrypted write against the accepted epoch reference.
+    pub message_plan: SecureMessagePlan,
+    /// Holder-local identity of the message this send will author.
+    ///
+    /// Allocated here so the optimistic bubble and its author-owned plaintext
+    /// sidecar can be keyed before the Event — which waits on the commit's
+    /// accepted id — exists.
+    pub message_local_operation_id: crate::operation::LocalOperationId,
     /// Post-commit snapshot — persisted by the caller ONLY after the server
     /// accepts the commit (persist-on-accept).
     pub new_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
@@ -236,7 +257,7 @@ pub(crate) fn build_secure_send(
     actor: &str,
     device_id: &str,
     strand_id: &str,
-    _local_message_id: &str,
+    local_message_id: &str,
     reply_to: Option<&str>,
     plaintext_bytes: &[u8],
     metadata_plaintext_bytes: Option<&[u8]>,
@@ -311,64 +332,54 @@ pub(crate) fn build_secure_send(
                 .saturating_sub(u64::from(real_commit_envelope.is_some())),
         )?
         .to_string();
-    let (group_state_ref, commit_envelope) =
-        if let Some(prepared_commit) = real_commit_envelope.as_ref() {
-            let commit_event = match sidecar_binding.as_ref() {
-                Some(binding) => {
-                    crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
-                        &state_store.read(),
-                        realm_id,
-                        actor,
-                        &prepared_commit.envelope,
-                        &prepared_commit.previous_governance_binding,
-                        binding.clone(),
-                    )?
-                }
-                None => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+    let commit_event = match real_commit_envelope.as_ref() {
+        Some(prepared_commit) => Some(match sidecar_binding.as_ref() {
+            Some(binding) => {
+                crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
                     &state_store.read(),
                     realm_id,
-                    circle_id,
                     actor,
                     &prepared_commit.envelope,
                     &prepared_commit.previous_governance_binding,
-                )?,
-            };
-            (commit_event.event_id.to_string(), Some(commit_event))
-        } else {
-            (base_group_state_ref, None)
-        };
-
-    // Wrap the MLS payload in the spec-canonical
-    // `ak.schema.encrypted_envelope.v1` wire shape, binding
-    // key_ref.group_state_ref to the current MLS group state.
-    let encrypted_envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
-        &encrypted_payload,
-        envelope_aad,
-        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
-        // `hidden` is at or below every possible Realm ceiling, so the
-        // fail-closed `from_declared(None)` resolution always admits it. A
-        // caller that starts emitting `routing_digest` MUST pass the Realm's
-        // accepted `aad_visibility` component here instead.
-        arkret_sdk::AadVisibilityCeiling::from_declared(None),
-        &group_state_ref,
-    )
-    .map_err(|err| format!("MLS encrypted envelope build failed: {err}"))?;
+                    binding.clone(),
+                )?
+            }
+            None => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+                &state_store.read(),
+                realm_id,
+                circle_id,
+                actor,
+                &prepared_commit.envelope,
+                &prepared_commit.previous_governance_binding,
+            )?,
+        }),
+        None => None,
+    };
     let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|err| format!("Send Secure strand id invalid: {err:?}"))?;
-    let encrypted_content =
-        arkret_sdk::MlsEncryptedPayload::<arkret_sdk::ContentBlock>::new(encrypted_envelope)
-            .map_err(|err| format!("MLS ContentBlock envelope type mismatch: {err}"))?;
-    let mut message_payload = arkret_sdk::MessageCreatePayload::with_mls_encrypted_content(
-        typed_strand_id,
-        "discussion",
-        encrypted_content,
-    );
-    if let Some((metadata_payload, metadata_aad)) = encrypted_metadata_message {
-        // Same canonical wrap + AAD visibility + group-state binding as the
-        // `encrypted_content` envelope, mounted parallel to it on the payload.
-        let encrypted_metadata = arkret_sdk::mls::encrypted_envelope_from_payload(
-            &metadata_payload,
-            metadata_aad,
+    let plan_realm_id = realm_id.to_owned();
+    let plan_actor = actor.to_owned();
+    let plan_reply_to = reply_to
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned);
+    let plan_scope = effective_scope.clone();
+    // The caller's optimistic row is already keyed by `local_message_id`; the
+    // queue slot has to answer to that same key, or the row it belongs to can
+    // never be found again.
+    let message_local_operation_id =
+        crate::operation::LocalOperationId::from_holder_key(local_message_id);
+    let plan_local_operation_id = message_local_operation_id.clone();
+    let message_plan: SecureMessagePlan = Box::new(move |accepted_commit, mention_digests| {
+        // Wrap the MLS payload in the spec-canonical
+        // `ak.schema.encrypted_envelope.v1` wire shape, binding
+        // key_ref.group_state_ref to the Event that established this epoch.
+        let group_state_ref = match accepted_commit {
+            Some(event_id) => event_id.to_string(),
+            None => base_group_state_ref,
+        };
+        let encrypted_envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
+            &encrypted_payload,
+            envelope_aad,
             arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
             // `hidden` is at or below every possible Realm ceiling, so the
             // fail-closed `from_declared(None)` resolution always admits it. A
@@ -377,28 +388,55 @@ pub(crate) fn build_secure_send(
             arkret_sdk::AadVisibilityCeiling::from_declared(None),
             &group_state_ref,
         )
-        .map_err(|err| format!("MLS encrypted metadata envelope build failed: {err}"))?;
-        let encrypted_metadata =
-            arkret_sdk::MlsEncryptedPayload::<arkret_sdk::MessageMetadata>::new(encrypted_metadata)
+        .map_err(|err| format!("MLS encrypted envelope build failed: {err}"))?;
+        let encrypted_content =
+            arkret_sdk::MlsEncryptedPayload::<arkret_sdk::ContentBlock>::new(encrypted_envelope)
+                .map_err(|err| format!("MLS ContentBlock envelope type mismatch: {err}"))?;
+        let mut message_payload = arkret_sdk::MessageCreatePayload::with_mls_encrypted_content(
+            typed_strand_id,
+            "discussion",
+            encrypted_content,
+        );
+        if let Some((metadata_payload, metadata_aad)) = encrypted_metadata_message {
+            // Same canonical wrap + AAD visibility + group-state binding as the
+            // `encrypted_content` envelope, mounted parallel to it on the payload.
+            let encrypted_metadata = arkret_sdk::mls::encrypted_envelope_from_payload(
+                &metadata_payload,
+                metadata_aad,
+                arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+                arkret_sdk::AadVisibilityCeiling::from_declared(None),
+                &group_state_ref,
+            )
+            .map_err(|err| format!("MLS encrypted metadata envelope build failed: {err}"))?;
+            let encrypted_metadata =
+                arkret_sdk::MlsEncryptedPayload::<arkret_sdk::MessageMetadata>::new(
+                    encrypted_metadata,
+                )
                 .map_err(|err| format!("MLS MessageMetadata envelope type mismatch: {err}"))?;
-        message_payload = message_payload.with_mls_encrypted_metadata(encrypted_metadata);
-    }
-    if let Some(reply_to) = reply_to.filter(|value| !value.trim().is_empty()) {
-        message_payload = message_payload.with_reply_to(reply_to);
-    }
-    let message_envelope = crate::operation::TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::MessageCreate,
-    >(realm_id, actor, message_payload)
-    .build_sdk_event("inkson");
-
-    let commit_event = commit_envelope;
-    let mut message_event = message_envelope
-        .map_err(|err| format!("Send Secure SDK Event conversion failed: {err}"))?;
-    message_event.scope_ref = effective_scope.clone();
+            message_payload = message_payload.with_mls_encrypted_metadata(encrypted_metadata);
+        }
+        if let Some(reply_to) = plan_reply_to {
+            message_payload = message_payload.with_reply_to(reply_to);
+        }
+        // `event-payload.schema.json#/$defs/message_create_payload` puts
+        // `mention_sidecar_digest` at the payload root and closes the object, so
+        // nesting it under `content` would be a schema violation.
+        message_payload.mention_sidecar_digest = mention_digests;
+        crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
+            &plan_realm_id,
+            &plan_actor,
+            message_payload,
+        )
+        .effective_scope(plan_scope)
+        .build_sdk_event("inkson")
+        .map(|operation| operation.with_local_operation_id(plan_local_operation_id))
+        .map_err(|err| format!("Send Secure SDK Event conversion failed: {err}"))
+    });
 
     Ok(SecureSendBuild {
         commit_event,
-        message_event,
+        message_plan,
+        message_local_operation_id,
         new_mls_snapshot,
         seal_ref,
         pending_history_secrets,
@@ -473,53 +511,65 @@ pub(crate) fn build_sidecar_exchange_control_send(
                 .saturating_sub(u64::from(prepared_commit.is_some())),
         )?
         .to_string();
-    let (group_state_ref, commit_event) = if let Some(prepared) = prepared_commit.as_ref() {
-        let event = crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
-            &state_store.read(),
-            realm_id,
-            actor,
-            &prepared.envelope,
-            &prepared.previous_governance_binding,
-            sidecar_binding.clone(),
-        )?;
-        (event.event_id.to_string(), Some(event))
-    } else {
-        (base_group_state_ref, None)
+    let commit_event = match prepared_commit.as_ref() {
+        Some(prepared) => Some(
+            crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
+                &state_store.read(),
+                realm_id,
+                actor,
+                &prepared.envelope,
+                &prepared.previous_governance_binding,
+                sidecar_binding.clone(),
+            )?,
+        ),
+        None => None,
     };
-    let encrypted_payload = arkret_sdk::mls::encrypted_envelope_from_payload(
-        &encrypted_payload,
-        envelope_aad,
-        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
-        arkret_sdk::AadVisibilityCeiling::from_declared(None),
-        &group_state_ref,
-    )
-    .map_err(|error| format!("Sidecar close encrypted envelope build failed: {error}"))?;
-    let payload = arkret_sdk::AgentSidecarExchangeControlPayload {
-        sidecar_id: sidecar_binding.sidecar_id,
-        source_context_ref: arkret_sdk::sidecar_operations::SidecarContextRef::Strand {
-            strand_id: arkret_sdk::StrandId::new(source_strand_id.to_owned())
-                .map_err(|error| format!("Sidecar close source Strand invalid: {error}"))?,
-        },
-        encrypted_payload,
-    };
-    let refs = control
+    let source_strand_id = arkret_sdk::StrandId::new(source_strand_id.to_owned())
+        .map_err(|error| format!("Sidecar close source Strand invalid: {error}"))?;
+    let plan_sidecar_id = sidecar_binding.sidecar_id;
+    let plan_refs: Vec<arkret_sdk::EventRef> = control
         .basis_event_ids
         .iter()
         .map(|event_id| arkret_sdk::EventRef::new(event_id.to_string(), "after"))
         .collect();
-    let mut message_event = crate::operation::TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::AgentSidecarExchangeControl,
-    >(realm_id, actor, payload)
-    .refs(refs)
-    .build_sdk_event("inkson")
-    .map_err(|error| format!("Sidecar close SDK Event conversion failed: {error}"))?;
-    message_event.scope_ref = effective_scope.clone();
-    message_event.event_id = message_event
-        .derive_event_id()
-        .map_err(|error| format!("Sidecar close Event id derivation failed: {error}"))?;
+    let plan_realm_id = realm_id.to_owned();
+    let plan_actor = actor.to_owned();
+    let plan_scope = effective_scope.clone();
+    let message_local_operation_id = crate::operation::LocalOperationId::new();
+    let plan_local_operation_id = message_local_operation_id.clone();
+    let message_plan: SecureMessagePlan = Box::new(move |accepted_commit, _mention_digests| {
+        let group_state_ref = match accepted_commit {
+            Some(event_id) => event_id.to_string(),
+            None => base_group_state_ref,
+        };
+        let encrypted_payload = arkret_sdk::mls::encrypted_envelope_from_payload(
+            &encrypted_payload,
+            envelope_aad,
+            arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
+            arkret_sdk::AadVisibilityCeiling::from_declared(None),
+            &group_state_ref,
+        )
+        .map_err(|error| format!("Sidecar close encrypted envelope build failed: {error}"))?;
+        let payload = arkret_sdk::AgentSidecarExchangeControlPayload {
+            sidecar_id: plan_sidecar_id,
+            source_context_ref: arkret_sdk::sidecar_operations::SidecarContextRef::Strand {
+                strand_id: source_strand_id,
+            },
+            encrypted_payload,
+        };
+        crate::operation::TypedOperationBuilder::new::<
+            arkret_sdk::event_spec::AgentSidecarExchangeControl,
+        >(&plan_realm_id, &plan_actor, payload)
+        .refs(plan_refs)
+        .effective_scope(plan_scope)
+        .build_sdk_event("inkson")
+        .map(|operation| operation.with_local_operation_id(plan_local_operation_id))
+        .map_err(|error| format!("Sidecar close SDK Event conversion failed: {error}"))
+    });
     Ok(SecureSendBuild {
         commit_event,
-        message_event,
+        message_plan,
+        message_local_operation_id,
         new_mls_snapshot,
         seal_ref: seal_view.move_seal_ref(),
         pending_history_secrets,
@@ -560,10 +610,12 @@ pub(crate) async fn submit_secure_send(
     api_token: String,
     actor: String,
     circle_id: Option<String>,
+    mention_digests: Vec<String>,
 ) -> SecureSendOutcome {
     let SecureSendBuild {
         commit_event,
-        message_event,
+        message_plan,
+        message_local_operation_id: _,
         new_mls_snapshot,
         seal_ref,
         pending_history_secrets,
@@ -583,33 +635,38 @@ pub(crate) async fn submit_secure_send(
     }
     let commit_op_id = commit_event
         .as_ref()
-        .map(|commit| sdk_event_local_operation_id(commit).to_owned());
+        .map(|commit| commit.local_operation_id().to_string());
 
+    let mut accepted_commit_event_id = None::<arkret_sdk::EventId>;
     if let Some(commit_event) = commit_event {
         // Submit the forced MLS commit first; if it fails, abort the message
-        // send (the Security Frontier will not bind).
+        // send (the Security Frontier will not bind). The message's
+        // `group_state_ref` is this commit's ACCEPTED id, so it is also the
+        // reason the message cannot be built before this point.
         match match api.event_submitter() {
             Ok(sub) => sub.submit_sdk_event(&commit_event).await,
             Err(err) => Err(err),
         } {
             Ok(resp) => {
+                match arkret_sdk::EventId::new(resp.event_id.clone()) {
+                    Ok(event_id) => accepted_commit_event_id = Some(event_id),
+                    Err(error) => {
+                        return SecureSendOutcome::MessageFailed {
+                            message: format!(
+                                "accepted MLS commit returned an invalid Event id: {error}"
+                            ),
+                        };
+                    }
+                }
                 // X14 — persist-on-accept: the server accepted the commit, so
                 // NOW advance the local snapshot to the post-commit epoch. On a
                 // commit reject we skip this and the snapshot stays at the
                 // pre-commit epoch, so the next Send Secure retries at the
                 // correct `expected_prev_epoch` instead of skewing forever.
                 if let Some(snapshot) = new_mls_snapshot {
-                    let accepted_commit_ref = match arkret_sdk::EventId::new(resp.event_id.clone())
-                    {
-                        Ok(event_id) => event_id,
-                        Err(error) => {
-                            return SecureSendOutcome::MessageFailed {
-                                message: format!(
-                                    "accepted MLS commit returned an invalid Event id: {error}"
-                                ),
-                            };
-                        }
-                    };
+                    let accepted_commit_ref = accepted_commit_event_id
+                        .clone()
+                        .expect("accepted commit id was captured above");
                     if let Err(error) = state_store.write().record_mls_group_state_ref_for_scope(
                         &effective_scope,
                         snapshot.group_id.as_str(),
@@ -657,6 +714,10 @@ pub(crate) async fn submit_secure_send(
         }
     }
 
+    let message_event = match message_plan(accepted_commit_event_id.as_ref(), mention_digests) {
+        Ok(message_event) => message_event,
+        Err(message) => return SecureSendOutcome::MessageFailed { message },
+    };
     match match api.event_submitter() {
         Ok(sub) => sub.submit_sdk_event(&message_event).await,
         Err(err) => Err(err),

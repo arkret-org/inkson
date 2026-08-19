@@ -20,9 +20,9 @@ use dioxus_router::hooks::{use_navigator, use_route};
 use super::model::{
     AgentGrantPreset, AgentServiceScopePreset, agent_lifecycle_wire, agent_runtime_state_wire,
     agent_state_badge_class, agent_state_label, agent_view_from_directory_row,
-    build_agent_pairing_deep_link, build_agent_pairing_handoff_token,
-    build_agent_provision_event_draft, is_pairing_request_expired, key_state_runtime_state,
-    render_agent_pairing_qr_svg, requested_scope_for_presets,
+    build_agent_pairing_deep_link, build_agent_pairing_handoff_token, build_agent_provision_intent,
+    is_pairing_request_expired, key_state_runtime_state, render_agent_pairing_qr_svg,
+    requested_scope_for_presets,
 };
 use crate::components::{QrSharePanel, UiIcon};
 use crate::routes::Route;
@@ -776,29 +776,20 @@ fn spawn_set_agent_enabled(
         }
         let id_for_status = id.clone();
         let status_changed_at = crate::clock::now_utc_millis();
-        let placeholder_hlc = match arkret_sdk::Hlc::new("000000000000-0000-00000000") {
-            Ok(hlc) => hlc,
-            Err(error) => {
-                last_op_status.set(format!("Agent lifecycle authoring failed: {error}"));
-                return;
-            }
-        };
         let agent_actor_id = key_state.agent_id.clone();
         let controller_actor_id = key_state.controller_id.clone();
-        let draft = if enabled {
-            arkret_event_draft::build_agent_resume_event(
+        let intent = if enabled {
+            arkret_event_draft::build_agent_resume_intent(
                 agent_actor_id.clone(),
                 controller_actor_id.clone(),
                 arkret_sdk::ScopeRef::Realm {
                     realm_id: key_state.principal_control_realm_id.clone(),
                 },
                 key_state.controller_authorization_ref.clone(),
-                1,
-                placeholder_hlc,
                 status_changed_at,
             )
         } else {
-            arkret_event_draft::build_agent_pause_event(
+            arkret_event_draft::build_agent_pause_intent(
                 agent_actor_id,
                 controller_actor_id,
                 arkret_sdk::ScopeRef::Realm {
@@ -806,13 +797,11 @@ fn spawn_set_agent_enabled(
                 },
                 key_state.controller_authorization_ref.clone(),
                 Some("controller_paused".to_owned()),
-                1,
-                placeholder_hlc,
                 status_changed_at,
             )
         };
-        let draft = match draft {
-            Ok(event) => event,
+        let operation = match intent {
+            Ok(intent) => crate::operation::LocalOperation::new(intent),
             Err(error) => {
                 last_op_status.set(format!("Agent lifecycle authoring failed: {error}"));
                 return;
@@ -838,8 +827,12 @@ fn spawn_set_agent_enabled(
                 state_store,
             )
             .await?;
+            // The lifecycle Event rides its own request body rather than the
+            // durable submit queue, so it is authored here and positioned by the
+            // same submitter that reads the accepted actor frontier.
+            let draft = submitter.author_for_direct_submission(&operation).await?;
             let lifecycle_event = submitter
-                .prepare_initial_submissions(vec![draft])
+                .prepare_initial_submissions(std::slice::from_ref(&draft))
                 .await?
                 .into_iter()
                 .next()
@@ -953,16 +946,9 @@ fn spawn_deactivate_agent(
 
         let reason = "controller_deactivated".to_owned();
         let changed_at = crate::clock::now_utc_millis();
-        let placeholder_hlc = match arkret_sdk::Hlc::new("000000000000-0000-00000000") {
-            Ok(hlc) => hlc,
-            Err(error) => {
-                last_op_status.set(format!("Agent deactivation authoring failed: {error}"));
-                return;
-            }
-        };
         let agent_actor_id = key_state.agent_id.clone();
         let controller_actor_id = key_state.controller_id.clone();
-        let lifecycle_event = match arkret_event_draft::build_agent_deactivate_event(
+        let operation = match arkret_event_draft::build_agent_deactivate_intent(
             agent_actor_id,
             controller_actor_id,
             arkret_sdk::ScopeRef::Realm {
@@ -971,11 +957,9 @@ fn spawn_deactivate_agent(
             key_state.controller_authorization_ref.clone(),
             status,
             Some(reason.clone()),
-            1,
-            placeholder_hlc,
             changed_at,
         ) {
-            Ok(event) => event,
+            Ok(intent) => crate::operation::LocalOperation::new(intent),
             Err(error) => {
                 last_op_status.set(format!("Agent deactivation authoring failed: {error}"));
                 return;
@@ -985,8 +969,11 @@ fn spawn_deactivate_agent(
         let id_for_status = id.clone();
         let refresh_api_token = api_token.clone();
         let result = with_event_submitter(&base, api_token, move |submitter| async move {
+            // Carried in the deactivate request body, so it is authored here
+            // against the accepted actor frontier rather than queued.
+            let authored = submitter.author_for_direct_submission(&operation).await?;
             let lifecycle_event = submitter
-                .prepare_initial_submissions(vec![lifecycle_event])
+                .prepare_initial_submissions(std::slice::from_ref(&authored))
                 .await?
                 .pop()
                 .ok_or_else(|| anyhow::anyhow!("deactivation lifecycle Event is missing"))?;
@@ -1313,8 +1300,12 @@ fn spawn_provision_agent(
                     controller_authorization_ref.as_str(),
                     describe.trust_domain.as_str(),
                 )?;
+                // A managed-Agent PCR genesis is a one-Event unit: the create
+                // names the Realm, so it is authored as a unit and its shape is
+                // proven on the authored result.
+                let intent = draft.into_intent();
                 submitter
-                    .prepare_sdk_events_batch(vec![draft])
+                    .author_event_unit(vec![Box::new(move |_| Ok(vec![intent]))])
                     .await?
                     .into_iter()
                     .next()
@@ -1343,7 +1334,7 @@ fn spawn_provision_agent(
                 return;
             }
         };
-        let draft = match build_agent_provision_event_draft(
+        let draft = match build_agent_provision_intent(
             &controller_full_id,
             &controller_principal_server_id,
             &controller_realm_id,
@@ -1361,8 +1352,11 @@ fn spawn_provision_agent(
         };
         let provision_event =
             match with_event_submitter(&base, api_token.clone(), move |submitter| async move {
+                let authored = submitter
+                    .author_independent_events(vec![draft.into_intent()])
+                    .await?;
                 submitter
-                    .prepare_initial_submissions(vec![draft])
+                    .prepare_initial_submissions(&authored)
                     .await?
                     .into_iter()
                     .next()

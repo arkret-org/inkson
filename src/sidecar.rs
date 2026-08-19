@@ -836,6 +836,7 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         api_token,
         intent.controller_id.clone(),
         None,
+        Vec::new(),
     )
     .await;
     let result = match outcome {
@@ -2866,7 +2867,8 @@ mod tests {
             "controller-approved shared summary",
         )
         .unwrap();
-        assert_eq!(published.kind.as_str(), "ak.message.create");
+        assert_eq!(published.kind().as_str(), "ak.message.create");
+        let published = crate::operation::author_for_test(&published);
         assert!(gate.allows_serialized(SidecarDisclosureSurface::SharedPublish, &published));
         let serialized = serde_json::to_value(published).unwrap();
         assert_eq!(serialized["payload"]["strand_id"], session.source_strand_id);

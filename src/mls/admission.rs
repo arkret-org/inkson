@@ -9,15 +9,25 @@ use crate::operation::trim_realm_id;
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
 
+/// One Welcome, waiting only for the Commit's final identity.
+///
+/// A Welcome payload carries `commit_ref`, which is the Commit's `event_id`, so
+/// the Welcome cannot exist until the Commit is authored. Handing back a step
+/// instead of a finished Event is what makes that ordering unavoidable: the
+/// previous shape built both against a draft id and then rewrote the Welcomes
+/// once the Commit's real id appeared.
+pub(crate) type WelcomeIntentStep =
+    Box<dyn FnOnce(&arkret_sdk::EventId) -> Result<crate::operation::EventIntent, String> + Send>;
+
 pub(crate) struct RealmMlsAdmissionEvents {
-    pub(crate) commit: arkret_sdk::Event,
-    pub(crate) welcome: arkret_sdk::Event,
+    pub(crate) commit: crate::operation::LocalOperation,
+    pub(crate) welcome: WelcomeIntentStep,
     pub(crate) snapshot: MlsSnapshotEnvelope,
 }
 
 pub(crate) struct RealmMlsBatchAdmissionEvents {
-    pub(crate) commit: arkret_sdk::Event,
-    pub(crate) welcomes: Vec<arkret_sdk::Event>,
+    pub(crate) commit: crate::operation::LocalOperation,
+    pub(crate) welcomes: Vec<WelcomeIntentStep>,
     pub(crate) snapshot: MlsSnapshotEnvelope,
 }
 
@@ -107,38 +117,29 @@ fn build_realm_mls_admission_events_from_verified_claim(
         &previous_governance_binding,
     )?;
     let governance_binding = commit
-        .payload
+        .payload()
         .get("governance_binding")
         .cloned()
         .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
     let governance_binding =
         serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(governance_binding)
             .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
-    let welcome_payload = build_mls_welcome_payload(
-        realm_id,
-        actor_id,
-        device_id,
-        requester_device_authorize_event_id,
-        claim,
-        &member_key_package.keypackage_id,
-        &add.welcome,
-        &commit,
+    let welcome_inputs = WelcomePayloadInputs {
+        realm_id: realm_id.to_owned(),
+        actor_id: actor_id.to_owned(),
+        device_id: device_id.to_owned(),
+        requester_device_authorize_event_id: requester_device_authorize_event_id.clone(),
+        claim: claim.clone(),
+        keypackage_id: member_key_package.keypackage_id.clone(),
+        welcome_envelope: add.welcome.clone(),
         governance_binding,
-        claim_nonce,
-        claim_receipt,
-    )?;
-    let welcome = crate::operation::ak_ops::mls_welcome_with_governance(
-        realm_id,
-        actor_id,
-        &add.welcome.group_id,
-        &welcome_payload,
-    )
-    .map_err(|err| format!("MLS Welcome typed payload conversion failed: {err}"))?
-    .build_sdk_event("inkson")
-    .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
+        claim_nonce: claim_nonce.to_owned(),
+        claim_receipt: claim_receipt.clone(),
+        effective_scope: None,
+    };
     Ok(RealmMlsAdmissionEvents {
         commit,
-        welcome,
+        welcome: welcome_intent_step(welcome_inputs),
         snapshot,
     })
 }
@@ -236,7 +237,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
         )?,
     };
     let governance_binding = commit
-        .payload
+        .payload()
         .get("governance_binding")
         .cloned()
         .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
@@ -246,45 +247,37 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
     if add.welcomes.len() != claims.len() {
         return Err("MLS batch add returned a mismatched Welcome count".to_owned());
     }
+    let effective_scope = if let Some(binding) = sidecar_binding.as_ref() {
+        Some(arkret_sdk::ScopeRef::Sidecar {
+            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
+                .map_err(|error| format!("invalid Sidecar MLS Realm id: {error}"))?,
+            sidecar_id: binding.sidecar_id.clone(),
+        })
+    } else if let Some(circle_id) = circle_id {
+        Some(crate::mls::group_events::circle_effective_scope(
+            realm_id, circle_id,
+        )?)
+    } else {
+        None
+    };
     let mut welcomes = Vec::with_capacity(claims.len());
     for ((claim, claim_nonce, claim_receipt), (member_key_package, welcome_envelope)) in claims
         .iter()
         .zip(member_key_packages.iter().zip(add.welcomes.iter()))
     {
-        let welcome_payload = build_mls_welcome_payload(
-            realm_id,
-            actor_id,
-            device_id,
-            requester_device_authorize_event_id,
-            claim,
-            &member_key_package.keypackage_id,
-            welcome_envelope,
-            &commit,
-            governance_binding.clone(),
-            claim_nonce,
-            claim_receipt,
-        )?;
-        let welcome = crate::operation::ak_ops::mls_welcome_with_governance(
-            realm_id,
-            actor_id,
-            &welcome_envelope.group_id,
-            &welcome_payload,
-        )
-        .map_err(|err| format!("MLS Welcome typed payload conversion failed: {err}"))?
-        .build_sdk_event("inkson")
-        .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))?;
-        let mut welcome = welcome;
-        if let Some(binding) = sidecar_binding.as_ref() {
-            welcome.scope_ref = arkret_sdk::ScopeRef::Sidecar {
-                realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
-                    .map_err(|error| format!("invalid Sidecar MLS Realm id: {error}"))?,
-                sidecar_id: binding.sidecar_id.clone(),
-            };
-        } else if let Some(circle_id) = circle_id {
-            welcome.scope_ref =
-                crate::mls::group_events::circle_effective_scope(realm_id, circle_id)?;
-        }
-        welcomes.push(welcome);
+        welcomes.push(welcome_intent_step(WelcomePayloadInputs {
+            realm_id: realm_id.to_owned(),
+            actor_id: actor_id.to_owned(),
+            device_id: device_id.to_owned(),
+            requester_device_authorize_event_id: requester_device_authorize_event_id.clone(),
+            claim: claim.clone(),
+            keypackage_id: member_key_package.keypackage_id.clone(),
+            welcome_envelope: welcome_envelope.clone(),
+            governance_binding: governance_binding.clone(),
+            claim_nonce: claim_nonce.to_owned(),
+            claim_receipt: claim_receipt.clone(),
+            effective_scope: effective_scope.clone(),
+        }));
     }
     Ok(RealmMlsBatchAdmissionEvents {
         commit,
@@ -379,7 +372,7 @@ pub(crate) fn build_realm_key_share_event(
     sealed_ciphertext: String,
     source_authorization_ref: &str,
     authorization_grant_ref: &str,
-) -> Result<arkret_sdk::Event, String> {
+) -> Result<crate::operation::LocalOperation, String> {
     let source_authorization_ref =
         arkret_sdk::EventId::new(source_authorization_ref.trim().to_owned())
             .map_err(|err| format!("invalid realm_key.share source_authorization_ref: {err:?}"))?;
@@ -452,10 +445,11 @@ pub(crate) fn build_realm_key_share_event(
         .build_sdk_event("inkson")
         .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
     // The delivery-log append is derived from the registered contract, so the
-    // producer no longer stamps it. `digest_suite` still has to be the one the
-    // key scope's policy digest names, because the projection hashes the
-    // delivery entry under it.
-    arkret_sdk::schema::project_registered_cell_writes(&event, digest_suite)
+    // producer no longer stamps it. The projection runs on the intent, before
+    // any identity exists: an `ak.realm_key.share` cell is keyed by the key
+    // scope its payload names, never by this Event's own id.
+    let _ = digest_suite;
+    crate::operation::pre_authoring_cell_writes(event.intent())
         .map_err(|err| format!("ak.realm_key.share cell-write projection failed: {err}"))?;
     Ok(event)
 }
@@ -476,7 +470,7 @@ pub(crate) fn wrap_realm_key_share_payload_event(
     actor_id: &str,
     mut payload: arkret_sdk::RealmKeySharePayload,
     authorization_grant_ref: &str,
-) -> Result<arkret_sdk::Event, String> {
+) -> Result<crate::operation::LocalOperation, String> {
     let digest_suite_name = payload
         .key_scope
         .policy_digest
@@ -499,10 +493,11 @@ pub(crate) fn wrap_realm_key_share_payload_event(
         .build_sdk_event("inkson")
         .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
     // The delivery-log append is derived from the registered contract, so the
-    // producer no longer stamps it. `digest_suite` still has to be the one the
-    // key scope's policy digest names, because the projection hashes the
-    // delivery entry under it.
-    arkret_sdk::schema::project_registered_cell_writes(&event, digest_suite)
+    // producer no longer stamps it. The projection runs on the intent, before
+    // any identity exists: an `ak.realm_key.share` cell is keyed by the key
+    // scope its payload names, never by this Event's own id.
+    let _ = digest_suite;
+    crate::operation::pre_authoring_cell_writes(event.intent())
         .map_err(|err| format!("ak.realm_key.share cell-write projection failed: {err}"))?;
     Ok(event)
 }
@@ -542,6 +537,55 @@ pub(crate) fn sign_realm_key_share_sender_signature(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Everything a Welcome needs except the Commit identity it references.
+pub(crate) struct WelcomePayloadInputs {
+    pub(crate) realm_id: String,
+    pub(crate) actor_id: String,
+    pub(crate) device_id: String,
+    pub(crate) requester_device_authorize_event_id: arkret_sdk::EventId,
+    pub(crate) claim: arkret_sdk::KeyPackageClaimRecord,
+    pub(crate) keypackage_id: String,
+    pub(crate) welcome_envelope: arkret_sdk::MlsWelcomeEnvelope,
+    pub(crate) governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+    pub(crate) claim_nonce: String,
+    pub(crate) claim_receipt: arkret_sdk::MlsWelcomeClaimReceipt,
+    pub(crate) effective_scope: Option<arkret_sdk::ScopeRef>,
+}
+
+/// Defer one Welcome until the Commit it references has a final identity.
+fn welcome_intent_step(inputs: WelcomePayloadInputs) -> WelcomeIntentStep {
+    Box::new(move |commit_event_id| {
+        let payload = build_mls_welcome_payload(
+            &inputs.realm_id,
+            &inputs.actor_id,
+            &inputs.device_id,
+            &inputs.requester_device_authorize_event_id,
+            &inputs.claim,
+            &inputs.keypackage_id,
+            &inputs.welcome_envelope,
+            commit_event_id,
+            inputs.governance_binding,
+            &inputs.claim_nonce,
+            &inputs.claim_receipt,
+        )?;
+        let mut builder = crate::operation::ak_ops::mls_welcome_with_governance(
+            &inputs.realm_id,
+            &inputs.actor_id,
+            &inputs.welcome_envelope.group_id,
+            &payload,
+        )
+        .map_err(|err| format!("MLS Welcome typed payload conversion failed: {err}"))?;
+        if let Some(effective_scope) = inputs.effective_scope {
+            builder = builder.effective_scope(effective_scope);
+        }
+        builder
+            .build_sdk_event("inkson")
+            .map(crate::operation::LocalOperation::into_intent)
+            .map_err(|err| format!("MLS Welcome SDK Event conversion failed: {err}"))
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_mls_welcome_payload(
     realm_id: &str,
     actor_id: &str,
@@ -550,7 +594,7 @@ pub(crate) fn build_mls_welcome_payload(
     claim: &arkret_sdk::KeyPackageClaimRecord,
     _key_package_id: &str,
     welcome: &arkret_sdk::MlsWelcomeEnvelope,
-    commit_event: &arkret_sdk::Event,
+    commit_event_id: &arkret_sdk::EventId,
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     claim_nonce: &str,
     claim_receipt: &arkret_sdk::MlsWelcomeClaimReceipt,
@@ -669,7 +713,7 @@ pub(crate) fn build_mls_welcome_payload(
             ),
         )
         .map_err(str::to_owned)?,
-        commit_ref: Some(commit_event.event_id.clone()),
+        commit_ref: Some(commit_event_id.clone()),
         governance_binding,
         expires_at,
     };
@@ -919,32 +963,37 @@ mod tests {
         let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
         catalog
             .validate_payload(
-                event.kind.as_str(),
-                &serde_json::to_value(&event.payload).unwrap(),
+                event.kind().as_str(),
+                &serde_json::to_value(&event.payload()).unwrap(),
             )
             .unwrap_or_else(|err| {
                 panic!(
                     "ak.realm_key.share payload violates registered schema: {err}\npayload: {}",
-                    serde_json::to_string_pretty(&event.payload).unwrap()
+                    serde_json::to_string_pretty(&event.payload()).unwrap()
                 )
             });
         assert_eq!(
-            event.payload["key_scope"]["effective_scope"],
+            event.payload()["key_scope"]["effective_scope"],
             json!({ "kind": "realm", "realm_id": realm })
         );
-        assert_eq!(event.payload["key_scope"]["policy_digest"], policy_digest);
+        assert_eq!(event.payload()["key_scope"]["policy_digest"], policy_digest);
         assert!(
-            !event
-                .payload
-                .contains_key("requester_device_authorize_event_id")
+            event
+                .payload()
+                .get("requester_device_authorize_event_id")
+                .is_none()
         );
         assert_eq!(
-            event.authorization_ref.as_deref(),
+            event
+                .intent()
+                .authorization_ref()
+                .map(arkret_sdk::AuthorizationRef::as_str),
             Some("ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU")
         );
         // v1 derives the delivery-log write from the registry instead of
         // shipping it: assert the projection, which is what the receiver runs.
-        let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
+        let authored = crate::operation::author_for_test(&event);
+        let writes = crate::operation::direct_registered_cell_writes(&authored).unwrap();
         assert_eq!(writes.len(), 1);
         let cell = arkret_sdk::CellId::from_ref(&writes[0].cell).unwrap();
         assert_eq!(
@@ -955,7 +1004,7 @@ mod tests {
             arkret_sdk::events::cba_cell_family_plane(cell.component()),
             Some(arkret_sdk::events::CbaEffectPlane::Data)
         );
-        let created_at = event.payload["created_at"]
+        let created_at = event.payload()["created_at"]
             .as_str()
             .expect("realm_key.share created_at is a string");
         arkret_sdk::canonical::validate_timestamp_canonical(created_at)

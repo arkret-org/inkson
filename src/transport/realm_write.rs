@@ -13,19 +13,19 @@ use arkret_wire::CapabilityActionId;
 use serde_json::{Value, json};
 
 use crate::event_builders::{
-    build_capability_relinquish_control_event, build_member_state_transition_event,
+    build_capability_relinquish_control_intent, build_member_state_transition_event,
     build_plaintext_visible_services_event, build_realm_alias_event,
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
-    build_realm_authority_basis_update_control_event, build_realm_authority_reset_control_event,
-    build_realm_bootstrap_events, build_realm_destroy_event,
-    build_realm_history_sharing_policy_event, build_realm_owner_transfer_control_event,
+    build_realm_authority_basis_update_control_intent, build_realm_authority_reset_control_intent,
+    build_realm_bootstrap_steps, build_realm_destroy_event,
+    build_realm_history_sharing_policy_event, build_realm_owner_transfer_control_intent,
     build_realm_state_event, build_space_create_event, build_space_lifecycle_event,
     parse_realm_bootstrap_members, recommended_history_sharing_policy_for_visibility,
     recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
-use crate::operation::{EventKind, ak_ops};
+use crate::operation::{EventKind, LocalOperation, ak_ops};
 use crate::realm_helpers::validate_join_rule_v1;
 
 /// Build + submit the spec-canonical `ak.realm.create` event bundle
@@ -93,7 +93,7 @@ pub async fn create_realm(
     let genesis_salt = arkret_sdk::GenesisSalt::generate()?;
     // The Realm id is not minted here: it is derived from the genesis Event
     // the builder produces (spec realm-and-space.md section 2.5.0).
-    let (_draft_realm_id, events) = build_realm_bootstrap_events(
+    let steps = build_realm_bootstrap_steps(
         genesis_salt,
         actor_id,
         &notary_did,
@@ -120,7 +120,7 @@ pub async fn create_realm(
     let idempotency_key =
         arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
     let realm_id = submitter
-        .submit_realm_bootstrap_durable(events, idempotency_key)
+        .submit_realm_bootstrap_durable(steps, idempotency_key)
         .await?
         .to_string();
 
@@ -179,9 +179,14 @@ pub async fn create_space_under_realm(
         parent_space_id,
         default_realm_id,
     )?;
-    // The Space is named by its create Event, not by this call site.
-    let space_id = arkret_sdk::SpaceId::from_event_id(&event.event_id).into_string();
-    submitter.submit_sdk_event(&event).await?;
+    // The Space is named by its create Event, so its id exists only once that
+    // Event has been authored and accepted. Reading it from the receipt is the
+    // difference between naming the Space that was created and naming one that
+    // never existed.
+    let accepted = submitter.submit_sdk_event(&event).await?;
+    let space_id =
+        arkret_sdk::SpaceId::from_event_id(&arkret_sdk::EventId::new(accepted.event_id.clone())?)
+            .into_string();
 
     Ok(SpaceCreateResult {
         ok: true,
@@ -232,19 +237,14 @@ pub async fn transition_member_state(
     to_state: &str,
     reason: &str,
 ) -> anyhow::Result<SubmitEventResult> {
-    let mut event = build_member_state_transition_event(
+    let event = build_member_state_transition_event(
         realm_id, actor_id, member, from_state, to_state, reason,
     )?;
-    // `ak.member.state` is CBA-exempt in the shared stamper only because the
-    // Realm-bootstrap batch submits it pre-signed without a seal frontier.
-    // Post-bootstrap transitions (ban / kick / leave / unban) carry effects,
-    // and the server rejects effects-carrying Control Moves without
-    // `seal_basis.leaves` (envelope validation). Every caller of this helper
-    // is an already-joined actor, so the realm seal frontier is readable.
-    let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
-    event.seal_basis = Some(seal_view.seal_basis());
-    event.seal_ref = None;
-    event.auth_context = None;
+    // The CBA basis is resolved once, at the authoring boundary, from the Realm
+    // Seal frontier. Post-bootstrap transitions (ban / kick / leave / unban)
+    // carry effects and the server rejects effects-carrying Control Moves
+    // without `seal_basis.leaves`; every caller here is an already-joined actor,
+    // so that frontier is readable when the write is authored.
     submitter.submit_sdk_event(&event).await
 }
 
@@ -280,16 +280,13 @@ pub async fn update_realm_metadata(
         optional_profile_string(fields.get("avatar_blob_ref"), "avatar_blob_ref")?
             .map(arkret_sdk::BlobRef::new)
             .transpose()?;
-    let mut event = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+    let event = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
         realm_id, actor_id, profile,
-    )?;
+    )?
     // The bootstrap builder uses a null-head guard. A later replacement is
-    // authorized against the current Realm Seal frontier instead.
-    event.preconditions.clear();
-    let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
-    event.seal_basis = Some(seal_view.seal_basis());
-    event.seal_ref = None;
-    event.auth_context = None;
+    // authorized against the current Realm Seal frontier instead, which the
+    // authoring boundary resolves.
+    .without_preconditions();
     submitter.submit_sdk_event(&event).await
 }
 
@@ -326,7 +323,7 @@ pub async fn set_realm_alias(
         .events;
     let current = latest_realm_alias_payload(&rows)?;
     let requested = alias.map(str::trim).filter(|alias| !alias.is_empty());
-    let mut event = match (requested, current) {
+    let event = match (requested, current) {
         (Some(alias), Some(expected)) => {
             let service_id = submitter.service_full_id().await?;
             build_realm_alias_rename_event(realm_id, actor_id, &service_id, alias, expected)?
@@ -346,10 +343,6 @@ pub async fn set_realm_alias(
         }
         (None, None) => anyhow::bail!("Realm alias is already absent"),
     };
-    let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
-    event.seal_basis = Some(seal_view.seal_basis());
-    event.seal_ref = None;
-    event.auth_context = None;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -382,14 +375,9 @@ pub async fn update_realm_plaintext_visible_services(
     actor_id: &str,
     services: Vec<String>,
 ) -> anyhow::Result<SubmitEventResult> {
-    let Some(mut event) = build_plaintext_visible_services_event(realm_id, actor_id, &services)?
-    else {
+    let Some(event) = build_plaintext_visible_services_event(realm_id, actor_id, &services)? else {
         anyhow::bail!("plaintext_visible_services update requires at least one service DID");
     };
-    let seal_view = submitter.events_frontier_realm_seal_view(realm_id).await?;
-    event.seal_basis = Some(seal_view.seal_basis());
-    event.seal_ref = None;
-    event.auth_context = None;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -610,7 +598,7 @@ pub async fn repair_direct_conversation_self_rejoin(
     // Resolve the fixed profile baseline up front. Repair must not manufacture
     // a policy Event and must not release old generation keys.
     crate::transport::account::direct_conversation_history_sharing_policy()?;
-    let mut event = build_member_state_transition_event(
+    let event = build_member_state_transition_event(
         realm_id.as_str(),
         actor_id.as_str(),
         actor_id.as_str(),
@@ -624,7 +612,7 @@ pub async fn repair_direct_conversation_self_rejoin(
     // The reducer derives that action from the self `leave -> join` payload
     // and verifies the immutable exact-pair binding; the client must select
     // the registered source before the Event proof is authored.
-    event.authorization_ref = Some(
+    let event = event.with_authorization_ref(
         arkret_sdk::AuthorizationRef::new(
             arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
         )
@@ -671,7 +659,7 @@ pub async fn dispatch_direct_conversation_repair(
         crate::transport::account::direct_conversation_current_generation_value_digest(resolve)?;
     crate::transport::account::direct_conversation_history_sharing_policy()?;
 
-    let mut rejoin = build_member_state_transition_event(
+    let rejoin = build_member_state_transition_event(
         coordinates.realm_id.as_str(),
         requester_principal_id.as_str(),
         requester_principal_id.as_str(),
@@ -679,7 +667,7 @@ pub async fn dispatch_direct_conversation_repair(
         "join",
         "direct_conversation_self_rejoin",
     )?;
-    rejoin.authorization_ref = Some(
+    let rejoin = rejoin.with_authorization_ref(
         arkret_sdk::AuthorizationRef::new(
             arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
         )
@@ -875,13 +863,13 @@ pub async fn activate_direct_conversation_repair(
         );
     }
     payload.validate()?;
-    let mut event =
+    let event =
         build_realm_state_event::<arkret_sdk::event_spec::DirectConversationMlsGenerationActivate>(
             snapshot.route.coordinates.realm_id.as_str(),
             actor_id.as_str(),
             payload,
         )?;
-    event.authorization_ref = Some(
+    let event = event.with_authorization_ref(
         arkret_sdk::AuthorizationRef::new(
             arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
         )
@@ -924,7 +912,9 @@ pub async fn transfer_realm_owner(
     actor_id: &str,
     payload: arkret_sdk::RealmOwnerTransferPayload,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = build_realm_owner_transfer_control_event(actor_id, payload)?;
+    let event = LocalOperation::new(build_realm_owner_transfer_control_intent(
+        actor_id, payload,
+    )?);
     submitter.submit_sdk_event(&event).await
 }
 
@@ -934,7 +924,9 @@ pub async fn reset_realm_authority(
     actor_id: &str,
     payload: arkret_sdk::RealmAuthorityResetPayload,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = build_realm_authority_reset_control_event(actor_id, payload)?;
+    let event = LocalOperation::new(build_realm_authority_reset_control_intent(
+        actor_id, payload,
+    )?);
     submitter.submit_sdk_event(&event).await
 }
 
@@ -944,7 +936,9 @@ pub async fn update_realm_authority_basis(
     actor_id: &str,
     payload: arkret_sdk::RealmAuthorityBasisUpdatePayload,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = build_realm_authority_basis_update_control_event(actor_id, payload)?;
+    let event = LocalOperation::new(build_realm_authority_basis_update_control_intent(
+        actor_id, payload,
+    )?);
     submitter.submit_sdk_event(&event).await
 }
 
@@ -956,7 +950,9 @@ pub async fn relinquish_capability(
     subject_id: &str,
     payload: arkret_sdk::CapabilityRelinquishPayload,
 ) -> anyhow::Result<SubmitEventResult> {
-    let event = build_capability_relinquish_control_event(realm_id, subject_id, payload)?;
+    let event = LocalOperation::new(build_capability_relinquish_control_intent(
+        realm_id, subject_id, payload,
+    )?);
     submitter.submit_sdk_event(&event).await
 }
 
@@ -1170,31 +1166,55 @@ pub async fn appeal_modify_atomic(
 ) -> anyhow::Result<(String, arkret_sdk::EventsSubmitOutcome)> {
     let new_decision =
         ak_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
-            .build_sdk_event("inkson")?;
-    let new_decision_id = new_decision.event_id.to_string();
-    let appeal_event = ak_ops::moderation_appeal_decision(
-        realm_id,
-        actor_id,
-        appeal_id,
-        "modify",
-        appeal_reason_text_ref,
-        Some(&new_decision_id),
-    )?
-    .build_sdk_event("inkson")?;
-    let lift_event = ak_ops::moderation_decision_lift(
-        realm_id,
-        actor_id,
-        target_ref,
-        decision_ref,
-        "appeal_modify",
-    )?
-    .build_sdk_event("inkson")?;
-    let result = sign_and_submit_moderation_batch(
-        submitter,
-        realm_id,
-        vec![new_decision, appeal_event, lift_event],
-    )
-    .await?;
+            .build_sdk_event("inkson")?
+            .into_intent();
+    let (realm_id_owned, actor_id_owned) = (realm_id.to_owned(), actor_id.to_owned());
+    let (appeal_id, target_ref_owned, decision_ref_owned, appeal_reason_text_ref) = (
+        appeal_id.to_owned(),
+        target_ref.to_owned(),
+        decision_ref.to_owned(),
+        appeal_reason_text_ref.to_owned(),
+    );
+    let authored = submitter
+        .author_event_unit(vec![
+            Box::new(move |_| Ok(vec![new_decision])),
+            Box::new(move |authored| {
+                // `modify_decision_ref` is the replacement decision's own Event
+                // id; the reducer cross-checks it, so it can only be read after
+                // that Event is authored.
+                let new_decision_id = authored
+                    .first()
+                    .ok_or_else(|| anyhow::anyhow!("appeal modify needs its replacement decision"))?
+                    .event_id()
+                    .to_string();
+                Ok(vec![
+                    ak_ops::moderation_appeal_decision(
+                        &realm_id_owned,
+                        &actor_id_owned,
+                        &appeal_id,
+                        "modify",
+                        &appeal_reason_text_ref,
+                        Some(&new_decision_id),
+                    )?
+                    .build_sdk_event("inkson")?
+                    .into_intent(),
+                    ak_ops::moderation_decision_lift(
+                        &realm_id_owned,
+                        &actor_id_owned,
+                        &target_ref_owned,
+                        &decision_ref_owned,
+                        "appeal_modify",
+                    )?
+                    .build_sdk_event("inkson")?
+                    .into_intent(),
+                ])
+            }),
+        ])
+        .await?;
+    let new_decision_id = authored[0].event_id().to_string();
+    let result = submitter
+        .submit_signed_sdk_events_batch(&authored, None)
+        .await?;
     Ok((new_decision_id, result))
 }
 
@@ -1206,10 +1226,17 @@ pub async fn appeal_modify_atomic(
 async fn sign_and_submit_moderation_batch(
     submitter: &EventSubmitter,
     _realm_id: &str,
-    events: Vec<arkret_sdk::Event>,
+    events: Vec<crate::operation::LocalOperation>,
 ) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
     submitter
-        .submit_sdk_events_batch(_realm_id, events, None)
+        .submit_sdk_events_batch(
+            _realm_id,
+            events
+                .into_iter()
+                .map(crate::operation::LocalOperation::into_intent)
+                .collect(),
+            None,
+        )
         .await
 }
 
@@ -1240,12 +1267,16 @@ mod tests {
     fn latest_alias_payload_folds_accepted_declaration_and_tombstone() {
         let declaration =
             build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_ID, "engineering").unwrap();
-        let declaration_value = serde_json::to_value(&declaration.payload).unwrap();
+        let declaration_value = serde_json::to_value(&declaration.payload()).unwrap();
         let tombstone =
             build_realm_alias_tombstone_event(REALM_ID, ACTOR_ID, declaration_value).unwrap();
         let rows = vec![
-            arkret_sdk::EventReadRow::Event(declaration),
-            arkret_sdk::EventReadRow::Event(tombstone),
+            arkret_sdk::EventReadRow::Event(
+                crate::operation::author_for_test(&declaration).into_event(),
+            ),
+            arkret_sdk::EventReadRow::Event(
+                crate::operation::author_for_test(&tombstone).into_event(),
+            ),
         ];
         let latest = latest_realm_alias_payload(&rows)
             .unwrap()
@@ -1264,8 +1295,10 @@ mod tests {
         )
         .unwrap();
         let latest = latest_realm_alias_payload(&[
-            arkret_sdk::EventReadRow::Event(alias),
-            arkret_sdk::EventReadRow::Event(unrelated),
+            arkret_sdk::EventReadRow::Event(crate::operation::author_for_test(&alias).into_event()),
+            arkret_sdk::EventReadRow::Event(
+                crate::operation::author_for_test(&unrelated).into_event(),
+            ),
         ])
         .unwrap()
         .expect("alias remains current");

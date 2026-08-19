@@ -112,28 +112,27 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
         "2026-06-20T09:00:00[Asia/Shanghai]",
         &calendar,
         vec![basis.clone()],
-        2,
-        arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
     )
     .unwrap();
 
-    assert_eq!(event.kind.as_str(), "ak.rsvp.set");
-    assert_eq!(sdk_event_local_target_ref(&event), None);
-    assert_eq!(event.payload["event_ref"], TEST_CALENDAR_STRAND_ID);
+    assert_eq!(event.kind().as_str(), "ak.rsvp.set");
+    assert_eq!(event.local_target_ref(), None);
+    assert_eq!(event.payload()["event_ref"], TEST_CALENDAR_STRAND_ID);
     assert_eq!(
-        event.payload["occurrence"],
+        event.payload()["occurrence"],
         "2026-06-20T09:00:00[Asia/Shanghai]"
     );
     // The response lives inside the complete entry together with the basis.
-    assert_eq!(event.payload["entry"]["response"]["status"], "accepted");
+    assert_eq!(event.payload()["entry"]["response"]["status"], "accepted");
     assert_eq!(
-        event.payload["entry"]["schedule_basis_refs"],
+        event.payload()["entry"]["schedule_basis_refs"],
         json!([basis.as_str()])
     );
     // The basis must be causally carried, otherwise a receiver rejects it.
     assert_eq!(
         event
-            .causal_refs
+            .intent()
+            .causal_refs()
             .iter()
             .map(arkret_sdk::Hash::as_str)
             .collect::<Vec<_>>(),
@@ -145,7 +144,7 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
     // so asserting the projection is the successor to the old array, and a
     // stronger claim: the pre-closure client shipped no effect at all and the
     // Event never reached its cell.
-    let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
+    let writes = crate::operation::pre_authoring_cell_writes(event.intent()).unwrap();
     assert_eq!(writes.len(), 1);
     assert!(
         writes[0]
@@ -154,8 +153,13 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
             .starts_with("ak:cell:ak.component.calendar.rsvp.v1:")
     );
     assert_eq!(
-        writes[0].op.value.as_ref().unwrap(),
-        &event.payload["entry"]
+        crate::operation::direct_registered_cell_writes(&crate::operation::author_for_test(&event))
+            .unwrap()[0]
+            .op
+            .value
+            .as_ref()
+            .unwrap(),
+        &event.payload()["entry"]
     );
     assert_registered_payload_valid(&event);
 }
@@ -180,8 +184,6 @@ fn calendar_rsvp_without_an_observed_schedule_fails_closed() {
             "",
             &calendar,
             Vec::new(),
-            2,
-            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         )
         .is_err()
     );

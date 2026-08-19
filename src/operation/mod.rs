@@ -15,9 +15,10 @@ use std::sync::{OnceLock, RwLock};
 
 pub use arkret_sdk::events::kinds::EventKind;
 pub use arkret_sdk::{
-    Audience as EventProofAudience, CriticalExtension, Event, EventRef as SemanticRef,
-    EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate, PredicateOp,
-    ProducerEventProof as EventProof, ProjectedCellWrite, ProjectionEffect, ScopeRef, SealBasis,
+    Audience as EventProofAudience, AuthoredEvent, CriticalExtension, Event, EventIntent,
+    EventRef as SemanticRef, EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate,
+    PredicateOp, ProducerEventProof as EventProof, ProjectedCellWrite, ProjectionEffect, ScopeRef,
+    SealBasis,
 };
 use serde_json::Value;
 
@@ -51,6 +52,16 @@ pub type EventCellProjectionError = arkret_sdk::schema::EventCellContractError;
 /// `CellWriteProjector` callback shape (`Result<_, String>`).
 pub fn cell_write_projector(event: &Event) -> Result<Vec<ProjectedCellWrite>, String> {
     project_registered_cell_writes(event).map_err(|error| error.to_string())
+}
+
+/// The registered cells an intent will write, resolved before authoring.
+///
+/// One definition, owned by the SDK, so a precondition and the admission-side
+/// projection can never disagree about which cell a write names.
+pub fn pre_authoring_cell_writes(
+    intent: &EventIntent,
+) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
+    arkret_sdk::pre_authoring_cell_writes(intent)
 }
 
 /// Every registered write of `event` that is fully determined by the signed
@@ -170,15 +181,237 @@ pub(crate) fn trim_realm_id(value: &str) -> String {
     value.trim().to_owned()
 }
 
+/// The holder-local identity of one user write.
+///
+/// Optimistic UI, the durable submit queue and receipt reconciliation all need a
+/// key for "this write" that exists *before* the Event is authored. They used to
+/// borrow the draft `event_id` — and everything derived from it, including
+/// `retype(event_id)` Board/List/Card ids — which authoring then changed,
+/// leaving the UI holding a second object that no accepted Event ever named.
+///
+/// This value is that key, and it is deliberately not an Arkret identifier: it
+/// never derives protocol identity, never authorizes anything, and never leaves
+/// this holder except as the unsigned reconciliation alias the server echoes
+/// back verbatim.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LocalOperationId(String);
+
+impl LocalOperationId {
+    /// Allocate a fresh holder-local operation identity.
+    pub fn new() -> Self {
+        Self(uuid_v7())
+    }
+
+    /// Adopt a holder-local key this client already minted for the same write.
+    ///
+    /// An optimistic row usually exists before the write can be built — the UI
+    /// needs something to key it by immediately — so that key becomes the
+    /// write's identity instead of a second, unrelated one. Two keys for one
+    /// user operation is exactly how a queue slot and the row it belongs to
+    /// stopped recognizing each other.
+    pub fn from_holder_key(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl Default for LocalOperationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for LocalOperationId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// A user write as this client holds it before submission: the semantic Event
+/// intent, plus the holder-local identities only this device uses.
+///
+/// The intent carries no `event_id`, so nothing downstream of this type can
+/// derive an object id, a route or a storage key from an identity that authoring
+/// has not settled yet. The single finalize boundary is
+/// [`crate::event_submit`]'s authoring step.
+#[derive(Clone, Debug)]
+pub struct LocalOperation {
+    intent: EventIntent,
+    local_operation_id: LocalOperationId,
+    local_target_ref: Option<String>,
+}
+
+impl LocalOperation {
+    /// Wrap a bare intent as a submittable write with a fresh holder-local
+    /// identity. Used where the intent comes from an SDK builder rather than
+    /// from [`TypedOperationBuilder`].
+    pub fn new(intent: EventIntent) -> Self {
+        Self {
+            intent,
+            local_operation_id: LocalOperationId::new(),
+            local_target_ref: None,
+        }
+    }
+
+    /// The semantic operation, ready to be positioned on the actor chain.
+    pub fn intent(&self) -> &EventIntent {
+        &self.intent
+    }
+
+    /// Consume this operation, keeping only the intent.
+    pub fn into_intent(self) -> EventIntent {
+        self.intent
+    }
+
+    pub fn local_operation_id(&self) -> &LocalOperationId {
+        &self.local_operation_id
+    }
+
+    /// The object this write targets, when the payload already names one.
+    ///
+    /// A create names its object by `retype(event_id)`, so it has no target to
+    /// report here: until the final Event id arrives, the object is known only
+    /// by [`Self::local_operation_id`].
+    pub fn local_target_ref(&self) -> Option<&str> {
+        self.local_target_ref.as_deref()
+    }
+
+    /// The holder-local handle a projection keys this write's object by.
+    ///
+    /// Existing objects answer with their protocol id; a pending create answers
+    /// with its holder-local operation id, which the projection migrates to the
+    /// event-derived id once the receipt lands.
+    pub fn local_object_handle(&self) -> &str {
+        self.local_target_ref
+            .as_deref()
+            .unwrap_or_else(|| self.local_operation_id.as_str())
+    }
+
+    pub fn seal_ref(&self) -> Option<&arkret_sdk::SealId> {
+        self.intent.seal_ref()
+    }
+
+    pub fn seal_basis(&self) -> Option<&SealBasis> {
+        self.intent.seal_basis()
+    }
+
+    /// Adopt a holder-local identity that was allocated before this write could
+    /// be built.
+    ///
+    /// An optimistic row has to exist before the Event does — for an encrypted
+    /// write the payload cannot even be sealed until the epoch's Event is
+    /// authored — so the identity is minted first and the write joins it here.
+    pub fn with_local_operation_id(mut self, local_operation_id: LocalOperationId) -> Self {
+        self.local_operation_id = local_operation_id;
+        self
+    }
+
+    /// Narrow this write to its accepted effective scope (Circle or Sidecar).
+    pub fn with_effective_scope(mut self, scope_ref: ScopeRef) -> anyhow::Result<Self> {
+        self.intent = self
+            .intent
+            .with_scope_ref(scope_ref)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        Ok(self)
+    }
+
+    /// Record the principal that executes this write on the actor's behalf.
+    pub fn with_executed_by(mut self, executed_by: arkret_sdk::DidCoreId) -> Self {
+        self.intent = self.intent.with_executed_by(executed_by);
+        self
+    }
+
+    /// Pin the CBA basis this write authors against.
+    ///
+    /// Only a producer that cannot re-resolve one needs this: the authoring
+    /// boundary resolves the basis from the accepted Seal view otherwise, and
+    /// leaves a pinned one untouched.
+    pub fn with_seal_basis(mut self, seal_basis: SealBasis) -> Self {
+        self.intent = self.intent.with_seal_basis(seal_basis);
+        self
+    }
+
+    /// Pin the authorization this write is authored under.
+    ///
+    /// A producer decision, so it belongs on the intent: the authoring boundary
+    /// leaves an already-claimed authorization alone.
+    pub fn with_authorization_ref(
+        mut self,
+        authorization_ref: arkret_sdk::AuthorizationRef,
+    ) -> Self {
+        self.intent = self.intent.with_authorization_ref(authorization_ref);
+        self
+    }
+
+    /// Drop the producer preconditions this write was drafted with.
+    ///
+    /// A facet builder guards a genesis write with a null-head precondition; a
+    /// later replacement of the same facet is authorized against the accepted
+    /// Seal frontier instead and must not re-assert the empty head.
+    pub fn without_preconditions(mut self) -> Self {
+        self.intent = self.intent.with_preconditions(Vec::new());
+        self
+    }
+
+    pub fn kind(&self) -> &EventKind {
+        self.intent.kind()
+    }
+
+    pub fn payload(&self) -> &std::collections::BTreeMap<String, Value> {
+        self.intent.payload()
+    }
+
+    /// Read the payload back through its marker's typed shape.
+    pub fn typed_payload<K: arkret_sdk::EventSpec>(&self) -> anyhow::Result<K::Payload> {
+        self.intent
+            .typed_payload::<K>()
+            .map_err(|error| anyhow::anyhow!("{error}"))
+    }
+
+    pub fn payload_value(&self) -> Value {
+        Value::Object(self.intent.payload().clone().into_iter().collect())
+    }
+
+    pub fn actor_id(&self) -> &arkret_sdk::DidCoreId {
+        self.intent.actor_id()
+    }
+
+    pub fn created_at(&self) -> chrono::DateTime<chrono::Utc> {
+        self.intent.created_at()
+    }
+
+    /// The Realm this write is scoped to, or `None` for a Realm genesis whose
+    /// Realm id is a function of the create Event id.
+    pub fn realm_id_opt(&self) -> Option<&arkret_sdk::RealmId> {
+        self.intent.realm_id_opt()
+    }
+}
+
+/// `unsigned` member carrying the holder-local operation identity.
+pub(crate) const LOCAL_OPERATION_IDEMPOTENCY_ALIAS: &str = "local_operation_idempotency_alias";
+/// `unsigned` member naming the existing object a non-create write targets.
+pub(crate) const LOCAL_TARGET_REF: &str = "local_target_ref";
+
 /// Standard Event builder whose kind is fixed by the SDK payload marker.
 ///
-/// This boundary never accepts a runtime `EventKind` or an erased JSON
-/// payload. The only constructor requires the
-/// payload associated with `K`, and erasure happens inside
-/// [`arkret_sdk::TypedEventDraft`] after its marker-specific validation.
+/// This boundary never accepts a runtime `EventKind` or an erased JSON payload.
+/// The only constructor requires the payload associated with `K`, and erasure
+/// happens inside [`arkret_sdk::TypedEventDraft`] after its marker-specific
+/// validation.
+///
+/// It produces a [`LocalOperation`], never an `Event`: the actor-chain position,
+/// HLC and CBA basis are not known here, and a builder that authored anyway
+/// would be handing out an identity it is about to change.
 #[derive(Debug)]
 pub struct TypedOperationBuilder {
-    event: anyhow::Result<Event>,
+    intent: anyhow::Result<EventIntent>,
     target_ref: Option<String>,
 }
 
@@ -192,11 +425,11 @@ impl TypedOperationBuilder {
         K: arkret_sdk::EventSpec,
     {
         let principal_server_id = authoring_principal_server_id();
-        let event = principal_server_id.and_then(|principal_server_id| {
-            Self::author_event::<K>(realm_id, actor, principal_server_id, payload)
+        let intent = principal_server_id.and_then(|principal_server_id| {
+            Self::draft_intent::<K>(realm_id, actor, principal_server_id, payload)
         });
         Self {
-            event,
+            intent,
             target_ref: None,
         }
     }
@@ -211,48 +444,50 @@ impl TypedOperationBuilder {
         K: arkret_sdk::EventSpec,
     {
         Self {
-            event: Self::author_event::<K>(realm_id, actor, principal_server_id, payload),
+            intent: Self::draft_intent::<K>(realm_id, actor, principal_server_id, payload),
             target_ref: None,
         }
     }
 
-    fn author_event<K>(
+    fn draft_intent<K>(
         realm_id: impl Into<String>,
         actor: impl Into<String>,
         principal_server_id: arkret_sdk::DidCoreId,
         payload: K::Payload,
-    ) -> anyhow::Result<Event>
+    ) -> anyhow::Result<EventIntent>
     where
         K: arkret_sdk::EventSpec,
     {
-        (|| {
-            let realm_id = arkret_sdk::RealmId::new(trim_realm_id(&realm_id.into()))
-                .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
-            let scope_ref = if K::KIND == EventKind::RealmCreate {
-                ScopeRef::RealmGenesis
-            } else {
-                ScopeRef::Realm {
-                    realm_id: realm_id.clone(),
-                }
-            };
-            let actor_id = crate::mls_api_helpers::principal_core_id(&actor.into())
-                .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
-            let hlc = arkret_sdk::Hlc::new("000000000000-0000-00000000")
-                .map_err(|err| anyhow::anyhow!("placeholder HLC is invalid: {err}"))?;
-            arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, principal_server_id, payload)
-                .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))?
-                .author(1, hlc, crate::clock::now_utc_millis())
-                .map_err(|err| anyhow::anyhow!("typed Event authoring failed: {err}"))
-        })()
+        let realm_id = arkret_sdk::RealmId::new(trim_realm_id(&realm_id.into()))
+            .map_err(|err| anyhow::anyhow!("invalid realm_id: {err}"))?;
+        let scope_ref = if K::KIND == EventKind::RealmCreate {
+            ScopeRef::RealmGenesis
+        } else {
+            ScopeRef::Realm { realm_id }
+        };
+        let actor_id = crate::mls_api_helpers::principal_core_id(&actor.into())
+            .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
+        arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, principal_server_id, payload)
+            .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))?
+            .into_intent(crate::clock::now_utc_millis())
+            .map_err(|err| anyhow::anyhow!("typed Event intent erasure failed: {err}"))
     }
 
-    fn map_event(mut self, update: impl FnOnce(&mut Event) -> anyhow::Result<()>) -> Self {
-        if let Ok(event) = &mut self.event
-            && let Err(error) = update(event)
-        {
-            self.event = Err(error);
-        }
+    fn map_intent(
+        mut self,
+        update: impl FnOnce(EventIntent) -> anyhow::Result<EventIntent>,
+    ) -> Self {
+        self.intent = self.intent.and_then(update);
         self
+    }
+
+    /// Borrow the drafted intent, e.g. to project the registered cell a
+    /// precondition must name. There is deliberately no way to author from this
+    /// borrow: the finalize boundary stays in the submit path.
+    pub fn intent(&self) -> anyhow::Result<&EventIntent> {
+        self.intent
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error:#}"))
     }
 
     pub fn target_ref(mut self, target_ref: impl Into<String>) -> Self {
@@ -261,167 +496,101 @@ impl TypedOperationBuilder {
     }
 
     pub fn executed_by(self, executed_by: impl Into<String>) -> Self {
-        self.map_event(|event| {
+        self.map_intent(|intent| {
             let executed_by = executed_by.into();
-            event.executed_by = Some(
+            Ok(intent.with_executed_by(
                 crate::mls_api_helpers::principal_core_id(&executed_by)
                     .map_err(|err| anyhow::anyhow!("invalid executed_by core_id: {err}"))?,
-            );
-            Ok(())
+            ))
         })
     }
 
     pub fn authorization_ref(self, authorization_ref: impl Into<String>) -> Self {
-        self.map_event(|event| {
-            event.authorization_ref = Some(
+        self.map_intent(|intent| {
+            Ok(intent.with_authorization_ref(
                 arkret_sdk::AuthorizationRef::new(authorization_ref.into())
                     .map_err(|err| anyhow::anyhow!("invalid authorization_ref: {err}"))?,
-            );
-            Ok(())
+            ))
         })
     }
 
     pub fn preconditions(self, preconditions: Vec<Precondition>) -> Self {
-        self.map_event(|event| {
-            event.preconditions = preconditions;
-            Ok(())
-        })
+        self.map_intent(|intent| Ok(intent.with_preconditions(preconditions)))
     }
 
     pub fn circle_id(self, circle_id: impl Into<String>) -> Self {
-        self.map_event(|event| {
-            if event.kind == EventKind::RealmCreate {
-                return Err(anyhow::anyhow!(
-                    "ak.realm.create cannot be narrowed to a Circle scope"
-                ));
-            }
-            event.scope_ref = ScopeRef::Circle {
-                realm_id: event.realm_id.clone(),
-                circle_id: arkret_sdk::CircleId::new(circle_id.into())
-                    .map_err(|err| anyhow::anyhow!("invalid circle_id: {err}"))?,
-            };
-            Ok(())
+        self.map_intent(|intent| {
+            let realm_id = intent
+                .realm_id_opt()
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("a Realm genesis has no Circle scope"))?;
+            let circle_id = arkret_sdk::CircleId::new(circle_id.into())
+                .map_err(|err| anyhow::anyhow!("invalid circle_id: {err}"))?;
+            intent
+                .with_scope_ref(ScopeRef::Circle {
+                    realm_id,
+                    circle_id,
+                })
+                .map_err(|err| anyhow::anyhow!("{err}"))
+        })
+    }
+
+    /// Narrow this write to its accepted effective scope (Circle or Sidecar).
+    ///
+    /// `scope_ref` is producer-signed, so it is part of the content the identity
+    /// is derived from; setting it here keeps it inside the one finalize
+    /// boundary instead of after it.
+    pub fn effective_scope(self, scope_ref: ScopeRef) -> Self {
+        self.map_intent(|intent| {
+            intent
+                .with_scope_ref(scope_ref)
+                .map_err(|err| anyhow::anyhow!("{err}"))
         })
     }
 
     pub fn refs(self, refs: Vec<SemanticRef>) -> Self {
-        self.map_event(|event| {
-            event.refs = refs;
-            Ok(())
-        })
+        self.map_intent(|intent| Ok(intent.with_refs(refs)))
     }
 
     pub fn causal_refs(self, causal_refs: Vec<arkret_sdk::Hash>) -> Self {
-        self.map_event(|event| {
-            event.causal_refs = causal_refs;
-            Ok(())
-        })
+        self.map_intent(|intent| Ok(intent.with_causal_refs(causal_refs)))
     }
 
     pub fn seal_ref(self, seal_ref: impl Into<String>) -> Self {
-        self.map_event(|event| {
-            event.seal_ref = Some(
+        self.map_intent(|intent| {
+            Ok(intent.with_seal_ref(
                 arkret_sdk::SealId::new(seal_ref.into())
                     .map_err(|err| anyhow::anyhow!("invalid seal_ref: {err}"))?,
-            );
-            Ok(())
+            ))
         })
     }
 
     pub fn seal_basis(self, seal_basis: SealBasis) -> Self {
-        self.map_event(|event| {
-            event.seal_basis = Some(seal_basis);
-            Ok(())
-        })
+        self.map_intent(|intent| Ok(intent.with_seal_basis(seal_basis)))
     }
 
     pub fn requirements(self, requirements: EventRequirements) -> Self {
-        self.map_event(|event| {
-            event.requirements = requirements;
-            Ok(())
-        })
+        self.map_intent(|intent| Ok(intent.with_requirements(requirements)))
     }
 
     pub fn created_at(self, created_at: chrono::DateTime<chrono::Utc>) -> Self {
-        self.map_event(|event| {
-            event.created_at = arkret_sdk::canonical::normalize_timestamp_canonical(created_at);
-            Ok(())
-        })
+        self.map_intent(|intent| Ok(intent.with_created_at(created_at)))
     }
 
     #[allow(clippy::expect_used)]
-    pub fn build(self, node_id: &str) -> Event {
+    pub fn build(self, node_id: &str) -> LocalOperation {
         self.build_sdk_event(node_id)
-            .expect("TypedOperationBuilder emitted an invalid SDK Event")
+            .expect("TypedOperationBuilder emitted an invalid SDK Event intent")
     }
 
-    pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<Event> {
+    pub fn build_sdk_event(self, node_id: &str) -> anyhow::Result<LocalOperation> {
         let _ = node_id;
-        let mut event = self.event?;
-        let operation_id =
-            arkret_sdk::OperationId::new_v7_at(crate::clock::now_unix_ms()).into_string();
-        event.unsigned.insert(
-            "local_operation_idempotency_alias".to_owned(),
-            Value::String(operation_id),
-        );
-        if let Some(target_ref) = self.target_ref {
-            event
-                .unsigned
-                .insert("local_target_ref".to_owned(), Value::String(target_ref));
-        }
-        event
-            .refresh_content_bound_identity()
-            .map_err(|err| anyhow::anyhow!("derive final event_id: {err}"))?;
-        if let Some(object_id) = arkret_sdk::schema::derived_object_id(&event) {
-            event
-                .unsigned
-                .insert("local_target_ref".to_owned(), Value::String(object_id));
-        }
-        match project_registered_cell_writes(&event) {
-            Ok(_) | Err(EventCellProjectionError::PreStateRequirement { .. }) => {}
-            Err(error) => {
-                return Err(anyhow::anyhow!(
-                    "{} has no evaluable registered cell-write contract: {error}",
-                    event.kind.as_str()
-                ));
-            }
-        }
-        Ok(event)
+        Ok(LocalOperation {
+            intent: self.intent?,
+            local_operation_id: LocalOperationId::new(),
+            local_target_ref: self.target_ref,
+        })
     }
-}
-
-/// Re-derive an Event's content-bound identity after its payload was edited.
-///
-/// `event_id` is a function of the finished Event (spec
-/// `zh/conformance/encoding.md` section 4.0). Event-derived create payloads
-/// omit their own object id, so refreshing the Event identity is a single
-/// acyclic step; the retyped object id is stored only as a local unsigned hint.
-pub(crate) fn rederive_event_identity(event: &mut Event) -> anyhow::Result<()> {
-    rederive_event_identity_with_digest_suite(event, arkret_sdk::canonical::DigestSuite::Sha256)
-}
-
-pub(crate) fn rederive_event_identity_with_digest_suite(
-    event: &mut Event,
-    digest_suite: arkret_sdk::canonical::DigestSuite,
-) -> anyhow::Result<()> {
-    event
-        .refresh_content_bound_identity_with_digest_suite(digest_suite)
-        .map_err(|err| anyhow::anyhow!("re-derive event_id after payload edit: {err}"))?;
-    if let Some(object_id) = arkret_sdk::schema::derived_object_id(event) {
-        event
-            .unsigned
-            .insert("local_target_ref".to_owned(), Value::String(object_id));
-    }
-    Ok(())
-}
-
-/// Free-function form of [`EventExt::local_operation_id`]: the local
-/// reconciliation/dedupe key for an SDK event — the optimistic write chain's
-/// `unsigned.local_operation_idempotency_alias` when present, else the event
-/// id. Single source (YGN-DRY-03); every view consumes this one definition so
-/// the dedupe fallback rule can never drift between surfaces.
-pub(crate) fn sdk_event_local_operation_id(event: &Event) -> &str {
-    event.local_operation_id()
 }
 
 pub trait EventExt {
@@ -429,51 +598,23 @@ pub trait EventExt {
     fn local_operation_id(&self) -> &str;
     fn local_target_ref(&self) -> Option<&str>;
     fn canonical_digest(&self) -> anyhow::Result<String>;
-    fn refresh_proof_hashes(&mut self) -> anyhow::Result<()>;
+    fn require_proof(&self) -> anyhow::Result<&EventProof>;
+}
+
+/// Signing helper for an Event that has finished authoring.
+///
+/// Only [`AuthoredEvent`] carries one, because attaching a proof to anything
+/// else would be signing an envelope whose identity is still moving.
+pub trait AuthoredEventExt {
     fn sign_ed25519(
         &mut self,
         signer_did: impl Into<String>,
         key_id: impl Into<String>,
         signing_key: &ed25519_dalek::SigningKey,
     ) -> anyhow::Result<()>;
-    fn require_proof(&self) -> anyhow::Result<&EventProof>;
 }
 
-impl EventExt for Event {
-    fn local_operation_idempotency_alias(&self) -> Option<&str> {
-        self.unsigned
-            .get("local_operation_idempotency_alias")
-            .and_then(Value::as_str)
-    }
-
-    fn local_operation_id(&self) -> &str {
-        self.local_operation_idempotency_alias()
-            .unwrap_or_else(|| self.event_id.as_str())
-    }
-
-    fn local_target_ref(&self) -> Option<&str> {
-        self.unsigned
-            .get("local_target_ref")
-            .and_then(Value::as_str)
-    }
-
-    fn canonical_digest(&self) -> anyhow::Result<String> {
-        self.event_digest()
-            .map_err(|err| anyhow::anyhow!("SDK Event digest failed: {err}"))
-    }
-
-    fn refresh_proof_hashes(&mut self) -> anyhow::Result<()> {
-        let digest = self.canonical_digest()?;
-        let digest = arkret_sdk::Hash::new(digest)
-            .map_err(|err| anyhow::anyhow!("event digest is not a SDK Hash: {err}"))?;
-        for proof in &mut self.proofs {
-            if let arkret_sdk::EventProof::Producer(proof) = proof {
-                proof.event_digest = digest.clone();
-            }
-        }
-        Ok(())
-    }
-
+impl AuthoredEventExt for AuthoredEvent {
     fn sign_ed25519(
         &mut self,
         signer_did: impl Into<String>,
@@ -495,6 +636,28 @@ impl EventExt for Event {
             .sign_envelope(self)
             .map_err(|err| anyhow::anyhow!("Ed25519 sign rejected: {err}"))?;
         Ok(())
+    }
+}
+
+impl EventExt for Event {
+    fn local_operation_idempotency_alias(&self) -> Option<&str> {
+        self.unsigned
+            .get(LOCAL_OPERATION_IDEMPOTENCY_ALIAS)
+            .and_then(Value::as_str)
+    }
+
+    fn local_operation_id(&self) -> &str {
+        self.local_operation_idempotency_alias()
+            .unwrap_or_else(|| self.event_id.as_str())
+    }
+
+    fn local_target_ref(&self) -> Option<&str> {
+        self.unsigned.get(LOCAL_TARGET_REF).and_then(Value::as_str)
+    }
+
+    fn canonical_digest(&self) -> anyhow::Result<String> {
+        self.event_digest()
+            .map_err(|err| anyhow::anyhow!("SDK Event digest failed: {err}"))
     }
 
     fn require_proof(&self) -> anyhow::Result<&EventProof> {
@@ -519,6 +682,53 @@ pub fn uuid_v7() -> String {
 
 /// Canonical helper constructors used by the current UI.
 pub mod ak_ops;
+
+/// Finalize a built operation so a test can assert on producer-signed content.
+///
+/// Producer-signed content is only complete once the actor chain and the HLC are
+/// stamped, so the envelope a test wants to inspect does not exist until then.
+/// Production takes both from the realm actor frontier and the durable
+/// signing-stamp allocator; a test has neither, so it pins them.
+///
+/// Test-only: nothing in production may author against a pinned actor chain.
+#[cfg(test)]
+pub(crate) fn author_for_test(operation: &LocalOperation) -> arkret_sdk::AuthoredEvent {
+    author_intent_for_test(operation.intent().clone())
+}
+
+/// [`author_for_test`] for a bare intent.
+#[cfg(test)]
+pub(crate) fn author_intent_for_test(intent: EventIntent) -> arkret_sdk::AuthoredEvent {
+    author_intent_for_test_at_seq(intent, 1)
+}
+
+/// [`author_intent_for_test`] at an explicit position in the actor chain.
+///
+/// A unit's members occupy consecutive `actor_seq` values, and their identities
+/// have to differ the way a real chain's do, so a test that authors several
+/// events walks the sequence instead of pinning one value for all of them.
+#[cfg(test)]
+pub(crate) fn author_intent_for_test_at_seq(
+    intent: EventIntent,
+    actor_seq: u64,
+) -> arkret_sdk::AuthoredEvent {
+    intent
+        .author(actor_seq, test_authoring_hlc_at_seq(actor_seq))
+        .expect("a test intent finalizes")
+}
+
+/// The pinned signing stamp for the first event of a test authoring path.
+#[cfg(test)]
+pub(crate) fn test_authoring_hlc() -> arkret_sdk::Hlc {
+    test_authoring_hlc_at_seq(1)
+}
+
+/// The pinned signing stamp for position `actor_seq` of a test authoring path.
+#[cfg(test)]
+pub(crate) fn test_authoring_hlc_at_seq(actor_seq: u64) -> arkret_sdk::Hlc {
+    arkret_sdk::Hlc::new(format!("01970e589d21-{actor_seq:04}-a13f9c2e"))
+        .expect("a pinned test HLC parses")
+}
 
 #[cfg(test)]
 #[path = "../operation_tests.rs"]

@@ -19,7 +19,9 @@ use std::sync::OnceLock;
 
 use ed25519_dalek::SigningKey;
 use inkson::event_builders;
-use inkson::operation::{Event, EventExt, EventKind};
+use inkson::operation::{AuthoredEventExt, Event, EventKind, LocalOperation};
+
+mod common;
 use jsonschema::{Registry, Resource};
 use serde_json::Value;
 
@@ -44,8 +46,8 @@ fn realm_event_paths_do_not_fall_back_to_default_sha256_helpers() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut pending = vec![manifest.join("src")];
     let forbidden = [
-        "arkret_sdk::signatures::sign_event(",
-        "arkret_signatures::sign_event(",
+        "AuthoredEvent::finalize(",
+        ".author_now(",
         "arkret_sdk::event_proof_verification_context(",
     ];
     let mut violations = Vec::new();
@@ -72,7 +74,8 @@ fn realm_event_paths_do_not_fall_back_to_default_sha256_helpers() {
     }
     assert!(
         violations.is_empty(),
-        "Realm signing and verification must use a trusted explicit digest suite:\n{}",
+        "Realm authoring and verification must name an explicit digest suite: the identity is derived under it, and the signer verifies against the suite the Event was authored under rather than choosing one:
+{}",
         violations.join("\n")
     );
 }
@@ -263,36 +266,92 @@ fn select_authoring_principal_server() {
 /// Stamp the wire fields the submit pipeline would normally attach
 /// (CBA basis + Ed25519 proof) so the envelope satisfies the reducer-input
 /// rules baked into event-envelope.schema.json.
-fn stamp_wire_fields(envelope: &mut Event) {
-    match reducer_input_plane(envelope) {
-        // Control Move: `seal_basis` and nothing from the data-plane pair.
-        Some("control") if !cba_exempt_reducer_kind(&envelope.kind) => {
-            if envelope.seal_basis.is_none() {
-                envelope.seal_basis = Some(test_seal_basis());
-            }
-        }
-        // DataEvent: the schema requires `seal_ref` AND `auth_context`
-        // together, and forbids `seal_basis` alongside them. Both are attached
-        // by the submit pipeline, not by the typed builder, so the gate has to
-        // stamp them before validating what actually goes on the wire.
-        Some("data") => {
-            if envelope.seal_ref.is_none() {
-                envelope.seal_ref = Some(
-                    arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
-                        .expect("test seal id is canonical"),
-                );
-            }
-            if envelope.auth_context.is_none() {
-                envelope.auth_context = Some(test_auth_context());
-            }
-        }
-        _ => {}
-    }
+fn wire_envelope(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
+    wire_envelope_from_intent(operation.into_intent())
+}
+
+/// Attach the producer proof to an envelope that is already authored.
+///
+/// A genesis unit's members are authored together, and every one of them is
+/// CBA-exempt, so there is nothing left to stamp before signing.
+fn sign_authored(envelope: &mut arkret_sdk::AuthoredEvent) {
     let signer_did = TEST_ACTOR_ID;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, test_signing_key())
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
+}
+
+/// The Realm genesis unit, authored the way the submit lane authors it.
+fn authored_realm_bootstrap(
+    invitees: &[String],
+    plaintext_visible_services: &[String],
+    alias: Option<&str>,
+) -> Vec<arkret_sdk::AuthoredEvent> {
+    common::author_unit(
+        event_builders::build_realm_bootstrap_steps(
+            test_genesis_salt(),
+            TEST_ACTOR_ID,
+            TEST_SERVICE_ID,
+            "https://server.example",
+            "Engineering",
+            None,
+            "listed",
+            "invite",
+            "shared",
+            "mls_rfc9420",
+            "standard",
+            "restricted",
+            "single_did",
+            "sha256",
+            "ak:trust_domain:server.example",
+            invitees,
+            plaintext_visible_services,
+            alias,
+            None,
+        )
+        .expect("build_realm_bootstrap_steps succeeds"),
+    )
+}
+
+/// Stamp the members a real submitter attaches, then finalize and sign.
+///
+/// Every one of these is producer-signed content, so it has to be in place
+/// BEFORE the identity is derived from it — which is why this returns an
+/// authored envelope instead of mutating one.
+fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_sdk::AuthoredEvent {
+    let mut intent = intent;
+    match reducer_input_plane_for_kind(intent.kind()) {
+        // Control Move: `seal_basis` and nothing from the data-plane pair.
+        Some("control") if !cba_exempt_reducer_kind(intent.kind()) => {
+            if intent.seal_basis().is_none() {
+                intent = intent.with_seal_basis(test_seal_basis());
+            }
+        }
+        // DataEvent: the schema requires `seal_ref` AND `auth_context`
+        // together, and forbids `seal_basis` alongside them. Both are attached
+        // by the submit pipeline, not by the typed builder, so the gate has to
+        // stamp them before the identity is derived from what goes on the wire.
+        Some("data") => {
+            if intent.seal_ref().is_none() {
+                intent = intent.with_seal_ref(
+                    arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
+                        .expect("test seal id is canonical"),
+                );
+            }
+            if intent.auth_context().is_none() {
+                intent = intent.with_auth_context(test_auth_context());
+            }
+        }
+        _ => {}
+    }
+    let mut envelope = common::author_intent_at_seq(intent, 1);
+    let signer_did = TEST_ACTOR_ID;
+    let key_id = format!("{signer_did}#device");
+    envelope
+        .sign_ed25519(signer_did, key_id, test_signing_key())
+        .expect("Ed25519 sign succeeds for schema-conformant envelope");
+    envelope
 }
 
 /// Whether a real submitter would attach `seal_basis` to this envelope.
@@ -302,10 +361,8 @@ fn stamp_wire_fields(envelope: &mut Event) {
 /// contract, so the plane is read from the registry here exactly as
 /// `arkret_schema::validate_registered_cell_writes_in_context` reads it at
 /// admission. Guessing from the kind name would fork the rule.
-fn reducer_input_plane(envelope: &Event) -> Option<&'static str> {
-    envelope
-        .kind
-        .descriptor()
+fn reducer_input_plane_for_kind(kind: &EventKind) -> Option<&'static str> {
+    kind.descriptor()
         .filter(|descriptor| descriptor.reducer_input)
         .and_then(|descriptor| descriptor.plane)
 }
@@ -447,7 +504,7 @@ fn assert_envelope_matches_schema(label: &str, envelope: &Event) {
 
 #[test]
 fn build_realm_create_event_matches_event_schema() {
-    let mut envelope = event_builders::build_realm_create_event(
+    let envelope = event_builders::build_realm_create_event(
         test_genesis_salt(),
         TEST_ACTOR_ID,
         TEST_SERVICE_ID,
@@ -465,14 +522,14 @@ fn build_realm_create_event_matches_event_schema() {
         None,
     )
     .expect("build_realm_create_event succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_realm_create_event", &envelope);
 }
 
 #[test]
 fn build_space_create_event_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope = event_builders::build_space_create_event(
+    let envelope = event_builders::build_space_create_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         "Launch checklist",
@@ -482,56 +539,56 @@ fn build_space_create_event_matches_event_schema() {
         None,
     )
     .expect("build_space_create_event succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_space_create_event", &envelope);
 }
 
 #[test]
 fn build_space_lifecycle_event_archive_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope = event_builders::build_space_lifecycle_event(
+    let envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         EventKind::SpaceArchive,
     )
     .expect("build_space_lifecycle_event(archive) succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_space_lifecycle_event[archive]", &envelope);
 }
 
 #[test]
 fn build_space_lifecycle_event_restore_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope = event_builders::build_space_lifecycle_event(
+    let envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         EventKind::SpaceRestore,
     )
     .expect("build_space_lifecycle_event(restore) succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_space_lifecycle_event[restore]", &envelope);
 }
 
 #[test]
 fn build_space_lifecycle_event_tombstone_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope = event_builders::build_space_lifecycle_event(
+    let envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         EventKind::SpaceTombstone,
     )
     .expect("build_space_lifecycle_event(tombstone) succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_space_lifecycle_event[tombstone]", &envelope);
 }
 
 #[test]
 fn build_realm_state_event_join_rule_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope =
+    let envelope =
         event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
             TEST_REALM_ID,
             TEST_ACTOR_ID,
@@ -542,28 +599,28 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
             },
         )
         .expect("build_realm_state_event(join_rule) succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_realm_state_event[join_rule]", &envelope);
 }
 
 #[test]
 fn build_realm_state_event_history_visibility_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope =
+    let envelope =
         event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryVisibility>(
             TEST_REALM_ID,
             TEST_ACTOR_ID,
             arkret_sdk::HistoryVisibilityPayload::new(arkret_sdk::HistoryVisibility::Shared),
         )
         .expect("build_realm_state_event(history_visibility) succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_realm_state_event[history_visibility]", &envelope);
 }
 
 #[test]
 fn build_realm_history_sharing_policy_event_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope = event_builders::build_realm_history_sharing_policy_event(
+    let envelope = event_builders::build_realm_history_sharing_policy_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         arkret_sdk::HistorySharingPolicyPayloadValue {
@@ -583,14 +640,14 @@ fn build_realm_history_sharing_policy_event_matches_event_schema() {
         },
     )
     .expect("build_realm_history_sharing_policy_event succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_realm_state_event[history_sharing_policy]", &envelope);
 }
 
 #[test]
 fn build_realm_preview_policy_event_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope =
+    let envelope =
         event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmPreviewPolicy>(
             TEST_REALM_ID,
             TEST_ACTOR_ID,
@@ -609,7 +666,7 @@ fn build_realm_preview_policy_event_matches_event_schema() {
             .expect("preview policy fixture is typed"),
         )
         .expect("build_realm_state_event(preview_policy) succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_realm_state_event[preview_policy]", &envelope);
 }
 
@@ -620,40 +677,19 @@ fn build_member_state_event_matches_event_schema() {
     // reason="space_create" — same canonical shape. We exercise the
     // wrapper path indirectly via `build_realm_bootstrap_events` (which
     // calls it for each invitee) and pick out the member-state envelope.
-    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
-        test_genesis_salt(),
-        TEST_ACTOR_ID,
-        TEST_SERVICE_ID,
-        "https://server.example",
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &[TEST_INVITEE_CORE_ID.to_owned()],
-        &[],
-        None,
-        None,
-    )
-    .expect("build_realm_bootstrap_events succeeds");
+    let events = authored_realm_bootstrap(&[TEST_INVITEE_CORE_ID.to_owned()], &[], None);
     let mut envelope = events
         .into_iter()
         .find(|event| event.kind == EventKind::MemberState)
         .expect("bootstrap chain emits one ak.member.state envelope for the invitee");
-    stamp_wire_fields(&mut envelope);
+    sign_authored(&mut envelope);
     assert_envelope_matches_schema("build_member_state_event[invite]", &envelope);
 }
 
 #[test]
 fn build_member_state_transition_event_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope = event_builders::build_member_state_transition_event(
+    let envelope = event_builders::build_member_state_transition_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         TEST_INVITEE_DID,
@@ -662,21 +698,21 @@ fn build_member_state_transition_event_matches_event_schema() {
         "invite_accept",
     )
     .expect("build_member_state_transition_event succeeds");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_member_state_transition_event", &envelope);
 }
 
 #[test]
 fn build_plaintext_visible_services_event_matches_event_schema() {
     select_authoring_principal_server();
-    let mut envelope = event_builders::build_plaintext_visible_services_event(
+    let envelope = event_builders::build_plaintext_visible_services_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
         &["did:web:server.example".to_owned()],
     )
     .expect("build_plaintext_visible_services_event succeeds")
     .expect("non-empty service list yields Some(envelope)");
-    stamp_wire_fields(&mut envelope);
+    let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_plaintext_visible_services_event", &envelope);
 }
 
@@ -686,28 +722,7 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
 /// `event-payload.schema.json#/$defs/realm_delivery_binding_policy_payload`.
 #[test]
 fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
-    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
-        test_genesis_salt(),
-        TEST_ACTOR_ID,
-        TEST_SERVICE_ID,
-        "https://server.example",
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &[],
-        &[],
-        None,
-        None,
-    )
-    .expect("build_realm_bootstrap_events succeeds");
+    let events = authored_realm_bootstrap(&[], &[], None);
 
     let mut policy = events
         .iter()
@@ -720,7 +735,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
         "the recipient-service allow-list must stay a closed DID list, never the \
          [\"*\"] unrestricted sentinel"
     );
-    stamp_wire_fields(&mut policy);
+    sign_authored(&mut policy);
     assert_envelope_matches_schema(
         "build_realm_bootstrap_events[delivery_binding_policy]",
         &policy,
@@ -741,28 +756,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
 #[test]
 fn blank_alias_is_absence_and_emits_no_alias_event() {
     for blank in ["  ", "#", " # "] {
-        let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
-            test_genesis_salt(),
-            TEST_ACTOR_ID,
-            TEST_SERVICE_ID,
-            "https://server.example",
-            "Engineering",
-            None,
-            "listed",
-            "invite",
-            "shared",
-            "mls_rfc9420",
-            "standard",
-            "restricted",
-            "single_did",
-            "sha256",
-            "ak:trust_domain:server.example",
-            &[],
-            &[],
-            Some(blank),
-            None,
-        )
-        .expect("an empty alias is indistinguishable from absence");
+        let events = authored_realm_bootstrap(&[], &[], Some(blank));
         assert!(
             !events
                 .iter()
@@ -783,28 +777,7 @@ fn blank_alias_is_absence_and_emits_no_alias_event() {
 /// object schema-valid AND must materialize exactly one dedicated facet Event.
 #[test]
 fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
-    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
-        test_genesis_salt(),
-        TEST_ACTOR_ID,
-        TEST_SERVICE_ID,
-        "https://server.example",
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &[],
-        &["did:web:server.example".to_owned()],
-        None,
-        None,
-    )
-    .expect("build_realm_bootstrap_events succeeds");
+    let events = authored_realm_bootstrap(&[], &["did:web:server.example".to_owned()], None);
 
     let mut create = events
         .iter()
@@ -818,7 +791,7 @@ fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
         "ak.realm.create object must not declare plaintext_visible_services; \
          realm.schema.json is closed and does not define that property"
     );
-    stamp_wire_fields(&mut create);
+    sign_authored(&mut create);
     assert_envelope_matches_schema(
         "build_realm_bootstrap_events[create with plaintext services]",
         &create,
@@ -845,28 +818,7 @@ fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
 /// `alias: None`, so the field never reached a validated object.
 #[test]
 fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object() {
-    let (_realm_id, events) = event_builders::build_realm_bootstrap_events(
-        test_genesis_salt(),
-        TEST_ACTOR_ID,
-        TEST_SERVICE_ID,
-        "https://server.example",
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "shared",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "single_did",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &[],
-        &[],
-        Some("#General"),
-        None,
-    )
-    .expect("build_realm_bootstrap_events succeeds");
+    let events = authored_realm_bootstrap(&[], &[], Some("#General"));
 
     let mut create = events
         .iter()
@@ -878,7 +830,7 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
         "ak.realm.create object must not declare alias; realm.schema.json is \
          closed and does not define that property"
     );
-    stamp_wire_fields(&mut create);
+    sign_authored(&mut create);
     assert_envelope_matches_schema("build_realm_bootstrap_events[create with alias]", &create);
 
     let mut alias_events: Vec<_> = events
@@ -898,7 +850,7 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
         alias_event.payload["alias"],
         serde_json::json!("general:server.example"),
     );
-    stamp_wire_fields(alias_event);
+    sign_authored(alias_event);
     assert_envelope_matches_schema("build_realm_bootstrap_events[alias facet]", alias_event);
 }
 
@@ -907,18 +859,20 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 #[test]
 fn managed_agent_pcr_prepare_builds_an_exact_ref_free_create() {
     select_authoring_principal_server();
-    let events = event_builders::build_managed_agent_pcr_bootstrap_events(
-        "did:web:agent.example",
-        arkret_sdk::ResolutionCommitment {
-            full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
-            method_history_head: format!("sha256:{}", "8".repeat(64)),
-            version_id: "1-Qmfixture".to_owned(),
-        },
-        TEST_ACTOR_ID,
-        "did:web:alice.example#delegation-0",
-        "ak:trust_domain:server.example",
-    )
-    .expect("managed Agent provision can freeze an event-derived PCR create");
+    let events = common::author_unit(
+        event_builders::build_managed_agent_pcr_bootstrap_steps(
+            "did:web:agent.example",
+            arkret_sdk::ResolutionCommitment {
+                full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+                method_history_head: format!("sha256:{}", "8".repeat(64)),
+                version_id: "1-Qmfixture".to_owned(),
+            },
+            TEST_ACTOR_ID,
+            "did:web:alice.example#delegation-0",
+            "ak:trust_domain:server.example",
+        )
+        .expect("managed Agent provision can freeze an event-derived PCR create"),
+    );
     assert_eq!(events.len(), 1);
     assert!(events[0].refs.is_empty());
 }

@@ -308,21 +308,18 @@ async fn dispatch_due_plan(
         )
         .target_ref(plan.value.message_payload.strand_id.as_str())
         .build_sdk_event("inkson")?;
-    // The prepare pipeline completes every producer-authored envelope field
-    // (actor frontier, HLC, CBA basis), re-derives the content-bound EventId,
-    // and signs — only now do the final Event / Message identities exist
-    // (spec §4). `submit_scheduled_send_event` then freezes and persists the
-    // exact canonical signed bytes before the first network submit.
-    let signed = submitter
-        .prepare_sdk_events_batch(vec![event])
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("scheduled-send event preparation produced no Event"))?;
+    // Authoring completes every producer-signed envelope field (actor frontier,
+    // HLC, CBA basis) and derives the one content-bound EventId — only now do
+    // the final Event / Message identities exist (spec §4).
+    // `submit_scheduled_send_event` then freezes and persists the exact
+    // canonical signed bytes before the first network submit.
+    let signed = submitter.author_for_direct_submission(&event).await?;
     let authoring_generation =
         crate::identity::authoring_generation::resolve_event_authoring_generation(
             submitter.http(),
-            &signed,
+            &crate::identity::authoring_generation::EventAuthorityFacts::from_intent(
+                event.intent(),
+            ),
         )
         .await?;
     match submitter

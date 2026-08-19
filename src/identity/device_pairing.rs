@@ -345,9 +345,12 @@ pub async fn author_pairing_request_body(
     >(realm_id.as_str(), principal.as_str(), authorize_payload)
     .created_at(created_at)
     .build_sdk_event("inkson-device-pairing")?;
-    let authorize_event = api
-        .event_submitter()?
-        .prepare_initial_submissions(vec![authorize])
+    let submitter = api.event_submitter()?;
+    let authorized = submitter
+        .author_independent_events(vec![authorize.into_intent()])
+        .await?;
+    let authorize_event = submitter
+        .prepare_initial_submissions(&authorized)
         .await?
         .into_iter()
         .next()

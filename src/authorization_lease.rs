@@ -974,18 +974,21 @@ mod tests {
 
     #[test]
     fn managed_agent_pcr_create_is_frozen_before_provision_commit() {
-        let events = crate::event_builders::build_managed_agent_pcr_bootstrap_events(
-            "did:web:agent.example",
-            arkret_sdk::ResolutionCommitment {
-                full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
-                method_history_head: format!("sha256:{}", "8".repeat(64)),
-                version_id: "1-Qmfixture".to_owned(),
-            },
-            "did:web:alice.example",
-            "did:web:agent.example#managed-controller",
-            "ak:trust_domain:did.web.example",
+        let events = crate::event_submit::author_event_unit_for_test(
+            crate::event_builders::build_managed_agent_pcr_bootstrap_steps(
+                "did:web:agent.example",
+                arkret_sdk::ResolutionCommitment {
+                    full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+                    method_history_head: format!("sha256:{}", "8".repeat(64)),
+                    version_id: "1-Qmfixture".to_owned(),
+                },
+                "did:web:alice.example",
+                "did:web:agent.example#managed-controller",
+                "ak:trust_domain:did.web.example",
+            )
+            .expect("controller can freeze the exact PCR create locally"),
         )
-        .expect("controller can freeze the exact PCR create locally");
+        .expect("the PCR bootstrap unit authors");
         assert_eq!(events.len(), 1);
         assert!(events[0].refs.is_empty());
     }

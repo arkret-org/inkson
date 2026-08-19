@@ -11,6 +11,8 @@ use inkson::models::{
     service_is_v1_principal_server_ready, service_supports_event_envelope_write_plane,
 };
 use inkson::operation::TypedOperationBuilder;
+
+mod common;
 use inkson::push::validate_blind_wakeup_payload;
 use reqwest::StatusCode;
 use serde_json::json;
@@ -783,7 +785,9 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
         ),
     )
     .build("contract-test");
-    assert_no_secret("event", &event, secret);
+    // The leak check runs over what actually leaves the device, which is the
+    // authored envelope.
+    assert_no_secret("event", &common::author(event), secret);
 
     let blind_push = json!({
         "type": "ak.push.blind_wakeup.v1",

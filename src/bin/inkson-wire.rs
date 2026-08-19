@@ -58,7 +58,7 @@ fn range_completeness(input: Value) -> Result<Value> {
         Event, EventId, EventRequirements, Hash, PayloadProof, PayloadProofPurpose, PayloadSigner,
         ScopeRef,
     };
-    use arkret_signatures::{Ed25519PayloadSigner, SignEventOptions, sign_event_with_digest_suite};
+    use arkret_signatures::{Ed25519PayloadSigner, SignEventOptions, sign_event};
 
     let input: RangeCompletenessInput =
         serde_json::from_value(input).context("parse range-completeness input")?;
@@ -109,8 +109,6 @@ fn range_completeness(input: Value) -> Result<Value> {
         verification_method.clone(),
     );
     let observed_at = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
-    let event_id =
-        EventId::new("ak:event:AQsJJ-0WQT9HoqD7KlOdlGMGOsuB_Ncu1svH5gbe3KL4".to_owned())?;
     let mut payload = arkret_sdk::RangeCompletenessAttestation {
         attestation_id: "ak:attestation:019fbeef-0000-7000-8000-000000000001".to_owned(),
         schema: SchemaId::RANGE_COMPLETENESS_ATTESTATION_V1.to_owned(),
@@ -163,8 +161,10 @@ fn range_completeness(input: Value) -> Result<Value> {
     let Value::Object(payload) = serde_json::to_value(payload)? else {
         bail!("typed completeness payload is not an object");
     };
-    let mut event = Event {
-        event_id: event_id.clone(),
+    let event = Event {
+        // Replaced by `finalize_with_digest_suite` below: the identity is derived
+        // from the finished content, so nothing here may claim one.
+        event_id: EventId::from_digest(digest_suite, [0; 32]),
         kind: arkret_wire::EventKind::AttestationRangeCompleteness,
         realm_id: input.realm_id.clone(),
         scope_ref: ScopeRef::Realm {
@@ -192,11 +192,13 @@ fn range_completeness(input: Value) -> Result<Value> {
         proofs: Vec::new(),
         requirements: EventRequirements::default(),
     };
-    sign_event_with_digest_suite(
+    let mut event = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(event, digest_suite)
+        .map_err(|error| anyhow::anyhow!("finalize fixture attestation Event: {error}"))?;
+    let event_id = event.event_id().clone();
+    sign_event(
         &mut event,
         &signer,
         &verification_method,
-        digest_suite,
         SignEventOptions::new().with_created_at(observed_at),
     )?;
 

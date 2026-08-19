@@ -194,7 +194,7 @@ pub(crate) fn build_creator_mls_genesis_event(
     actor_id: &str,
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
-) -> Result<Option<arkret_sdk::Event>, String> {
+) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_effective_scope(
         state_store,
         realm_id,
@@ -212,7 +212,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     actor_id: &str,
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
-) -> Result<Option<arkret_sdk::Event>, String> {
+) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_effective_scope_with_binding(
         state_store,
         realm_id,
@@ -232,7 +232,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
-) -> Result<Option<arkret_sdk::Event>, String> {
+) -> Result<Option<crate::operation::LocalOperation>, String> {
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -292,24 +292,18 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
         &governance_binding,
     )
     .map_err(|err| err.user_message())?;
-    let mut event = crate::operation::ak_ops::mls_genesis_with_governance(
+    let event = crate::operation::ak_ops::mls_genesis_with_governance(
         realm_id,
         actor_id,
         &summary.group_id,
         &payload,
     )
     .map_err(|err| format!("MLS genesis typed payload conversion failed: {err}"))?
+    // Scope narrowing is producer-signed content, so it happens on the intent.
+    .effective_scope(effective_scope)
     .build_sdk_event("inkson")
     .map(Some)
     .map_err(|err| format!("MLS genesis SDK Event conversion failed: {err}"))?;
-    if let Some(event) = event.as_mut() {
-        event.scope_ref = effective_scope;
-        // The id is a function of the finished content, so it is stamped last —
-        // after the scope narrowing above, which is part of that content.
-        event.event_id = event
-            .derive_event_id()
-            .map_err(|err| format!("MLS genesis event id derivation failed: {err}"))?;
-    }
     Ok(event)
 }
 
@@ -323,7 +317,7 @@ pub(crate) fn mls_commit_event_from_store(
     _schedule_hash: &arkret_sdk::Hash,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
-) -> Result<arkret_sdk::Event, String> {
+) -> Result<crate::operation::LocalOperation, String> {
     mls_commit_event_from_store_for_effective_scope(
         state_store,
         realm_id,
@@ -341,7 +335,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope(
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
-) -> Result<arkret_sdk::Event, String> {
+) -> Result<crate::operation::LocalOperation, String> {
     mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
         state_store,
         realm_id,
@@ -361,7 +355,7 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     proposal_refs: Vec<arkret_sdk::EventId>,
-) -> Result<arkret_sdk::Event, String> {
+) -> Result<crate::operation::LocalOperation, String> {
     mls_commit_event_from_store_for_effective_scope_with_options(
         state_store,
         realm_id,
@@ -381,7 +375,7 @@ pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
-) -> Result<arkret_sdk::Event, String> {
+) -> Result<crate::operation::LocalOperation, String> {
     mls_commit_event_from_store_for_effective_scope_with_options(
         state_store,
         realm_id,
@@ -394,37 +388,58 @@ pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
     )
 }
 
-pub(crate) fn mls_commit_event_from_store_for_sidecar_scope_with_proposal_refs(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    actor_id: &str,
-    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
-    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
-    proposal_refs: Vec<arkret_sdk::EventId>,
-    sidecar_binding: arkret_sdk::SidecarMlsBinding,
-) -> Result<arkret_sdk::Event, String> {
-    mls_commit_event_from_store_for_effective_scope_with_options(
-        state_store,
-        realm_id,
-        None,
-        actor_id,
-        commit_envelope,
-        previous_governance_binding,
-        proposal_refs,
-        Some(sidecar_binding),
-    )
+/// Everything an `ak.mls.commit` needs from the local store, read once.
+///
+/// Held as owned values so the commit can be built later, after the proposals it
+/// references have been authored — the store cannot be borrowed across that
+/// boundary.
+pub(crate) struct MlsCommitBasis {
+    realm_id: String,
+    actor_id: String,
+    effective_scope: arkret_sdk::ScopeRef,
+    prev_epoch: u64,
+    base_group_state_ref: String,
+    governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+    commit_envelope: arkret_sdk::MlsCommitEnvelope,
+    preconditions: Vec<crate::operation::Precondition>,
 }
 
-fn mls_commit_event_from_store_for_effective_scope_with_options(
+impl MlsCommitBasis {
+    /// Build the commit once the proposals it references are authored.
+    pub(crate) fn build(
+        self,
+        proposal_refs: Vec<arkret_sdk::EventId>,
+    ) -> Result<crate::operation::LocalOperation, String> {
+        let payload = arkret_sdk::MlsCommitPayload::new(
+            self.prev_epoch,
+            self.base_group_state_ref,
+            proposal_refs,
+            &self.commit_envelope,
+            self.governance_binding,
+        )
+        .map_err(|err| format!("MLS commit payload failed: {err}"))?;
+        crate::operation::ak_ops::mls_commit_with_governance(
+            &self.realm_id,
+            &self.actor_id,
+            &payload,
+        )
+        .map_err(|err| format!("MLS commit payload failed: {err}"))?
+        .preconditions(self.preconditions)
+        .effective_scope(self.effective_scope)
+        .build_sdk_event("inkson")
+        .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))
+    }
+}
+
+pub(crate) fn mls_commit_basis_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
     commit_envelope: &arkret_sdk::MlsCommitEnvelope,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
-    proposal_refs: Vec<arkret_sdk::EventId>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
-) -> Result<arkret_sdk::Event, String> {
+) -> Result<MlsCommitBasis, String> {
     let circle = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
@@ -473,31 +488,44 @@ fn mls_commit_event_from_store_for_effective_scope_with_options(
         }
         None => governance_binding,
     };
-    let payload = arkret_sdk::MlsCommitPayload::new(
-        prev_epoch,
-        base_group_state_ref,
-        proposal_refs,
-        commit_envelope,
-        governance_binding,
-    )
-    .map_err(|err| format!("MLS commit payload failed: {err}"))?;
-    let mut event =
-        crate::operation::ak_ops::mls_commit_with_governance(realm_id, actor_id, &payload)
-            .map_err(|err| format!("MLS commit payload failed: {err}"))?
-            .build_sdk_event("inkson")
-            .map_err(|err| format!("MLS commit SDK Event conversion failed: {err}"))?;
-    event.preconditions = crate::mls::governance::mls_commit_preconditions(
+    let preconditions = crate::mls::governance::mls_commit_preconditions(
         commit_envelope.group_id.as_str(),
         prev_epoch,
         previous_governance_binding,
     )
     .map_err(|err| format!("MLS commit preconditions failed: {err}"))?;
-    event.scope_ref = effective_scope;
-    // Stamped last: the id is a function of the finished content.
-    event.event_id = event
-        .derive_event_id()
-        .map_err(|err| format!("MLS commit event id derivation failed: {err}"))?;
-    Ok(event)
+    Ok(MlsCommitBasis {
+        realm_id: realm_id.to_owned(),
+        actor_id: actor_id.to_owned(),
+        effective_scope,
+        prev_epoch,
+        base_group_state_ref,
+        governance_binding,
+        commit_envelope: commit_envelope.clone(),
+        preconditions,
+    })
+}
+
+fn mls_commit_event_from_store_for_effective_scope_with_options(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    commit_envelope: &arkret_sdk::MlsCommitEnvelope,
+    previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
+    proposal_refs: Vec<arkret_sdk::EventId>,
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+) -> Result<crate::operation::LocalOperation, String> {
+    mls_commit_basis_from_store(
+        state_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        commit_envelope,
+        previous_governance_binding,
+        sidecar_binding,
+    )?
+    .build(proposal_refs)
 }
 
 #[cfg(test)]

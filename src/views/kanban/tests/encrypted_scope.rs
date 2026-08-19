@@ -1,5 +1,28 @@
 use super::*;
 
+/// Seal an encrypted write against the epoch its own MLS Events establish.
+///
+/// Production seals inside the submit lane, once the genesis or commit this write
+/// forced has been accepted. A test has no transport, so it authors those Events
+/// and seals against the identities they derive.
+#[cfg(not(target_arch = "wasm32"))]
+fn seal_against_accepted_epoch(
+    plan: super::super::mls_encrypt::EncryptedPatchPlan,
+    mls_events: &super::super::mls_encrypt::EncryptedWriteMlsEvents,
+) -> Value {
+    let accepted = |operation: &Option<crate::operation::LocalOperation>| {
+        operation.as_ref().map(|operation| {
+            crate::operation::author_for_test(operation)
+                .event_id()
+                .clone()
+        })
+    };
+    let commit = accepted(&mls_events.commit);
+    let genesis = accepted(&mls_events.genesis);
+    plan.seal(commit.as_ref(), genesis.as_ref())
+        .expect("an encrypted write seals against its accepted epoch")
+}
+
 /// The local plaintext sidecar stores the JSON-serialized patch VALUE, which is
 /// now the canonical ContentBlock rather than a bare string.
 fn content_block_json(body: &str) -> String {
@@ -24,7 +47,6 @@ fn encrypted_scope_blocks_plaintext_strand_update_payload() {
     )
     .expect("builds")
     .build("inkson");
-    let event = sdk_event(event);
 
     assert!(kanban_event_carries_plaintext_private_content(&event));
     let reason = kanban_plaintext_block_reason(Some(true), &event).unwrap();
@@ -53,7 +75,6 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     )
     .expect("builds")
     .build("inkson");
-    let private_update = sdk_event(private_update);
     assert!(kanban_event_carries_plaintext_private_content(
         &private_update
     ));
@@ -81,7 +102,6 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     )
     .expect("builds")
     .build("inkson");
-    let board_create = sdk_event(board_create);
     assert!(
         kanban_plaintext_block_reason(None, &board_create).is_none(),
         "container scaffold metadata must not be blocked by unknown security state"
@@ -125,6 +145,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
         &secure,
     )
     .expect("complete creator projection must reach the encrypted success path");
+    let patched = seal_against_accepted_epoch(patched, &_mls_events);
     let encrypted_payload = patched["encrypted_content"]["value"].clone();
     assert!(
         encrypted_payload.get("ciphertext").is_some(),
@@ -141,7 +162,6 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     )
     .expect("builds")
     .build("inkson");
-    let event = sdk_event(event);
 
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
@@ -403,6 +423,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     };
 
     assert!(state.mls_snapshot_for(realm).is_some());
+    let patched = seal_against_accepted_epoch(patched, &mls_events);
     assert_eq!(
         patched["encrypted_content"]["value"]["content_type"],
         KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
@@ -474,10 +495,6 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         state.private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH),
         Some(content_block_json("private description"))
     );
-    assert_eq!(
-        patched["encrypted_content"]["value"]["content_type"],
-        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
-    );
     assert!(mls_events.commit.is_none());
     assert!(mls_events.snapshot.is_none());
     // A freshly-created creator group must still produce a one-time
@@ -486,30 +503,32 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let genesis = mls_events
         .genesis
         .expect("freshly-created creator group should emit genesis");
+    // Sealing is what binds the envelope to the accepted epoch, and the id it
+    // binds to is the genesis Event's — which only exists once that Event is
+    // authored. A different accepted genesis produces a different binding, with
+    // no rewrite of already-sealed bytes anywhere in between.
+    let accepted_genesis = crate::operation::author_for_test(&genesis)
+        .event_id()
+        .clone();
+    let patched = patched
+        .seal(None, Some(&accepted_genesis))
+        .expect("epoch-0 write seals against its accepted genesis");
+    assert_eq!(
+        patched["encrypted_content"]["value"]["content_type"],
+        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
+    );
     assert_eq!(patched["encrypted_content"]["value"]["version"], "1.0");
     assert_eq!(
         patched["encrypted_content"]["value"]["key_ref"]["group_state_ref"],
-        genesis.event_id.as_str()
-    );
-    let accepted_genesis =
-        arkret_sdk::EventId::new("ak:event:AVtcXI0sfnw9Pex-qynbBUykPtV8niszMj0Ko75SINJ2").unwrap();
-    let mut rebound_patch = patched.clone();
-    assert_eq!(
-        rebind_encrypted_group_state_ref(&mut rebound_patch, &genesis.event_id, &accepted_genesis)
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        rebound_patch["encrypted_content"]["value"]["key_ref"]["group_state_ref"],
         accepted_genesis.as_str()
     );
-    assert_eq!(genesis.kind.as_str(), "ak.mls.genesis");
-    assert_eq!(genesis.payload["epoch"].as_u64(), Some(0));
+    assert_eq!(genesis.kind().as_str(), "ak.mls.genesis");
+    assert_eq!(genesis.payload()["epoch"].as_u64(), Some(0));
     assert_eq!(
-        genesis.payload["creator_principal_id"].as_str(),
+        genesis.payload()["creator_principal_id"].as_str(),
         Some(actor_id.as_str())
     );
-    assert!(genesis.payload.contains_key("governance_binding"));
+    assert!(genesis.payload().contains_key("governance_binding"));
     assert_registered_payload_valid(&genesis);
 }
 
@@ -566,10 +585,16 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
     let genesis = mls_events
         .genesis
         .expect("missing accepted genesis reference must be repaired by resubmission");
-    assert_eq!(genesis.kind.as_str(), "ak.mls.genesis");
+    assert_eq!(genesis.kind().as_str(), "ak.mls.genesis");
+    let accepted_genesis = crate::operation::author_for_test(&genesis)
+        .event_id()
+        .clone();
+    let patched = patched
+        .seal(None, Some(&accepted_genesis))
+        .expect("the repaired epoch-0 write seals against its accepted genesis");
     assert_eq!(
         patched["encrypted_content"]["value"]["key_ref"]["group_state_ref"],
-        genesis.event_id.as_str()
+        accepted_genesis.as_str()
     );
 }
 
@@ -668,6 +693,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     )
     .expect("complete projection and ready snapshot must encrypt the patch");
 
+    let patched = seal_against_accepted_epoch(patched, &mls_events);
     assert_eq!(
         patched["encrypted_content"]["value"]["content_type"],
         KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
@@ -697,41 +723,46 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     assert!(mls_events.snapshot.is_some());
     let commit = mls_events
         .commit
+        .as_ref()
         .expect("overdue minimal metadata MLS snapshot should emit commit event");
+    // The envelope is bound to the commit that established this epoch, by that
+    // commit's own final id.
     assert_eq!(
         patched["encrypted_content"]["value"]["key_ref"]["group_state_ref"],
-        commit.event_id.as_str()
+        crate::operation::author_for_test(commit)
+            .event_id()
+            .as_str()
     );
-    assert_eq!(commit.kind.as_str(), "ak.mls.commit");
-    assert_registered_payload_valid(&commit);
-    assert!(!commit.payload.contains_key("group_id"));
-    assert!(!commit.payload.contains_key("expected_prev_epoch"));
+    assert_eq!(commit.kind().as_str(), "ak.mls.commit");
+    assert_registered_payload_valid(commit);
+    assert!(!commit.payload().contains_key("group_id"));
+    assert!(!commit.payload().contains_key("expected_prev_epoch"));
     assert!(
-        commit.payload["commit_bytes_b64"]
+        commit.payload()["commit_bytes_b64"]
             .as_str()
             .is_some_and(|value| !value.is_empty()),
         "durable MLS commits must inline the complete RFC 9420 Commit bytes"
     );
-    assert!(!commit.payload.contains_key("preconditions"));
-    assert!(!commit.payload.contains_key("effects"));
+    assert!(!commit.payload().contains_key("preconditions"));
+    assert!(!commit.payload().contains_key("effects"));
     assert_eq!(
-        commit.payload["governance_binding"]["realm_id"],
+        commit.payload()["governance_binding"]["realm_id"],
         json!("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
     );
     assert_eq!(
-        commit.payload["governance_binding"]["effective_scope"],
+        commit.payload()["governance_binding"]["effective_scope"],
         json!({
             "kind": "realm",
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         })
     );
     assert_eq!(
-        commit.payload["base_epoch_ref"],
+        commit.payload()["base_epoch_ref"],
         json!(base_group_state_ref)
     );
-    assert!(commit.payload["governance_binding"]["security_frontier_digest"].is_string());
+    assert!(commit.payload()["governance_binding"]["security_frontier_digest"].is_string());
     assert!(
-        !commit.payload["governance_binding"]
+        !commit.payload()["governance_binding"]
             .as_object()
             .unwrap()
             .contains_key("membership_frontier")
@@ -758,7 +789,8 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
     )
     .unwrap();
 
-    assert_eq!(patched, patch);
+    assert!(patched.is_plaintext());
+    assert_eq!(seal_against_accepted_epoch(patched, &mls_events), patch);
     assert!(mls_events.commit.is_none());
     assert!(mls_events.genesis.is_none());
     assert!(state.local_identity_record().is_none());
@@ -778,9 +810,8 @@ fn encrypted_scope_allows_structural_strand_position_update() {
     )
     .expect("builds")
     .build("inkson");
-    let event = sdk_event(event);
 
-    assert_eq!(event.kind.as_str(), "ak.strand.update");
+    assert_eq!(event.kind().as_str(), "ak.strand.update");
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
 }
@@ -797,7 +828,6 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     )
     .expect("builds")
     .build("inkson");
-    let strand = sdk_event(strand);
     let space = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
         "did:web:alice.example",
@@ -808,7 +838,6 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     )
     .expect("builds")
     .build("inkson");
-    let space = sdk_event(space);
 
     assert!(kanban_plaintext_block_reason(Some(true), &strand).is_none());
     assert!(kanban_plaintext_block_reason(Some(true), &space).is_none());
@@ -833,8 +862,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     )
     .expect("builds")
     .build("inkson");
-    let board = sdk_event(board);
-    assert_eq!(board.kind.as_str(), "ak.space.create");
+    assert_eq!(board.kind().as_str(), "ak.space.create");
     assert!(
         kanban_plaintext_block_reason(Some(true), &board).is_none(),
         "encrypted scope must not block board container create"
@@ -850,8 +878,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     )
     .expect("builds")
     .build("inkson");
-    let list = sdk_event(list);
-    assert_eq!(list.kind.as_str(), "ak.space.create");
+    assert_eq!(list.kind().as_str(), "ak.space.create");
     assert!(
         kanban_plaintext_block_reason(Some(true), &list).is_none(),
         "encrypted scope must not block list container create"
@@ -865,8 +892,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     )
     .expect("builds")
     .build("inkson");
-    let list_rank_update = sdk_event(list_rank_update);
-    assert_eq!(list_rank_update.kind.as_str(), "ak.space.update");
+    assert_eq!(list_rank_update.kind().as_str(), "ak.space.update");
     assert!(
         kanban_plaintext_block_reason(Some(true), &list_rank_update).is_none(),
         "encrypted scope must not block list rank update"
@@ -886,7 +912,6 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     )
     .expect("builds")
     .build("inkson");
-    let private_update = sdk_event(private_update);
     assert!(
         kanban_plaintext_block_reason(Some(true), &private_update).is_some(),
         "encrypted scope must still block plaintext private strand content"
@@ -905,7 +930,6 @@ fn encrypted_scope_allows_strand_summary_metadata_update() {
     )
     .expect("builds")
     .build("inkson");
-    let event = sdk_event(event);
 
     assert!(!kanban_event_carries_plaintext_private_content(&event));
     assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
@@ -1008,6 +1032,7 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     )
     .unwrap();
 
+    let patch = seal_against_accepted_epoch(patch, &events);
     assert!(value_is_mls_envelope(&patch["encrypted_content"]["value"]));
     assert!(events.genesis.is_none());
     assert!(events.commit.is_none());

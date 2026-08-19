@@ -358,13 +358,16 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         let service_id = description.service_id.to_string();
                                         let service_full_id =
                                             description.service_resolution.full_id.to_string();
+                                        let submitter = api.event_submitter()?;
                                         let authorization =
                                             build_agent_key_authorization_for_pairing(
+                                                &submitter,
                                                 &controller,
                                                 &service_id,
                                                 &key_state,
                                                 &body,
-                                            )?;
+                                            )
+                                            .await?;
                                         let authorize_event =
                                             authorization.authorize_event;
                                         let requested_scope_disclosure =
@@ -375,11 +378,10 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                                 &body,
                                             )?;
                                         let agent_full_id = body.agent_id.clone();
-                                        let submitter = api.event_submitter()?;
                                         let authorize_submission = submitter
-                                            .prepare_initial_submissions(vec![
-                                                authorize_event,
-                                            ])
+                                            .prepare_initial_submissions(std::slice::from_ref(
+                                                &authorize_event,
+                                            ))
                                             .await?
                                             .into_iter()
                                             .next()

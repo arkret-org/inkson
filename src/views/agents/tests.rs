@@ -3,10 +3,11 @@ mod personal_agent_tests {
 
     use super::super::*;
     use crate::views::agents::model::{
-        build_agent_key_authorize_event_for_pairing, build_agent_pairing_deep_link,
-        build_agent_pairing_handoff_token, build_requested_scope_disclosure_for_pairing,
-        parse_runtime_key_approval_request, render_agent_pairing_qr_svg,
-        runtime_key_pairing_error_message, summarize_runtime_key_approval_request,
+        build_agent_pairing_deep_link, build_agent_pairing_handoff_token,
+        build_requested_scope_disclosure_for_pairing, finish_agent_key_authorization_for_pairing,
+        parse_runtime_key_approval_request, prepare_agent_key_authorize_pairing,
+        render_agent_pairing_qr_svg, runtime_key_pairing_error_message,
+        summarize_runtime_key_approval_request,
     };
 
     fn agent_initial_resolution(
@@ -569,9 +570,13 @@ mod personal_agent_tests {
         )
         .unwrap();
 
-        let authorization =
-            build_agent_key_authorization_for_pairing(controller, service_id, &key_state, &request)
+        // The controller's binding commits to the authorize Event's final id, so
+        // the write is authored between the two halves of the builder.
+        let plan =
+            prepare_agent_key_authorize_pairing(controller, service_id, &key_state, &request)
                 .unwrap();
+        let authored = crate::operation::author_intent_for_test(plan.intent().clone());
+        let authorization = finish_agent_key_authorization_for_pairing(plan, authored).unwrap();
         let event = authorization.authorize_event;
         let signing_key_binding = authorization.signing_key_binding;
 
@@ -769,12 +774,15 @@ mod personal_agent_tests {
         .to_string();
         let request = parse_runtime_key_approval_request(&raw).unwrap();
 
-        let event = build_agent_key_authorize_event_for_pairing(
-            controller, service_id, &key_state, &request,
-        )
-        .unwrap();
+        // Re-pairing's supersedes set is settled before authoring: it names the
+        // authorizations this key replaces, not anything about the new Event.
+        let intent =
+            prepare_agent_key_authorize_pairing(controller, service_id, &key_state, &request)
+                .unwrap()
+                .intent()
+                .clone();
 
-        let supersedes = event.payload["supersedes"]
+        let supersedes = intent.payload()["supersedes"]
             .as_array()
             .expect("re-pair authorize event must carry a supersedes array");
         assert_eq!(

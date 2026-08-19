@@ -21,7 +21,7 @@ pub async fn report(
     )?;
     let principal_id = crate::mls_api_helpers::principal_core_id(actor)
         .map_err(|error| anyhow::anyhow!("invalid moderation reporter DID: {error}"))?;
-    let (signed, _) = submitter.prepare_sdk_event_for_submit(&event).await?;
+    let signed = submitter.author_for_direct_submission(&event).await?;
     let report_event =
         crate::authorization_lease::standard_initial_submission(submitter.http(), &signed).await?;
     let body = arkret_sdk::ModerationReportRequestBody { report_event };

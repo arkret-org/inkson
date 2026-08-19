@@ -1,5 +1,4 @@
 use super::*;
-use crate::operation::EventExt;
 
 #[test]
 fn card_activity_items_show_local_strand_and_assignment_writes() {
@@ -115,27 +114,30 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
         .find(|mutation| matches!(mutation, CardAssignmentMutation::Create { .. }))
         .expect("create mutation");
     assert_eq!(create.actor_id(), "did:web:alice.example");
-    assert_eq!(create.operation().kind.as_str(), "ak.relation.create");
+    assert_eq!(create.operation().kind().as_str(), "ak.relation.create");
     // `relation_create_payload` has two branches; only the object branch is
     // projectable, because the registered contract sets
     // `value = {"field": "payload.relation"}` into the relation cell.
-    let relation = &create.operation().payload["relation"];
+    let relation = &create.operation().payload()["relation"];
     assert_eq!(relation["relation_kind"], json!("assigned_to"));
     assert_eq!(relation["from_ref"], json!(current.id));
     assert_eq!(relation["to_ref"], json!("did:web:alice.example"));
     // No `relation.id` on a create payload: the id is derived from this Event
     // and reappears as the cell subject and the local target ref below.
     assert!(relation.get("id").is_none());
-    let writes = crate::operation::direct_registered_cell_writes(create.operation()).unwrap();
+    // The Relation cell is named by `retype(event_id)`, so the write only has a
+    // subject once the create is finalized — and the create itself reports no
+    // Relation id at all.
+    assert_eq!(create.relation_id(), None);
+    assert_eq!(create.operation().local_target_ref(), None);
+    let authored = crate::operation::author_for_test(create.operation());
+    let relation_id = arkret_sdk::RelationId::from_event_id(authored.event_id());
+    let writes = crate::operation::direct_registered_cell_writes(&authored).unwrap();
     assert_eq!(
         writes[0].cell.as_str(),
-        format!("ak:cell:ak.component.relation.v1:{}", create.relation_id())
+        format!("ak:cell:ak.component.relation.v1:{relation_id}")
     );
     assert_eq!(writes[0].op.value.as_ref(), Some(relation));
-    assert_eq!(
-        create.operation().local_target_ref(),
-        Some(create.relation_id())
-    );
 
     let tombstone = mutations
         .iter()
@@ -143,18 +145,28 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
         .expect("tombstone mutation");
     assert_eq!(
         tombstone.relation_id(),
-        "ak:relation:AXYOPItXAzTTu_rqIAINR7C7AvNSR5bjjBslclmJ9ZVt"
+        Some("ak:relation:AXYOPItXAzTTu_rqIAINR7C7AvNSR5bjjBslclmJ9ZVt")
     );
-    assert_eq!(tombstone.operation().kind.as_str(), "ak.relation.tombstone");
     assert_eq!(
-        tombstone.operation().payload["relation_id"],
+        tombstone.operation().kind().as_str(),
+        "ak.relation.tombstone"
+    );
+    assert_eq!(
+        tombstone.operation().payload()["relation_id"],
         json!("ak:relation:AXYOPItXAzTTu_rqIAINR7C7AvNSR5bjjBslclmJ9ZVt")
     );
 
     let after = assignment_relations_after_mutations(&current, &selected, &mutations);
     assert_eq!(after.len(), 1);
     assert_eq!(after[0].actor_id, "did:web:alice.example");
-    assert!(after[0].relation_id.starts_with("ak:relation:"));
+    // The pending create's row is keyed by the write's holder-local operation
+    // id: the Relation is named by `retype(event_id)` of that create, so no
+    // `ak:relation:` id exists for it until the create is accepted.
+    assert_eq!(
+        after[0].relation_id,
+        create.operation().local_operation_id().to_string()
+    );
+    assert!(!after[0].relation_id.starts_with("ak:relation:"));
 }
 
 #[test]

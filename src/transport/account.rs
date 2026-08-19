@@ -199,7 +199,7 @@ pub async fn update_profile(
             None,
         )
     };
-    let (signed, _) = submitter.prepare_sdk_event_for_submit(&event).await?;
+    let signed = submitter.author_for_direct_submission(&event).await?;
     let profile_event =
         crate::authorization_lease::standard_initial_submission(submitter.http(), &signed).await?;
     let mut successor_seal = Some(
@@ -372,7 +372,7 @@ async fn submit_contact_response(
             operation_id,
             idempotency_key,
             reservation_handle,
-            signed_event: signed_event.clone(),
+            signed_event: signed_event.event().clone(),
             control_proposal_ack: None,
         });
         match http.contacts_respond(&commit).await? {
@@ -426,7 +426,7 @@ async fn submit_contact_response(
             operation_id,
             idempotency_key,
             reservation_handle,
-            signed_event: signed_event.clone(),
+            signed_event: signed_event.event().clone(),
             control_proposal_ack: None,
         });
         match http
@@ -729,16 +729,16 @@ pub async fn create_direct_conversation_from_resolve(
         anyhow::bail!("Direct Conversation resolver did not grant founding authority");
     };
     let trust_domain = submitter.events_describe().await?.trust_domain;
-    let events = crate::event_builders::build_direct_conversation_founding_events(
+    let steps = crate::event_builders::build_direct_conversation_founding_steps(
         founder_id,
         peer_id,
         trust_domain,
         next_founding_input,
     )?;
-    let signed = submitter.prepare_sdk_events_batch(events).await?;
+    let signed = submitter.author_event_unit(steps).await?;
     let events: [arkret_sdk::EventInitialSubmission; 4] = signed
         .into_iter()
-        .map(arkret_sdk::EventInitialSubmission::online)
+        .map(|event| arkret_sdk::EventInitialSubmission::online(event.into_event()))
         .collect::<Vec<_>>()
         .try_into()
         .map_err(|_| anyhow::anyhow!("Direct Conversation founding unit lost its closed length"))?;
@@ -1155,7 +1155,7 @@ pub async fn tombstone_contact(
         operation_id,
         idempotency_key,
         reservation_handle,
-        signed_event: signed_event.clone(),
+        signed_event: signed_event.event().clone(),
         control_proposal_ack: None,
     });
     match http.contacts_tombstone(&commit).await? {
@@ -1201,7 +1201,7 @@ pub async fn consent_cell(
 /// server's to choose. A cell that already exists keeps its `consent_id`; a new
 /// one gets a freshly minted producer-allocated id.
 pub async fn grant_consent(
-    http: &arkret_sdk::http_client::Client,
+    submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
     peer: &str,
     scope: &str,
@@ -1209,13 +1209,13 @@ pub async fn grant_consent(
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
     // Reuse the existing subject when there is one, so a re-grant lands in the
     // same cell instead of opening a second one for the same (peer, scope).
-    let consent_id = match consent_cell(http, holder, peer, scope).await {
+    let consent_id = match consent_cell(submitter.http(), holder, peer, scope).await {
         Ok(cell) => crate::operation::ak_ops::consent_id_from_cell_id(&cell.cell_id)?,
         Err(_) => arkret_sdk::ConsentId::new_v7_at(crate::clock::now_unix_ms()),
     };
     let holder_did = did_for_request_field("holder", holder)?;
     let principal_control_realm_id =
-        crate::identity::principal_control::resolve_accepted(http, &holder_did).await?;
+        crate::identity::principal_control::resolve_accepted(submitter.http(), &holder_did).await?;
     let event = crate::operation::ak_ops::consent_grant(
         principal_control_realm_id.as_str(),
         holder.trim(),
@@ -1226,14 +1226,23 @@ pub async fn grant_consent(
     )?
     .build_sdk_event("inkson")?;
     let body = arkret_sdk::ConsentGrantRequestBody {
-        grant_event: arkret_wire::EventInitialSubmission::online(event),
+        grant_event: arkret_wire::EventInitialSubmission::online(
+            submitter
+                .author_for_direct_submission(&event)
+                .await?
+                .into_event(),
+        ),
     };
     let path = format!(
         "{}/{}/grant",
         arkret_wire::PATH_SELF_CONSENT_CELLS,
         crate::wire_helpers::path_component(holder.trim()),
     );
-    http.post(&path, &body).await.map_err(anyhow::Error::from)
+    submitter
+        .http()
+        .post(&path, &body)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 /// Revoke scoped consent from `peer`. Spec OpenAPI
@@ -1243,16 +1252,16 @@ pub async fn grant_consent(
 /// dots being removed; there is nothing the server could substitute for that
 /// without reintroducing the concurrent-revoke race the dot model exists to close.
 pub async fn revoke_consent(
-    http: &arkret_sdk::http_client::Client,
+    submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
     peer: &str,
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
-    let cell = consent_cell(http, holder, peer, scope).await?;
+    let cell = consent_cell(submitter.http(), holder, peer, scope).await?;
     let consent_id = crate::operation::ak_ops::consent_id_from_cell_id(&cell.cell_id)?;
     let holder_did = did_for_request_field("holder", holder)?;
     let principal_control_realm_id =
-        crate::identity::principal_control::resolve_accepted(http, &holder_did).await?;
+        crate::identity::principal_control::resolve_accepted(submitter.http(), &holder_did).await?;
     let event = crate::operation::ak_ops::consent_revoke(
         principal_control_realm_id.as_str(),
         holder.trim(),
@@ -1261,14 +1270,23 @@ pub async fn revoke_consent(
     )?
     .build_sdk_event("inkson")?;
     let body = arkret_sdk::ConsentRevokeRequestBody {
-        revoke_event: arkret_wire::EventInitialSubmission::online(event),
+        revoke_event: arkret_wire::EventInitialSubmission::online(
+            submitter
+                .author_for_direct_submission(&event)
+                .await?
+                .into_event(),
+        ),
     };
     let path = format!(
         "{}/{}/revoke",
         arkret_wire::PATH_SELF_CONSENT_CELLS,
         crate::wire_helpers::path_component(holder.trim()),
     );
-    http.post(&path, &body).await.map_err(anyhow::Error::from)
+    submitter
+        .http()
+        .post(&path, &body)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 /// Open an outbound consent request: ask `holder` to grant the
@@ -1412,8 +1430,11 @@ async fn account_data_set_submission(
         ),
     }?;
     let event = builder.build_sdk_event("inkson")?;
+    let authored = submitter
+        .author_independent_events(vec![event.into_intent()])
+        .await?;
     submitter
-        .prepare_initial_submissions(vec![event])
+        .prepare_initial_submissions(&authored)
         .await?
         .into_iter()
         .next()
@@ -1554,8 +1575,11 @@ pub async fn submit_read_cursor_advance(
     >(marker.body.realm_id.clone(), marker.actor.clone(), payload)
     .created_at(marker.updated_at)
     .build_sdk_event("inkson")?;
+    let authored = submitter
+        .author_independent_events(vec![event.into_intent()])
+        .await?;
     let advance_event = submitter
-        .prepare_initial_submissions(vec![event])
+        .prepare_initial_submissions(&authored)
         .await?
         .into_iter()
         .next()

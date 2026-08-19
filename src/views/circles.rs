@@ -228,7 +228,7 @@ pub fn CirclesPanel(
                                                     spawn(async move {
                                                         let outcome = with_authed_api(&base, credential, |api| async move {
                                                             crate::transport::circle::remove_circle_member(
-                                                                api.http(),
+                                                                &api.event_submitter()?,
                                                                 &member_realm_id,
                                                                 &account_did,
                                                                 &circle_id,
@@ -296,7 +296,7 @@ pub fn CirclesPanel(
                                             spawn(async move {
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
                                                     crate::transport::circle::add_circle_member(
-                                                        api.http(), &member_realm_id, &account_did, &circle_id, actor_id.as_str(), membership,
+                                                        &api.event_submitter()?, &member_realm_id, &account_did, &circle_id, actor_id.as_str(), membership,
                                                     ).await
                                                 }).await;
                                                 match outcome {
@@ -332,7 +332,7 @@ pub fn CirclesPanel(
                                             let account_did = account_did.clone();
                                             spawn(async move {
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
-                                                    crate::transport::circle::archive_circle(api.http(), &realm_id, &account_did, &circle_id, None).await
+                                                    crate::transport::circle::archive_circle(&api.event_submitter()?, &realm_id, &account_did, &circle_id, None).await
                                                 }).await;
                                                 match outcome {
                                                     Ok(_) => { status.set("Circle archived".to_owned()); refresh += 1; }
@@ -363,7 +363,7 @@ pub fn CirclesPanel(
                                             let account_did = account_did.clone();
                                             spawn(async move {
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
-                                                    crate::transport::circle::restore_circle(api.http(), &realm_id, &account_did, &circle_id, None).await
+                                                    crate::transport::circle::restore_circle(&api.event_submitter()?, &realm_id, &account_did, &circle_id, None).await
                                                 }).await;
                                                 match outcome {
                                                     Ok(_) => { status.set("Circle restored".to_owned()); refresh += 1; }
@@ -470,20 +470,27 @@ pub fn CirclesPanel(
                                                 return;
                                             }
                                         };
-                                        let request = arkret_sdk::CircleCreateRequestBody {
-                                            create_event: arkret_wire::EventInitialSubmission::online(create_event),
-                                        };
+                                        let create_operation = create_event;
                                         busy.set(true);
                                         status.set("Creating Circle and establishing initial membership…".to_owned());
                                         let base = base.clone();
                                         let credential = token();
                                         spawn(async move {
                                             let outcome = with_authed_api(&base, credential, |api| async move {
+                                                let submitter = api.event_submitter()?;
+                                                let request = arkret_sdk::CircleCreateRequestBody {
+                                                    create_event: arkret_wire::EventInitialSubmission::online(
+                                                        submitter
+                                                            .author_for_direct_submission(&create_operation)
+                                                            .await?
+                                                            .into_event(),
+                                                    ),
+                                                };
                                                 let created = api.http().circle_create(&request).await?;
                                                 // The Circle id only exists once the create Event is
                                                 // accepted, so the join Event is authored after it.
                                                 crate::transport::circle::add_circle_member(
-                                                    api.http(),
+                                                    &submitter,
                                                     created.realm_id.as_str(),
                                                     actor_id.as_str(),
                                                     created.circle_id.as_str(),

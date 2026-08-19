@@ -4,7 +4,7 @@ pub fn account_profile_create(
     principal_control_realm_id: &arkret_sdk::RealmId,
     principal_id: &arkret_sdk::DidCoreId,
     profile: arkret_models_identity::ActorProfile,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     TypedOperationBuilder::new::<arkret_sdk::event_spec::ProfileCreate>(
         principal_control_realm_id.as_str(),
         principal_id.as_str(),
@@ -18,7 +18,7 @@ pub fn account_profile_update(
     principal_id: &arkret_sdk::DidCoreId,
     profile_id: arkret_sdk::ActorProfileId,
     patch: arkret_sdk::Patch,
-) -> anyhow::Result<arkret_sdk::Event> {
+) -> anyhow::Result<crate::operation::LocalOperation> {
     TypedOperationBuilder::new::<arkret_sdk::event_spec::ProfileUpdate>(
         principal_control_realm_id.as_str(),
         principal_id.as_str(),
