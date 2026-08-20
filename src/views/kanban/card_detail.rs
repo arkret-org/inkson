@@ -26,15 +26,14 @@ pub(super) fn route_card_strand_id(route: &Route) -> Option<String> {
 /// kanban routes. `None` for the board-less routes (plain `/kanban`,
 /// `/kanban/<realm>`, and `/kanban/<realm>/task/<strand>`
 /// share-link form) where the board must be resolved from projection.
-pub(super) fn route_board_id(route: &Route) -> Option<String> {
+///
+/// The URL is untrusted input, so the segment is parsed as a [`SpaceId`] at
+/// this boundary and anything else (empty, a holder-local operation id, a
+/// malformed id) fails closed to `None` instead of leaking into selection.
+pub(super) fn route_board_id(route: &Route) -> Option<arkret_sdk::SpaceId> {
     match route {
         Route::KanbanBoard { board_id, .. } | Route::KanbanBoardTask { board_id, .. } => {
-            let board_id = board_id.trim();
-            if board_id.is_empty() {
-                None
-            } else {
-                Some(board_id.to_owned())
-            }
+            arkret_sdk::SpaceId::new(board_id.trim()).ok()
         }
         _ => None,
     }
@@ -1066,12 +1065,18 @@ pub(super) fn card_detail_route_realm_id(realm_id: &str) -> String {
     }
 }
 
-pub(super) fn kanban_card_detail_board_route(realm_id: &str, board_id: &str) -> Route {
+pub(super) fn kanban_card_detail_board_route(
+    realm_id: &str,
+    board_id: Option<&arkret_sdk::SpaceId>,
+) -> Route {
     let realm_id = realm_id.trim();
     if realm_id.is_empty() {
         Route::Kanban
     } else {
-        kanban_board_route(realm_id, board_id)
+        kanban_board_route(
+            realm_id,
+            board_id.map(arkret_sdk::SpaceId::as_str).unwrap_or(""),
+        )
     }
 }
 

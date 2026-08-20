@@ -767,6 +767,91 @@ pub(crate) fn local_space_create_from_raw_operation(
     })
 }
 
+/// Derive the pending Board creates the durable op log still holds.
+///
+/// Indexed by the write's holder-local [`crate::operation::LocalOperationId`]
+/// (the `RawOperationRecord::operation_id`); a row drops out the moment its
+/// accept receipt / canonical backfill merge records an event-derived target
+/// id, which is exactly when the confirmed option takes over. Cancelled or
+/// dropped writes are excluded (nothing left to show); queued/submitted/failed
+/// writes stay visible with their `write_state` mapped onto [`CardState`].
+pub(crate) fn pending_board_creates_from_ops(
+    raw_operations: &[RawOperationRecord],
+    realm_id: &str,
+) -> Vec<PendingBoardCreate> {
+    let mut by_operation: BTreeMap<String, PendingBoardCreate> = BTreeMap::new();
+    for record in raw_operations {
+        if raw_operation_accepted_create_target_id(&record.payload).is_some() {
+            continue;
+        }
+        let Some(local_create) = local_space_create_from_raw_operation(record) else {
+            continue;
+        };
+        if local_create.kind != "board"
+            || !local_space_create_matches_realm(&local_create, realm_id)
+        {
+            continue;
+        }
+        // `local_space_create_from_raw_operation` falls back to the (here
+        // holder-local) id when the payload carries no title; a pending Board
+        // must never show its operation id as a title.
+        let title = if local_create.title == local_create.id {
+            "Board".to_owned()
+        } else {
+            local_create.title
+        };
+        by_operation.insert(
+            record.operation_id.clone(),
+            PendingBoardCreate {
+                operation_id: crate::operation::LocalOperationId::from_holder_key(
+                    record.operation_id.clone(),
+                ),
+                title,
+                state: raw_operation_card_state(&record.payload),
+            },
+        );
+    }
+    by_operation.into_values().collect()
+}
+
+/// Detect Board creates that LEFT the pending set since the previous pass and
+/// resolve the accepted Space id of the newest one.
+///
+/// A create row stops being pending exactly when its receipt/backfill merge
+/// records the final Event id — which is also the moment its holder-local
+/// operation id becomes resolvable through `event_derived_target_aliases`. The
+/// caller remembers the pending operation-id set across passes; this function
+/// diffs it against the current set, resolves the departed ids, and returns
+/// the newest candidate (`LocalOperationId` is UUIDv7, so string order is time
+/// order) together with the set the next pass must remember. Rows that left
+/// the pending set without an accepted alias (failed-then-dropped, cancelled)
+/// yield no candidate. Idempotent across repeated receipts and backfill-first
+/// orderings: with an empty `awaiting` (cold start) nothing can migrate.
+pub(crate) fn accepted_board_create_transition(
+    awaiting: &BTreeSet<String>,
+    pending: &[PendingBoardCreate],
+    aliases: &BTreeMap<String, String>,
+) -> (Option<arkret_sdk::SpaceId>, BTreeSet<String>) {
+    let still_pending = pending
+        .iter()
+        .map(|create| create.operation_id.as_str().to_owned())
+        .collect::<BTreeSet<_>>();
+    let candidate = awaiting
+        .difference(&still_pending)
+        .filter_map(|operation_id| {
+            let accepted = resolve_event_derived_target_alias(aliases, operation_id);
+            if accepted == *operation_id {
+                return None;
+            }
+            arkret_sdk::SpaceId::new(accepted)
+                .ok()
+                .map(|space_id| (operation_id, space_id))
+        })
+        .max_by(|left, right| left.0.cmp(right.0))
+        .map(|(_, space_id)| space_id);
+    (candidate, still_pending)
+}
+
 /// Resolve the object named by an event-derived create.
 ///
 /// Before acceptance an optimistic row only knows its holder-local handle in

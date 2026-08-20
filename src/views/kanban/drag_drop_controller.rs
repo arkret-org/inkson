@@ -30,21 +30,30 @@ pub(super) fn submit_kanban_operation_event(
     let kind = operation.kind().as_str().to_owned();
     let actor_id = operation.actor_id().to_string();
     let created_at = arkret_sdk::canonical::format_timestamp_canonical(operation.created_at());
-    state_store.write().enqueue_local_projection_command(
-        operation_id.clone(),
-        Some(realm_id),
-        json!({
-            "kind": kind,
-            "operation_id": operation_id,
-            "actor_id": actor_id,
-            "created_at": created_at,
-            "write_state": "queued",
-            "body": operation.payload().clone(),
-            // A create names its object only once accepted, so until then the
-            // record keys it by the write's holder-local handle.
-            "local_target_ref": operation.local_object_handle(),
-        }),
-    );
+    {
+        let mut store = state_store.write();
+        store.enqueue_local_projection_command(
+            operation_id.clone(),
+            Some(realm_id),
+            json!({
+                "kind": kind,
+                "operation_id": operation_id,
+                "actor_id": actor_id,
+                "created_at": created_at,
+                "write_state": "queued",
+                "body": operation.payload().clone(),
+                // A create names its object only once accepted, so until then the
+                // record keys it by the write's holder-local handle.
+                "local_target_ref": operation.local_object_handle(),
+            }),
+        );
+        // Land the op-log row inside this same write: the op-log-derived
+        // pending Board surface (and the seed suppression reading it) must
+        // observe the create before the options-sync effect re-runs, which
+        // happens as soon as this store write marks subscribers dirty. The
+        // deferred drain in `KanbanEffects` then simply no-ops.
+        store.project_pending_local_commands();
+    }
     board_status.set(format!(
         "submitting {kind} operation {}",
         short_protocol_id(&operation_id)

@@ -961,10 +961,11 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
     // An event-derived create's optimistic row is keyed by the DRAFT object id
     // (`local_target_ref` = retype(draft event_id)); the canonical row that
     // replaces it re-derives `local_target_ref` from the ACCEPTED event id.
-    // The draft handle is what `selected_board_space_id`, the board URL, and
-    // any child created while the accept receipt was in flight still point at,
-    // so keep it on the merged row as `local_temporary_target_ref` — the alias
-    // source `event_derived_target_aliases` resolves those references with.
+    // The draft handle is what the pending-create derivation and any child
+    // optimistically created while the accept receipt was in flight still point
+    // at, so keep it on the merged row as `local_temporary_target_ref` — the
+    // alias source `event_derived_target_aliases` resolves those references
+    // with.
     if incoming_object
         .get("local_temporary_target_ref")
         .is_none_or(Value::is_null)
@@ -1167,7 +1168,7 @@ mod durable_inbox_tests {
     }
 
     /// The canonical row replacing an optimistic create must keep the draft
-    /// object handle: `selected_board_space_id`, the board URL, and children
+    /// object handle: the pending-create derivation and children optimistically
     /// created while the accept receipt was in flight all still reference it,
     /// and `event_derived_target_aliases` can only resolve them if the merged
     /// row records draft -> accepted. (2026-08-19 board-title incident: the

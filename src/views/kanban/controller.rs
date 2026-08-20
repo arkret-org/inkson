@@ -14,7 +14,11 @@ pub(super) enum KanbanCommand {
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct KanbanController {
     pub board_space_options: Signal<Vec<BoardSpaceOption>>,
-    pub selected_board_space_id: Signal<String>,
+    /// The confirmed Board selection. `None` means "no confirmed Board
+    /// selected" — including while a create is still pending; a pending Board
+    /// is NEVER represented here, only in the op-log-derived
+    /// `PendingBoardCreate` state.
+    pub selected_board: Signal<Option<arkret_sdk::SpaceId>>,
     pub lifecycle_container_projection:
         Signal<Vec<crate::state::projection_views::SpaceContainerProjectionView>>,
     pub lifecycle_strand_projection:
@@ -94,13 +98,13 @@ impl KanbanController {
 
 pub(super) fn use_kanban_controller(
     initial_board_options: Vec<BoardSpaceOption>,
-    initial_board_space_id: String,
+    initial_board: Option<arkret_sdk::SpaceId>,
     seed_fallback_allowed: bool,
     event_write_ready: bool,
 ) -> KanbanController {
     KanbanController {
         board_space_options: use_signal(move || initial_board_options),
-        selected_board_space_id: use_signal(move || initial_board_space_id),
+        selected_board: use_signal(move || initial_board),
         lifecycle_container_projection: use_signal(Vec::new),
         lifecycle_strand_projection: use_signal(Vec::new),
         new_board_title: use_signal(|| "Board".to_owned()),

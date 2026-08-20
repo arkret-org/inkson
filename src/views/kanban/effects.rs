@@ -17,9 +17,14 @@ pub(super) fn KanbanEffects(
 ) -> Element {
     let mut state_store = crate::app::SessionContext::get().state_store;
     let navigator = use_navigator();
+    // Board-create operation ids still pending as of the last reconciliation
+    // pass. Remembered across passes so the receipt migration below can detect
+    // the pending -> accepted TRANSITION (an accepted row is no longer
+    // pending, so it cannot be found by scanning the pending set).
+    let mut awaiting_board_ops = use_signal(BTreeSet::<String>::new);
     let KanbanController {
         mut board_space_options,
-        mut selected_board_space_id,
+        mut selected_board,
         mut lifecycle_container_projection,
         mut lifecycle_strand_projection,
         mut selected_card,
@@ -56,24 +61,52 @@ pub(super) fn KanbanEffects(
         ..
     } = controller;
 
+    // A pending Board create is rendered from the op log without touching the
+    // selection or the URL. A row leaves the pending set exactly when its
+    // receipt/backfill merge records the final Event id, so the migration is
+    // detected as a TRANSITION: diff the remembered pending operation ids
+    // against the current set and resolve the departed ones through the
+    // holder-local alias. When nothing is selected (the create handler clears
+    // the selection; a user who switched away is never hijacked), commit the
+    // accepted Space id selection + canonical route in one step. The confirmed
+    // option appears from the same op-log projection, so a repeated receipt or
+    // a backfill-first ordering cannot duplicate it. Declared FIRST so the
+    // transition wins over the options-seeding effect below on the pass where
+    // the receipt lands.
+    {
+        let route_realm_id = selected_realm_id.clone();
+        let pending_realm_id = local_realm_id.clone();
+        use_effect(move || {
+            let raw_operations = state_store.read().load().raw_operations;
+            let pending = pending_board_creates_from_ops(&raw_operations, &pending_realm_id);
+            let aliases = event_derived_target_aliases(&raw_operations);
+            let (accepted, still_pending) =
+                accepted_board_create_transition(&awaiting_board_ops.peek(), &pending, &aliases);
+            if *awaiting_board_ops.peek() != still_pending {
+                awaiting_board_ops.set(still_pending);
+            }
+            let Some(space_id) = accepted else {
+                return;
+            };
+            if selected_board.peek().is_some() {
+                return;
+            }
+            selected_board.set(Some(space_id.clone()));
+            let _ = navigator.replace(kanban_board_route(&route_realm_id, space_id.as_str()));
+        });
+    }
+
     {
         let realm = local_realm_id.clone();
         use_effect(move || {
             let raw_operations = state_store.read().load().raw_operations;
             let containers = space_container_views_from_ops(&raw_operations, &realm);
             let strands = strand_views_from_ops(&raw_operations);
+            // `board_space_options_from_projection` fails closed on non-SpaceId
+            // rows, so a pending Board create never enters the confirmed option
+            // set; it is rendered from `pending_board_creates_from_ops` until
+            // the receipt reconciles it.
             let options = board_space_options_from_projection(&containers);
-            // The click handler inserts a holder-local Board option before the
-            // command queue has projected its optimistic op. Preserve that
-            // titled option across this short gap (including when other Boards
-            // already exist), then drop it as soon as receipt reconciliation
-            // exposes a canonical alias.
-            let aliases = event_derived_target_aliases(&raw_operations);
-            let options = preserve_pending_board_space_options(
-                options,
-                &board_space_options.peek(),
-                &aliases,
-            );
             if *lifecycle_container_projection.peek() != containers {
                 lifecycle_container_projection.set(containers);
             }
@@ -83,10 +116,15 @@ pub(super) fn KanbanEffects(
             if !options.is_empty() && *board_space_options.peek() != options {
                 board_space_options.set(options.clone());
             }
-            if selected_board_space_id.peek().trim().is_empty()
+            // Seeding the first confirmed Board must yield while a create is
+            // pending: the create handler cleared the selection precisely so
+            // the pending surface (title + creating state) can show instead of
+            // snapping back to the previous Board.
+            if selected_board.peek().is_none()
+                && pending_board_creates_from_ops(&raw_operations, &realm).is_empty()
                 && let Some(first) = options.first()
             {
-                selected_board_space_id.set(first.id.clone());
+                selected_board.set(Some(first.id.clone()));
             }
         });
     }
@@ -187,35 +225,11 @@ pub(super) fn KanbanEffects(
             let Some(board_id) = routed_board_id.clone() else {
                 return;
             };
-            let raw_operations = state_store.read().load().raw_operations;
-            let aliases = event_derived_target_aliases(&raw_operations);
-            let board_id = resolve_event_derived_target_alias(&aliases, &board_id);
-            if selected_board_space_id() != board_id {
-                selected_board_space_id.set(board_id);
+            // `route_board_id` already failed closed on anything that is not a
+            // canonical Space id, so the routed value is trusted here.
+            if selected_board().as_ref() != Some(&board_id) {
+                selected_board.set(Some(board_id));
             }
-        });
-    }
-
-    // A Board create is selected immediately by its holder-local operation id
-    // so the optimistic empty-board surface can render. Once the submit receipt
-    // records the final Event id, migrate both selection and URL to the derived
-    // protocol Space id. Never put the UUID handle in the URL: it is not a
-    // parent id and a refresh must restore the canonical Board identity.
-    {
-        let route_realm_id = selected_realm_id.clone();
-        use_effect(move || {
-            let temporary = selected_board_space_id();
-            if temporary.trim().is_empty() {
-                return;
-            }
-            let raw_operations = state_store.read().load().raw_operations;
-            let aliases = event_derived_target_aliases(&raw_operations);
-            let accepted = resolve_event_derived_target_alias(&aliases, &temporary);
-            if accepted == temporary || !board_space_id_accepts_children(&accepted) {
-                return;
-            }
-            selected_board_space_id.set(accepted.clone());
-            let _ = navigator.replace(kanban_board_route(&route_realm_id, &accepted));
         });
     }
 
@@ -235,8 +249,13 @@ pub(super) fn KanbanEffects(
             else {
                 return;
             };
-            if selected_board_space_id() != strand_board {
-                selected_board_space_id.set(strand_board);
+            // The projection may still reference a holder-local handle; only a
+            // canonical Space id may drive the selection.
+            let Ok(strand_board) = arkret_sdk::SpaceId::new(strand_board) else {
+                return;
+            };
+            if selected_board().as_ref() != Some(&strand_board) {
+                selected_board.set(Some(strand_board));
             }
         });
     }

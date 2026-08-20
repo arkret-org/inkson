@@ -219,11 +219,43 @@ pub(crate) struct DraggedColumn {
     pub(crate) column_id: String,
 }
 
+/// A confirmed Board in the switcher. `id` is the canonical event-derived
+/// Space id: a pending create NEVER appears here — it is rendered from the
+/// derived [`PendingBoardCreate`] state instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BoardSpaceOption {
-    pub(crate) id: String,
+    pub(crate) id: arkret_sdk::SpaceId,
     pub(crate) title: String,
     pub(crate) state: SpaceContainerLifecycleState,
+}
+
+/// A Board create the durable queue still holds as a local write.
+///
+/// Derived from the `raw_operations` op log (never a signal, never a second
+/// persistence): the row's `operation_id` is the holder-local
+/// [`crate::operation::LocalOperationId`] the accept receipt reconciles
+/// against, `title` is what the user typed, and `state` mirrors the op's
+/// `write_state` so a queued/failed create reads as such. The moment the
+/// receipt (or a canonical backfill row) records the final Event id, the row
+/// stops being pending and the Board joins `board_space_options` under its
+/// `SpaceId::from_event_id(..)` identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingBoardCreate {
+    pub(crate) operation_id: crate::operation::LocalOperationId,
+    pub(crate) title: String,
+    pub(crate) state: CardState,
+}
+
+impl PendingBoardCreate {
+    /// Short status suffix for the switcher label while the create is in
+    /// flight. Failure states surface as failures; everything else is the
+    /// in-progress "creating" state.
+    pub(crate) fn status_hint(&self) -> &'static str {
+        match self.state {
+            CardState::SoftFailed | CardState::Quarantined | CardState::Conflict => "create failed",
+            _ => "creating",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

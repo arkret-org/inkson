@@ -4,29 +4,41 @@ use crate::views::helpers::short_protocol_id;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn select_kanban_board(
-    board_id: String,
-    mut selected_board_space_id: Signal<String>,
+    board_id: Option<arkret_sdk::SpaceId>,
+    mut selected_board: Signal<Option<arkret_sdk::SpaceId>>,
     mut board_popover: Signal<BoardToolbarPopover>,
     mut selected_card: Signal<Option<KanbanCard>>,
     board_route_realm_id: String,
     mut adding_card_to: Signal<Option<String>>,
     mut board_status: Signal<String>,
 ) {
-    // Board switching is pure selection: set `selected_board_space_id` and the
+    // Board switching is pure selection: set `selected_board` and the
     // URL, then let the `columns` `use_memo` (keyed on the selection + the op
     // log) re-project the chosen board. No reproject / `columns.set` here.
-    selected_board_space_id.set(board_id.clone());
+    selected_board.set(board_id.clone());
     board_popover.set(BoardToolbarPopover::None);
     // Closing any open card too: a board switch should not keep a card from a
     // different board mounted.
     selected_card.set(None);
-    if board_id.trim().is_empty() {
-        adding_card_to.set(None);
-        board_status.set("Select or create a board before adding lists".to_owned());
-    } else {
-        board_status.set(format!("Board selected · {}", short_protocol_id(&board_id)));
+    match &board_id {
+        None => {
+            adding_card_to.set(None);
+            board_status.set("Select or create a board before adding lists".to_owned());
+        }
+        Some(board_id) => {
+            board_status.set(format!(
+                "Board selected · {}",
+                short_protocol_id(board_id.as_str())
+            ));
+        }
     }
-    replace_kanban_board_url(&board_route_realm_id, &board_id);
+    replace_kanban_board_url(
+        &board_route_realm_id,
+        board_id
+            .as_ref()
+            .map(arkret_sdk::SpaceId::as_str)
+            .unwrap_or(""),
+    );
 }
 
 pub(super) fn replace_kanban_board_url(realm_id: &str, board_id: &str) {

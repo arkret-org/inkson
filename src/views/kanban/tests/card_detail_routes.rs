@@ -108,20 +108,22 @@ fn route_card_strand_id_reads_task_segment_only() {
 
 #[test]
 fn route_board_id_reads_board_segment_only() {
+    let board = "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
+    let parsed = arkret_sdk::SpaceId::new(board).ok();
     assert_eq!(
         route_board_id(&Route::KanbanBoard {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
-            board_id: "ak:space:board".to_owned(),
+            board_id: board.to_owned(),
         }),
-        Some("ak:space:board".to_owned())
+        parsed
     );
     assert_eq!(
         route_board_id(&Route::KanbanBoardTask {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
-            board_id: "ak:space:board".to_owned(),
+            board_id: board.to_owned(),
             task_id: "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg".to_owned(),
         }),
-        Some("ak:space:board".to_owned())
+        parsed
     );
     // The board-less routes carry no board id — it is resolved from
     // the projection on arrival.
@@ -136,6 +138,29 @@ fn route_board_id_reads_board_segment_only() {
         route_board_id(&Route::KanbanRealm {
             realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
         }),
+        None
+    );
+}
+
+/// The URL segment is untrusted: a holder-local operation id (or any malformed
+/// value) must fail closed to `None` instead of entering the Board selection.
+#[test]
+fn route_board_id_fails_closed_on_non_space_id_segments() {
+    let route_with = |board_id: &str| Route::KanbanBoard {
+        realm_id: "ak:realm:At9cQzHAltYPBAr08k50aWUnPgEYe-038vPA2q3wBT5U".to_owned(),
+        board_id: board_id.to_owned(),
+    };
+    assert_eq!(route_board_id(&route_with("")), None);
+    assert_eq!(
+        route_board_id(&route_with("01a01bdd-804b-7ad0-bee8-194898437ad7")),
+        None,
+        "a pending create's holder-local id is never a Board route"
+    );
+    assert_eq!(route_board_id(&route_with("ak:space:board")), None);
+    assert_eq!(
+        route_board_id(&route_with(
+            "ak:strand:ARLfbkLnSkVpiiEUORJ1StQffis7S7-xfOV6V1_PuAPg"
+        )),
         None
     );
 }

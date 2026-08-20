@@ -201,7 +201,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     });
     let KanbanController {
         board_space_options: _,
-        selected_board_space_id,
+        selected_board,
         lifecycle_container_projection: _,
         lifecycle_strand_projection: _,
         new_board_title: _,
@@ -318,7 +318,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                         session.display_mode == arkret_sdk::AgentSidecarDisplayMode::ContextMerged
                     });
                     let board_route_after_close =
-                        kanban_card_detail_board_route(&selected_realm_id, &selected_board_space_id());
+                        kanban_card_detail_board_route(&selected_realm_id, selected_board().as_ref());
                     let route_is_card_detail = matches!(
                         route,
                         Route::KanbanTask { .. } | Route::KanbanBoardTask { .. }

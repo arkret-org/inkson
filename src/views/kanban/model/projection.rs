@@ -19,7 +19,8 @@ pub(crate) fn truthy_env_value(value: Option<&str>) -> bool {
 pub(crate) fn initial_board_space_options(seed_fallback_allowed: bool) -> Vec<BoardSpaceOption> {
     if seed_fallback_allowed {
         vec![BoardSpaceOption {
-            id: DEMO_BOARD_SPACE_ID.to_owned(),
+            id: arkret_sdk::SpaceId::new(DEMO_BOARD_SPACE_ID)
+                .expect("demo board seed carries a canonical Space id"),
             title: "Local demo board".to_owned(),
             state: SpaceContainerLifecycleState::Active,
         }]
@@ -36,35 +37,6 @@ pub(crate) fn sort_board_space_options(options: &mut Vec<BoardSpaceOption>) {
 
 pub(crate) fn generated_board_fallback_title(board_id: &str) -> String {
     format!("Board {}", short_protocol_id(board_id))
-}
-
-/// Whether a selected Board handle is a protocol Space id that downstream
-/// writes may reference.
-///
-/// A freshly-created Board is selected optimistically by its holder-local
-/// operation id. That UUID is useful as a UI key, but it is deliberately not
-/// an Arkret identifier and must never be passed to a List create as
-/// `parent_space_id`. The accepted create receipt later migrates the selection
-/// to `retype(event_id)`, at which point child writes are safe to enable.
-pub(crate) fn board_space_id_accepts_children(board_id: &str) -> bool {
-    arkret_sdk::SpaceId::new(board_id).is_ok()
-}
-
-pub(crate) fn preserve_pending_board_space_options(
-    mut projected: Vec<BoardSpaceOption>,
-    current: &[BoardSpaceOption],
-    aliases: &BTreeMap<String, String>,
-) -> Vec<BoardSpaceOption> {
-    for pending in current.iter().filter(|option| {
-        !board_space_id_accepts_children(&option.id)
-            && resolve_event_derived_target_alias(aliases, &option.id) == option.id
-    }) {
-        if !projected.iter().any(|option| option.id == pending.id) {
-            projected.push(pending.clone());
-        }
-    }
-    sort_board_space_options(&mut projected);
-    projected
 }
 
 pub(crate) fn should_replace_projected_container_title(
@@ -85,14 +57,20 @@ pub(crate) fn board_space_options_from_projection(
         .filter(|view| {
             view.kind == "board" || (view.kind.trim().is_empty() && view.parent_space_id.is_none())
         })
-        .map(|view| BoardSpaceOption {
-            id: view.space_id.clone(),
-            title: if view.title.trim().is_empty() {
-                view.space_id.clone()
-            } else {
-                view.title.clone()
-            },
-            state: space_container_state_from_projection(&view.state),
+        // Fail closed: only a canonical `ak:space:` id may become a Board
+        // option. A pending create still keyed by its holder-local handle is
+        // surfaced by `pending_board_creates_from_ops` instead.
+        .filter_map(|view| {
+            let id = arkret_sdk::SpaceId::new(view.space_id.clone()).ok()?;
+            Some(BoardSpaceOption {
+                id,
+                title: if view.title.trim().is_empty() {
+                    view.space_id.clone()
+                } else {
+                    view.title.clone()
+                },
+                state: space_container_state_from_projection(&view.state),
+            })
         })
         .collect::<Vec<_>>();
     let mut seen = options
@@ -106,12 +84,15 @@ pub(crate) fn board_space_options_from_projection(
         .map(str::trim)
         .filter(|id| !id.is_empty())
     {
-        if !seen.insert(parent_space_id.to_owned()) {
+        let Ok(parent_space_id) = arkret_sdk::SpaceId::new(parent_space_id) else {
+            continue;
+        };
+        if !seen.insert(parent_space_id.clone()) {
             continue;
         }
         options.push(BoardSpaceOption {
-            id: parent_space_id.to_owned(),
-            title: generated_board_fallback_title(parent_space_id),
+            title: generated_board_fallback_title(parent_space_id.as_str()),
+            id: parent_space_id,
             state: SpaceContainerLifecycleState::Active,
         });
     }
@@ -173,11 +154,14 @@ pub(crate) fn overlay_local_board_space_options(
         .into_iter()
         .filter(|local_create| local_create.kind == "board")
     {
-        if let Some(existing) = options
-            .iter_mut()
-            .find(|option| option.id == local_create.id)
-        {
-            if should_replace_projected_container_title(&existing.title, &existing.id) {
+        // Pending creates are still keyed by their holder-local handle; they
+        // belong to `pending_board_creates_from_ops`, never to the confirmed
+        // option set.
+        let Ok(local_id) = arkret_sdk::SpaceId::new(local_create.id.clone()) else {
+            continue;
+        };
+        if let Some(existing) = options.iter_mut().find(|option| option.id == local_id) {
+            if should_replace_projected_container_title(&existing.title, existing.id.as_str()) {
                 existing.title = local_create.title;
             }
             if existing.state == SpaceContainerLifecycleState::Tombstoned {
@@ -186,7 +170,7 @@ pub(crate) fn overlay_local_board_space_options(
             continue;
         }
         options.push(BoardSpaceOption {
-            id: local_create.id,
+            id: local_id,
             title: local_create.title,
             state: SpaceContainerLifecycleState::Active,
         });
@@ -205,11 +189,11 @@ pub(crate) fn columns_from_lifecycle_projection(
     let selected_board_id = if !preferred_board_id.trim().is_empty()
         && board_options
             .iter()
-            .any(|option| option.id == preferred_board_id)
+            .any(|option| option.id.as_str() == preferred_board_id)
     {
         Some(preferred_board_id.to_owned())
     } else {
-        board_options.first().map(|option| option.id.clone())
+        board_options.first().map(|option| option.id.to_string())
     };
     let Some(board_id) = selected_board_id else {
         return (Vec::new(), board_options, None);

@@ -820,32 +820,45 @@ pub fn KanbanPanel(
     let route = use_route::<Route>();
     let local_realm_id = local_projection_realm_id(&selected_realm_id, &projection_realm_id);
     // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
-    // its `/task/<strand>` extension). Seeding `selected_board_space_id`
+    // its `/task/<strand>` extension). Seeding `selected_board`
     // from the route — instead of always `board_options.first()` — is
     // what makes a refresh restore the exact board the user had open,
     // including when the open card is a local draft the server
-    // projection does not know about yet.
+    // projection does not know about yet. `route_board_id` parses the
+    // untrusted segment as a `SpaceId` and fails closed, so a stale URL can
+    // never put a holder-local operation id into the selection.
     let routed_board_id = route_board_id(&route);
-    let initial_board_options = {
+    let (initial_board_options, initial_board_pending_create) = {
         let seed_options = initial_board_space_options(seed_fallback_allowed);
         let state = state_store.read().load();
-        overlay_local_board_space_options(seed_options, &state.raw_operations, &local_realm_id)
+        let options =
+            overlay_local_board_space_options(seed_options, &state.raw_operations, &local_realm_id);
+        // A pending create outlives a refresh via the durable op log. While
+        // one exists, cold start must NOT seed the first confirmed Board —
+        // the pending surface (title + creating state) owns the view until
+        // the receipt transition commits the accepted Space id.
+        let pending_create =
+            !pending_board_creates_from_ops(&state.raw_operations, &local_realm_id).is_empty();
+        (options, pending_create)
     };
-    let initial_board_space_id = routed_board_id.clone().unwrap_or_else(|| {
-        initial_board_options
-            .first()
-            .map(|option| option.id.clone())
-            .unwrap_or_default()
+    let initial_board = routed_board_id.or_else(|| {
+        if initial_board_pending_create {
+            None
+        } else {
+            initial_board_options
+                .first()
+                .map(|option| option.id.clone())
+        }
     });
     let controller = use_kanban_controller(
         initial_board_options.clone(),
-        initial_board_space_id.clone(),
+        initial_board,
         seed_fallback_allowed,
         event_write_ready,
     );
     let KanbanController {
-        mut board_space_options,
-        mut selected_board_space_id,
+        board_space_options,
+        mut selected_board,
         lifecycle_container_projection: _,
         lifecycle_strand_projection,
         mut new_board_title,
@@ -899,7 +912,19 @@ pub fn KanbanPanel(
         mut board_status,
         command_queue: _,
     } = controller;
-    let selected_board_space_id_selected = use_memo(move || Some(selected_board_space_id()));
+    let selected_board_value_for_select =
+        use_memo(move || selected_board().map(|board_id| board_id.to_string()));
+    // Pending Board creates derive from the durable op log (no extra signal,
+    // no extra persistence): the row carries the user-entered title and the
+    // write state until the accept receipt reconciles it into a confirmed
+    // `SpaceId` option.
+    let pending_board_creates = use_memo({
+        let pending_realm_id = local_realm_id.clone();
+        move || {
+            let store = state_store.read();
+            pending_board_creates_from_ops(&store.load().raw_operations, &pending_realm_id)
+        }
+    });
     // `columns` is a PURE derivation of the realm op log: it folds
     // `raw_operations` (remote backfill / subscribe events + local optimistic
     // ops) for the selected board via the single event-sourced `project_board`,
@@ -915,7 +940,9 @@ pub fn KanbanPanel(
         let decrypt_device = device_id.clone();
         let seed_columns = initial_columns.clone();
         move || {
-            let board_id = selected_board_space_id();
+            let board_id = selected_board()
+                .map(|board_id| board_id.to_string())
+                .unwrap_or_default();
             let decrypt_store = state_store.read();
             let raw_operations = decrypt_store.load().raw_operations;
             let decrypt_ctx = mls_decrypt_ctx_if_ready(
@@ -945,19 +972,29 @@ pub fn KanbanPanel(
             cols
         }
     });
-    let selected_board_space_id_value = selected_board_space_id();
-    let selected_board_accepts_children =
-        board_space_id_accepts_children(&selected_board_space_id_value);
+    let selected_board_value = selected_board();
+    // The active surface is either the confirmed selection or, while no
+    // confirmed Board is selected, the most recent pending create — so the
+    // user sees their titled Board surface (and a disabled Add List) from the
+    // moment they click Create, without the pending write ever borrowing a
+    // protocol identity.
+    let active_pending_board = if selected_board_value.is_some() {
+        None
+    } else {
+        pending_board_creates().into_iter().next_back()
+    };
     let board_status_text = board_status();
     let board_select_label = format!("{}:", crate::i18n::tr("kanban.board_header"));
-    let selected_board_title = if selected_board_space_id_value.trim().is_empty() {
-        "Select board".to_owned()
-    } else {
-        board_space_options()
+    let selected_board_title = match &selected_board_value {
+        Some(board_id) => board_space_options()
             .iter()
-            .find(|option| option.id == selected_board_space_id_value)
+            .find(|option| option.id == *board_id)
             .map(|option| option.title.clone())
-            .unwrap_or_else(|| short_protocol_id(&selected_board_space_id_value))
+            .unwrap_or_else(|| short_protocol_id(board_id.as_str())),
+        None => active_pending_board
+            .as_ref()
+            .map(|pending| format!("{} ({})", pending.title, pending.status_hint()))
+            .unwrap_or_else(|| "Select board".to_owned()),
     };
 
     // Synthesis track projection (option`ak.strand.update). The track is built
@@ -1023,7 +1060,8 @@ pub fn KanbanPanel(
         })
     };
 
-    let board_selected = !selected_board_space_id().trim().is_empty();
+    let board_selected = selected_board_value.is_some();
+    let board_surface_active = board_selected || active_pending_board.is_some();
     // Pre-wrapped Realm id for building board / card URLs inside event
     // handlers (the raw selected Realm String can't be moved into more
     // than one closure).
@@ -1098,12 +1136,15 @@ pub fn KanbanPanel(
                                     Select::<String> {
                                         class: "board-select-native",
                                         "data-testid": "board-space-select",
-                                        value: Some(selected_board_space_id_selected.into()),
+                                        value: Some(selected_board_value_for_select.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
+                                                // The empty sentinel option clears the
+                                                // selection; anything else must parse
+                                                // as a canonical Space id.
                                                 select_kanban_board(
-                                                    v,
-                                                    selected_board_space_id,
+                                                    arkret_sdk::SpaceId::new(v).ok(),
+                                                    selected_board,
                                                     board_popover,
                                                     selected_card,
                                                     board_route_realm_id_for_select.clone(),
@@ -1158,13 +1199,13 @@ pub fn KanbanPanel(
                                         rsx! {
                                             Button {
                                                 variant: ButtonVariant::Secondary,
-                                                class: if selected_board_space_id().trim().is_empty() { "board-select-menu-item is-active" } else { "board-select-menu-item" },
+                                                class: if selected_board().is_none() { "board-select-menu-item is-active" } else { "board-select-menu-item" },
                                                 role: "option",
-                                                "aria-selected": "{selected_board_space_id().trim().is_empty()}",
+                                                "aria-selected": "{selected_board().is_none()}",
                                                 onclick: move |_| {
                                                     select_kanban_board(
-                                                        String::new(),
-                                                        selected_board_space_id,
+                                                        None,
+                                                        selected_board,
                                                         board_popover,
                                                         selected_card,
                                                         board_route_realm_id_for_empty.clone(),
@@ -1181,7 +1222,8 @@ pub fn KanbanPanel(
                                         {
                                             let option_id = board_option.id.clone();
                                             let option_title = board_option.title.clone();
-                                            let option_is_active = selected_board_space_id() == option_id;
+                                            let option_is_active =
+                                                selected_board().as_ref() == Some(&option_id);
                                             let board_route_realm_id_for_option = board_route_realm_id.clone();
                                             rsx! {
                                                 Button {
@@ -1194,8 +1236,8 @@ pub fn KanbanPanel(
                                                         let option_id = option_id.clone();
                                                         move |_| {
                                                             select_kanban_board(
-                                                                option_id.clone(),
-                                                                selected_board_space_id,
+                                                                Some(option_id.clone()),
+                                                                selected_board,
                                                                 board_popover,
                                                                 selected_card,
                                                                 board_route_realm_id_for_option.clone(),
@@ -1210,10 +1252,33 @@ pub fn KanbanPanel(
                                             }
                                         }
                                     }
+                                    // Pending creates are not selectable options:
+                                    // they have no protocol identity yet, so they
+                                    // render as disabled rows until the receipt
+                                    // reconciles them into confirmed Boards.
+                                    for pending in pending_board_creates().iter() {
+                                        {
+                                            let pending_label =
+                                                format!("{} ({})", pending.title, pending.status_hint());
+                                            rsx! {
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    class: "board-select-menu-item",
+                                                    role: "option",
+                                                    "aria-selected": "false",
+                                                    "aria-disabled": "true",
+                                                    disabled: true,
+                                                    title: "{pending_label}",
+                                                    UiIcon { name: "board" }
+                                                    span { "{pending_label}" }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                        if board_selected {
+                        if board_surface_active {
                             div { class: "actions board-list-compose",
                                 Input {
                                     "data-testid": "new-column-input",
@@ -1226,8 +1291,11 @@ pub fn KanbanPanel(
                                     size: ButtonSize::Sm,
                                     class: "btn",
                                     "data-testid": "add-column-button",
-                                    disabled: !selected_board_accepts_children,
-                                    title: if selected_board_accepts_children {
+                                    // A pending Board has no protocol id yet, so it
+                                    // cannot be a List `parent_space_id`; the action
+                                    // unlocks when the receipt commits the selection.
+                                    disabled: selected_board_value.is_none(),
+                                    title: if selected_board_value.is_some() {
                                         "Add a list to this board"
                                     } else {
                                         "Waiting for the board to be accepted"
@@ -1248,18 +1316,13 @@ pub fn KanbanPanel(
                                                 board_status.set("sign in before adding lists".to_owned());
                                                 return;
                                             }
-                                            let board_space_id = selected_board_space_id();
-                                            if board_space_id.trim().is_empty() {
-                                                board_status.set("select or create a Board Space before adding lists".to_owned());
-                                                return;
-                                            }
-                                            if !board_space_id_accepts_children(&board_space_id) {
+                                            let Some(board_space_id) = selected_board() else {
                                                 board_status.set(
                                                     "Board is still being created; add a list after server confirmation."
                                                         .to_owned(),
                                                 );
                                                 return;
-                                            }
+                                            };
                                             let col_count = columns().len();
                                             let rank = format!("r{:03}", col_count + 1);
                                             let op = match crate::operation::ak_ops::space_create(
@@ -1267,7 +1330,7 @@ pub fn KanbanPanel(
                                                 &actor,
                                                 "list",
                                                 &title,
-                                                Some(&board_space_id),
+                                                Some(board_space_id.as_str()),
                                                 Some(&rank),
                                             ) {
                                                 Ok(builder) => builder
@@ -1357,6 +1420,7 @@ pub fn KanbanPanel(
                                             let base = base_url.clone();
                                             let realm = selected_realm_id.clone();
                                             let actor = account_did.clone();
+                                            let create_route_realm_id = board_route_realm_id.clone();
                                             move |_| {
                                                 let title = new_board_title().trim().to_owned();
                                                 if title.is_empty() {
@@ -1397,29 +1461,15 @@ pub fn KanbanPanel(
                                                     return;
                                                 }
                                                 // The Board Space is named by `retype(event_id)` of the
-                                                // FINAL create Event, which does not exist yet. The view
-                                                // keys the new board by the write's holder-local handle;
-                                                // `event_derived_target_aliases` migrates it to the
-                                                // accepted id when the receipt lands.
-                                                let board_space_id = op.local_object_handle().to_owned();
-                                                // Keep the user-entered title visible while the
-                                                // create is in flight. The temporary holder-local
-                                                // id is a UI key only; the Add List action stays
-                                                // disabled until receipt reconciliation replaces
-                                                // it with the accepted `ak:space:...` id.
-                                                let mut options = board_space_options();
-                                                options.retain(|option| option.id != board_space_id);
-                                                options.push(BoardSpaceOption {
-                                                    id: board_space_id.clone(),
-                                                    title: title.clone(),
-                                                    state: SpaceContainerLifecycleState::Active,
-                                                });
-                                                sort_board_space_options(&mut options);
-                                                board_space_options.set(options);
-                                                // Select the new board now;`ak.space.creatempty) columns
-                                                // derive from the appended `ak.space.create` op via the
-                                                // options-sync effect and the `columns` memo.
-                                                selected_board_space_id.set(board_space_id.clone());
+                                                // FINAL create Event, which does not exist yet, so the
+                                                // create only enqueues the durable `LocalOperation`.
+                                                // Clear the confirmed selection and fall back to the
+                                                // realm-level route: the op-log-derived
+                                                // `pending_board_creates` memo then renders the new
+                                                // Board's title + creating state immediately, and the
+                                                // route reconciler cannot pin the previous Board back.
+                                                // The transition effect commits the accepted `SpaceId`
+                                                // selection + canonical route once the receipt lands.
                                                 adding_card_to.set(None);
                                                 controller.enqueue_operation(
                                                     base.clone(),
@@ -1428,6 +1478,11 @@ pub fn KanbanPanel(
                                                     op,
                                                     selected_scope_security_encrypted,
                                                 );
+                                                selected_board.set(None);
+                                                let _ = navigator.replace(kanban_board_route(
+                                                    &create_route_realm_id,
+                                                    "",
+                                                ));
                                                 board_status.set(
                                                     "Creating Board; lists will be available after server confirmation."
                                                         .to_owned(),
@@ -1486,7 +1541,7 @@ pub fn KanbanPanel(
             div { class: "{board_grid_class}", "data-testid": "kanban-board-grid",
                 if visible_columns.is_empty() {
                     div { class: "board-empty-state",
-                        if board_selected {
+                        if board_surface_active {
                             EmptyState {
                                 title: "No lists yet".to_owned(),
                                 kind: EmptyStateKind::Empty,
@@ -1566,11 +1621,10 @@ pub fn KanbanPanel(
                                 let Some(dragged) = dragging_card() else {
                                     return;
                                 };
-                                let board_space_id = selected_board_space_id();
-                                if board_space_id.trim().is_empty() {
+                                let Some(board_space_id) = selected_board() else {
                                     board_status.set("select or create a Board Space before moving cards".to_owned());
                                     return;
-                                }
+                                };
                                 dragging_card.set(None);
                                 let neighbours = ColumnNeighbours {
                                     prev_rank: last_rank.clone(),
@@ -1580,7 +1634,7 @@ pub fn KanbanPanel(
                                     base.clone(),
                                     token,
                                     realm.clone(),
-                                    board_space_id,
+                                    board_space_id.to_string(),
                                     actor.clone(),
                                     dragged,
                                     target_column_id.clone(),
@@ -1801,11 +1855,10 @@ pub fn KanbanPanel(
                                         let Some(dragged) = dragging_card() else {
                                             return;
                                         };
-                                        let board_space_id = selected_board_space_id();
-                                        if board_space_id.trim().is_empty() {
+                                        let Some(board_space_id) = selected_board() else {
                                             board_status.set("select or create a Board Space before moving cards".to_owned());
                                             return;
-                                        }
+                                        };
                                         dragging_card.set(None);
                                         let neighbours = ColumnNeighbours {
                                             prev_rank: prev_rank.clone(),
@@ -1815,7 +1868,7 @@ pub fn KanbanPanel(
                                             base.clone(),
                                             token,
                                             realm.clone(),
-                                            board_space_id,
+                                            board_space_id.to_string(),
                                             actor.clone(),
                                             dragged,
                                             target_column_id.clone(),
@@ -1874,7 +1927,10 @@ pub fn KanbanPanel(
                                         selected_card.set(Some(c.clone()));
                                         let _ = navigator.push(kanban_card_task_route(
                                             &route_realm_id,
-                                            &selected_board_space_id(),
+                                            selected_board()
+                                                .as_ref()
+                                                .map(arkret_sdk::SpaceId::as_str)
+                                                .unwrap_or(""),
                                             &c.id,
                                         ));
                                         replace_card_detail_tab_query(CardDetailContentTab::default());
@@ -2065,11 +2121,10 @@ pub fn KanbanPanel(
                                                 if title.is_empty() {
                                                     return;
                                                 }
-                                                let board_space_id = selected_board_space_id();
-                                                if board_space_id.trim().is_empty() {
+                                                let Some(board_space_id) = selected_board() else {
                                                     board_status.set("select or create a Board Space before adding cards".to_owned());
                                                     return;
-                                                }
+                                                };
                                                 // Insert the new card at the end of the column.
                                                 // Look up the column's current tail rank and ask
                                                 // `rank_between` for a strictly-greater rank. If
@@ -2092,7 +2147,7 @@ pub fn KanbanPanel(
                                                 // its own create Event, so the command boundary
                                                 // fills the subject in once the envelope exists.
                                                 let command = KanbanCardCreateCommand {
-                                                    board_space_id,
+                                                    board_space_id: board_space_id.to_string(),
                                                     list_space_id: col_id.clone(),
                                                     title,
                                                     rank,
@@ -2414,7 +2469,9 @@ pub fn KanbanPanel(
                                                 token,
                                                 realm.clone(),
                                                 actor.clone(),
-                                                selected_board_space_id(),
+                                                selected_board()
+                                                    .map(|board_id| board_id.to_string())
+                                                    .unwrap_or_default(),
                                                 state_store,
                                                 board_status,
                                             );

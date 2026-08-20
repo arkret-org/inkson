@@ -1,44 +1,206 @@
 use super::*;
 
-#[test]
-fn pending_board_handle_cannot_be_used_as_a_list_parent() {
-    assert!(!board_space_id_accepts_children(
-        "01a01bdd-804b-7ad0-bee8-194898437ad7"
-    ));
-    assert!(board_space_id_accepts_children(
-        "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR"
-    ));
+const PENDING_TEST_REALM: &str = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+const PENDING_TEST_OPERATION: &str = "01a01bdd-804b-7ad0-bee8-194898437ad7";
+const PENDING_TEST_EVENT: &str = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+const PENDING_TEST_SPACE: &str = "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+/// A queued Board-create op-log row exactly as `submit_kanban_operation_event`
+/// appends it: keyed by the holder-local operation id, no `event_id` yet.
+fn pending_board_create_record(write_state: &str) -> RawOperationRecord {
+    RawOperationRecord {
+        operation_id: PENDING_TEST_OPERATION.to_owned(),
+        realm_id: Some(PENDING_TEST_REALM.to_owned()),
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.space.create",
+            "operation_id": PENDING_TEST_OPERATION,
+            "local_target_ref": PENDING_TEST_OPERATION,
+            "write_state": write_state,
+            "body": { "object": { "kind": "board", "title": "Design board", "realm_id": PENDING_TEST_REALM } }
+        }),
+    }
 }
 
+/// The same row after the accept receipt / canonical backfill merge: the
+/// final Event id is recorded and the draft handle survives as
+/// `local_temporary_target_ref`.
+fn accepted_board_create_record() -> RawOperationRecord {
+    RawOperationRecord {
+        operation_id: PENDING_TEST_OPERATION.to_owned(),
+        realm_id: Some(PENDING_TEST_REALM.to_owned()),
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.space.create",
+            "operation_id": PENDING_TEST_OPERATION,
+            "event_id": PENDING_TEST_EVENT,
+            "local_target_ref": PENDING_TEST_SPACE,
+            "local_temporary_target_ref": PENDING_TEST_OPERATION,
+            "write_state": "synced",
+            "body": { "object": { "kind": "board", "title": "Design board", "realm_id": PENDING_TEST_REALM } }
+        }),
+    }
+}
+
+/// Pending Board creates are keyed by their holder-local `LocalOperationId`
+/// and carry the user-entered title plus the op's write state — never a fake
+/// protocol id.
 #[test]
-fn pending_board_keeps_its_title_until_the_accepted_alias_arrives() {
-    let pending_id = "01a01bdd-804b-7ad0-bee8-194898437ad7";
-    let accepted_id = "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
-    let pending = BoardSpaceOption {
-        id: pending_id.to_owned(),
-        title: "Design board".to_owned(),
-        state: SpaceContainerLifecycleState::Active,
-    };
-
-    let waiting = preserve_pending_board_space_options(
-        Vec::new(),
-        std::slice::from_ref(&pending),
-        &BTreeMap::new(),
+fn pending_board_create_derives_title_and_write_state_from_the_op_log() {
+    let pending = pending_board_creates_from_ops(
+        &[pending_board_create_record("queued")],
+        PENDING_TEST_REALM,
     );
-    assert_eq!(waiting, vec![pending.clone()]);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].operation_id.as_str(), PENDING_TEST_OPERATION);
+    assert_eq!(pending[0].title, "Design board");
+    assert_eq!(pending[0].state, CardState::Queued);
+    assert_eq!(pending[0].status_hint(), "creating");
 
-    let accepted = BoardSpaceOption {
-        id: accepted_id.to_owned(),
-        title: "Design board".to_owned(),
-        state: SpaceContainerLifecycleState::Active,
-    };
-    let aliases = BTreeMap::from([(pending_id.to_owned(), accepted_id.to_owned())]);
-    let reconciled = preserve_pending_board_space_options(
-        vec![accepted.clone()],
-        std::slice::from_ref(&pending),
-        &aliases,
+    // A failed create stays visible as a failed pending write instead of
+    // degrading into a fake Board id.
+    let pending = pending_board_creates_from_ops(
+        &[pending_board_create_record("failed")],
+        PENDING_TEST_REALM,
     );
-    assert_eq!(reconciled, vec![accepted]);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].state, CardState::SoftFailed);
+    assert_eq!(pending[0].status_hint(), "create failed");
+
+    // A dropped (cancelled) write leaves no pending surface at all.
+    assert!(
+        pending_board_creates_from_ops(
+            &[pending_board_create_record("dropped")],
+            PENDING_TEST_REALM
+        )
+        .is_empty()
+    );
+}
+
+/// The confirmed option set fails closed on anything that is not a canonical
+/// `ak:space:` id: a pending create's holder-local handle never becomes a
+/// `BoardSpaceOption`.
+#[test]
+fn pending_board_create_never_enters_confirmed_board_options() {
+    let raw_operations = vec![pending_board_create_record("queued")];
+
+    let containers = space_container_views_from_ops(&raw_operations, PENDING_TEST_REALM);
+    let options = board_space_options_from_projection(&containers);
+    assert!(
+        options.is_empty(),
+        "a pending create keyed by its holder-local handle is not a Board option"
+    );
+    let overlaid =
+        overlay_local_board_space_options(Vec::new(), &raw_operations, PENDING_TEST_REALM);
+    assert!(
+        overlaid.is_empty(),
+        "the local overlay must not promote a pending create into the confirmed option set"
+    );
+}
+
+/// Once the accept receipt (or a canonical backfill merge) records the final
+/// Event id on the same operation row, the pending surface drops out, the
+/// holder-local alias resolves to the event-derived `SpaceId`, and exactly one
+/// confirmed option carries the user-entered title.
+#[test]
+fn accepted_receipt_reconciles_pending_create_into_a_confirmed_space_id() {
+    let raw_operations = vec![accepted_board_create_record()];
+
+    assert!(
+        pending_board_creates_from_ops(&raw_operations, PENDING_TEST_REALM).is_empty(),
+        "an accepted create is no longer pending"
+    );
+
+    let aliases = event_derived_target_aliases(&raw_operations);
+    let resolved = resolve_event_derived_target_alias(&aliases, PENDING_TEST_OPERATION);
+    let space_id =
+        arkret_sdk::SpaceId::new(resolved).expect("the reconciled alias is a canonical Space id");
+    assert_eq!(space_id.as_str(), PENDING_TEST_SPACE);
+
+    let containers = space_container_views_from_ops(&raw_operations, PENDING_TEST_REALM);
+    let options = board_space_options_from_projection(&containers);
+    assert_eq!(
+        options.len(),
+        1,
+        "no duplicate option for the reconciled Board"
+    );
+    assert_eq!(options[0].id.as_str(), PENDING_TEST_SPACE);
+    assert_eq!(options[0].title, "Design board");
+}
+
+/// The receipt migration is a TRANSITION: the pass that first remembers the
+/// pending operation migrates nothing; the pass after the receipt merged
+/// (row accepted, alias resolvable) yields exactly the event-derived Space id;
+/// any later pass is a no-op.
+#[test]
+fn accepted_board_create_transition_fires_once_on_receipt() {
+    // Pass 1: queued — the operation joins the remembered pending set.
+    let queued_ops = vec![pending_board_create_record("queued")];
+    let pending = pending_board_creates_from_ops(&queued_ops, PENDING_TEST_REALM);
+    let (candidate, awaiting) =
+        accepted_board_create_transition(&BTreeSet::new(), &pending, &BTreeMap::new());
+    assert_eq!(
+        candidate, None,
+        "nothing migrates while the create is pending"
+    );
+    assert_eq!(
+        awaiting,
+        BTreeSet::from([PENDING_TEST_OPERATION.to_owned()])
+    );
+
+    // Pass 2: the receipt merged — the row left the pending set and its
+    // holder-local id now resolves to the accepted Space id.
+    let accepted_ops = vec![accepted_board_create_record()];
+    let pending = pending_board_creates_from_ops(&accepted_ops, PENDING_TEST_REALM);
+    let aliases = event_derived_target_aliases(&accepted_ops);
+    let (candidate, awaiting) = accepted_board_create_transition(&awaiting, &pending, &aliases);
+    assert_eq!(
+        candidate.as_ref().map(arkret_sdk::SpaceId::as_str),
+        Some(PENDING_TEST_SPACE)
+    );
+    assert!(awaiting.is_empty());
+
+    // Pass 3 (repeated receipt / backfill-first replay): idempotent no-op.
+    let (candidate, awaiting) = accepted_board_create_transition(&awaiting, &pending, &aliases);
+    assert_eq!(candidate, None);
+    assert!(awaiting.is_empty());
+}
+
+/// A row that leaves the pending set WITHOUT an accepted alias (cancelled, or
+/// failed and later dropped) must never migrate the selection.
+#[test]
+fn accepted_board_create_transition_ignores_dropped_departures() {
+    let dropped_ops = vec![pending_board_create_record("dropped")];
+    let pending = pending_board_creates_from_ops(&dropped_ops, PENDING_TEST_REALM);
+    let aliases = event_derived_target_aliases(&dropped_ops);
+    let awaiting = BTreeSet::from([PENDING_TEST_OPERATION.to_owned()]);
+
+    let (candidate, still_pending) =
+        accepted_board_create_transition(&awaiting, &pending, &aliases);
+    assert_eq!(candidate, None);
+    assert!(still_pending.is_empty());
+}
+
+/// Several creates reconciling in the same pass migrate to the NEWEST one:
+/// `LocalOperationId` is UUIDv7, so string order is time order.
+#[test]
+fn accepted_board_create_transition_prefers_the_newest_candidate() {
+    let older = "01a01bdd-804b-7ad0-bee8-194898437ad7";
+    let newer = "01a01bdd-804b-7ad0-bee8-194898437ad8";
+    let older_space = "ak:space:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR";
+    let newer_space = PENDING_TEST_SPACE;
+    let awaiting = BTreeSet::from([older.to_owned(), newer.to_owned()]);
+    let aliases = BTreeMap::from([
+        (older.to_owned(), older_space.to_owned()),
+        (newer.to_owned(), newer_space.to_owned()),
+    ]);
+
+    let (candidate, still_pending) = accepted_board_create_transition(&awaiting, &[], &aliases);
+    assert_eq!(
+        candidate.as_ref().map(arkret_sdk::SpaceId::as_str),
+        Some(newer_space)
+    );
+    assert!(still_pending.is_empty());
 }
 
 #[test]
@@ -68,7 +230,7 @@ fn board_space_options_pick_board_spaces_from_projection() {
 
     assert_eq!(options.len(), 1);
     assert_eq!(
-        options[0].id,
+        options[0].id.as_str(),
         "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
     assert_eq!(options[0].title, "Release");
@@ -228,7 +390,7 @@ fn lifecycle_projection_infers_board_from_list_parent() {
 
     assert_eq!(selected_board.as_deref(), Some(board_id));
     assert_eq!(options.len(), 1);
-    assert_eq!(options[0].id, board_id);
+    assert_eq!(options[0].id.as_str(), board_id);
     assert_eq!(columns.len(), 1);
     assert_eq!(columns[0].id, list_id);
     assert_eq!(columns[0].title, "Todo");

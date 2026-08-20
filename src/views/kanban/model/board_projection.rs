@@ -703,7 +703,7 @@ mod tests {
         let (columns, options, board_id) = project_board(&ops, BOARD, REALM, None);
 
         assert_eq!(board_id.as_deref(), Some(BOARD));
-        assert!(options.iter().any(|option| option.id == BOARD));
+        assert!(options.iter().any(|option| option.id.as_str() == BOARD));
         assert_eq!(columns.len(), 1, "one list column");
         let titles = card_titles(&columns);
         assert_eq!(titles[0].0, "Todos");
@@ -889,7 +889,7 @@ mod tests {
             1,
             "no phantom fallback board is minted for the draft parent"
         );
-        assert_eq!(options[0].id, BOARD);
+        assert_eq!(options[0].id.as_str(), BOARD);
         assert_eq!(options[0].title, "Board1", "the Board keeps its title");
         assert_eq!(columns.len(), 1, "the draft-parented list attaches");
         assert_eq!(columns[0].title, "Todos");
