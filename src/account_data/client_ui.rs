@@ -1,14 +1,17 @@
 //! `ak.client.ui_state` account-data payload helpers (theme, sidebar collapsed,
-//! per-Realm view, avatar blob ref cache).
+//! per-Realm view, avatar blob ref cache, language).
 //!
 //! Spec: `discovery/client-preferences.md` §2 — the `ak.client.ui_state`
-//! account-data key carries cross-device UI preferences. Inkson persists
-//! theme + sidebar state locally and best-effort syncs them across
+//! account-data key carries cross-device UI preferences, and §3.4 assigns the
+//! `language` field to this cell. Inkson persists theme + sidebar state
+//! locally and best-effort syncs them across
 //! devices via `ak.account_data.set`.
 
 use std::collections::BTreeMap;
 
 use serde_json::Value;
+
+use crate::i18n::Locale;
 
 // ─────────────────────────────────────────────────────────────────────────
 // A4a — `ak.client.ui_state` payload (theme, sidebar collapsed, per-Realm view).
@@ -100,6 +103,47 @@ pub fn theme_from_client_ui(value: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|s| matches!(*s, "light" | "night" | "system"))
         .map(ToOwned::to_owned)
+}
+
+/// Set the `language` field (spec `discovery/client-preferences.md` §3.4) on a
+/// decrypted `ak.client.ui_state` body, preserving every other field already
+/// present (theme, recent_realms, avatar_blob_ref, ...).
+///
+/// The stored tag is [`Locale::code`] — the canonical base language, never a
+/// region variant. A device that writes `zh` and a device that reads it agree
+/// without either needing a fallback chain.
+pub fn set_client_ui_language(body: &mut Value, locale: Locale) {
+    if let Value::Object(map) = body {
+        map.insert(
+            "language".to_owned(),
+            Value::String(locale.code().to_owned()),
+        );
+    }
+}
+
+/// Locale recovered from the `language` field of a `ak.client.ui_state`
+/// payload.
+///
+/// Returns `None` when the field is absent, malformed, or names a language
+/// this build cannot render — an older client may have written `ja` back when
+/// the enum still carried it, and selecting a dictionary that no longer exists
+/// would render raw keys. Falling through leaves the local value in charge.
+pub fn language_from_client_ui(value: &Value) -> Option<Locale> {
+    value
+        .get("language")
+        .and_then(Value::as_str)
+        .and_then(Locale::from_tag)
+}
+
+/// Merge the `language` field of a remote `ak.client.ui_state` payload into
+/// the locally-active locale.
+///
+/// Returns `Some(remote)` when the device should switch, `None` when it is
+/// already correct or the remote payload carries nothing usable. Mirrors
+/// [`merge_client_ui_theme`], which solves the same problem for the theme.
+pub fn merge_client_ui_language(local: Locale, remote_value: &Value) -> Option<Locale> {
+    let remote = language_from_client_ui(remote_value)?;
+    (remote != local).then_some(remote)
 }
 
 /// Merge a remote `ak.client.ui_state` theme into the local cached theme. Local

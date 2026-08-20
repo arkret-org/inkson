@@ -98,9 +98,8 @@ fn locale_display_name(locale: Locale) -> &'static str {
 /// 1. the live signal, so the UI switches now;
 /// 2. the device preference, which is what seeds the *next* launch before a session exists — and
 ///    what the OIDC `ui_locales` parameter is built from, so coauth follows on the next sign-in;
-/// 3. the `client.language` account-data entry, which is how the user's other devices find out.
-///    This is the tier that was declared in the protocol but never written, which is why the choice
-///    used to stay on one device.
+/// 3. the `language` field of the `ak.client.ui_state` account-data entry (spec
+///    `discovery/client-preferences.md` §3.4), which is how the user's other devices find out.
 fn select_locale(
     choice: Locale,
     mut locale: Signal<Locale>,
@@ -118,6 +117,13 @@ fn select_locale(
 
 /// Best-effort cross-device sync of the language choice.
 ///
+/// The choice is written into the `language` field of the registered
+/// `ak.client.ui_state` cell (spec `discovery/client-preferences.md` §3.4)
+/// through the CAS read-merge-write loop in
+/// [`crate::transport::account::update_account_data_with_merge`], so theme,
+/// `recent_realms`, `avatar_blob_ref` and every other field of the cell
+/// survive the update.
+///
 /// Mirrors [`push_client_ui_account_data_with_avatar`]: signed-out is a no-op
 /// (the device preference already holds the choice and the next sign-in
 /// republishes it), and a failed write is logged rather than surfaced — the
@@ -131,26 +137,39 @@ pub(crate) fn push_client_language_account_data(
     if api_token.trim().is_empty() {
         return;
     }
-    let body = crate::account_data::build_client_language_body(locale);
-    // inkson's own key enum: `client.language` is declared in the spec's
-    // client-preference registry but has no generated `arkret_wire` constant
-    // yet, so the literal comes from the local mapping.
-    let key = crate::account_data::CLIENT_LANGUAGE_WIRE_KEY;
-    let body = match encrypted_account_data_value(key, &body) {
-        Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(%error, "client.language encryption failed");
-            return;
-        }
+    let Some(actor) = crate::secure_key_store::active_device_seed_scope()
+        .filter(|actor| !actor.trim().is_empty())
+    else {
+        return;
     };
     spawn(async move {
         if let Err(err) = with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(&sub, key, body).await
+            crate::transport::account::update_account_data_with_merge(
+                &sub,
+                AccountDataKey::CLIENT_UI_STATE,
+                |snapshot| {
+                    let mut plaintext = match snapshot.entry.as_ref() {
+                        Some(entry) => crate::account_data::decrypt_account_data_entry(
+                            &actor,
+                            AccountDataKey::CLIENT_UI_STATE,
+                            entry,
+                        )?,
+                        None => serde_json::json!({}),
+                    };
+                    crate::account_data::set_client_ui_language(&mut plaintext, locale);
+                    crate::account_data::encrypt_account_data_value(
+                        &actor,
+                        AccountDataKey::CLIENT_UI_STATE,
+                        &plaintext,
+                    )
+                },
+            )
+            .await
         })
         .await
         {
             tracing::warn!(
-                "ak.account_data.set for client.language failed: {}",
+                "ak.account_data.set for ak.client.ui_state language failed: {}",
                 err.display()
             );
         }

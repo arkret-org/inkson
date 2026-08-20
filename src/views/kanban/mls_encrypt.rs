@@ -748,17 +748,16 @@ pub(super) fn dispatch_card_detail_update(
                             // The accepted Event id from the submit outcome —
                             // the build-time id died when the queue re-authored
                             // the envelope.
-                            let accepted_commit_ref = match arkret_sdk::EventId::new(
-                                resp.event_id.clone(),
-                            ) {
-                                Ok(event_id) => event_id,
-                                Err(error) => {
-                                    board_status.set(format!(
+                            let accepted_commit_ref =
+                                match arkret_sdk::EventId::new(resp.event_id.clone()) {
+                                    Ok(event_id) => event_id,
+                                    Err(error) => {
+                                        board_status.set(format!(
                                         "accepted MLS commit returned an invalid Event id: {error}"
                                     ));
-                                    return;
-                                }
-                            };
+                                        return;
+                                    }
+                                };
                             if let Err(error) =
                                 state_store.write().record_mls_group_state_ref_for_scope(
                                     effective_scope,

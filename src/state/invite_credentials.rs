@@ -9,66 +9,47 @@
 //! `ak.account_data.update` actor-private device update. This module is the
 //! single ingestion and lookup point for both paths.
 
+use arkret_models_collaboration::governance::invite_addressing::{
+    InviteDelivery, InviteDeliveryEntry,
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{ClientLocalState, LocalStateStore, StoredInviteCredential};
 
-/// Account-data key the Principal Server writes delivered invite credentials
-/// under. Server-owned: clients never write this key.
-pub(crate) const INVITE_DELIVERY_ACCOUNT_DATA_KEY: &str = "ak.account.invite_delivery";
-
 /// Upper bound on locally retained invite credentials; writes evict expired
 /// entries first, then the oldest by `received_at`.
 pub(crate) const MAX_INVITE_CREDENTIALS: usize = 200;
 
-/// Parse the entries of an `ak.account.invite_delivery` cell payload.
+/// Parse the entries of an `ak.account.invite_delivery` cell payload
+/// (`arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY`, wire schema
+/// [`InviteDelivery::SCHEMA`]) into the SDK's strong
+/// [`InviteDeliveryEntry`] type.
 ///
-/// Entries that fail to parse carry no credential anyone could rely on, so
-/// they are skipped rather than partially trusted.
+/// The cell-level schema discriminator must match; entries that fail to
+/// parse or validate carry no credential anyone could rely on, so they are
+/// skipped rather than partially trusted.
 pub(crate) fn invite_delivery_entries_from_cell(
     content: &Value,
 ) -> Vec<(String, StoredInviteCredential)> {
+    if content.get("schema").and_then(Value::as_str) != Some(InviteDelivery::SCHEMA) {
+        return Vec::new();
+    }
     let Some(entries) = content.get("entries").and_then(Value::as_array) else {
         return Vec::new();
     };
     entries
         .iter()
         .filter_map(|entry| {
-            let invite_id = entry
-                .get("invite_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?
-                .to_owned();
-            let realm_id = entry
-                .get("realm_id")
-                .and_then(Value::as_str)
-                .and_then(|value| arkret_sdk::RealmId::new(value.to_owned()).ok())?;
-            let invite_token = entry
-                .get("invite_token")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())?
-                .to_owned();
-            let expires_at = entry
-                .get("expires_at")
-                .and_then(Value::as_str)
-                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                .map(|value| value.with_timezone(&Utc));
-            let received_at = entry
-                .get("received_at")
-                .and_then(Value::as_str)
-                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-                .map(|value| value.with_timezone(&Utc))
-                .unwrap_or_else(Utc::now);
+            let entry = serde_json::from_value::<InviteDeliveryEntry>(entry.clone()).ok()?;
+            entry.validate().ok()?;
             Some((
-                invite_id,
+                entry.invite_id.as_str().to_owned(),
                 StoredInviteCredential {
-                    realm_id,
-                    invite_token,
-                    expires_at,
-                    received_at,
+                    realm_id: entry.realm_id,
+                    invite_token: entry.invite_token,
+                    expires_at: Some(entry.expires_at),
+                    received_at: entry.received_at,
                 },
             ))
         })
@@ -150,7 +131,7 @@ impl LocalStateStore {
             return false;
         };
         if update.get("account_data_key").and_then(Value::as_str)
-            != Some(INVITE_DELIVERY_ACCOUNT_DATA_KEY)
+            != Some(arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY)
             || update.get("operation").and_then(Value::as_str) != Some("put")
         {
             return false;
@@ -173,7 +154,7 @@ mod tests {
 
     fn cell(entries: Value) -> Value {
         json!({
-            "schema": INVITE_DELIVERY_ACCOUNT_DATA_KEY,
+            "schema": InviteDelivery::SCHEMA,
             "entries": entries,
             "updated_at": "2026-08-18T00:00:00.000Z"
         })

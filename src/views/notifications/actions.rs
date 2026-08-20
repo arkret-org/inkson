@@ -455,7 +455,7 @@ fn accept_invite_notification(
             if invite_token.is_none() {
                 let snapshot = crate::transport::account::account_data_snapshot(
                     &api.sdk_http_client()?,
-                    crate::state::invite_credentials::INVITE_DELIVERY_ACCOUNT_DATA_KEY,
+                    arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY,
                 )
                 .await?;
                 if let Some(content) = snapshot.entry.map(|entry| entry.content) {

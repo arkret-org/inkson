@@ -1364,7 +1364,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         continue;
                                     }
                                 }
-                                // A4a — hydrate `ak.client.ui_state` theme from
+                                // A4a — hydrate `ak.client.ui_state` fields from
                                 // the remote payload. Cross-device wins:
                                 // when remote carries a valid theme that
                                 // differs from the local cached value
@@ -1391,6 +1391,35 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                                     remote_theme,
                                                 );
                                             }
+                                            // §3.4 `language` — the
+                                            // actor-private locale
+                                            // preference. Recording it as
+                                            // this device's cached choice is
+                                            // what makes the setting follow
+                                            // the user: the shell observes
+                                            // the same device preference, so
+                                            // the UI switches now, and the
+                                            // next cold boot (which runs
+                                            // before any session exists)
+                                            // starts in the right language
+                                            // instead of guessing from the
+                                            // platform.
+                                            let local_locale = store
+                                                .device_pref("locale")
+                                                .as_deref()
+                                                .and_then(crate::i18n::Locale::from_tag)
+                                                .unwrap_or_default();
+                                            if let Some(remote_locale) =
+                                                crate::account_data::merge_client_ui_language(
+                                                    local_locale,
+                                                    &content,
+                                                )
+                                            {
+                                                store.set_device_pref(
+                                                    "locale",
+                                                    remote_locale.code(),
+                                                );
+                                            }
                                             if let Some(avatar_blob_ref) =
                                             crate::account_data::avatar_blob_ref_from_client_ui(
                                                 &content,
@@ -1411,42 +1440,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         }
                                         Err(error) => tracing::warn!(
                                             "ignoring undecryptable ak.client.ui_state: {error}"
-                                        ),
-                                    }
-                                    continue;
-                                }
-                                // `client.language` — the actor-private locale
-                                // preference. Recording it as this device's
-                                // cached choice is what makes the setting
-                                // follow the user: the shell observes the
-                                // same device preference, so the UI switches
-                                // now, and the next cold boot (which runs
-                                // before any session exists) starts in the
-                                // right language instead of guessing from the
-                                // platform.
-                                if account_data_key == crate::account_data::CLIENT_LANGUAGE_WIRE_KEY
-                                {
-                                    match crate::account_data::decrypt_account_data_entry(
-                                        &account_did(),
-                                        account_data_key,
-                                        entry,
-                                    ) {
-                                        Ok(content) => {
-                                            let local = store
-                                                .device_pref("locale")
-                                                .as_deref()
-                                                .and_then(crate::i18n::Locale::from_tag)
-                                                .unwrap_or_default();
-                                            if let Some(remote) =
-                                                crate::account_data::merge_client_language(
-                                                    local, &content,
-                                                )
-                                            {
-                                                store.set_device_pref("locale", remote.code());
-                                            }
-                                        }
-                                        Err(error) => tracing::warn!(
-                                            "ignoring undecryptable client.language: {error}"
                                         ),
                                     }
                                     continue;

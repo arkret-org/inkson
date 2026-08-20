@@ -23,7 +23,8 @@ pub(super) fn GlobalEffects(
         crate::i18n::set_locale(&mut i18n_signal, locale());
     });
 
-    // The `client.language` account-data entry lands in the device preference
+    // The `language` field of the `ak.client.ui_state` account-data cell lands
+    // in the device preference
     // (see `connect.rs`), which is the one place both the running shell and a
     // cold boot read. Observing it here is what turns "another device changed
     // the language" into a live switch rather than something the user sees

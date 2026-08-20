@@ -2,8 +2,9 @@
 //!
 //! Two tiers carry a language choice off this device:
 //!
-//! * `client.language` account data — the user's other inkson devices, via the principal server.
-//!   Actor-private, so it is not on `ActorProfile`.
+//! * the `language` field of the `ak.client.ui_state` account-data cell (spec
+//!   `discovery/client-preferences.md` §3.4) — the user's other inkson devices, via the principal
+//!   server. Actor-private, so it is not on `ActorProfile`.
 //! * the OIDC `ui_locales` parameter — coauth, on the next sign-in, built from the same device
 //!   preference this module resolves.
 //!
@@ -11,23 +12,52 @@
 //! tiers across their public surface (`inkson::account_data` and
 //! `inkson::i18n`) the way coauth and the settings view reach them.
 
-use inkson::account_data::{build_client_language_body, merge_client_language};
+use std::collections::BTreeMap;
+
+use inkson::account_data::{
+    build_client_ui_body, merge_client_ui_language, set_client_ui_language,
+};
 use inkson::i18n::{Locale, resolve_locale};
 use serde_json::json;
 
+fn published_ui_state_with_language(locale: Locale) -> serde_json::Value {
+    let mut body = build_client_ui_body(Some("night"), None, &BTreeMap::new(), None);
+    set_client_ui_language(&mut body, locale);
+    body
+}
+
 #[test]
 fn a_choice_made_on_another_device_switches_this_one() {
-    let published = build_client_language_body(Locale::Zh);
+    let published = published_ui_state_with_language(Locale::Zh);
     assert_eq!(
-        merge_client_language(Locale::En, &published),
+        merge_client_ui_language(Locale::En, &published),
+        Some(Locale::Zh)
+    );
+}
+
+#[test]
+fn setting_the_language_preserves_the_other_ui_state_fields() {
+    // The write path is read-merge-write on the shared cell: theme and any
+    // sibling field must survive a language update.
+    let published = published_ui_state_with_language(Locale::Zh);
+    assert_eq!(published.get("theme"), Some(&json!("night")));
+    assert_eq!(published.get("language"), Some(&json!("zh")));
+}
+
+#[test]
+fn a_region_variant_from_another_client_folds_onto_the_base() {
+    // The spec example carries `zh-CN`; the canonical base tag is what this
+    // build can render.
+    assert_eq!(
+        merge_client_ui_language(Locale::En, &json!({ "language": "zh-CN" })),
         Some(Locale::Zh)
     );
 }
 
 #[test]
 fn a_device_already_in_the_synced_language_does_not_churn() {
-    let published = build_client_language_body(Locale::Zh);
-    assert_eq!(merge_client_language(Locale::Zh, &published), None);
+    let published = published_ui_state_with_language(Locale::Zh);
+    assert_eq!(merge_client_ui_language(Locale::Zh, &published), None);
 }
 
 #[test]
@@ -36,11 +66,18 @@ fn an_entry_from_a_build_that_shipped_more_locales_is_ignored() {
     // Selecting one now would render raw keys, so the local value must win.
     for tag in ["ar", "es", "ja", "fr"] {
         assert_eq!(
-            merge_client_language(Locale::En, &json!({ "locale": tag })),
+            merge_client_ui_language(Locale::En, &json!({ "language": tag })),
             None,
             "{tag}"
         );
     }
+}
+
+#[test]
+fn a_cell_without_a_language_field_keeps_the_local_locale() {
+    // Cells written before this field existed carry only theme etc.
+    let published = build_client_ui_body(Some("night"), None, &BTreeMap::new(), None);
+    assert_eq!(merge_client_ui_language(Locale::Zh, &published), None);
 }
 
 #[test]

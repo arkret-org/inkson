@@ -1,7 +1,7 @@
 //! Client-side account_data layer per `discovery/client-preferences.md`.
 //!
 //! Spec: actor-private preferences (UI state, read-receipt overrides, presence
-//! gating, blocklist, language) are stored as `ak.account_data.set` events with
+//! gating, blocklist) are stored as `ak.account_data.set` events with
 //! actor-private wire scope. Inkson previously kept these as ad-hoc fields on
 //! `LocalState`; this module centralizes the storage shape so
 //! `ak.account_data.set` writes have a single canonical entry point.
@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod blocklist;
-mod client_language;
 mod client_ui;
 mod crypto;
 mod keys;
@@ -29,7 +28,6 @@ mod productivity;
 mod remark;
 
 pub use blocklist::*;
-pub use client_language::*;
 pub use client_ui::*;
 pub use crypto::*;
 pub use keys::*;
