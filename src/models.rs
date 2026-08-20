@@ -17,7 +17,12 @@ use serde_json::Value;
 /// not include handle evidence in the viewer response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurrentAccount {
-    pub did: String,
+    /// Stable principal core id returned by `ak.self.account.read.viewer`.
+    ///
+    /// This is deliberately typed as a core id: the account viewer does not
+    /// return resolution material and callers must not persist this value as a
+    /// full DID or bind an Event signer to it.
+    pub principal_id: arkret_sdk::DidCoreId,
     #[serde(default)]
     pub handle: String,
     pub display_name: Option<String>,

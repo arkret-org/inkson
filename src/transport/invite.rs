@@ -406,14 +406,14 @@ impl crate::transport::TransportClient {
         if let Ok(handle) = canonical_invitee_handle(target) {
             let requester = crate::transport::account::account_me(&self.sdk_http_client()?)
                 .await?
-                .did;
+                .principal_id;
             let resolved = self
                 .resolve_handle_with_context(
                     &handle,
                     ResolveHandleContext {
                         intent: Some("contact_request"),
-                        requester: Some(&requester),
-                        audience: Some(&requester),
+                        requester: Some(requester.as_str()),
+                        audience: Some(requester.as_str()),
                         ..ResolveHandleContext::default()
                     },
                 )

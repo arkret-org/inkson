@@ -92,6 +92,21 @@ pub(super) fn session_refresh_write_plan(
     }
 }
 
+pub(super) fn full_actor_for_account_viewer(
+    store: &LocalStateStore,
+    account: &crate::models::CurrentAccount,
+) -> anyhow::Result<String> {
+    store
+        .full_account_did_for_principal(&account.principal_id)
+        .map(|full_id| full_id.to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "account viewer returned principal core id {}, but this installation has no matching retained full DID",
+                account.principal_id
+            )
+        })
+}
+
 async fn client_core_events_describe(
     authed: &crate::transport::TransportClient,
     _state_store: SyncSignal<LocalStateStore>,
@@ -651,17 +666,21 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     return;
                 };
                 let canonical_actor = match account_viewer_result {
-                    Ok(account) if !account.did.trim().is_empty() => {
+                    Ok(account) => {
                         account_personal_handle =
                             personal_handle_from_account_handle(&account.handle);
-                        account.did
-                    }
-                    Ok(_) => {
-                        last_error.set(Some(
-                            "account_me: server returned empty actor DID; reusing local actor"
-                                .to_owned(),
-                        ));
-                        actor.clone()
+                        match full_actor_for_account_viewer(&state_store.read(), &account) {
+                            Ok(full_id) => full_id,
+                            Err(error) => {
+                                invalidate_bootstrap_session(
+                                    &session,
+                                    format!("account_me identity boundary failed: {error}"),
+                                    session_boot_state,
+                                    sync_bootstrap_complete,
+                                );
+                                return;
+                            }
+                        }
                     }
                     Err(error) if is_account_viewer_projection_missing_error(&error) => {
                         invalidate_bootstrap_session(
@@ -709,17 +728,26 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     return;
                                 };
                                 match account_viewer_retry_result {
-                                    Ok(account) if !account.did.trim().is_empty() => {
+                                    Ok(account) => {
                                         account_personal_handle =
                                             personal_handle_from_account_handle(&account.handle);
-                                        account.did
-                                    }
-                                    Ok(_) => {
-                                        last_error.set(Some(
-                                            "account_me: refreshed session returned empty actor DID; reusing local actor"
-                                                .to_owned(),
-                                        ));
-                                        actor.clone()
+                                        match full_actor_for_account_viewer(
+                                            &state_store.read(),
+                                            &account,
+                                        ) {
+                                            Ok(full_id) => full_id,
+                                            Err(error) => {
+                                                invalidate_bootstrap_session(
+                                                    &session,
+                                                    format!(
+                                                        "account_me identity boundary failed after session refresh: {error}"
+                                                    ),
+                                                    session_boot_state,
+                                                    sync_bootstrap_complete,
+                                                );
+                                                return;
+                                            }
+                                        }
                                     }
                                     Err(retry_error)
                                         if is_account_viewer_projection_missing_error(

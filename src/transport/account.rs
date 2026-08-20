@@ -1039,8 +1039,8 @@ pub async fn sync_describe(
 pub async fn invites(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_sdk::AuthzInviteList> {
-    let subject = account_me(http).await?.did;
-    http.authz_invites(&subject, None, None)
+    let subject = account_me(http).await?.principal_id;
+    http.authz_invites(subject.as_str(), None, None)
         .await
         .map_err(anyhow::Error::from)
 }
@@ -1058,7 +1058,7 @@ fn current_account_from_viewer(
         .map(|profile| arkret_sdk::canonical::format_timestamp_canonical(profile.created_at))
         .unwrap_or_default();
     CurrentAccount {
-        did: viewer.principal_id.as_str().to_owned(),
+        principal_id: viewer.principal_id.clone(),
         handle: primary_handle_from_viewer(&viewer),
         display_name,
         created_at,
@@ -1676,7 +1676,10 @@ mod tests {
 
         let account = current_account_from_viewer(viewer);
 
-        assert_eq!(account.did, "ak:did_core:web:alice.example");
+        assert_eq!(
+            account.principal_id.as_str(),
+            "ak:did_core:web:alice.example"
+        );
         assert_eq!(account.handle, "alice:local.host");
         assert_eq!(account.display_name.as_deref(), Some("Alice"));
         assert_eq!(account.created_at, "2026-06-12T08:00:00.000Z");
@@ -1718,7 +1721,10 @@ mod tests {
 
         let account = current_account_from_viewer(viewer);
 
-        assert_eq!(account.did, "ak:did_core:web:alice.example");
+        assert_eq!(
+            account.principal_id.as_str(),
+            "ak:did_core:web:alice.example"
+        );
         assert_eq!(account.handle, "");
         assert_eq!(account.display_name, None);
         assert_eq!(account.created_at, "");

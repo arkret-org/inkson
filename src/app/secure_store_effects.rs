@@ -32,7 +32,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
     {
         let config_store_for_secure_upgrade = config_store;
         let base_url_for_secure_upgrade = base_url;
-        let account_did_for_secure_upgrade = account_did;
+        let mut account_did_for_secure_upgrade = account_did;
         let mut device_id_for_secure_upgrade = device_id;
         let mut state_store_for_secure_upgrade = state_store;
         let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
@@ -208,7 +208,25 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             String::new(),
                         );
                     }
-                    let account_scope = account_did_for_secure_upgrade.peek().trim().to_owned();
+                    let persisted_account_scope =
+                        account_did_for_secure_upgrade.peek().trim().to_owned();
+                    let account_scope = arkret_sdk::DidCoreId::new(persisted_account_scope.clone())
+                        .ok()
+                        .and_then(|principal_id| {
+                            state_store_for_secure_upgrade
+                                .read()
+                                .full_account_did_for_principal(&principal_id)
+                        })
+                        .map(|full_id| full_id.to_string())
+                        .unwrap_or(persisted_account_scope);
+                    if account_scope != account_did_for_secure_upgrade.peek().trim() {
+                        tracing::warn!(
+                            target: "secure_store",
+                            repaired_full_did = %account_scope,
+                            "repaired a persisted principal core id back to the retained full DID"
+                        );
+                        account_did_for_secure_upgrade.set(account_scope.clone());
+                    }
                     let user_store = if account_scope.is_empty() {
                         None
                     } else {

@@ -834,7 +834,6 @@ fn DeviceSetupRequired(
     });
     rsx! {
         div { class: "event onboarding-card", "data-testid": "device-setup-required",
-            div { class: "onboarding-step-mark", "aria-hidden": "true", "1" }
             h2 { "Authorize this device" }
             p { class: "muted",
                 "This account is already linked, but this browser has no currently accepted device key. Create an approval request and scan it from an authorized device."
@@ -977,7 +976,6 @@ fn RootAnchoredDeviceRecovery(
     let mut busy = use_signal(|| false);
     rsx! {
         div { class: "event onboarding-card", "data-testid": "root-anchored-device-recovery",
-            div { class: "onboarding-step-mark", "aria-hidden": "true", "1" }
             h2 { "Recover this identity" }
             p { class: "muted",
                 "This account already has an identity. Enter its 24-word Recovery Key to prove root control and authorize this device. No approval from another device or administrator is required."

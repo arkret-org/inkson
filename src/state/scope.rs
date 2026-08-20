@@ -40,6 +40,63 @@ impl LocalStateStore {
         self.read_root().known_dids
     }
 
+    /// Recover this installation's retained full DID for a server-authored
+    /// principal core id.
+    ///
+    /// Account-viewer responses intentionally contain only `DidCoreId`.  A
+    /// core id is sufficient for account-local storage selection, but it is
+    /// not resolution material and must never replace the full DID used by the
+    /// Event signer.  Search every durable source that can legitimately retain
+    /// that full id, including the anonymous pending-login handoff, so profiles
+    /// written by older builds can repair themselves without losing the local
+    /// device identity.
+    pub fn full_account_did_for_principal(
+        &self,
+        principal_id: &arkret_sdk::DidCoreId,
+    ) -> Option<arkret_sdk::DidFullId> {
+        let matching_full_id = |candidate: &str| {
+            let full_id = arkret_sdk::DidFullId::new(candidate.trim().to_owned()).ok()?;
+            (arkret_sdk::project_full_id_to_core_id(&full_id)
+                .ok()?
+                .as_str()
+                == principal_id.as_str())
+            .then_some(full_id)
+        };
+
+        let root = self.read_root();
+        if let Some(full_id) = root
+            .active_did
+            .as_deref()
+            .and_then(&matching_full_id)
+            .or_else(|| {
+                root.known_dids
+                    .iter()
+                    .find_map(|known| matching_full_id(known))
+            })
+        {
+            return Some(full_id);
+        }
+
+        let live = self.load();
+        if let Some(full_id) = live
+            .pending_account_handoff
+            .as_ref()
+            .and_then(|handoff| handoff.bound_principal_id.as_deref())
+            .and_then(&matching_full_id)
+            .or_else(|| {
+                live.recovery_material_evidence
+                    .as_ref()
+                    .and_then(|evidence| matching_full_id(evidence.principal_id.as_str()))
+            })
+        {
+            return Some(full_id);
+        }
+
+        self.read_account_state(principal_id.as_str())
+            .and_then(|state| state.recovery_material_evidence)
+            .and_then(|evidence| matching_full_id(evidence.principal_id.as_str()))
+    }
+
     /// Read a cross-account UI device preference (theme/locale/...), shared by
     /// every account on this browser. `None` when unset.
     pub fn device_pref(&self, key: &str) -> Option<String> {

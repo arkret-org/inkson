@@ -639,23 +639,18 @@ impl InksonEventSigner {
         event: &arkret_sdk::Event,
     ) -> Result<DidUrl, EventSignerError> {
         // Event actors are canonical core ids, while a proof verification
-        // method is necessarily a full DID URL. For directly-authored events,
-        // recover only the already-installed signer's exact full id and prove
-        // that it projects to this actor; never resolve a generic "current"
-        // DID from the core id. Delegated events already carry their exact
-        // executor full id in `executed_by`.
-        let direct_controller;
-        let controller = if let Some(executed_by) = event.executed_by.as_ref() {
-            executed_by.as_str()
-        } else {
-            direct_controller = self.full_id_for_actor(&event.actor_id)?;
-            direct_controller.as_str()
-        };
+        // method is necessarily a full DID URL. Recover only the
+        // already-installed signer's exact full id and prove that it projects
+        // to the authoring principal (`executed_by ?? actor_id`); never treat
+        // the core id in `executed_by` as a full DID or resolve a generic
+        // "current" DID from it.
+        let authoring_principal = event.executed_by.as_ref().unwrap_or(&event.actor_id);
+        let controller = self.full_id_for_actor(authoring_principal)?;
         let raw = if let Some(device_id) = self.device_id.as_deref() {
             format!("{controller}#{device_id}")
         } else {
             let stored_controller = verification_method_controller(&self.verification_method);
-            if stored_controller == controller {
+            if stored_controller == controller.as_str() {
                 self.verification_method.as_str().to_owned()
             } else {
                 format!("{controller}#device")
@@ -1442,6 +1437,43 @@ mod tests {
             format!("did:web:alice.example#{TEST_DEVICE_ID}")
         );
         assert_eq!(event.actor_id.as_str(), "ak:did_core:web:alice.example");
+    }
+
+    #[test]
+    fn sign_delegated_event_roots_proof_in_executor_full_did() {
+        let _g = reset();
+        let signer =
+            build_ed25519_device_signer([9u8; 32], "did:web:controller.example", TEST_DEVICE_ID);
+        let operation = TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
+            TEST_REALM_ID,
+            "did:web:agent.example",
+            arkret_sdk::MessageCreatePayload::with_content(
+                arkret_sdk::StrandId::new(
+                    "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df".to_owned(),
+                )
+                .unwrap(),
+                "discussion",
+                arkret_sdk::ContentBlock::text("delegated"),
+            ),
+        )
+        .executed_by("did:web:controller.example")
+        .authorization_ref("did:web:agent.example#managed-controller")
+        .build("test_node");
+        let mut event = crate::operation::author_for_test(&operation);
+
+        signer
+            .sign_envelope(&mut event)
+            .expect("delegated Event signs through the controller's full DID");
+
+        assert_eq!(
+            producer_proof(&event).verification_method,
+            format!("did:web:controller.example#{TEST_DEVICE_ID}")
+        );
+        assert_eq!(event.actor_id.as_str(), "ak:did_core:web:agent.example");
+        assert_eq!(
+            event.executed_by.as_ref().unwrap().as_str(),
+            "ak:did_core:web:controller.example"
+        );
     }
 
     #[test]

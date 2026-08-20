@@ -852,21 +852,11 @@ fn returning_sign_in_principal(
 
     let core_id = arkret_sdk::DidCoreId::new(actor.to_owned())
         .map_err(|error| format!("The saved account principal is invalid: {error}"))?;
-    let Some(evidence) = store.recovery_material_evidence() else {
-        // Older profiles may contain only a stable core id. Without retained
-        // full-id evidence we cannot safely restore the event signer binding;
-        // continue as account-first recovery rather than inventing a full DID.
-        return Ok(None);
-    };
-    let evidence_core = arkret_sdk::project_full_id_to_core_id(&evidence.principal_id)
-        .map_err(|error| format!("The retained principal evidence is invalid: {error}"))?;
-    if evidence_core != core_id {
-        return Err(
-            "The saved account principal does not match this device's retained identity evidence. No local device state was used."
-                .to_owned(),
-        );
-    }
-    Ok(Some(evidence.principal_id))
+    // Builds predating the typed account-viewer boundary could persist the
+    // viewer's core id into the full-DID config slot. Recover only an exact
+    // matching full id retained by this installation; never synthesize one
+    // from the core id.
+    Ok(store.full_account_did_for_principal(&core_id))
 }
 
 fn principal_value_matches_full(value: &str, expected: &arkret_sdk::DidFullId) -> bool {
@@ -1666,9 +1656,7 @@ async fn exchange_bound_handoff_session(
     let account = crate::transport::account::account_me(&principal_http)
         .await
         .map_err(|error| format!("Principal server rejected the returning session: {error}"))?;
-    let account_principal_id = arkret_sdk::DidCoreId::new(account.did.clone())
-        .map_err(|error| format!("Principal server returned an invalid account id: {error}"))?;
-    if account_principal_id != principal_id {
+    if account.principal_id != principal_id {
         return Err(ReturningSessionExchangeError::Fatal(
             "Principal server account does not match the authenticated handoff.".to_owned(),
         ));
@@ -2016,6 +2004,49 @@ mod tests {
                 .expect("returning principal")
                 .as_str(),
             actor
+        );
+    }
+
+    #[test]
+    fn same_browser_second_login_repairs_core_id_profile_and_routes_as_returning_device() {
+        let mut store = crate::state::isolated_store_for_tests("returning-core-id-profile");
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        let principal =
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal).unwrap();
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
+                .unwrap();
+
+        // Reproduce the old account-viewer bug: registration first retained
+        // the full DID, then a viewer refresh selected the same account by its
+        // core id and persisted that core id into the active profile.
+        store.switch_active_account(principal.as_str());
+        store.switch_active_account(principal_core.as_str());
+
+        let user_store = crate::secure_key_store::UserLocalStore::new(principal_core.clone());
+        user_store.save_device_id(&secure_store, &device).unwrap();
+        user_store
+            .save_signing_seed(&secure_store, &[41_u8; 32])
+            .unwrap();
+
+        let repaired = returning_sign_in_principal(&store, principal_core.as_str())
+            .unwrap()
+            .expect("known full DID repairs the core-id-only profile");
+        let returning_device = returning_device_id(&secure_store, &repaired, device.as_str())
+            .unwrap()
+            .expect("durable device identity remains available");
+        let disposition = AccountHandoffDisposition::Bound {
+            principal_id: principal_core,
+            full_id: principal.clone(),
+        };
+
+        assert_eq!(repaired, principal);
+        assert_eq!(returning_device, device.to_string());
+        assert_eq!(
+            authenticated_account_route(&disposition, Some(&repaired), Some(&device),),
+            AuthenticatedAccountRoute::ReturningSession(device),
+            "same-browser second login must not enter device setup",
         );
     }
 

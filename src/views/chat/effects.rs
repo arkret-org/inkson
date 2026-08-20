@@ -585,7 +585,8 @@ pub(super) fn ChatEffects(
                 if let Ok(account) =
                     async { crate::transport::account::account_me(&api.sdk_http_client()?).await }
                         .await
-                    && account.did == account_did_for_load
+                    && crate::mls_api_helpers::principal_core_id(&account_did_for_load)
+                        .is_ok_and(|principal_id| principal_id == account.principal_id)
                     && let Some(display_name) =
                         normalize_account_handle(&account.handle).or_else(|| {
                             clean_participant_display_name(

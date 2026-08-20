@@ -477,7 +477,7 @@ fn accept_invite_notification(
             let (submit, accepted_title) = api
                 .accept_realm_invite(
                     &accepted_realm_for_api,
-                    &account.did,
+                    account.principal_id.as_str(),
                     &invite_id,
                     invite_token.as_deref(),
                 )

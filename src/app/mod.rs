@@ -3573,7 +3573,20 @@ fn AppBootstrap() -> Element {
                                                             .await
                                                             {
                                                                 Ok(account) => {
-                                                                    let canonical_actor = account.did;
+                                                                    let canonical_actor = match connect::full_actor_for_account_viewer(
+                                                                        &state_store.read(),
+                                                                        &account,
+                                                                    ) {
+                                                                        Ok(full_id) => full_id,
+                                                                        Err(error) => {
+                                                                            last_error.set(Some(error.to_string()));
+                                                                            account_session_state.set(
+                                                                                "Session identity could not be restored; sign in again."
+                                                                                    .to_owned(),
+                                                                            );
+                                                                            return;
+                                                                        }
+                                                                    };
                                                                     if let Some(personal_handle) =
                                                                         personal_handle_from_account_handle(&account.handle)
                                                                     {
@@ -3622,7 +3635,11 @@ fn AppBootstrap() -> Element {
                                                                                         .await
                                                                                         .ok()
                                                                                         .and_then(|account| {
-                                                                                            let canonical_actor = account.did;
+                                                                                            let canonical_actor = connect::full_actor_for_account_viewer(
+                                                                                                &state_store.read(),
+                                                                                                &account,
+                                                                                            )
+                                                                                            .ok()?;
                                                                                             if let Some(personal_handle) =
                                                                                                 personal_handle_from_account_handle(&account.handle)
                                                                                             {
@@ -3643,8 +3660,7 @@ fn AppBootstrap() -> Element {
                                                                                                         .set("Not published".to_owned());
                                                                                                 }
                                                                                             }
-                                                                                            (!canonical_actor.trim().is_empty())
-                                                                                                .then_some(canonical_actor)
+                                                                                            Some(canonical_actor)
                                                                                         }),
                                                                                     Err(_) => None,
                                                                                 }
