@@ -290,7 +290,7 @@
 .due-calendar-day.selected {
   border-color: var(--accent, var(--ak-brand));
   background: var(--accent, var(--ak-brand));
-  color: var(--surface, #fff);
+  color: var(--surface);
 }
 .due-edit-status {
   color: var(--text-3, var(--ak-muted));
@@ -331,13 +331,13 @@
   background: var(--accent);
 }
 .card-detail-activity-item.pending .card-detail-activity-dot {
-  background: var(--warning, #f59e0b);
+  background: var(--warning);
 }
 .card-detail-activity-item.accepted .card-detail-activity-dot {
-  background: var(--success, #22c55e);
+  background: var(--success);
 }
 .card-detail-activity-item.failed .card-detail-activity-dot {
-  background: var(--danger, #ef4444);
+  background: var(--danger);
 }
 .card-detail-activity-body {
   min-width: 0;
@@ -385,7 +385,7 @@
   --editor-ink: var(--text, var(--ak-ink, #142018));
   --editor-muted: var(--text-2, var(--ak-muted, #627065));
   --editor-accent: var(--accent, var(--ak-teal, #3a8a67));
-  --editor-code-bg: color-mix(in srgb, var(--surface-inv, #18212f) 8%, var(--surface-2, var(--ak-bg-soft, #f7faf7)) 92%);
+  --editor-code-bg: color-mix(in srgb, var(--surface-inv) 8%, var(--surface-2, var(--ak-bg-soft, #f7faf7)) 92%);
   --editor-code-ink: var(--accent-ink, var(--editor-accent));
   gap: 0;
 }
@@ -533,7 +533,7 @@
 }
 .card-rich-editor .toastui-editor-defaultUI .toastui-editor-ok-button {
   background: var(--editor-accent);
-  color: var(--accent-ink, #fff);
+  color: var(--accent-ink);
 }
 .card-rich-editor .toastui-editor-defaultUI .toastui-editor-close-button,
 .card-rich-editor .toastui-editor-popup-add-image .toastui-editor-file-select-button {
@@ -543,6 +543,6 @@
 }
 .card-rich-editor .toastui-editor-tooltip,
 .card-rich-editor .toastui-editor-tooltip .arrow {
-  background: var(--surface-inv, #111a16);
-  color: var(--text-inv, #f5f8f6);
+  background: var(--surface-inv);
+  color: var(--text-inv);
 }

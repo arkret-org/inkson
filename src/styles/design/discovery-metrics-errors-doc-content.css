@@ -814,21 +814,21 @@
 }
 .board-grid.is-column-dragging .column-drop-target-before {
     opacity: 1;
-    outline-color: var(--accent, #7c83ff);
-    background-color: color-mix(in srgb, var(--accent, #7c83ff) 10%, transparent);
+    outline-color: var(--accent);
+    background-color: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .board-column.drop-zone-available {
-    outline: 2px dashed var(--accent, #7c83ff);
+    outline: 2px dashed var(--accent);
     outline-offset: -2px;
-    background-color: color-mix(in srgb, var(--accent, #7c83ff) 6%, transparent);
+    background-color: color-mix(in srgb, var(--accent) 6%, transparent);
     transition: background-color 120ms ease-out, outline-color 120ms ease-out;
 }
 /* The specific column under the drag pointer gets a solid accent border +
    stronger tint so the drop destination is unambiguous (M1). */
 .board-column.is-drop-target {
-    outline: 2px solid var(--accent, #7c83ff);
+    outline: 2px solid var(--accent);
     outline-offset: -2px;
-    background-color: color-mix(in srgb, var(--accent, #7c83ff) 14%, transparent);
+    background-color: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .board-card.dragging-source {
     opacity: 0.35;
@@ -849,7 +849,7 @@
     font-size: 0.85em;
 }
 .theme-switcher-option[data-active="true"] {
-    background: var(--accent, #7c83ff);
+    background: var(--accent);
     color: white;
 }
 

@@ -52,7 +52,7 @@ impl CardAssignmentMutation {
 #[derive(Serialize)]
 #[serde(untagged)]
 enum QueuedAssignmentBody {
-    Create(arkret_sdk::RelationCreatePayload),
+    Create(Box<arkret_sdk::RelationCreatePayload>),
     Tombstone(arkret_sdk::RelationTombstonePayload),
 }
 
@@ -76,9 +76,9 @@ fn queued_assignment_body(
     mutation: &CardAssignmentMutation,
 ) -> anyhow::Result<QueuedAssignmentBody> {
     Ok(match mutation {
-        CardAssignmentMutation::Create { operation, .. } => QueuedAssignmentBody::Create(
+        CardAssignmentMutation::Create { operation, .. } => QueuedAssignmentBody::Create(Box::new(
             operation.typed_payload::<arkret_wire::event_spec::RelationCreate>()?,
-        ),
+        )),
         CardAssignmentMutation::Tombstone { operation, .. } => QueuedAssignmentBody::Tombstone(
             operation.typed_payload::<arkret_wire::event_spec::RelationTombstone>()?,
         ),

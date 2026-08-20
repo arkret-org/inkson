@@ -7,7 +7,7 @@ use super::*;
 #[derive(serde::Serialize)]
 #[serde(untagged)]
 enum SharedPinOperationBody {
-    Add(arkret_sdk::PinAddPayload),
+    Add(Box<arkret_sdk::PinAddPayload>),
     Remove(arkret_sdk::PinRemovePayload),
 }
 
@@ -24,9 +24,9 @@ fn shared_pin_operation_body(
     operation: &crate::operation::LocalOperation,
 ) -> anyhow::Result<SharedPinOperationBody> {
     Ok(match operation.kind() {
-        arkret_sdk::EventKind::PinAdd => SharedPinOperationBody::Add(
+        arkret_sdk::EventKind::PinAdd => SharedPinOperationBody::Add(Box::new(
             operation.typed_payload::<arkret_wire::event_spec::PinAdd>()?,
-        ),
+        )),
         arkret_sdk::EventKind::PinRemove => SharedPinOperationBody::Remove(
             operation.typed_payload::<arkret_wire::event_spec::PinRemove>()?,
         ),
@@ -495,7 +495,10 @@ impl ChatController {
                 Err(error) => Err(error),
             };
             if let Err(error) = result {
-                status_msg.set(format!("Private save stayed local: {error}"));
+                status_msg.set(format!(
+                    "Private save stayed local: {}",
+                    crate::api_error::display_user_facing(&error)
+                ));
             }
         });
     }
@@ -615,7 +618,10 @@ impl ChatController {
                             !(pin.matches_scope(&pin_scope) && pin.target_ref == target_ref)
                         });
                     }
-                    status_msg.set(format!("Shared pin failed: {error}"));
+                    status_msg.set(format!(
+                        "Shared pin failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ));
                 }
             }
         });
@@ -744,9 +750,15 @@ impl ChatController {
                         mark_message_command_failed(
                             &mut messages,
                             &message_id,
-                            format!("Message update failed: {error:#}"),
+                            format!(
+                                "Message update failed: {}",
+                                crate::api_error::display_user_facing(&error)
+                            ),
                         );
-                        status_msg.set(format!("Message update failed: {error:#}"));
+                        status_msg.set(format!(
+                            "Message update failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        ));
                         return;
                     }
                 },
@@ -754,9 +766,15 @@ impl ChatController {
                     mark_message_command_failed(
                         &mut messages,
                         &message_id,
-                        format!("Message update failed: {error:#}"),
+                        format!(
+                            "Message update failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        ),
                     );
-                    status_msg.set(format!("Message update failed: {error:#}"));
+                    status_msg.set(format!(
+                        "Message update failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ));
                     return;
                 }
             };
@@ -769,9 +787,15 @@ impl ChatController {
                     mark_message_command_failed(
                         &mut messages,
                         &message_id,
-                        format!("Message update failed: {error}"),
+                        format!(
+                            "Message update failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        ),
                     );
-                    status_msg.set(format!("Message update failed: {error}"));
+                    status_msg.set(format!(
+                        "Message update failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ));
                 }
             }
         });
@@ -851,9 +875,15 @@ impl ChatController {
                     mark_message_command_failed(
                         &mut messages,
                         &message_id,
-                        format!("Message removal failed: {error}"),
+                        format!(
+                            "Message removal failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        ),
                     );
-                    status_msg.set(format!("Message removal failed: {error}"));
+                    status_msg.set(format!(
+                        "Message removal failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ));
                 }
             }
         });

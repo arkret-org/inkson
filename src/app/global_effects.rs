@@ -173,7 +173,7 @@ pub(super) fn GlobalEffects(
                 .await
                 {
                     tracing::debug!(
-                        error = %error.display(),
+                        error = %error.display_diagnostic(),
                         "scheduled-send dispatch tick deferred"
                     );
                 }

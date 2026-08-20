@@ -6,6 +6,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { mockArkretApi } from "./mockArkretApi";
+import { writeSessionGrantInjection } from "./strandsHarness";
 
 const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
 const MOBILE_VIEWPORT = { width: 390, height: 844 }; // iPhone 13
@@ -14,18 +15,13 @@ const TABLET_VIEWPORT = { width: 820, height: 1180 }; // iPad Air narrow layout
 async function bootAuthenticatedShell(page: Page, viewport = MOBILE_VIEWPORT) {
   await page.setViewportSize(viewport);
   await mockArkretApi(page);
-  await page.addInitScript(() => {
-    localStorage.setItem(
-      "inkson.config.v1",
-      JSON.stringify({
-        server_url: "https://local.host",
-        account_did: "did:web:alice.example",
-        device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
-        session_credential: "sx:e2e-token",
-      }),
-    );
-  });
+  // Session restore requires an injected grant + DPoP key (the secure store
+  // is IndexedDB-only); a bare inkson.config.v1 seed lands on Sign in. The
+  // writer touches localStorage, so navigate to the origin first, then
+  // reload so boot observes both the config and the injection.
   await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
+  await writeSessionGrantInjection(page);
+  await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toBeVisible({ timeout: 120_000 });
 }
 

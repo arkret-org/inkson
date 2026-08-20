@@ -17,7 +17,10 @@
 //! 2. The recovery holder identity is rendered only AFTER verifying it resolves to an active
 //!    `ArkretRealmHistoryRecoveryKey` service entry on the principal's DID Document (via the SDK
 //!    authority `resolve_realm_history_recovery_key`). An unverifiable recipient is shown as
-//!    "无法验证" — never as a bare public key.
+//!    "无法验证" / "Unverifiable" — never as a bare public key.
+//!
+//! All copy lives in the `durability_banner.*` i18n keys (`src/i18n/en.rs` /
+//! `zh.rs`); both locales preserve the two rules above.
 
 use dioxus::prelude::*;
 
@@ -109,9 +112,9 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
     });
 
     let mode_human = match mode_label {
-        "org_recovery_key" => "单一组织恢复密钥 (org_recovery_key)",
-        "threshold" => "门限恢复 (threshold)",
-        _ => mode_label,
+        "org_recovery_key" => crate::i18n::tr("durability_banner.mode_single"),
+        "threshold" => crate::i18n::tr("durability_banner.mode_threshold"),
+        _ => mode_label.to_owned(),
     };
 
     // Snapshot the resource value so the rsx body matches on an owned Option
@@ -124,7 +127,7 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
             "data-testid": "durability-disclosure-banner",
             "data-durability-mode": "{mode_label}",
             div { class: "event-head",
-                span { "本 Realm 历史已持续封存给恢复方" }
+                span { {crate::i18n::tr("durability_banner.title")} }
                 span {
                     class: "badge amber",
                     "data-testid": "durability-mode-badge",
@@ -137,9 +140,9 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
             }
             div { class: "muted",
                 // §2.10.8: state the holder can decrypt ALL history; MUST NOT
-                // imply real-time listening — the RRK is offline and only taken
-                // out on recovery.
-                "该恢复方持有者可解密本 Realm 的全部历史。恢复方处于离线状态、不是群组成员、不接收实时消息，仅在需要恢复时取出密钥。"
+                // imply real-time listening — the recovery key is offline and
+                // only taken out on recovery.
+                {crate::i18n::tr("durability_banner.body")}
             }
             div {
                 class: "durability-recipient-list",
@@ -147,7 +150,7 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
                 match verification_snapshot {
                     None => rsx! {
                         div { class: "muted", "data-testid": "durability-recipients-loading",
-                            "正在验证恢复方身份…"
+                            {crate::i18n::tr("durability_banner.verifying")}
                         }
                     },
                     Some(list) => rsx! {
@@ -159,16 +162,25 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
                                         principal_did,
                                         display,
                                         controller_organization,
-                                    } => rsx! {
-                                        div {
-                                            class: "durability-recipient",
-                                            "data-testid": "durability-recipient-verified",
-                                            "data-recipient-id": "{recipient_id}",
-                                            span { class: "badge green", "已验证" }
-                                            strong { title: "{principal_did}", "{display}" }
-                                            if let Some(org) = controller_organization {
-                                                span { class: "muted",
-                                                    " · 受控于 {short_protocol_id(&org)}"
+                                    } => {
+                                        let controlled_by = controller_organization.map(|org| {
+                                            format!(
+                                                " · {}",
+                                                crate::i18n::tr_args(
+                                                    "durability_banner.controlled_by",
+                                                    &[("org", short_protocol_id(&org))],
+                                                )
+                                            )
+                                        });
+                                        rsx! {
+                                            div {
+                                                class: "durability-recipient",
+                                                "data-testid": "durability-recipient-verified",
+                                                "data-recipient-id": "{recipient_id}",
+                                                span { class: "badge green", {crate::i18n::tr("durability_banner.verified")} }
+                                                strong { title: "{principal_did}", "{display}" }
+                                                if let Some(controlled_by) = controlled_by {
+                                                    span { class: "muted", "{controlled_by}" }
                                                 }
                                             }
                                         }
@@ -176,17 +188,21 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
                                     RecipientVerification::Unverified {
                                         recipient_id,
                                         principal_did,
-                                    } => rsx! {
-                                        div {
-                                            class: "durability-recipient durability-recipient--unverified",
-                                            "data-testid": "durability-recipient-unverified",
-                                            "data-recipient-id": "{recipient_id}",
-                                            span { class: "badge red", "无法验证" }
-                                            // Never render a bare public key; only
-                                            // the (unverified) principal id, clearly
-                                            // marked as unverified.
-                                            span { class: "muted", title: "{principal_did}",
-                                                "恢复方 {short_protocol_id(&principal_did)}（未能解析到活跃的 RRK 服务条目）"
+                                    } => {
+                                        // Never render a bare public key; only the
+                                        // (unverified) principal id, clearly marked
+                                        // as unverifiable ("无法验证" / "Unverifiable").
+                                        let unverified_detail = crate::i18n::tr_args(
+                                            "durability_banner.unverifiable_detail",
+                                            &[("did", short_protocol_id(&principal_did))],
+                                        );
+                                        rsx! {
+                                            div {
+                                                class: "durability-recipient durability-recipient--unverified",
+                                                "data-testid": "durability-recipient-unverified",
+                                                "data-recipient-id": "{recipient_id}",
+                                                span { class: "badge red", {crate::i18n::tr("durability_banner.unverifiable")} }
+                                                span { class: "muted", title: "{principal_did}", "{unverified_detail}" }
                                             }
                                         }
                                     },

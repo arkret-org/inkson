@@ -101,9 +101,23 @@ impl ApiCallError {
         }
     }
 
-    /// Human-readable rendering suitable for `status` / `last_error`
-    /// signals.
+    /// User-facing rendering for `status` / `last_error` signals:
+    /// plain-language localized copy that never carries the raw server
+    /// envelope or `(diagnostic: …)` payload. Use [`Self::display_diagnostic`]
+    /// for logs and developer surfaces.
     pub fn display(&self) -> String {
+        match self {
+            Self::Unavailable(_) => {
+                crate::api_error::localized_error_copy("error.server_unavailable")
+            }
+            Self::AuthExpired(_) => crate::api_error::localized_error_copy("error.session_expired"),
+            Self::Failed(err) => crate::api_error::display_user_facing(err),
+        }
+    }
+
+    /// Full diagnostic rendering for logs / developer surfaces: the raw
+    /// error plus the server's `reason_detail` when one was returned.
+    pub fn display_diagnostic(&self) -> String {
         match self {
             Self::Unavailable(err) => format!(
                 "API unavailable: {}",

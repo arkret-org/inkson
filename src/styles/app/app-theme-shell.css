@@ -1,55 +1,35 @@
-/* App theme layer: calm security-oriented palette shared by all views. */
-body {
-  font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  background: #eef3ed;
-  color: #142018;
-  letter-spacing: 0;
-}
+/* App theme layer: calm security-oriented palette shared by all views.
+ * The --ak-* tokens below are legacy aliases kept for existing
+ * consumers (workflow/board/card views); they now re-point at the
+ * canonical theme tokens from app_overrides/theme-shell-overrides.css
+ * so both light and dark themes resolve from one palette. */
 .shell {
-  --ak-bg: #edf3ee;
-  --ak-bg-soft: #f7faf7;
-  --ak-bg-end: #e0ebe2;
-  --ak-surface: #ffffff;
-  --ak-surface-raised: rgba(255, 255, 255, 0.94);
-  --ak-ink: #142018;
-  --ak-muted: #627065;
-  --ak-line: #d6e1d7;
-  --ak-line-strong: #c0cec2;
-  --ak-brand: #2b6b4f;
-  --ak-brand-strong: #1f5a41;
-  --ak-teal: #3a8a67;
-  --ak-green: #4b946a;
-  --ak-amber: #a56b13;
-  --ak-red: #c64940;
-  --ak-nav: #0f1914;
-  --ak-nav-soft: #16241d;
-  --ak-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
-  --ak-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
+  --ak-bg: var(--bg);
+  --ak-bg-soft: var(--surface-2);
+  --ak-bg-end: var(--bg-elev);
+  --ak-surface: var(--surface-solid);
+  --ak-surface-raised: var(--surface);
+  --ak-ink: var(--text);
+  --ak-muted: var(--text-2);
+  --ak-line: var(--border);
+  --ak-line-strong: var(--border-strong);
+  --ak-brand: var(--accent);
+  --ak-brand-strong: var(--accent-strong);
+  --ak-teal: var(--accent-2);
+  --ak-green: var(--success);
+  --ak-amber: var(--warning);
+  --ak-red: var(--danger);
+  --ak-nav: var(--nav-bg);
+  --ak-nav-soft: var(--nav-bg-2);
+  --ak-shadow-sm: var(--shadow-sm);
+  --ak-shadow: var(--shadow-lg);
   background: linear-gradient(135deg, var(--ak-bg) 0%, var(--ak-bg-soft) 64%, var(--ak-bg-end) 100%);
   color: var(--ak-ink);
 }
-[data-theme="dark"] .shell {
-  --ak-bg: #0d1511;
-  --ak-bg-soft: #111b16;
-  --ak-bg-end: #09100d;
-  --ak-surface: #15211b;
-  --ak-surface-raised: rgba(21, 33, 27, 0.94);
-  --ak-ink: #e7f0ea;
-  --ak-muted: #9caea2;
-  --ak-line: #2b3d34;
-  --ak-line-strong: #3b5246;
-  --ak-brand: #71b58f;
-  --ak-brand-strong: #4f9870;
-  --ak-teal: #89d0ad;
-  --ak-nav: #08100c;
-  --ak-nav-soft: #0d1612;
-  --ak-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
-  --ak-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
-}
 .sidebar {
   background: var(--ak-nav);
-  color: #e5edf7;
-  border-right: 1px solid rgba(148, 163, 184, 0.16);
+  color: var(--nav-text);
+  border-right: 1px solid var(--nav-border);
 }
 .brand {
   position: relative;
@@ -66,24 +46,24 @@ body {
   border-radius: 10px;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--text-on-accent);
   background: linear-gradient(135deg, var(--ak-brand-strong), var(--ak-teal));
-  box-shadow: 0 12px 30px rgba(31, 107, 79, 0.24);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--ak-brand-strong) 24%, transparent);
 }
 .status {
-  border-color: #334155;
+  border-color: var(--nav-border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.055);
+  background: var(--nav-soft);
   box-shadow: var(--ak-shadow-sm);
 }
 .realm-tree-node-button {
-  border-color: #334155;
+  border-color: var(--nav-border);
   border-radius: 12px;
   background: var(--ak-nav-soft);
 }
 .realm-tree-node-button.active {
-  border-color: rgba(113, 181, 143, 0.48);
-  background: rgba(43, 107, 79, 0.18);
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .main {
   background: transparent;
@@ -91,7 +71,7 @@ body {
 .topbar {
   margin: -6px -6px 2px;
   padding: 14px 16px;
-  border: 1px solid rgba(215, 224, 234, 0.86);
+  border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--ak-surface-raised);
   box-shadow: var(--ak-shadow-sm);
@@ -165,7 +145,7 @@ body {
 }
 .primary {
   background: var(--ak-brand-strong);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 .secondary {
   border: 1px solid var(--ak-line-strong);
@@ -176,14 +156,14 @@ body {
   border-radius: 999px;
   font-weight: 700;
 }
-.badge-info { background: #e8f3ec; color: #1f5a41; }
-.badge-success { background: #eefbf5; color: #047857; }
-.badge-error { background: #fff1f2; color: #b91c1c; }
-.badge-warning { background: #fff8e5; color: #92400e; }
-.badge.blue { background: #e8f3ec; color: #1f5a41; }
-.badge.amber { background: #fff8e5; color: #92400e; }
-.badge.red { background: #fff1f2; color: #b91c1c; }
-.badge.green { background: #ecfdf5; color: #047857; }
+.badge-info { background: var(--info-soft); color: var(--info-ink); }
+.badge-success { background: var(--success-soft); color: var(--success-ink); }
+.badge-error { background: var(--danger-soft); color: var(--danger-ink); }
+.badge-warning { background: var(--warning-soft); color: var(--warning-ink); }
+.badge.blue { background: var(--info-soft); color: var(--info-ink); }
+.badge.amber { background: var(--warning-soft); color: var(--warning-ink); }
+.badge.red { background: var(--danger-soft); color: var(--danger-ink); }
+.badge.green { background: var(--success-soft); color: var(--success-ink); }
 .write-state-badge {
   display: inline-flex;
   align-items: center;
@@ -276,11 +256,11 @@ body {
   line-height: 1;
 }
 .nested-card {
-  background: rgba(248, 250, 252, 0.76);
+  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
 }
 .directory-axis-card {
   background:
-    radial-gradient(circle at 100% 0%, rgba(43, 107, 79, 0.14), transparent 32%),
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--ak-brand) 14%, transparent), transparent 32%),
     var(--ak-surface);
 }
 .directory-search-card {
@@ -843,7 +823,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 50px 16px;
-  background: rgba(8, 16, 12, 0.52);
+  background: var(--scrim);
   overflow: auto;
 }
 .card-detail-popup {

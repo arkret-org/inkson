@@ -28,7 +28,7 @@
 }
 
 .contact-message-counter.over {
-  color: var(--danger, #d4504e);
+  color: var(--danger);
 }
 
 /* U3 — "from contacts" picker vs the locator (stranger) path. The divider
@@ -58,7 +58,7 @@
   content: "";
   flex: 1;
   height: 1px;
-  background: var(--border-default, var(--border, #333));
+  background: var(--border);
 }
 
 /* U4 — invite policy section spacing. */

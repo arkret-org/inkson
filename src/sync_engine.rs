@@ -978,7 +978,7 @@ async fn run_circle_scope_rotate_pass(
                 }
                 tracing::debug!(
                     %realm_id,
-                    error = %err.display(),
+                    error = %err.display_diagnostic(),
                     "sync_engine: Circle scope-rotate scan skipped",
                 );
                 continue;
@@ -1194,7 +1194,7 @@ async fn run_circle_scope_rotate_pass(
                     tracing::debug!(
                         %realm_id,
                         ?target_principal_ids,
-                        error = %error.display(),
+                        error = %error.display_diagnostic(),
                         "sync_engine: Realm-default MLS remove commit deferred",
                     );
                     continue;
@@ -1363,7 +1363,7 @@ async fn run_circle_scope_rotate_pass(
                             %realm_id,
                             %circle_id,
                             ?target_principal_ids,
-                            error = %err.display(),
+                            error = %err.display_diagnostic(),
                             "sync_engine: Circle scope-rotate submit failed",
                         );
                         continue;
@@ -1545,7 +1545,7 @@ async fn run_idle_self_update_pass(
             Err(err) => {
                 tracing::debug!(
                     %realm_id,
-                    error = %err.display(),
+                    error = %err.display_diagnostic(),
                     "sync_engine: idle §5.6 self-update commit not accepted (race or transient)",
                 );
                 // Lost the §5.4 CAS or a transient error — discard the local

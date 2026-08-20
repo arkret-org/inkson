@@ -133,7 +133,11 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
                                         .await
                                         {
                                             Ok(result) => uploaded.push(result.item),
-                                            Err(error) => last_error = Some(error.to_string()),
+                                            Err(error) => {
+                                                last_error = Some(
+                                                    crate::api_error::display_user_facing(&error),
+                                                );
+                                            }
                                         }
                                     }
                                     if !uploaded.is_empty() {
@@ -385,7 +389,10 @@ fn refresh_items(
                     format!("Synced {count}")
                 });
             }
-            Err(error) => status.set(format!("Refresh failed: {error}")),
+            Err(error) => status.set(format!(
+                "Refresh failed: {}",
+                crate::api_error::display_user_facing(&error)
+            )),
         }
         refreshing.set(false);
     });

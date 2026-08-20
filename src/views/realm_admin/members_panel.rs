@@ -4133,7 +4133,10 @@ pub fn RealmMembersPanel(
                                                         {
                                                             Ok(did) => did,
                                                             Err(error) => {
-                                                                status_msg.set(format!("invite target resolve failed: {error}"));
+                                                                status_msg.set(format!(
+                                                                    "invite target resolve failed: {}",
+                                                                    crate::api_error::display_user_facing(&error)
+                                                                ));
                                                                 return;
                                                             }
                                                         };
@@ -4258,7 +4261,10 @@ pub fn RealmMembersPanel(
                                                                     )),
                                                                 }
                                                             }
-                                                            Err(error) => status_msg.set(format!("invite failed: {error}")),
+                                                            Err(error) => status_msg.set(format!(
+                                                                "invite failed: {}",
+                                                                crate::api_error::display_user_facing(&error)
+                                                            )),
                                                         }
                                                     }
                                                     Err(error) => status_msg.set(format!("invalid server URL: {error}")),

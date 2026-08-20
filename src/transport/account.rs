@@ -1660,7 +1660,8 @@ mod tests {
                     "schema": "ak.schema.handle_claim.v1",
                     "handle": "alice:local.host",
                     "subject": "ak:did_core:web:alice.example",
-                    "binding_state": "verified"
+                    "binding_state": "verified",
+                    "created_at": "2026-06-12T08:00:00.000Z"
                 },
                 "profile": {
                     "id": "ak:actor_profile:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
@@ -1700,7 +1701,8 @@ mod tests {
                         "schema": "ak.schema.handle_claim.v1",
                         "handle": "alice:auth.local.host",
                         "subject": subject,
-                        "binding_state": binding_state
+                        "binding_state": binding_state,
+                        "created_at": "2026-06-12T08:00:00.000Z"
                     }
                 }))
                 .expect("account viewer shape");

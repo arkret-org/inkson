@@ -554,7 +554,7 @@ pub fn CallPanel(
                 // ── Dialer (idle). ───────────────────────────────────
                 if stage() == CallStage::Idle {
                     div { class: "event", "data-testid": "call-dialer",
-                        label { "Realm" }
+                        label { {crate::i18n::tr("friendly.realm")} }
                         input {
                             class: "input",
                             "data-testid": "call-realm-input",

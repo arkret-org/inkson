@@ -180,8 +180,24 @@ pub fn VerifyDevicePanel(
     let mut peer_public_b64 = use_signal(String::new);
     let mut sas_send_status = use_signal(String::new);
 
+    // `tr()` reads the i18n signal out of Dioxus context, which is not
+    // available inside spawned tasks / futures — the same constraint that
+    // makes `setup::realms::BootstrapProgressStrings` pre-resolve
+    // templates. Status strings set from async code below are resolved
+    // here and cloned across the boundary; `{placeholder}`s go through
+    // `crate::i18n::substitute_args`.
+    let peer_key_autofilled = crate::i18n::tr("verify_device.peer_key_autofilled");
+    let public_key_sent = crate::i18n::tr("verify_device.public_key_sent");
+    let send_failed_signing_tpl = crate::i18n::tr("verify_device.send_failed_signing");
+    let send_failed_sign_tpl = crate::i18n::tr("verify_device.send_failed_sign");
+    let send_failed_tpl = crate::i18n::tr("verify_device.send_failed");
+    let match_failed_signing_tpl = crate::i18n::tr("verify_device.match_failed_signing");
+    let match_failed_sign_tpl = crate::i18n::tr("verify_device.match_failed_sign");
+    let matched_tpl = crate::i18n::tr("verify_device.matched");
+
     {
         let state_store_for_inbox = state_store;
+        let peer_key_autofilled = peer_key_autofilled.clone();
         use_effect(move || {
             if verify_method() != VerifyMethod::Sas
                 || ephemeral_keypair().is_none()
@@ -197,8 +213,7 @@ pub fn VerifyDevicePanel(
             let messages_value = serde_json::json!({ "messages": inbox });
             if let Some(key) = extract_peer_verification_key(&messages_value) {
                 peer_public_b64.set(key);
-                sas_send_status
-                    .set("peer X25519 public key auto-filled from account subscribe".to_owned());
+                sas_send_status.set(peer_key_autofilled.clone());
             }
         });
     }
@@ -210,8 +225,10 @@ pub fn VerifyDevicePanel(
         let base = base_url.clone();
         let token_for_poll = token;
         let mut state_store_for_poll = state_store;
+        let peer_key_autofilled = peer_key_autofilled.clone();
         use_future(move || {
             let base = base.clone();
+            let peer_key_autofilled = peer_key_autofilled.clone();
             async move {
                 let mut ticks: u32 = 0;
                 loop {
@@ -237,10 +254,7 @@ pub fn VerifyDevicePanel(
                         let messages_value = serde_json::json!({ "messages": inbox });
                         if let Some(key) = extract_peer_verification_key(&messages_value) {
                             peer_public_b64.set(key);
-                            sas_send_status.set(
-                                "peer X25519 public key auto-filled from account subscribe"
-                                    .to_owned(),
-                            );
+                            sas_send_status.set(peer_key_autofilled.clone());
                             break;
                         }
                     }
@@ -274,10 +288,7 @@ pub fn VerifyDevicePanel(
                         .ingest_to_device_messages(&messages.messages);
                     if let Some(key) = extract_peer_verification_key(&messages_value) {
                         peer_public_b64.set(key);
-                        sas_send_status.set(
-                            "peer X25519 public key auto-filled from device_messages fallback"
-                                .to_owned(),
-                        );
+                        sas_send_status.set(peer_key_autofilled.clone());
                         if can_ack_batch && let Some(ack_token) = ack_token {
                             let _ = crate::transport::auth::with_endpoint_clients(
                                 &base,
@@ -409,11 +420,11 @@ pub fn VerifyDevicePanel(
                                     move |_| {
                                         let target = target_device();
                                         if target.trim().is_empty() {
-                                            verify_status.set("SAS target device id is required.".to_owned());
+                                            verify_status.set(crate::i18n::tr("verify_device.target_required"));
                                             return;
                                         }
                                         sas_code.set(format!("sas-session:{target}"));
-                                        verify_status.set("SAS session started locally. Generate and exchange X25519 public keys to compare the real SAS.".to_owned());
+                                        verify_status.set(crate::i18n::tr("verify_device.session_started"));
                                     }
                                 },
                                 {crate::i18n::tr("verify_device.start_sas")}
@@ -428,14 +439,17 @@ pub fn VerifyDevicePanel(
                         // device_message poll).
                         div { class: "event", "data-testid": "sas-x25519-exchange",
                             div { class: "event-head",
-                                span { "Key exchange (X25519)" }
+                                span { {crate::i18n::tr("verify_device.key_exchange_title")} }
                                 span { class: "badge",
-                                    if ephemeral_keypair().is_some() { "keypair ready" }
-                                    else { "not generated" }
+                                    if ephemeral_keypair().is_some() {
+                                        {crate::i18n::tr("verify_device.keypair_ready")}
+                                    } else {
+                                        {crate::i18n::tr("verify_device.keypair_missing")}
+                                    }
                                 }
                             }
                             div { class: "muted",
-                                "Generate a fresh ephemeral X25519 keypair, send the public half to your other device, and paste its public key here. The SAS pair below recomputes from the real ECDH shared secret as soon as both halves are present."
+                                {crate::i18n::tr("verify_device.key_exchange_hint")}
                             }
                             div { class: "actions",
                                 Button {
@@ -445,18 +459,19 @@ pub fn VerifyDevicePanel(
                                         match arkret_crypto::key_verification::EphemeralX25519Keypair::generate() {
                                             Ok(keypair) => {
                                                 ephemeral_keypair.set(Some(std::sync::Arc::new(keypair)));
-                                                sas_send_status.set(
-                                                    "fresh X25519 keypair generated; click Send to push the public half to the peer".to_owned(),
-                                                );
+                                                sas_send_status.set(crate::i18n::tr(
+                                                    "verify_device.keypair_generated",
+                                                ));
                                             }
                                             Err(error) => {
-                                                sas_send_status.set(format!(
-                                                    "could not generate ephemeral X25519 keypair: {error}"
+                                                sas_send_status.set(crate::i18n::tr_args(
+                                                    "verify_device.keypair_generate_failed",
+                                                    &[("error", error.to_string())],
                                                 ));
                                             }
                                         }
                                     },
-                                    "Generate my X25519 keypair"
+                                    {crate::i18n::tr("verify_device.generate_keypair")}
                                 }
                                 Button {
                                     variant: ButtonVariant::Primary,
@@ -466,14 +481,18 @@ pub fn VerifyDevicePanel(
                                         let base = base_url.clone();
                                         let account = account_did.clone();
                                         let from_device_for_send = device_id.clone();
+                                        let send_failed_signing_tpl = send_failed_signing_tpl.clone();
+                                        let send_failed_sign_tpl = send_failed_sign_tpl.clone();
+                                        let send_failed_tpl = send_failed_tpl.clone();
+                                        let public_key_sent = public_key_sent.clone();
                                         move |_| {
                                             let Some(pair) = ephemeral_keypair() else {
-                                                sas_send_status.set("generate a keypair first".to_owned());
+                                                sas_send_status.set(crate::i18n::tr("verify_device.generate_first"));
                                                 return;
                                             };
                                             let target = target_device().trim().to_owned();
                                             if target.is_empty() {
-                                                sas_send_status.set("target device id is required".to_owned());
+                                                sas_send_status.set(crate::i18n::tr("verify_device.target_required"));
                                                 return;
                                             }
                                             let public_b64 = pair.public_base64();
@@ -481,12 +500,20 @@ pub fn VerifyDevicePanel(
                                             let account = account.clone();
                                             let from_device = from_device_for_send.clone();
                                             let api_token = token();
+                                            // `tr()` context is unavailable inside the
+                                            // spawned task; move the pre-resolved
+                                            // templates across the boundary.
+                                            let send_failed_signing = send_failed_signing_tpl.clone();
+                                            let send_failed_sign = send_failed_sign_tpl.clone();
+                                            let send_failed = send_failed_tpl.clone();
+                                            let public_key_sent = public_key_sent.clone();
                                             spawn(async move {
                                                 let identity = match state_store.write().ensure_local_identity() {
                                                     Ok(identity) => identity,
                                                     Err(error) => {
-                                                        sas_send_status.set(format!(
-                                                            "send failed: secure device signing key unavailable: {error}"
+                                                        sas_send_status.set(crate::i18n::substitute_args(
+                                                            send_failed_signing,
+                                                            &[("error", error.to_string())],
                                                         ));
                                                         return;
                                                     }
@@ -503,7 +530,10 @@ pub fn VerifyDevicePanel(
                                                 ) {
                                                     Ok(proof) => proof,
                                                     Err(error) => {
-                                                        sas_send_status.set(format!("send failed: could not sign key envelope: {error}"));
+                                                        sas_send_status.set(crate::i18n::substitute_args(
+                                                            send_failed_sign,
+                                                            &[("error", error.to_string())],
+                                                        ));
                                                         return;
                                                     }
                                                 };
@@ -518,7 +548,10 @@ pub fn VerifyDevicePanel(
                                                 ) {
                                                     Ok(content) => content,
                                                     Err(error) => {
-                                                        sas_send_status.set(format!("send failed: {error}"));
+                                                        sas_send_status.set(crate::i18n::substitute_args(
+                                                            send_failed.clone(),
+                                                            &[("error", error.to_string())],
+                                                        ));
                                                         return;
                                                     }
                                                 };
@@ -541,17 +574,16 @@ pub fn VerifyDevicePanel(
                                                 )
                                                 .await
                                                 {
-                                                    Ok(_) => sas_send_status.set(
-                                                        "public key shipped via /device_messages; awaiting peer's key".to_owned(),
-                                                    ),
-                                                    Err(err) => sas_send_status.set(format!(
-                                                        "send failed: {}", err.display()
+                                                    Ok(_) => sas_send_status.set(public_key_sent),
+                                                    Err(err) => sas_send_status.set(crate::i18n::substitute_args(
+                                                        send_failed,
+                                                        &[("error", err.display().to_string())],
                                                     )),
                                                 }
                                             });
                                         }
                                     },
-                                    "Send my public key to peer"
+                                    {crate::i18n::tr("verify_device.send_public_key")}
                                 }
                             }
                             if let Some(pair) = ephemeral_keypair() {
@@ -559,7 +591,7 @@ pub fn VerifyDevicePanel(
                                     let pub_b64 = pair.public_base64();
                                     rsx! {
                                         div { class: "muted", "data-testid": "sas-local-public",
-                                            "My X25519 public (base64): {pub_b64}"
+                                            {crate::i18n::tr_args("verify_device.my_public_key", &[("key", pub_b64.clone())])}
                                         }
                                     }
                                 }
@@ -567,7 +599,7 @@ pub fn VerifyDevicePanel(
                             Input {
                                 "data-testid": "sas-peer-public-input",
                                 value: "{peer_public_b64}",
-                                placeholder: "Paste peer's X25519 public key (base64)",
+                                placeholder: crate::i18n::tr("verify_device.peer_key_placeholder"),
                                 oninput: move |event: FormEvent| peer_public_b64.set(event.value().trim().to_owned()),
                             }
                             if !sas_send_status().is_empty() {
@@ -611,7 +643,7 @@ pub fn VerifyDevicePanel(
                                                     shared.as_ref(),
                                                     info.as_bytes(),
                                                 ),
-                                                "real X25519 shared secret",
+                                                crate::i18n::tr("verify_device.source_secure"),
                                                 true,
                                             ),
                                             Err(_) => (
@@ -619,7 +651,7 @@ pub fn VerifyDevicePanel(
                                                     target.as_bytes(),
                                                     info.as_bytes(),
                                                 ),
-                                                "demo info (peer key invalid)",
+                                                crate::i18n::tr("verify_device.source_demo_invalid"),
                                                 false,
                                             ),
                                         }
@@ -629,7 +661,7 @@ pub fn VerifyDevicePanel(
                                             target.as_bytes(),
                                             info.as_bytes(),
                                         ),
-                                        "demo info (paste peer key for real ECDH)",
+                                        crate::i18n::tr("verify_device.source_demo_waiting"),
                                         false,
                                     ),
                                 };
@@ -653,8 +685,8 @@ pub fn VerifyDevicePanel(
                                     }
                                 }
                                 div { class: "entity-title", {crate::i18n::tr("verify_device.short_auth_string")} }
-                                div { class: "muted", "Visually compare this emoji + digit sequence side-by-side on both devices." }
-                                div { class: "muted", "data-testid": "sas-source", "Source: {sas_source}" }
+                                div { class: "muted", {crate::i18n::tr("verify_device.compare_hint")} }
+                                div { class: "muted", "data-testid": "sas-source", "{sas_source}" }
                                 // SAS emoji row — now computed via SDK HKDF.
                                 div { class: "actions", "data-testid": "sas-emoji-row",
                                     for (codepoint, label) in emoji_pairs {
@@ -686,9 +718,12 @@ pub fn VerifyDevicePanel(
                                                 .unwrap_or_default();
                                             let peer_public = peer_public_b64();
                                             let sas_decimal = sas.decimal_digits;
+                                            let match_failed_signing_tpl = match_failed_signing_tpl.clone();
+                                            let match_failed_sign_tpl = match_failed_sign_tpl.clone();
+                                            let matched_tpl = matched_tpl.clone();
                                             move |_| {
                                                 if local_public.trim().is_empty() || peer_public.trim().is_empty() {
-                                                    verify_status.set("SAS proof requires both signed X25519 public keys; generate/send your key and wait for the peer key first.".to_owned());
+                                                    verify_status.set(crate::i18n::tr("verify_device.match_requires_keys"));
                                                     return;
                                                 }
                                                 let actor = actor.clone();
@@ -696,12 +731,19 @@ pub fn VerifyDevicePanel(
                                                 let target = target.clone();
                                                 let local_public = local_public.clone();
                                                 let peer_public = peer_public.clone();
+                                                // `tr()` context is unavailable inside the
+                                                // spawned task; move the pre-resolved
+                                                // templates across the boundary.
+                                                let match_failed_signing = match_failed_signing_tpl.clone();
+                                                let match_failed_sign = match_failed_sign_tpl.clone();
+                                                let matched = matched_tpl.clone();
                                                 spawn(async move {
                                                     let identity = match state_store.write().ensure_local_identity() {
                                                         Ok(identity) => identity,
                                                         Err(error) => {
-                                                            verify_status.set(format!(
-                                                                "SAS failed: secure device signing key unavailable: {error}"
+                                                            verify_status.set(crate::i18n::substitute_args(
+                                                                match_failed_signing,
+                                                                &[("error", error.to_string())],
                                                             ));
                                                             return;
                                                         }
@@ -718,60 +760,64 @@ pub fn VerifyDevicePanel(
                                                     ) {
                                                         Ok(proof) => proof,
                                                         Err(error) => {
-                                                            verify_status.set(format!("SAS failed: could not sign proof: {error}"));
+                                                            verify_status.set(crate::i18n::substitute_args(
+                                                                match_failed_sign,
+                                                                &[("error", error.to_string())],
+                                                            ));
                                                             return;
                                                         }
                                                     };
                                                     let _ = proof;
-                                                    verify_status.set(format!(
-                                                        "SAS matched for {target}; signed proof built locally. Device authorization continues through the pairing/device-message flow."
+                                                    verify_status.set(crate::i18n::substitute_args(
+                                                        matched,
+                                                        &[("target", target)],
                                                     ));
                                                 });
                                             }
                                         },
-                                        "They Match"
+                                        {crate::i18n::tr("verify_device.they_match")}
                                     }
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "sas-mismatch-button",
-                                        onclick: move |_| verify_status.set("Mismatch — aborted. The new device will not be authorized and will not receive encrypted history.".to_owned()),
-                                        "They Don't Match"
+                                        onclick: move |_| verify_status.set(crate::i18n::tr("verify_device.mismatch_aborted")),
+                                        {crate::i18n::tr("verify_device.they_dont_match")}
                                     }
                                 }
                                 // Post-verification events panel
                                 // crypto-media/device-lifecycle.md §1.2 + §7-§9 (verification)
                                 div { class: "event", "data-testid": "sas-post-verification",
                                     div { class: "event-head",
-                                        span { "What happens after you confirm" }
+                                        span { {crate::i18n::tr("verify_device.after_confirm_title")} }
                                         span { class: "muted", "device-lifecycle §1.2, §7-§9" }
                                     }
                                     div { class: "muted",
-                                        "SAS only confirms human trust in the new device's key. The four steps below sign that trust into your account so the device becomes a long-term member and gains access to encrypted history."
+                                        {crate::i18n::tr("verify_device.after_confirm_body")}
                                     }
                                     div { class: "metric-grid",
                                         div { class: "metric",
                                             strong { "①" }
-                                            span { "Authorize device" }
-                                            div { class: "muted", "Add the new device's public key to your authorized set" }
+                                            span { {crate::i18n::tr("verify_device.step_authorize")} }
+                                            div { class: "muted", {crate::i18n::tr("verify_device.step_authorize_hint")} }
                                         }
                                         div { class: "metric",
                                             strong { "②" }
-                                            span { "Record acceptance" }
-                                            div { class: "muted", "The root-anchored device directory records the authorization" }
+                                            span { {crate::i18n::tr("verify_device.step_record")} }
+                                            div { class: "muted", {crate::i18n::tr("verify_device.step_record_hint")} }
                                         }
                                         div { class: "metric",
                                             strong { "③" }
-                                            span { "Rejoin encrypted groups" }
-                                            div { class: "muted", "Each Space rolls its encryption epoch to include the new device" }
+                                            span { {crate::i18n::tr("verify_device.step_rejoin")} }
+                                            div { class: "muted", {crate::i18n::tr("verify_device.step_rejoin_hint")} }
                                         }
                                         div { class: "metric",
                                             strong { "④" }
-                                            span { "Sync secret storage" }
-                                            div { class: "muted", "Pull the encrypted master-key envelope so history is decryptable" }
+                                            span { {crate::i18n::tr("verify_device.step_sync")} }
+                                            div { class: "muted", {crate::i18n::tr("verify_device.step_sync_hint")} }
                                         }
                                     }
                                     div { class: "muted",
-                                        "Sign-in, device authorization and device verification are three separate steps. Skipping SAS leaves you with a short-lived session that cannot decrypt past messages."
+                                        {crate::i18n::tr("verify_device.after_confirm_note")}
                                     }
                                 }
                             }

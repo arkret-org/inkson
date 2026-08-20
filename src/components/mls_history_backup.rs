@@ -380,7 +380,7 @@ async fn upload_mls_history_backup_job_snapshot(
         .await
     })
     .await
-    .map_err(|err| anyhow::anyhow!(err.display()))?;
+    .map_err(|err| anyhow::anyhow!(err.display_diagnostic()))?;
     Ok((backup_id, snapshot, body))
 }
 

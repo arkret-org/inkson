@@ -1,3 +1,13 @@
+//! UI copy style rules for every string in these dictionaries:
+//!
+//! * Plain language first — lead with what happened or what the user can do, then one concrete next
+//!   action. No protocol identifiers in user-facing copy: no `ak.*` event names, no `did:webvh:`
+//!   examples, no MLS epoch / key package talk, no PCR / RRK / SAS acronyms. Jargon belongs inside
+//!   "technical details" affordances and Developer surfaces only.
+//! * Error copy formula: what happened + what it means + what to do next.
+//! * English: short sentences, sentence case. Chinese: 简洁口语化，统一使用 工作区 / 空间 / 设备 /
+//!   恢复密钥 这套词汇，UI 名称不中英混杂。
+
 use std::collections::HashMap;
 
 /// The locale the client renders in.

@@ -95,7 +95,7 @@ pub(super) fn load_own_agents_for_sidebar(
             Err(err) => {
                 tracing::warn!(
                     "failed to reload personal agents for Contacts sidebar: {}",
-                    err.display()
+                    err.display_diagnostic()
                 );
             }
         }
@@ -161,7 +161,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                 crate::components::feedback::toast_error(
                     "feedback.contacts_load_failed",
                     vec![],
-                    Some(err.display()),
+                    Some(err.display_diagnostic()),
                 );
             }
         }
@@ -202,7 +202,7 @@ pub(super) fn load_direct_contacts_for_sidebar(
                 crate::components::feedback::toast_error(
                     "feedback.contacts_load_failed",
                     vec![],
-                    Some(err.display()),
+                    Some(err.display_diagnostic()),
                 );
             }
         }
@@ -333,7 +333,7 @@ pub(super) fn leave_sidebar_realm(
             Err(err) => crate::components::feedback::toast_error(
                 "feedback.realm_leave_failed",
                 vec![("realm", realm_label)],
-                Some(err.display()),
+                Some(err.display_diagnostic()),
             ),
         }
     });
@@ -455,7 +455,7 @@ pub(super) fn delete_sidebar_contact(
             Err(err) => crate::components::feedback::toast_error(
                 "feedback.contact_delete_failed",
                 vec![("name", peer_label)],
-                Some(err.display()),
+                Some(err.display_diagnostic()),
             ),
         }
     });

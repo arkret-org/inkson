@@ -24,7 +24,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("nav.collaboration", "Collaboration");
     dict.set("nav.contacts", "Contacts");
     dict.set("nav.direct_messages", "Direct");
-    dict.set("nav.new_realm_short", "Realm");
+    dict.set("nav.new_realm_short", "Workspace");
     dict.set("nav.add_contact_short", "Contact");
     dict.set("direct.empty", "No direct conversations");
     dict.set("direct.sign_in", "Sign in to load direct conversations");
@@ -32,12 +32,12 @@ pub fn english_translations() -> TranslationDict {
     dict.set("direct.unavailable", "Direct conversation unavailable");
     dict.set("contacts.empty", "No contacts yet");
     dict.set("contacts.sign_in", "Sign in to load contacts");
-    dict.set("sidebar.search_realms", "Search Realms");
+    dict.set("sidebar.search_realms", "Search workspaces");
     dict.set("sidebar.search_contacts", "Search contacts");
     dict.set("sidebar.search", "Search");
-    dict.set("sidebar.realms_empty", "No Realm tree loaded");
-    dict.set("sidebar.realms_sign_in", "Sign in to load Realms");
-    dict.set("sidebar.realms_no_results", "No matching Realms");
+    dict.set("sidebar.realms_empty", "No workspaces loaded yet");
+    dict.set("sidebar.realms_sign_in", "Sign in to load workspaces");
+    dict.set("sidebar.realms_no_results", "No matching workspaces");
 
     // AKP-0007 Circle error keys (P3B.3.2)
     add_circle_error_keys(&mut dict);
@@ -73,9 +73,9 @@ pub fn english_translations() -> TranslationDict {
     dict.set("directory.search_placeholder", "Search...");
     dict.set("directory.search", "Search");
     dict.set("directory.load_more", "Load More");
-    dict.set("directory.tab.realms", "Realms");
+    dict.set("directory.tab.realms", "Workspaces");
     dict.set("directory.tab.organizations", "Organizations");
-    dict.set("directory.tab.actors", "Actors");
+    dict.set("directory.tab.actors", "People");
     dict.set("directory.tab.objects", "Objects");
     dict.set("directory.tab.applets", "Applets");
     dict.set("directory.applet.ping", "Ping");
@@ -205,7 +205,7 @@ pub fn english_translations() -> TranslationDict {
     // R-i18n-002 extra keys for the highest-visibility surfaces.
     dict.set(
         "topbar.search_placeholder",
-        "Jump to a Realm, view or action...",
+        "Jump to a workspace, view or action...",
     );
     dict.set("topbar.notifications", "Notifications");
     dict.set("topbar.new_space", "New Space");
@@ -216,8 +216,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("login.signed_in_as", "Signed in as");
     dict.set("login.title", "Sign in");
     dict.set("login.completing", "Completing sign in");
-    dict.set("login.principal_server", "Principal server");
-    dict.set("login.principal_server_url", "Principal server URL");
+    dict.set("login.principal_server", "Sign-in server");
+    dict.set("login.principal_server_url", "Sign-in server URL");
     dict.set("login.show_preset_servers", "Show preset servers");
     dict.set("login.preset_servers", "Preset servers");
     dict.set("login.status.signed_out", "signed-out");
@@ -255,13 +255,19 @@ pub fn english_translations() -> TranslationDict {
         "Unread and approvals",
     );
     dict.set("dashboard.notifications_delta_signin", "Sign in required");
-    dict.set("dashboard.realms_label", "Realms");
-    dict.set("dashboard.realms_delta_search", "Search or join a Realm");
-    dict.set("dashboard.realms_delta_signin", "Sign in to load realms");
-    dict.set("dashboard.workspace_setup", "Realm Setup");
+    dict.set("dashboard.realms_label", "Workspaces");
+    dict.set(
+        "dashboard.realms_delta_search",
+        "Search or join a workspace",
+    );
+    dict.set(
+        "dashboard.realms_delta_signin",
+        "Sign in to load workspaces",
+    );
+    dict.set("dashboard.workspace_setup", "Workspace Setup");
     dict.set(
         "dashboard.workspace_setup_delta",
-        "Bootstrap your first Realm and initial policy",
+        "Bootstrap your first workspace and initial policy",
     );
     dict.set("dashboard.onboarding", "Onboarding");
     dict.set("dashboard.onboarding_steps", "4 steps");
@@ -269,15 +275,15 @@ pub fn english_translations() -> TranslationDict {
         "dashboard.onboarding_delta",
         "Identity, device, and recovery setup",
     );
-    dict.set("dashboard.recent_realms", "Recent Realms");
-    dict.set("dashboard.no_realms", "No realms loaded");
+    dict.set("dashboard.recent_realms", "Recent Workspaces");
+    dict.set("dashboard.no_realms", "No workspaces loaded");
     dict.set(
         "dashboard.no_realms_help",
-        "The connected server did not return realms yet.",
+        "The connected server did not return workspaces yet.",
     );
     dict.set(
         "dashboard.no_session_help",
-        "The client is not showing placeholder realms.",
+        "The client is not showing placeholder workspaces.",
     );
     // F-I18N-CLEAN-1: en strings previously hard-coded in dashboard / chat /
     // kanban / settings / realm_admin views.
@@ -299,11 +305,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.settings.shared_history", "Shared history");
     dict.set(
         "chat.settings.shared_history_hint",
-        "Realm-scoped policy - managed under Realm admin.",
+        "Workspace-scoped policy - managed under Workspace settings.",
     );
     dict.set(
         "settings.muted_realms_empty",
-        "No realms muted. Use the Notifications view to mute a noisy realm.",
+        "No workspaces muted. Use the Notifications view to mute a noisy workspace.",
     );
     dict.set("realm_admin.no_members_loaded", "No members yet.");
     dict.set(
@@ -316,7 +322,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.invite_hint",
-        "Use an invite locator link for highest trust, or enter a handle / DID + server DID when the recipient allows discovery.",
+        "For the most secure invite, use the invite link the person shares with you. If they allow being found, enter their handle or identity address plus their server.",
     );
 
     dict.set("notifications.archived", "Show archived");
@@ -326,12 +332,12 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.showing", "Showing");
     dict.set("notifications.load_more", "Load more");
     dict.set("directory.loading_more", "Loading...");
-    dict.set("directory.load_more_realms", "Load More Realms");
+    dict.set("directory.load_more_realms", "Load More Workspaces");
     dict.set(
         "directory.load_more_organizations",
         "Load More Organizations",
     );
-    dict.set("directory.load_more_actors", "Load More Actors");
+    dict.set("directory.load_more_actors", "Load More People");
 
     dict.set("composer.send", "Send");
     dict.set("composer.encrypted_toggle", "Encrypt locally");
@@ -340,16 +346,16 @@ pub fn english_translations() -> TranslationDict {
         "Plaintext messages may be visible to the configured server.",
     );
 
-    dict.set("command_palette.realms", "Realms");
+    dict.set("command_palette.realms", "Workspaces");
     dict.set("command_palette.jump_to", "Jump to");
     dict.set(
         "command_palette.empty",
-        "No matching realms or views. Press Esc to close.",
+        "No matching workspaces or views. Press Esc to close.",
     );
     dict.set("command_palette.close", "Close (Esc)");
 
-    dict.set("mobile.filter_realms", "Filter realms...");
-    dict.set("mobile.no_match", "No realms match.");
+    dict.set("mobile.filter_realms", "Filter workspaces...");
+    dict.set("mobile.no_match", "No workspaces match.");
 
     // Kanban / Board view (header + section labels)
     dict.set("kanban.board_header", "Board");
@@ -382,8 +388,8 @@ pub fn english_translations() -> TranslationDict {
         "Type a message before secure send",
     );
     dict.set("realm_admin.save_profile", "Save Profile");
-    dict.set("realm_admin.destroy_realm", "Destroy Realm");
-    dict.set("realm_admin.archive_realm", "Archive Realm");
+    dict.set("realm_admin.destroy_realm", "Destroy Workspace");
+    dict.set("realm_admin.archive_realm", "Archive Workspace");
     dict.set("verify_device.refresh_trust", "Refresh");
     dict.set("verify_device.verify_action", "Verify");
     dict.set("verify_device.revoke_action", "Revoke");
@@ -400,7 +406,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("kanban.rename_list_hint", "Double-click to rename");
     dict.set(
         "kanban.security_not_ready",
-        "Security state not ready; please retry shortly before writing to this Realm.",
+        "Security state not ready; please retry shortly before writing to this workspace.",
     );
     dict.set("realm_admin.apply_policy", "Apply Policy");
     dict.set(
@@ -411,10 +417,10 @@ pub fn english_translations() -> TranslationDict {
         "realm_admin.revoke_capability_move",
         "Revoke capability (Move)",
     );
-    dict.set("realm_admin.admin_grant_title", "Realm administrators");
+    dict.set("realm_admin.admin_grant_title", "Workspace administrators");
     dict.set(
         "realm_admin.admin_grant_hint",
-        "Grant or revoke ak.realm.admin authority. Authored as a signed capability event; takes effect once the soland reducer projects it.",
+        "Grant or revoke admin rights for this workspace. The change is signed and takes effect once the server processes it.",
     );
     dict.set("realm_admin.admin_subject_label", "Admin subject (DID)");
     dict.set("realm_admin.admin_grant_id_label", "Grant ID");
@@ -435,17 +441,17 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.ban_member_move", "Ban (Move)");
     dict.set("realm_admin.rotate_epoch", "Rotate Epoch");
     dict.set("realm_admin.leave_realm", "Leave");
-    dict.set("realm_admin.leave_confirm_title", "Leave this Realm?");
+    dict.set("realm_admin.leave_confirm_title", "Leave this workspace?");
     dict.set(
         "realm_admin.leave_confirm_body",
-        "After leaving you will need a new invitation to rejoin this Realm, and its local cache on this device will be cleared.",
+        "After leaving you will need a new invitation to rejoin this workspace, and its local cache on this device will be cleared.",
     );
-    dict.set("realm_admin.leave_confirm_target", "Realm to leave");
-    dict.set("realm_admin.leave_confirm_button", "Leave Realm");
+    dict.set("realm_admin.leave_confirm_target", "Workspace to leave");
+    dict.set("realm_admin.leave_confirm_button", "Leave Workspace");
     dict.set("realm_admin.leave_confirm_cancel", "Cancel");
     dict.set(
         "realm_admin.durability_title",
-        "Realm recovery key (durability)",
+        "Workspace recovery key (durability)",
     );
     dict.set(
         "realm_admin.durability_scheme_not_eligible",
@@ -453,11 +459,11 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_intro",
-        "Declares who can unseal this Realm's history after every member device is lost or all members have left. Changing the policy is a control-plane Move: it only applies to new epochs once a following ak.mls.commit covers the membership frontier, which also triggers re-disclosure to members.",
+        "Choose who can unlock this workspace's history if every member device is lost or everyone leaves. Changes apply only to new content after the next membership update, which also re-shares keys with members.",
     );
     dict.set(
         "realm_admin.durability_scheme_warning",
-        "This Realm does not use mls_exporter_aead_v1, so there is no deliverable history_secret; declaring mode != none will be rejected (durability_scheme_incompatible).",
+        "This workspace's encryption format does not support history recovery, so any mode other than None will be rejected.",
     );
     dict.set("realm_admin.durability_mode_label", "Mode");
     dict.set(
@@ -478,7 +484,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_recipients_hint",
-        "One per line: recipient_id | principal_did | verification_method [ | controller_org_did]",
+        "One recipient per line, fields separated by |: recipient name | identity address (did:...) | verification key [ | controlling organization]",
     );
     dict.set(
         "realm_admin.durability_threshold_label",
@@ -495,7 +501,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.durability_submitting", "Submitting…");
     dict.set(
         "realm_admin.durability_submitted",
-        "Submitted ak.realm.policy_bundle; advance one ak.mls.commit to activate the sealing obligation and trigger re-disclosure.",
+        "Policy saved. It takes effect after the next membership update, which also re-shares keys with members.",
     );
     dict.set(
         "realm_admin.durability_submit_failed",
@@ -535,7 +541,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_err_threshold_k",
-        "threshold k must satisfy 1 <= k <= n ({n}), got {k}",
+        "The threshold must be between 1 and the number of recipients ({n}); you entered {k}.",
     );
     dict.set("directory.list_contacts", "List");
     dict.set("directory.search_button", "Search");
@@ -598,6 +604,266 @@ pub fn english_translations() -> TranslationDict {
     // Recovery view (top-level section headers)
     dict.set("recovery.title", "Recovery");
     dict.set("recovery.recovery_key_section", "Recovery Key (24 words)");
+
+    // Custody-confirmed Recovery Key upload status (`views/recovery/upload.rs`).
+    dict.set(
+        "recovery.upload.publishing",
+        "Recovery key confirmed — publishing the recovery policy and encrypted backup…",
+    );
+    dict.set(
+        "recovery.upload.backed_up",
+        "Recovery key created; the recovery policy and encrypted account backup are stored. Write the 24 words down — they are the only way to restore on a new device.",
+    );
+    dict.set(
+        "recovery.upload.policy_active",
+        "Recovery key created and the recovery policy is active. Encrypted content will be backed up automatically the first time you use encryption.",
+    );
+    dict.set(
+        "recovery.upload.device_unauthorized",
+        "This device isn't authorized to set up the account recovery key. Authorize it from a device you already use, or restore with your existing 24-word recovery key.",
+    );
+    dict.set(
+        "recovery.upload.unreachable",
+        "Couldn't reach the server to set up recovery (nothing was changed): {error}. Try again.",
+    );
+
+    // Recovery panel (`views/recovery/panel.rs`) — headers, buttons,
+    // status lines, and backup-history copy.
+    dict.set("recovery.panel.aria_label", "Recovery and key backup");
+    dict.set("recovery.panel.options", "Recovery options");
+    dict.set(
+        "recovery.panel.overview_help",
+        "The Recovery Key (24 words) is the only recovery credential. Arkret never stores it on the server; backups are encrypted on this device before upload. A new device is authorized only after your recovery policy accepts its proof.",
+    );
+    dict.set(
+        "recovery.panel.status.publishing",
+        "publishing the confirmed recovery key…",
+    );
+    dict.set(
+        "recovery.panel.status.write_down",
+        "write the words down now",
+    );
+    dict.set("recovery.panel.status.accepted", "recovery key accepted ✓");
+    dict.set(
+        "recovery.panel.status.unconfirmed",
+        "backup on server — unconfirmed here",
+    );
+    dict.set("recovery.panel.status.not_set", "not set ⚠");
+    dict.set(
+        "recovery.panel.detail.publishing",
+        "Your offline copy is confirmed; the recovery policy and first encrypted backup are being saved.",
+    );
+    dict.set(
+        "recovery.panel.detail.custody",
+        "Write the words down, then re-enter them before anything is published.",
+    );
+    dict.set(
+        "recovery.panel.detail.confirmed",
+        "Recovery Key confirmed on this device",
+    );
+    dict.set("recovery.panel.detail.accepted_at", "Accepted {when}");
+    dict.set(
+        "recovery.panel.detail.material_elsewhere",
+        "A confirmed recovery key exists, but this device does not keep the words.",
+    );
+    dict.set(
+        "recovery.panel.detail.generate_cta",
+        "Generate one to enable cross-device recovery",
+    );
+    dict.set("recovery.panel.protects_title", "What it protects");
+    dict.set("recovery.panel.protects_value", "Encrypted history");
+    dict.set(
+        "recovery.panel.protects_hint",
+        "your encryption keys and your own content, backed up automatically",
+    );
+    dict.set("recovery.panel.keep_offline", "keep offline");
+    dict.set("recovery.panel.badge_not_backed_up", "Not backed up yet");
+    dict.set("recovery.panel.badge_backed_up", "Backed up");
+    dict.set(
+        "recovery.panel.key_help",
+        "This is your account's only recovery credential. Generating it protects your encryption keys behind these 24 words and uploads an encrypted backup; your own content is then backed up automatically. The words themselves never leave this device (only a fingerprint is kept locally); Arkret cannot recover them for you, so write them down. Losing them means your encrypted history cannot be restored.",
+    );
+    dict.set(
+        "recovery.panel.publishing_title",
+        "Publishing the recovery policy and encrypted backup…",
+    );
+    dict.set(
+        "recovery.panel.publishing_hint",
+        "The confirmed words stay only in memory until this write succeeds or you retry.",
+    );
+    dict.set("recovery.panel.not_generated", "Not generated yet");
+    dict.set(
+        "recovery.panel.not_generated_hint",
+        "Generate one so a new device can unlock your encrypted backups.",
+    );
+    dict.set(
+        "recovery.panel.write_down_title",
+        "Write these 24 words down now.",
+    );
+    dict.set(
+        "recovery.panel.write_down_body",
+        "Re-enter the saved words below before clearing them from this screen.",
+    );
+    dict.set(
+        "recovery.panel.confirm_label",
+        "Re-enter the saved Recovery Key",
+    );
+    dict.set(
+        "recovery.panel.confirm_placeholder",
+        "Type or paste the 24 words you saved",
+    );
+    dict.set(
+        "recovery.panel.confirm_hint",
+        "The words must match before the plaintext is cleared. If a word is wrong, the check tells you which position to fix — no need to regenerate.",
+    );
+    dict.set(
+        "recovery.panel.plaintext_cleared",
+        "The words are no longer in memory. Replacing the recovery key requires the staged handoff workflow.",
+    );
+    dict.set(
+        "recovery.panel.rotation_guard_title",
+        "Direct replacement is disabled.",
+    );
+    dict.set(
+        "recovery.panel.rotation_guard_body",
+        "A new Recovery Key must be activated through the two-step handoff, and all protected backups must be re-encrypted before the old key is revoked.",
+    );
+    dict.set("recovery.panel.last_accepted", "Last accepted");
+    dict.set(
+        "recovery.panel.rotate_hint",
+        "Rotate only through the staged handoff workflow",
+    );
+    dict.set("recovery.panel.fingerprint", "Fingerprint");
+    dict.set(
+        "recovery.panel.fingerprint_hint",
+        "stored locally, never uploaded",
+    );
+    dict.set(
+        "recovery.panel.goto_devices_title",
+        "Authorize this device from one you already use, then come back and generate the key.",
+    );
+    dict.set("recovery.panel.goto_devices", "Open device settings");
+    dict.set(
+        "recovery.panel.regenerate_title_fresh",
+        "Discard the displayed words and prepare a fresh recovery secret.",
+    );
+    dict.set(
+        "recovery.panel.regenerate_title_guard",
+        "Direct replacement is unsafe; use the staged handoff.",
+    );
+    dict.set(
+        "recovery.panel.regenerate_title_default",
+        "Generate the words locally; nothing is published until you re-enter them.",
+    );
+    dict.set("recovery.panel.generate_failed", "Generate failed: {error}");
+    dict.set(
+        "recovery.panel.generated_status",
+        "Write the words down offline and re-enter them. No recovery key has been published yet.",
+    );
+    dict.set("recovery.panel.publishing_button", "Publishing…");
+    dict.set("recovery.panel.start_over", "Start over with a new key");
+    dict.set("recovery.panel.generate", "Generate");
+    dict.set("recovery.panel.handoff_required", "Staged handoff required");
+    dict.set(
+        "recovery.panel.copy_title",
+        "Copy the 24-word Recovery Key to the clipboard.",
+    );
+    dict.set("recovery.panel.copied", "✓ Copied!");
+    dict.set("recovery.panel.copy", "Copy");
+    dict.set(
+        "recovery.panel.retry_title",
+        "Clear the entry and type the saved words again.",
+    );
+    dict.set("recovery.panel.retry", "Clear and retry");
+    dict.set(
+        "recovery.panel.clear_live_title",
+        "Confirm the offline copy before publishing the recovery key.",
+    );
+    dict.set(
+        "recovery.panel.custody_confirmed",
+        "Offline copy confirmed. Publishing the recovery policy and first encrypted backup…",
+    );
+    dict.set(
+        "recovery.panel.metadata_save_failed",
+        "The recovery key was accepted, but saving local metadata failed.",
+    );
+    dict.set(
+        "recovery.panel.accepted_done",
+        "Recovery key accepted; the words were cleared from memory. Keep your offline copy safe.",
+    );
+    dict.set(
+        "recovery.panel.retry_extra",
+        " If your saved copy keeps failing, start over with a new key.",
+    );
+    dict.set(
+        "recovery.panel.word_count",
+        "You entered {entered} of 24 words. Complete the phrase, then confirm again.{extra}",
+    );
+    dict.set(
+        "recovery.panel.word_mismatch",
+        "Word {index} does not match the displayed key. Fix it and confirm again.{extra}",
+    );
+    dict.set(
+        "recovery.panel.confirm_publish",
+        "Confirm custody and publish",
+    );
+    dict.set("recovery.panel.history_title", "Advanced · Backup history");
+    dict.set(
+        "recovery.panel.history_subtitle",
+        "encrypted server copies only",
+    );
+    dict.set(
+        "recovery.panel.history_help",
+        "Shows when encrypted backups were created on the server. Backup contents stay encrypted and are not shown here.",
+    );
+    dict.set("recovery.panel.fetching", "Fetching backup times…");
+    dict.set("recovery.panel.fetch_failed", "Backup times: {error}");
+    dict.set("recovery.panel.loading", "Loading…");
+    dict.set("recovery.panel.refresh", "Refresh backup times");
+    dict.set(
+        "recovery.panel.clear_title",
+        "Only clears this local panel. It does not delete server backups.",
+    );
+    dict.set(
+        "recovery.panel.cleared",
+        "Cleared local backup history state. Server backups were not deleted.",
+    );
+    dict.set("recovery.panel.clear", "Clear panel");
+    dict.set(
+        "recovery.panel.no_backups",
+        "No encrypted server backups found. Recovery policy status is checked separately.",
+    );
+    dict.set("recovery.panel.not_loaded", "No backup times loaded yet.");
+    dict.set(
+        "recovery.panel.inventory_empty",
+        "Loaded 0 backup timestamps from the server. Recovery policy status is checked separately from encrypted backup inventory.",
+    );
+    dict.set(
+        "recovery.panel.inventory_loaded",
+        "Loaded {count} backup timestamp(s). Last backup: {latest}",
+    );
+    dict.set("recovery.panel.last_backup", "Last backup");
+    dict.set("recovery.panel.backups_found", "Backups found");
+    dict.set("recovery.panel.snapshots", "encrypted snapshots");
+    dict.set("recovery.panel.backup_times", "Backup times");
+    dict.set("recovery.panel.total", "{total} total");
+    dict.set("recovery.panel.latest", "latest");
+    dict.set(
+        "recovery.panel.older_hidden",
+        "{count} older backup time(s) hidden",
+    );
+    dict.set(
+        "recovery.panel.writeback_title",
+        "Advanced · What happens when recovery succeeds",
+    );
+    dict.set(
+        "recovery.panel.writeback_subtitle",
+        "method-specific evidence",
+    );
+    dict.set(
+        "recovery.panel.writeback_body",
+        "A complete recovery makes the new device create its own keys, prove them against your active recovery policy, record a recovery receipt, authorize itself, and then unlock your encrypted history backups. Backup history stays visible above; the proof and device authorization are separate follow-up steps.",
+    );
     dict.set("device_authorization.aria_label", "Authorize this device");
     dict.set("device_authorization.title", "Authorize this device");
     dict.set(
@@ -606,7 +872,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "device_authorization.description",
-        "This browser is signed in, but it is not yet trusted for encrypted data. Start an approval request here. An authorized device that is online will usually show a confirmation prompt automatically.",
+        "This browser is signed in, but it is not trusted for encrypted data yet. Start an approval request here — a device you already trust will usually show a confirmation prompt.",
     );
     dict.set(
         "device_authorization.approve_step_existing_title",
@@ -642,7 +908,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "mls_unlock.description",
-        "This device is authorized, but it does not yet have the keys needed to open encrypted history. Restore them from another authorized device or with your Recovery Key.",
+        "This device is authorized, but it does not have the keys to open encrypted history yet. Restore them from another device you own, or use your recovery key.",
     );
     dict.set(
         "mls_unlock.approve_step_existing_title",
@@ -659,7 +925,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "mls_unlock.loading_hint",
-        "Restoring multiple encrypted realms can take a few seconds. Keep this tab open.",
+        "Restoring multiple encrypted workspaces can take a few seconds. Keep this tab open.",
     );
     dict.set(
         "mls_unlock.limitation",
@@ -670,7 +936,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_unlock.hide_recovery_key", "Hide recovery key");
     dict.set(
         "mls_unlock.recovery_fallback_hint",
-        "Use this only if no authorized device is available. The 24-word Recovery Key starts the recovery path and unlocks encrypted-history backups after policy checks.",
+        "Only use this if none of your other devices are available. Your 24-word recovery key unlocks your encrypted-history backups once the server's checks pass.",
     );
     dict.set("mls_unlock.placeholder", "24-word recovery key");
     dict.set("mls_unlock.button_idle", "Unlock with key");
@@ -711,7 +977,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "mls_recovery_missing.description",
-        "This Realm is end-to-end encrypted. If you just accepted an invite, the key is delivered to you automatically when you join — nothing to enter; reload or let sync finish and new messages will open. Messages sent before you joined cannot be opened on any device — that is by design, and no recovery backup will unlock them. A recovery backup only brings back content from YOUR OWN earlier devices: set it up under Settings -> Recovery by generating your Recovery Key (24 words) — your encrypted history is backed up to it automatically.",
+        "This workspace is end-to-end encrypted, and this device does not have the key yet. If you just joined, the key arrives automatically — reload or wait for sync to finish; messages from before you joined cannot be opened on any device. To restore content from your own earlier devices, set up your recovery key in Settings → Recovery.",
     );
     dict.set("mls_recovery_missing.button_dismiss", "Dismiss");
 
@@ -821,7 +1087,7 @@ pub fn english_translations() -> TranslationDict {
     );
 
     // Space-admin view (section labels)
-    dict.set("realm_admin.title", "Realm Settings");
+    dict.set("realm_admin.title", "Workspace Settings");
     dict.set("realm_admin.devices", "Devices");
     dict.set("realm_admin.members", "Members");
     dict.set("realm_admin.access", "Access");
@@ -860,7 +1126,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.handle_reassigned.badge", "handle reassigned");
     dict.set(
         "chat.handle_reassigned.tooltip",
-        "This handle was captured at compose time but currently resolves to a different DID. Compare the captured label against the current sender.",
+        "This name pointed to a different account when the message was written than it does now. Check the sender carefully before trusting it.",
     );
     dict.set("chat.binding_context.separator", " @ ");
     dict.set("chat.binding_context.details", "Show service binding");
@@ -887,9 +1153,9 @@ pub fn english_translations() -> TranslationDict {
         "chat.crypto.undecryptable_generic",
         "This message can't be decrypted on this device.",
     );
-    dict.set("chat.mls.epoch", "MLS epoch");
-    dict.set("chat.mls.key_package", "Key package");
-    dict.set("chat.mls.welcome", "Welcome");
+    dict.set("chat.mls.epoch", "Encryption version");
+    dict.set("chat.mls.key_package", "Device encryption key");
+    dict.set("chat.mls.welcome", "Join invitation");
     // T7.5 layout polish.
     dict.set("chat.tabs.settings", "Settings");
     dict.set("chat.tabs.members", "Members");
@@ -900,7 +1166,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("moderation.report.title", "Report message");
     dict.set(
         "moderation.report.help",
-        "Choose the reason that best describes the problem. The signed report is submitted to this Realm's moderation process.",
+        "Choose the reason that best describes the problem. The signed report is submitted to this workspace's moderation process.",
     );
     dict.set("moderation.report.reason", "Reason");
     dict.set("moderation.report.reason.spam", "Spam");
@@ -972,11 +1238,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("pinned_bar.title", "Shared pinned messages");
     dict.set("pinned_bar.scroll_to", "Jump to message");
     // Actor-private Realm list pinning.
-    dict.set("realm.pin", "Pin Realm");
-    dict.set("realm.unpin", "Unpin Realm");
-    dict.set("realm.pinned", "Pinned Realm");
-    dict.set("realm.unpinned", "Unpinned Realm");
-    dict.set("realm.pin_failed", "Realm pin account-data save failed");
+    dict.set("realm.pin", "Pin Workspace");
+    dict.set("realm.unpin", "Unpin Workspace");
+    dict.set("realm.pinned", "Pinned Workspace");
+    dict.set("realm.unpinned", "Unpinned Workspace");
+    dict.set("realm.pin_failed", "Workspace pin account-data save failed");
     // Actor-private contact list pinning.
     dict.set("contact.pin", "Pin Contact");
     dict.set("contact.unpin", "Unpin Contact");
@@ -994,7 +1260,7 @@ pub fn english_translations() -> TranslationDict {
     // Notifications panel (group tabs + toolbar tooltips)
     dict.set("notifications.feed_title", "Notification feed");
     dict.set("notifications.view.latest", "Latest");
-    dict.set("notifications.view.realm", "Realm");
+    dict.set("notifications.view.realm", "Workspace");
     dict.set("notifications.view.type", "Type");
     dict.set("notifications.tooltip.settings", "Notification settings");
     dict.set("notifications.tooltip.mark_all_read", "Mark all read");
@@ -1003,11 +1269,11 @@ pub fn english_translations() -> TranslationDict {
     dict.set("notifications.tooltip.refresh", "Refresh notifications");
     dict.set(
         "notifications.filtered_body",
-        "All loaded notifications are currently hidden by archive, type, or per-Realm mute rules.",
+        "All loaded notifications are currently hidden by archive, type, or per-workspace mute rules.",
     );
     // Default titles / actions per notification kind (the model stores these
     // keys; render translates via tr()).
-    dict.set("notifications.default_title.invite", "Realm invite");
+    dict.set("notifications.default_title.invite", "Workspace invite");
     dict.set("notifications.default_title.reaction", "New reaction");
     dict.set("notifications.default_title.mention", "You were mentioned");
     dict.set(
@@ -1033,20 +1299,23 @@ pub fn english_translations() -> TranslationDict {
     );
     // Dashboard projection collection labels (helpers return these keys;
     // render translates via tr()).
-    dict.set("dashboard.node_kind.realm", "Realm");
+    dict.set("dashboard.node_kind.realm", "Workspace");
     dict.set("dashboard.node_kind.space", "Space");
-    dict.set("dashboard.collection.realms_and_spaces", "Realms & Spaces");
+    dict.set(
+        "dashboard.collection.realms_and_spaces",
+        "Workspaces & Spaces",
+    );
     dict.set("dashboard.collection.spaces", "Spaces");
-    dict.set("dashboard.collection.realms", "Realms");
+    dict.set("dashboard.collection.realms", "Workspaces");
     dict.set(
         "dashboard.collection.recent_realms_and_spaces",
-        "Recent Realms & Spaces",
+        "Recent Workspaces & Spaces",
     );
     dict.set("dashboard.collection.recent_spaces", "Recent Spaces");
-    dict.set("dashboard.collection.recent_realms", "Recent Realms");
+    dict.set("dashboard.collection.recent_realms", "Recent Workspaces");
     dict.set(
         "dashboard.collection.browse_realm_or_space",
-        "Search or join a Realm or Space",
+        "Search or join a Workspace or Space",
     );
     dict.set(
         "dashboard.collection.browse_space",
@@ -1054,11 +1323,11 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "dashboard.collection.browse_realm",
-        "Search or join a Realm",
+        "Search or join a workspace",
     );
     dict.set(
         "dashboard.collection.signin_realms_and_spaces",
-        "Sign in to load realms and Spaces",
+        "Sign in to load workspaces and Spaces",
     );
     dict.set(
         "dashboard.collection.signin_spaces",
@@ -1066,17 +1335,17 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "dashboard.collection.signin_realms",
-        "Sign in to load realms",
+        "Sign in to load workspaces",
     );
     dict.set(
         "dashboard.collection.empty_realms_and_spaces",
-        "No realms or Spaces loaded",
+        "No workspaces or Spaces loaded",
     );
     dict.set("dashboard.collection.empty_spaces", "No Spaces loaded");
-    dict.set("dashboard.collection.empty_realms", "No realms loaded");
+    dict.set("dashboard.collection.empty_realms", "No workspaces loaded");
     dict.set(
         "dashboard.collection.empty_help_realms_and_spaces",
-        "The connected server did not return realms or Spaces yet.",
+        "The connected server did not return workspaces or Spaces yet.",
     );
     dict.set(
         "dashboard.collection.empty_help_spaces",
@@ -1084,17 +1353,17 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "dashboard.collection.empty_help_realms",
-        "The connected server did not return realms yet.",
+        "The connected server did not return workspaces yet.",
     );
 
     // Verify Device (device-lifecycle.md §10 Verification Strands: SAS / QR)
     dict.set("verify_device.title", "Device Verification");
     dict.set("verify_device.choose_method", "choose method");
     dict.set("verify_device.qr_code", "QR Code");
-    dict.set("verify_device.sas_emoji", "SAS (Emoji)");
+    dict.set("verify_device.sas_emoji", "Emoji comparison");
     dict.set("verify_device.qr_section", "QR Verification");
     dict.set("verify_device.qr_section_hint", "scan or display");
-    dict.set("verify_device.sas_section", "SAS Verification");
+    dict.set("verify_device.sas_section", "Emoji verification");
     dict.set("verify_device.sas_section_hint", "emoji comparison");
     dict.set("verify_device.target_device_id", "Target Device ID");
     dict.set(
@@ -1102,18 +1371,137 @@ pub fn english_translations() -> TranslationDict {
         "Device ID to verify",
     );
     dict.set("verify_device.generate_qr", "Generate QR Data");
-    dict.set("verify_device.start_sas", "Start SAS Verification");
-    dict.set(
-        "verify_device.short_auth_string",
-        "Short Authentication String",
-    );
+    dict.set("verify_device.start_sas", "Start emoji verification");
+    dict.set("verify_device.short_auth_string", "Comparison code");
     dict.set(
         "verify_device.sas_demo_warning",
         "Key exchange is not complete yet. The sequence below is a placeholder and must not be used for verification.",
     );
     dict.set(
         "verify_device.sas_match_disabled_hint",
-        "Complete the X25519 key exchange first — the placeholder sequence cannot be confirmed as a match.",
+        "The secure connection between the devices is not ready yet, so these cannot be confirmed as a match. Wait for it to finish.",
+    );
+
+    // SAS strand — plain-language rewrite: no SAS / X25519 jargon in
+    // user-facing copy. This panel has no "technical details" affordance,
+    // so the jargon is dropped rather than tucked behind one.
+    dict.set("verify_device.key_exchange_title", "Key exchange");
+    dict.set("verify_device.keypair_ready", "key ready");
+    dict.set("verify_device.keypair_missing", "not generated");
+    dict.set(
+        "verify_device.key_exchange_hint",
+        "Generate a fresh one-time key, send the public part to your other device, and paste the other device's public key below. The emoji and digits update as soon as both sides are connected.",
+    );
+    dict.set("verify_device.generate_keypair", "Generate my key");
+    dict.set(
+        "verify_device.keypair_generated",
+        "Key generated — click Send to share the public part with the other device.",
+    );
+    dict.set(
+        "verify_device.keypair_generate_failed",
+        "Could not generate a key: {error}",
+    );
+    dict.set("verify_device.send_public_key", "Send my public key");
+    dict.set("verify_device.generate_first", "Generate a key first.");
+    dict.set(
+        "verify_device.target_required",
+        "Enter the device ID to verify first.",
+    );
+    dict.set(
+        "verify_device.send_failed_signing",
+        "Send failed — this device's signing key is unavailable: {error}",
+    );
+    dict.set(
+        "verify_device.send_failed_sign",
+        "Send failed — could not sign the key message: {error}",
+    );
+    dict.set("verify_device.send_failed", "Send failed: {error}");
+    dict.set(
+        "verify_device.public_key_sent",
+        "Public key sent. Waiting for the other device's key.",
+    );
+    dict.set("verify_device.my_public_key", "My public key: {key}");
+    dict.set(
+        "verify_device.peer_key_placeholder",
+        "Paste the other device's public key",
+    );
+    dict.set(
+        "verify_device.peer_key_autofilled",
+        "The other device's public key arrived automatically.",
+    );
+    dict.set(
+        "verify_device.session_started",
+        "Verification session started. Generate and exchange keys on both devices to see the real emoji and digits.",
+    );
+    dict.set(
+        "verify_device.compare_hint",
+        "Compare these emoji and digits on both devices — they must look identical.",
+    );
+    dict.set(
+        "verify_device.source_secure",
+        "Derived from the secure key exchange between both devices.",
+    );
+    dict.set(
+        "verify_device.source_demo_invalid",
+        "Placeholder — the other device's key is invalid.",
+    );
+    dict.set(
+        "verify_device.source_demo_waiting",
+        "Placeholder — waiting for the other device's key.",
+    );
+    dict.set(
+        "verify_device.match_requires_keys",
+        "Both devices' keys are needed first — generate and send your key, then wait for the other device's key.",
+    );
+    dict.set(
+        "verify_device.match_failed_signing",
+        "Confirmation failed — this device's signing key is unavailable: {error}",
+    );
+    dict.set(
+        "verify_device.match_failed_sign",
+        "Confirmation failed — could not sign the proof: {error}",
+    );
+    dict.set(
+        "verify_device.matched",
+        "Codes match for {target}. The confirmation is signed on this device; authorization continues through the pairing flow.",
+    );
+    dict.set(
+        "verify_device.mismatch_aborted",
+        "Mismatch — aborted. The new device will not be authorized and will not receive encrypted history.",
+    );
+    dict.set("verify_device.they_match", "They match");
+    dict.set("verify_device.they_dont_match", "They don't match");
+    dict.set(
+        "verify_device.after_confirm_title",
+        "What happens after you confirm",
+    );
+    dict.set(
+        "verify_device.after_confirm_body",
+        "The comparison only confirms that you trust the new device's key. The four steps below record that trust in your account, so the device becomes a long-term member and can read encrypted history.",
+    );
+    dict.set("verify_device.step_authorize", "Authorize device");
+    dict.set(
+        "verify_device.step_authorize_hint",
+        "Add the new device's public key to your authorized set",
+    );
+    dict.set("verify_device.step_record", "Record acceptance");
+    dict.set(
+        "verify_device.step_record_hint",
+        "Your account's device directory records the authorization",
+    );
+    dict.set("verify_device.step_rejoin", "Rejoin encrypted groups");
+    dict.set(
+        "verify_device.step_rejoin_hint",
+        "Each space updates its encryption to include the new device",
+    );
+    dict.set("verify_device.step_sync", "Sync secret storage");
+    dict.set(
+        "verify_device.step_sync_hint",
+        "Fetch the encrypted key backup so past history is readable",
+    );
+    dict.set(
+        "verify_device.after_confirm_note",
+        "Sign-in, device authorization, and device verification are three separate steps. Skipping verification leaves you with a short-lived session that cannot decrypt past messages.",
     );
 
     // A6.4 — keyboard shortcut help overlay.
@@ -1161,7 +1549,7 @@ pub fn english_translations() -> TranslationDict {
     // submit-time guard when the input still doesn't look like a DID.
     dict.set(
         "settings.privacy.blocked_users.did_invalid",
-        "DID must start with did: (e.g. did:webvh:alice.example).",
+        "Enter an identity address starting with \"did:\".",
     );
     dict.set("settings.privacy.unblock", "Unblock");
     // A4b — avatar upload UI keys.
@@ -1210,10 +1598,10 @@ pub fn english_translations() -> TranslationDict {
     );
     // A6.1 — global cross-Realm message search.
     dict.set("search.title", "Search messages");
-    dict.set("search.placeholder", "Search across all your realms...");
+    dict.set("search.placeholder", "Search across all your workspaces...");
     dict.set(
         "search.results.empty",
-        "Type a query to search across your realms.",
+        "Type a query to search across your workspaces.",
     );
     dict.set("search.results.loading", "Searching…");
     dict.set("search.results.error", "Search failed");
@@ -1284,9 +1672,12 @@ pub fn english_translations() -> TranslationDict {
     dict.set("friendly.sync.frontier", "Sync state");
 
     // Friendly labels for the security-boundary Realm and container Space split.
-    dict.set("friendly.realm", "Realm");
-    dict.set("friendly.realm.short", "Realm");
-    dict.set("friendly.realm.description", "Security boundary — membership, policy, federation, and encryption are governed at this level.");
+    dict.set("friendly.realm", "Workspace");
+    dict.set("friendly.realm.short", "Workspace");
+    dict.set(
+        "friendly.realm.description",
+        "A workspace owns membership, rules, sharing between servers, and encryption for everything inside it.",
+    );
     dict.set("friendly.realm.security_class", "Security boundary");
     dict.set(
         "friendly.realm.security_class.standard",
@@ -1296,18 +1687,18 @@ pub fn english_translations() -> TranslationDict {
         "friendly.realm.security_class.high_assurance",
         "High assurance",
     );
-    dict.set("friendly.realm.settings", "Realm settings");
+    dict.set("friendly.realm.settings", "Workspace settings");
     dict.set(
         "friendly.realm.settings.subtitle",
-        "Policy, membership, federation, and E2EE",
+        "Members, rules, sharing, and encryption",
     );
-    dict.set("friendly.realm.switcher", "Switch Realm");
-    dict.set("friendly.realm.ref_label", "Realm");
+    dict.set("friendly.realm.switcher", "Switch workspace");
+    dict.set("friendly.realm.ref_label", "Workspace");
     dict.set("friendly.space", "Space");
     dict.set("friendly.space.short", "Space");
     dict.set(
         "friendly.space.description",
-        "Navigation container — boards, lists, and sections live inside a Realm.",
+        "A space groups boards, lists, and sections inside a workspace.",
     );
     dict.set("friendly.space.container_class", "Navigation container");
     dict.set("friendly.space.settings", "Space settings");
@@ -1315,10 +1706,10 @@ pub fn english_translations() -> TranslationDict {
         "friendly.space.settings.subtitle",
         "Navigation, sort, and display",
     );
-    dict.set("friendly.discussion.realm_ref", "Realm");
+    dict.set("friendly.discussion.realm_ref", "Workspace");
     dict.set(
         "friendly.discussion.realm_ref.hint",
-        "Which Realm this discussion belongs to (security boundary).",
+        "Which workspace this discussion belongs to (security boundary).",
     );
 
     // Profile gate (friendly version of ProfileGateNotice).
@@ -1388,7 +1779,7 @@ pub fn english_translations() -> TranslationDict {
     // Round R2/R3 (T07) — Realm terminal-state banner.
     dict.set(
         "realm.destroyed.banner",
-        "This realm has been permanently retired.",
+        "This workspace has been permanently retired.",
     );
 
     // Round R2/R3 (T15) — OOB lookup-form generic error string.
@@ -1424,6 +1815,7 @@ pub fn english_translations() -> TranslationDict {
     // `code` / `reason` field that the toast layer maps via these
     // keys. zh translations follow in `chinese_translations()`.
     add_r3_error_keys(&mut dict);
+    add_generic_error_keys(&mut dict);
 
     // Contacts UI, invite-receive policy, and the realm "invite from
     // contacts" picker. English is the authoritative default; zh follows
@@ -1437,6 +1829,7 @@ pub fn english_translations() -> TranslationDict {
     // breadcrumb route labels. zh follows in `chinese_translations()`.
     setup_strings(&mut dict);
     route_label_strings(&mut dict);
+    prompt_copy_strings(&mut dict);
 
     dict
 }
@@ -1448,7 +1841,7 @@ pub fn english_translations() -> TranslationDict {
 fn add_feedback_keys(dict: &mut TranslationDict) {
     dict.set(
         "feedback.policy_denied",
-        "Action blocked by server policy: {code} — {message}",
+        "This action isn't allowed by the server's policy.",
     );
     dict.set(
         "feedback.banner_offline",
@@ -1464,11 +1857,11 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "Account is not connected; sign in first",
     );
     dict.set("feedback.contacts_load_failed", "Failed to load contacts");
-    dict.set("feedback.realm_leaving", "Leaving Realm: {realm}");
-    dict.set("feedback.realm_left", "Left Realm: {realm}");
+    dict.set("feedback.realm_leaving", "Leaving workspace: {realm}");
+    dict.set("feedback.realm_left", "Left workspace: {realm}");
     dict.set(
         "feedback.realm_leave_failed",
-        "Failed to leave Realm {realm}",
+        "Failed to leave workspace {realm}",
     );
     dict.set("feedback.contact_deleting", "Deleting contact: {name}");
     dict.set("feedback.contact_deleted", "Deleted contact: {name}");
@@ -1480,14 +1873,17 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.direct_open_failed",
         "Could not open the direct conversation",
     );
-    dict.set("feedback.bulk_realms_leaving", "Leaving {total} Realm(s)…");
+    dict.set(
+        "feedback.bulk_realms_leaving",
+        "Leaving {total} workspace(s)…",
+    );
     dict.set(
         "feedback.bulk_realms_left",
-        "Left {done} of {total} Realm(s)",
+        "Left {done} of {total} workspace(s)",
     );
     dict.set(
         "feedback.bulk_realms_leave_failed",
-        "Left {done} of {total} Realm(s); some failed",
+        "Left {done} of {total} workspace(s); some failed",
     );
     dict.set(
         "feedback.bulk_contacts_deleting",
@@ -1515,9 +1911,9 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "feedback.realm_resolved",
-        "Realm resolved (join rule: {join_rule})",
+        "Workspace resolved (join rule: {join_rule})",
     );
-    dict.set("feedback.realm_create_failed", "Realm creation failed");
+    dict.set("feedback.realm_create_failed", "Workspace creation failed");
     dict.set("feedback.copied_did", "DID copied");
     dict.set("feedback.copied_handles", "Handles copied");
     dict.set("feedback.copied_device_id", "Device ID copied");
@@ -1527,13 +1923,13 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
     dict.set("feedback.notification_kind_muted", "{label} muted");
     dict.set(
         "feedback.override_pick_realm",
-        "Pick a Realm before adding an override",
+        "Pick a workspace before adding an override",
     );
     dict.set("feedback.watch_level_set", "Set {realm} to {level}");
     dict.set("feedback.override_removed", "Removed override for {realm}");
     dict.set(
         "feedback.overrides_cleared",
-        "Cleared all per-realm overrides",
+        "Cleared all per-workspace overrides",
     );
     dict.set("feedback.push_registered", "Push registered: {label}");
     dict.set("feedback.push_register_failed", "Push registration failed");
@@ -1571,22 +1967,22 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.read_receipt_override_inherit",
         "Read receipts for {realm}: inherit default",
     );
-    dict.set("feedback.enter_realm_id", "Enter a Realm ID first");
+    dict.set("feedback.enter_realm_id", "Enter a workspace ID first");
     dict.set(
         "feedback.realm_remark_saved",
-        "Realm remark saved: {realm} \u{2192} {name}",
+        "Workspace remark saved: {realm} \u{2192} {name}",
     );
     dict.set(
         "feedback.realm_remark_cleared",
-        "Realm remark cleared for {realm}",
+        "Workspace remark cleared for {realm}",
     );
     dict.set(
         "feedback.enter_realm_and_name",
-        "Enter both a Realm ID and a local name",
+        "Enter both a workspace ID and a local name",
     );
     dict.set(
         "feedback.invalid_realm_id",
-        "Realm ID must start with ak:realm:",
+        "Workspace ID must start with ak:realm:",
     );
 }
 
@@ -1855,7 +2251,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "error.agent.accountability_grant_missing",
-        "Controller accountability grant is missing or stale; reattach a grant before retrying.",
+        "The agent's owner approval is missing or out of date. Reconnect the agent's approval, then try again.",
     );
     dict.set(
         "error.agent.approval_already_consumed",
@@ -1865,59 +2261,59 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     // Media binding (AKP-0010).
     dict.set(
         "error.call.focus_unavailable_for_client",
-        "The selected media focus is unavailable for this client. Retry or leave the call.",
+        "This call's media connection isn't available in this app. Try again, or leave the call and rejoin.",
     );
     dict.set(
         "error.call.focus_mismatch",
-        "Media focus disagreement with the call state. Rejoin the call to reconcile.",
+        "The call's connection info is out of sync. Leave and rejoin the call to fix it.",
     );
     dict.set(
         "error.call.unknown_focus_type",
-        "Unknown media focus type. Update the app to a compatible version.",
+        "This call uses a connection type this app doesn't understand. Update the app to the latest version.",
     );
     dict.set(
         "error.call.token_issuer_unauthorised",
-        "Media token issuer is not the realm's current media service. Refusing connection.",
+        "The call's access token did not come from this workspace's media service, so the connection was refused.",
     );
     dict.set(
         "error.call.participant_binding_invalid",
-        "Participant binding failed validation (signature, TTL, or tuple mismatch).",
+        "A participant's call credentials did not pass validation, so they can't join.",
     );
     dict.set(
         "error.call.participant_identity_unrecognised",
-        "Backend reported a participant identity not present in the call state. Failing closed.",
+        "The server reported a participant who isn't in this call. The connection was refused to stay safe.",
     );
     dict.set(
         "error.call.session_focus_already_committed",
-        "The call's session focus is already committed; rejoin to use it.",
+        "This call's connection is already set. Rejoin the call to use it.",
     );
     dict.set(
         "error.call.e2ee_key_source_unauthorised",
-        "Refusing media key from an unauthorised source — MLS exporter is the only allowed origin.",
+        "The call's encryption key came from an untrusted source, so it was refused. Keys may only come from the group's own encryption.",
     );
     dict.set(
         "error.call.recording_artifact_pipeline_bypassed",
-        "Recording destination is not a Arkret authenticated blob — refusing to record.",
+        "The recording destination isn't a verified Arkret storage location, so recording was refused.",
     );
     dict.set(
         "error.call.transcription_artifact_pipeline_bypassed",
-        "Transcript destination is not a Arkret authenticated blob — refusing transcription.",
+        "The transcript destination isn't a verified Arkret storage location, so transcription was refused.",
     );
     dict.set(
         "error.call.media_service_binding_uncovered",
-        "Media service declaration is not covered by the current MLS governance binding. Refusing media join.",
+        "This workspace hasn't approved the call's media service, so joining was refused. Ask an admin to review the call settings.",
     );
     dict.set(
         "error.call.media_plaintext_service_not_authorised",
-        "This media service is not authorised to decrypt plaintext media. Refusing media negotiation.",
+        "This media service isn't allowed to handle unencrypted media, so the connection was refused.",
     );
     dict.set(
         "error.call.mls_governance_binding_stale",
-        "MLS governance binding is stale for the current media policy. Refusing media negotiation.",
+        "The call's approval record is out of date for the current media policy, so the connection was refused. Rejoin the call to refresh it.",
     );
     dict.set(
         "error.call.desktop_media_unavailable",
-        "Desktop calling is not ready yet on this build — no media transport. Use a web client to place this call.",
+        "Desktop calling isn't ready in this build yet. Use the web app to place this call.",
     );
 
     // Handle wire-level enforce.
@@ -1937,7 +2333,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     // Recovery.
     dict.set(
         "error.recovery.witness_revoke_lagging",
-        "Recovery witness revoke is lagging — wait for witness chain to catch up.",
+        "The recovery helper's removal has not finished syncing yet. Wait a moment, then try again.",
     );
     dict.set(
         "error.recovery.policy_mismatch",
@@ -1949,6 +2345,42 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     );
 }
 
+/// Generic API-error copy for the user-facing error funnel
+/// ([`crate::api_error::display_user_facing`]). These keys cover the common
+/// server-failure classes that have no dedicated `error.*` key; every
+/// string follows the error formula (what happened + what it means + one
+/// next action) and carries no protocol identifiers.
+fn add_generic_error_keys(dict: &mut TranslationDict) {
+    dict.set(
+        "error.generic",
+        "Something went wrong while talking to the server. Try again.",
+    );
+    dict.set(
+        "error.network_unavailable",
+        "Can't reach the server. Check your connection, then try again.",
+    );
+    dict.set(
+        "error.server_unavailable",
+        "The server is unavailable right now. Check the server address, or wait a moment and try again.",
+    );
+    dict.set(
+        "error.session_expired",
+        "Your session has expired. Sign in again to continue.",
+    );
+    dict.set(
+        "error.device_not_authorized",
+        "This device isn't authorized for that action. Authorize it from a device that's already signed in, then try again.",
+    );
+    dict.set(
+        "error.rate_limited",
+        "Too many requests. Wait a moment, then try again.",
+    );
+    dict.set(
+        "error.not_found",
+        "The server couldn't find what you were looking for. It may have been moved or deleted. Refresh and try again.",
+    );
+}
+
 /// English i18n strings for the 6 AKP-0007 reason / error codes
 /// surfaced by [`crate::circle::CircleErrorKind`] (P3B.3.2). Zh / Ar
 /// translations follow in a later milestone; the toast falls back to
@@ -1956,7 +2388,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
 fn add_circle_error_keys(dict: &mut TranslationDict) {
     dict.set(
         "error.circle.realm_mismatch",
-        "This Circle belongs to a different Realm than the message you tried to send.",
+        "This Circle belongs to a different workspace than the message you tried to send.",
     );
     dict.set(
         "error.circle.not_active",
@@ -1968,7 +2400,7 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "error.circle.member_not_in_realm",
-        "Cannot add this user to the Circle — they are not an active member of the parent Realm.",
+        "Cannot add this user to the Circle — they are not an active member of the parent workspace.",
     );
     dict.set(
         "error.circle.scope_rebind_forbidden",
@@ -1976,11 +2408,11 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     );
     dict.set(
         "error.circle.metadata_floor",
-        "This write would expose metadata below the Realm or Circle encryption floor.",
+        "This write would expose metadata below the workspace or Circle encryption floor.",
     );
     dict.set(
         "error.circle.encryption_below_realm_floor",
-        "This Realm requires E2EE, so the Circle must stay MLS-backed.",
+        "This workspace requires E2EE, so the Circle must stay MLS-backed.",
     );
     dict.set(
         "error.circle.encryption_profile_locked",
@@ -1999,22 +2431,33 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     dict.set("circle.status.archived", "Archived");
     dict.set("circle.status.tombstoned", "Tombstoned");
 
-    // R3.3 (AKP-0011) — shareable object links (Chinese-first).
-    dict.set("object_link.share", "分享链接");
-    dict.set("object_link.share_realm", "分享此领域");
-    dict.set("object_link.share_strand", "分享此流程");
-    dict.set("object_link.share_message", "分享此消息");
-    dict.set("object_link.copy_https", "复制链接");
-    dict.set("object_link.copy_app", "复制“在应用中打开”链接");
-    dict.set("object_link.copied", "链接已复制");
-    dict.set("object_link.open", "打开分享链接");
+    // CircleScopePicker — default scope option + help text (render site
+    // localizes; `CircleScope::label()` stays a static str).
+    dict.set("circle.scope.realm_everyone", "Workspace (everyone)");
     dict.set(
-        "object_link.open_placeholder",
-        "粘贴 web+arkret: 或 https 分享链接",
+        "circle.scope.help",
+        "Choose a Circle to restrict visibility to a strict subset of workspace members.",
     );
-    dict.set("object_link.opening", "正在打开链接…");
-    dict.set("object_link.error.unavailable", "链接不可用或已过期。");
-    dict.set("object_link.error.invalid", "无法识别该链接格式。");
+
+    // R3.3 (AKP-0011) — shareable object links.
+    dict.set("object_link.share", "Share link");
+    dict.set("object_link.share_realm", "Share this workspace");
+    dict.set("object_link.share_strand", "Share this thread");
+    dict.set("object_link.share_message", "Share this message");
+    dict.set("object_link.copy_https", "Copy link");
+    dict.set("object_link.copy_app", "Copy \"Open in app\" link");
+    dict.set("object_link.copied", "Link copied");
+    dict.set("object_link.open", "Open shared link");
+    dict.set("object_link.open_placeholder", "Paste a shared link");
+    dict.set("object_link.opening", "Opening link…");
+    dict.set(
+        "object_link.error.unavailable",
+        "This link is unavailable or has expired.",
+    );
+    dict.set(
+        "object_link.error.invalid",
+        "This link's format is not recognized.",
+    );
 }
 
 /// Setup surface: the `ak.realm.create` wizard, the `ak.space.create` form,
@@ -2023,11 +2466,11 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
 /// namespace like every other dictionary section.
 fn setup_strings(dict: &mut TranslationDict) {
     // Realm wizard shell.
-    dict.set("setup.new_realm", "New Realm");
-    dict.set("setup.realm_title_heading", "Create a Realm");
+    dict.set("setup.new_realm", "New Workspace");
+    dict.set("setup.realm_title_heading", "Create a workspace");
     dict.set(
         "setup.realm_intro",
-        "A Realm is the security / sync / E2EE boundary. The recommended mode is MLS with metadata_encryption_floor=e2ee_required and content_encryption_floor=e2ee_required.",
+        "A workspace is the unit that owns security, sync, and encryption for everything inside it. The recommended setup encrypts both content and metadata end to end.",
     );
     dict.set("setup.create_steps", "Create steps");
     dict.set("setup.step_progress", "{current} / {total}");
@@ -2042,11 +2485,11 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.step.seed.label", "Seed");
     dict.set("setup.step.seed.subtitle", "initial members and create");
     dict.set("setup.step.done.label", "Done");
-    dict.set("setup.step.done.subtitle", "open created realm");
+    dict.set("setup.step.done.subtitle", "open created workspace");
 
     // Basics step.
     dict.set("setup.basics.hint", "required title");
-    dict.set("setup.field.realm_title", "Realm title");
+    dict.set("setup.field.realm_title", "Workspace title");
     dict.set(
         "setup.field.realm_title_placeholder",
         "Engineering, Research, Design system...",
@@ -2054,9 +2497,9 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.field.summary", "Summary");
     dict.set(
         "setup.field.realm_summary_placeholder",
-        "What this Realm is for.",
+        "What this workspace is for.",
     );
-    dict.set("setup.field.realm_alias", "Realm alias");
+    dict.set("setup.field.realm_alias", "Workspace alias");
     dict.set("setup.field.realm_alias_placeholder", "engineering");
 
     // Boundary step.
@@ -2064,7 +2507,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.discoverability", "Discoverability");
     dict.set(
         "setup.axis.discoverability.question",
-        "Who can discover that this Realm exists?",
+        "Who can discover that this workspace exists?",
     );
     dict.set(
         "setup.axis.discoverability.unset",
@@ -2095,7 +2538,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.content_scheme", "Content scheme");
     dict.set(
         "setup.axis.content_scheme.question",
-        "Which MLS content scheme should this Realm use?",
+        "Which MLS content scheme should this workspace use?",
     );
     dict.set(
         "setup.axis.content_scheme.unset",
@@ -2121,7 +2564,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.federation_policy", "Federation policy");
     dict.set(
         "setup.axis.federation_policy.question",
-        "How does this Realm interoperate with other deployments?",
+        "How does this workspace interoperate with other deployments?",
     );
     dict.set(
         "setup.axis.federation_policy.unset",
@@ -2134,7 +2577,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.seal_profile", "Seal profile");
     dict.set(
         "setup.axis.seal_profile.question",
-        "Who signs durable seals for this Realm?",
+        "Who signs durable seals for this workspace?",
     );
     dict.set("setup.axis.seal_profile.unset", "Seal profile is not set.");
     dict.set("setup.axis.hash_profile", "Hash profile");
@@ -2166,60 +2609,69 @@ fn setup_strings(dict: &mut TranslationDict) {
     // Create blockers / progress.
     dict.set(
         "setup.blocker.already_created",
-        "Realm created. Continue from the Done step.",
+        "Workspace created. Continue from the Done step.",
     );
-    dict.set("setup.blocker.sign_in", "Sign in before creating a Realm.");
+    dict.set(
+        "setup.blocker.sign_in",
+        "Sign in before creating a workspace.",
+    );
     dict.set(
         "setup.blocker.session_unavailable",
-        "Your authenticated session is unavailable. Sign in again before creating a Realm.",
+        "Your authenticated session is unavailable. Sign in again before creating a workspace.",
     );
     dict.set(
         "setup.blocker.secure_store",
         "Device signing storage is still starting. Try again in a moment.",
     );
-    dict.set("setup.blocker.creating", "Creating Realm...");
+    dict.set("setup.blocker.creating", "Creating workspace...");
     dict.set(
         "setup.error.session_expired",
-        "Session expired. Refresh or sign in again before creating a Realm.",
+        "Session expired. Refresh or sign in again before creating a workspace.",
     );
 
     // Bootstrap progress breadcrumbs, joined with " · " into the
     // "Bootstrap state" line after a successful create.
     dict.set(
         "setup.progress.accepted",
-        "Realm {id} accepted; finishing encrypted Realm setup",
+        "Workspace {id} accepted; finishing encrypted setup",
     );
-    dict.set("setup.progress.created", "created {id}");
-    dict.set("setup.progress.seeded_owner_only", "seeded owner only");
-    dict.set("setup.progress.seeded_members", "seeded {count} member(s)");
+    dict.set("setup.progress.created", "Created {id}");
+    dict.set(
+        "setup.progress.seeded_owner_only",
+        "Added you as the only member",
+    );
+    dict.set("setup.progress.seeded_members", "Added {count} member(s)");
     dict.set(
         "setup.progress.canonical_policy",
-        "canonical policy {discoverability} / {join_rule} / {history_visibility}",
+        "Policy: {discoverability} / {join_rule} / {history_visibility}",
     );
     dict.set(
         "setup.progress.plaintext_services",
-        "plaintext services {count}",
+        "Unencrypted services: {count}",
     );
     dict.set(
         "setup.progress.mls_ready_backup",
-        "MLS ready; history backup {id}",
+        "Encryption ready; history backup {id}",
     );
-    dict.set("setup.progress.mls_ready_local", "MLS ready locally");
+    dict.set(
+        "setup.progress.mls_ready_local",
+        "Encryption ready on this device",
+    );
     dict.set(
         "setup.progress.mls_admission_failed",
-        "MLS admission failed: {error}",
+        "Could not enable encryption: {error}",
     );
     dict.set(
         "setup.progress.mls_welcome_queued",
-        "MLS Welcome queued for {count}",
+        "Invitations queued for {count}",
     );
     dict.set(
         "setup.progress.floor_required",
-        "metadata/content floor e2ee_required",
+        "Metadata and content are end-to-end encrypted",
     );
     dict.set(
         "setup.error.signer_not_ready",
-        "event signer is not ready; cannot sign ak.realm.create: {error}",
+        "Your signing key is not ready yet, so the workspace could not be created. Try again in a moment. Details: {error}",
     );
     dict.set("setup.error.create_failed", "create failed: {error}");
     dict.set("setup.error.created_then_failed", "created {id}; {error}");
@@ -2230,31 +2682,31 @@ fn setup_strings(dict: &mut TranslationDict) {
 
     // Done step.
     dict.set("setup.done.hint", "next context");
-    dict.set("setup.done.created_realm", "Created Realm");
+    dict.set("setup.done.created_realm", "Created workspace");
     dict.set(
         "setup.done.empty",
-        "Create a Realm before opening the next context.",
+        "Create a workspace before opening the next context.",
     );
 
     // Encrypted-Realm recovery gate.
     dict.set(
         "setup.recovery_gate.aria",
-        "Set up recovery before creating an encrypted Realm",
+        "Set up recovery before creating an encrypted workspace",
     );
     dict.set("setup.recovery_gate.title", "Set up recovery first");
-    dict.set("setup.recovery_gate.badge", "encrypted Realm");
+    dict.set("setup.recovery_gate.badge", "encrypted workspace");
     dict.set(
         "setup.recovery_gate.body",
-        "This Realm is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it.",
+        "This workspace is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it.",
     );
 
     // Actions.
     dict.set("setup.action.back", "Back");
     dict.set("setup.action.next_boundary", "Next: Boundary");
     dict.set("setup.action.next_seed", "Next: Seed");
-    dict.set("setup.action.create_realm", "Create Realm");
+    dict.set("setup.action.create_realm", "Create workspace");
     dict.set("setup.action.finishing", "Finishing setup...");
-    dict.set("setup.action.open_realm", "Open Realm");
+    dict.set("setup.action.open_realm", "Open workspace");
     dict.set("setup.action.setup_recovery_key", "Set up Recovery Key");
 
     setup_option_strings(dict);
@@ -2294,13 +2746,13 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.discoverability.secret", "Secret");
     dict.set(
         "setup.opt.discoverability.secret.hint",
-        "The Realm should not disclose that it exists to unauthorized viewers.",
+        "The workspace should not disclose that it exists to unauthorized viewers.",
     );
 
     dict.set("setup.opt.join_rule.public", "Public");
     dict.set(
         "setup.opt.join_rule.public.hint",
-        "Anyone who can see the Realm can join without a separate approval step.",
+        "Anyone who can see the workspace can join without a separate approval step.",
     );
     dict.set("setup.opt.join_rule.invite", "Invite");
     dict.set(
@@ -2315,7 +2767,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.join_rule.restricted", "Restricted");
     dict.set(
         "setup.opt.join_rule.restricted.hint",
-        "Joining depends on policy or claims, even if the Realm is discoverable.",
+        "Joining depends on policy or claims, even if the workspace is discoverable.",
     );
 
     dict.set(
@@ -2324,12 +2776,12 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     );
     dict.set(
         "setup.opt.history_visibility.world_readable.hint",
-        "Past history is readable without joining. Use only with intentionally open Realms.",
+        "Past history is readable without joining. Use only with intentionally open workspaces.",
     );
     dict.set("setup.opt.history_visibility.shared", "Shared");
     dict.set(
         "setup.opt.history_visibility.shared.hint",
-        "New members can read the pre-join history that is meant to be shared with the whole Realm.",
+        "New members can read the pre-join history that is meant to be shared with the whole workspace.",
     );
     dict.set("setup.opt.history_visibility.invited", "Invited");
     dict.set(
@@ -2355,7 +2807,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.encryption_profile.none", "No encryption");
     dict.set(
         "setup.opt.encryption_profile.none.hint",
-        "Plaintext is visible to the server. Use only for public Realms.",
+        "Plaintext is visible to the server. Use only for public workspaces.",
     );
 
     dict.set(
@@ -2375,7 +2827,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.security_class.standard", "Standard");
     dict.set(
         "setup.opt.security_class.standard.hint",
-        "Default posture. Federation policy can be open or restricted per Realm settings.",
+        "Default posture. Federation policy can be open or restricted per workspace settings.",
     );
     dict.set("setup.opt.security_class.high_assurance", "High assurance");
     dict.set(
@@ -2396,7 +2848,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.federation_policy.closed", "Closed");
     dict.set(
         "setup.opt.federation_policy.closed.hint",
-        "No federation at all. Use for fully internal Realms.",
+        "No federation at all. Use for fully internal workspaces.",
     );
     dict.set("setup.opt.federation_policy.quarantine", "Quarantine");
     dict.set(
@@ -2503,10 +2955,10 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
 fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.new_space", "New Space");
     dict.set("setup.space.hero.hint", "navigation container");
-    dict.set("setup.space.heading", "Create a Space inside a Realm");
+    dict.set("setup.space.heading", "Create a Space inside a workspace");
     dict.set(
         "setup.space.intro",
-        "A Space is a product-structure container (project / folder / board / list). It lives inside a Realm and inherits all security from it — no separate membership, encryption, or federation decisions.",
+        "A Space is a product-structure container (project / folder / board / list). It lives inside a workspace and inherits all security from it — no separate membership, encryption, or federation decisions.",
     );
     dict.set("setup.space.basics", "Basics");
     dict.set("setup.space.basics.hint", "title + kind");
@@ -2514,7 +2966,7 @@ fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.default_realm.label", "default_realm_id");
     dict.set(
         "setup.space.default_realm.inherit",
-        "(inherit — use home Realm)",
+        "(inherit — use home workspace)",
     );
     dict.set("setup.space.not_created", "not created yet");
     dict.set(
@@ -2558,23 +3010,23 @@ fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.field.parent", "Parent Space (optional)");
     dict.set(
         "setup.space.parent.no_realm",
-        "Choose New Space from a Realm or Space row in the sidebar to set the home Realm.",
+        "Choose New Space from a workspace or Space row in the sidebar to set the home workspace.",
     );
     dict.set(
         "setup.space.parent.no_siblings",
-        "No sibling Spaces in this Realm yet — leave at root.",
+        "No sibling Spaces in this workspace yet — leave at root.",
     );
     dict.set(
         "setup.space.advanced_summary",
-        "Advanced (cross-Realm default for new resources)",
+        "Advanced (cross-workspace default for new resources)",
     );
     dict.set(
         "setup.space.default_realm.empty",
-        "Need at least one Realm to point at.",
+        "Need at least one workspace to point at.",
     );
     dict.set(
         "setup.space.default_realm.hint",
-        "New Strands / Morphs / Views created from this Space land in this Realm by default. Doesn't grant access — the user still needs membership.",
+        "New Strands / Morphs / Views created from this Space land in this workspace by default. Doesn't grant access — the user still needs membership.",
     );
     dict.set("setup.space.action.create", "Create Space");
     dict.set("setup.space.outcome", "Outcome");
@@ -2639,25 +3091,31 @@ fn setup_overview_strings(dict: &mut TranslationDict) {
     dict.set("setup.overview.surfaces", "Setup Surfaces");
     dict.set("setup.overview.surfaces.hint", "single-purpose entrypoints");
     dict.set("setup.overview.realm.hint", "security-boundary bootstrap");
-    dict.set("setup.overview.realm.open", "Open New Realm");
+    dict.set("setup.overview.realm.open", "Open New Workspace");
     dict.set(
         "setup.overview.space.hint",
-        "navigation container inside a Realm",
+        "navigation container inside a workspace",
     );
     dict.set(
         "setup.overview.space.body",
-        "Hover a Realm or Space in the left sidebar and click the inline + — that's the canonical entry, because it pre-fills the parent context for you. The link below opens the form blank (you'll have to pick a Realm manually).",
+        "Hover a workspace or Space in the left sidebar and click the inline + — that's the canonical entry, because it pre-fills the parent context for you. The link below opens the form blank (you'll have to pick a workspace manually).",
     );
     dict.set("setup.overview.space.open", "Open blank form");
     dict.set("setup.overview.onboarding", "Onboarding");
     dict.set("setup.overview.onboarding.hint", "identity bootstrap");
     dict.set("setup.overview.onboarding.open", "Open Onboarding");
     dict.set("setup.overview.search", "Search");
-    dict.set("setup.overview.search.hint", "actors / handles / realms");
+    dict.set(
+        "setup.overview.search.hint",
+        "actors / handles / workspaces",
+    );
     dict.set("setup.overview.search.open", "Open Search");
     dict.set("setup.overview.board", "Board");
     dict.set("setup.overview.board.hint", "after bootstrap");
-    dict.set("setup.overview.board.open_current", "Open Current Realm");
+    dict.set(
+        "setup.overview.board.open_current",
+        "Open Current Workspace",
+    );
     dict.set("setup.overview.board.open", "Open Board");
     dict.set("setup.overview.moved", "What Moved");
     dict.set("setup.overview.moved.hint", "IA cleanup");
@@ -2671,7 +3129,7 @@ fn setup_overview_strings(dict: &mut TranslationDict) {
     );
     dict.set(
         "setup.overview.badge.realm",
-        "New Realm = security-boundary bootstrap",
+        "New Workspace = security-boundary bootstrap",
     );
     dict.set(
         "setup.overview.badge.settings",
@@ -2684,8 +3142,8 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.dashboard", "Home");
     dict.set("route.login", "Login");
     dict.set("route.register", "Create identity");
-    dict.set("route.realms_manage", "Manage Realms");
-    dict.set("route.realm", "Realm");
+    dict.set("route.realms_manage", "Manage workspaces");
+    dict.set("route.realm", "Workspace");
     dict.set("route.chat", "Discussion");
     dict.set("route.direct", "Direct");
     dict.set("route.contacts_manage", "Manage Contacts");
@@ -2693,14 +3151,14 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.files", "Files");
     dict.set("route.directory", "Search");
     dict.set("route.setup", "Setup");
-    dict.set("route.setup_realms", "New Realm");
+    dict.set("route.setup_realms", "New Workspace");
     dict.set("route.setup_new_space", "New Space");
     dict.set("route.settings", "Settings");
     dict.set("route.notifications", "Notifications");
     dict.set("route.verify_device", "Verify Device");
     dict.set("route.realm_members", "Members");
     dict.set("route.circles", "Circles");
-    dict.set("route.realm_admin", "Realm Settings");
+    dict.set("route.realm_admin", "Workspace Settings");
     dict.set("route.realm_admin.profile", "Profile");
     dict.set("route.realm_admin.access", "Access Policy");
     dict.set("route.realm_admin.security", "Security & MLS");
@@ -2727,4 +3185,248 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.settings.capabilities", "Capabilities");
     dict.set("route.settings.theme", "Appearance & locale");
     dict.set("route.settings.release", "Diagnostics");
+}
+
+/// Plain-language copy for the inline prompts, banners, and manage
+/// pages migrated off hardcoded literals. Keep both locales in this
+/// same list shape: every key gets an en value here and a zh value in
+/// `zh.rs`'s `prompt_copy_strings`, and the parity test enforces it.
+fn prompt_copy_strings(dict: &mut TranslationDict) {
+    dict.set("did_health.label.degraded", "Limited");
+    dict.set("did_health.label.stale_cache", "Outdated cache");
+    dict.set("did_health.label.metadata", "Metadata");
+    dict.set("did_health.label.outage", "Offline");
+    dict.set("did_health.label.server_metadata", "Server metadata");
+    dict.set("did_health.title.degraded", "Identity checks are limited");
+    dict.set(
+        "did_health.title.metadata_mismatch",
+        "Identity info format mismatch",
+    );
+    dict.set(
+        "did_health.title.unavailable",
+        "Identity checks are offline",
+    );
+    dict.set(
+        "did_health.title.service_unavailable",
+        "Identity service unavailable",
+    );
+    dict.set("did_health.detail.fresh_cache", "Identity checks are offline right now; showing recently confirmed information for display only.");
+    dict.set("did_health.detail.stale_cache", "Identity checks are offline right now, and the saved information is out of date. Actions that need trust are paused.");
+    dict.set("did_health.detail.metadata_mismatch", "The identity service did not provide the expected information format. Actions that need trust remain paused.");
+    dict.set(
+        "did_health.detail.partial",
+        "Some identity checks are unavailable right now. Actions that need trust remain paused.",
+    );
+    dict.set("did_health.detail.no_cache", "Identity checks are offline and no saved information is available. Actions that need trust are paused.");
+    dict.set("did_health.detail.server_metadata", "This server did not provide the expected identity metadata, so identity checks are blocked.");
+    dict.set(
+        "did_health.detail.blocked",
+        "Identity checks are blocked until the service recovers.",
+    );
+    dict.set(
+        "recovery_setup.err_requires_account",
+        "Sign in before setting up a recovery key.",
+    );
+    dict.set(
+        "recovery_setup.err_generation_failed",
+        "The recovery key couldn't be generated ({error}). Try again.",
+    );
+    dict.set(
+        "recovery_setup.status_after_generate",
+        "Write the 24 words down offline, then re-enter them. Nothing has been published yet.",
+    );
+    dict.set("recovery_setup.generating", "Generating recovery key…");
+    dict.set(
+        "recovery_setup.generating_replacement",
+        "Generating a new recovery key…",
+    );
+    dict.set(
+        "recovery_setup.save_first_guard",
+        "Save these 24 words first, then confirm them below.",
+    );
+    dict.set("recovery_setup.aria_label", "Set up your recovery key");
+    dict.set(
+        "recovery_setup.title",
+        "Set up your recovery key (24 words)",
+    );
+    dict.set("recovery_setup.subtitle", "Required before encryption");
+    dict.set("recovery_setup.device_unauthorized", "This device isn't authorized to save recovery data yet. The words stay on this screen only. Authorize this device and try again with the same words, or restore with your existing recovery key.");
+    dict.set("recovery_setup.intro", "Generate 24 words here and write them down somewhere safe offline, then continue to encrypted workspaces. Arkret cannot recover these words for you.");
+    dict.set(
+        "recovery_setup.generated_key_label",
+        "Recovery key (24 words)",
+    );
+    dict.set("recovery_setup.copied", "Copied");
+    dict.set("recovery_setup.copy_words", "Copy words");
+    dict.set("recovery_setup.download", "Download .txt");
+    dict.set("recovery_setup.save_warning", "Save these words now. They are never uploaded, and won't be shown again once you close this window.");
+    dict.set(
+        "recovery_setup.confirm_label",
+        "Re-enter the saved recovery key",
+    );
+    dict.set(
+        "recovery_setup.confirm_placeholder",
+        "Type or paste the 24 words you saved",
+    );
+    dict.set("recovery_setup.confirm_hint", "You can continue only when the words match exactly. If they're wrong, generate a new key and save that one instead.");
+    dict.set(
+        "recovery_setup.restore_button",
+        "Restore with existing recovery key",
+    );
+    dict.set("recovery_setup.close", "Close");
+    dict.set("recovery_setup.try_again", "Try again");
+    dict.set("recovery_setup.generating_button", "Generating…");
+    dict.set("recovery_setup.not_now", "Not now");
+    dict.set("recovery_setup.regenerate", "Generate a new key");
+    dict.set(
+        "recovery_setup.err_word_count",
+        "You entered {entered} of 24 words. Complete the phrase, then confirm again.",
+    );
+    dict.set(
+        "recovery_setup.err_word_mismatch",
+        "Word {index} does not match this recovery key. Fix it and confirm again.",
+    );
+    dict.set(
+        "recovery_setup.publishing",
+        "Saved copy confirmed. Publishing your recovery settings and first encrypted backup…",
+    );
+    dict.set(
+        "recovery_setup.metadata_save_failed",
+        "Recovery was set up, but local details couldn't be saved on this device.",
+    );
+    dict.set("recovery_setup.confirm_button", "Confirm saved key");
+    dict.set(
+        "device_pair.aria_label",
+        "A new device is requesting access to your account",
+    );
+    dict.set("device_pair.title", "New device wants to join your account");
+    dict.set("device_pair.subtitle", "Device pairing");
+    dict.set("device_pair.body", "A device is asking to be added to your account. Approve it only if you started this — compare the code below on both devices first.");
+    dict.set("device_pair.platform", "Platform: {platform}");
+    dict.set("device_pair.expires", "Request expires {time}");
+    dict.set(
+        "device_pair.compare_code",
+        "Compare this code on both devices",
+    );
+    dict.set("device_pair.approving", "Approving…");
+    dict.set(
+        "device_pair.err_approval_failed",
+        "Couldn't approve the device: {error}",
+    );
+    dict.set("device_pair.reject", "Reject");
+    dict.set("device_pair.approve", "Approve");
+    dict.set(
+        "agent_runtime.aria_label",
+        "An agent runtime is requesting access to your account",
+    );
+    dict.set("agent_runtime.title", "Agent runtime approval requested");
+    dict.set("agent_runtime.subtitle", "Agent pairing");
+    dict.set("agent_runtime.body", "An agent runtime is asking to finish pairing. Approve only if you started this request and the code matches the runtime screen.");
+    dict.set(
+        "agent_runtime.replacement_warning",
+        "This replaces the runtime key of an active or paused agent.",
+    );
+    dict.set("agent_runtime.slug", "Slug: {slug}");
+    dict.set("agent_runtime.requested", "Requested {time}");
+    dict.set(
+        "agent_runtime.compare_code",
+        "Compare this code before approving",
+    );
+    dict.set("agent_runtime.runtime_key", "Runtime key");
+    dict.set("agent_runtime.proof_expires", "Proof expires {time}");
+    dict.set(
+        "agent_runtime.rejecting",
+        "Rejecting request and rotating the pairing code…",
+    );
+    dict.set(
+        "agent_runtime.rejected",
+        "Request rejected and pairing code rotated.",
+    );
+    dict.set(
+        "agent_runtime.err_rotate_failed",
+        "Couldn't rotate the pairing code. {error}",
+    );
+    dict.set("agent_runtime.reject_rotate", "Reject and rotate code");
+    dict.set("agent_runtime.dismiss", "Dismiss");
+    dict.set("agent_runtime.err_no_account", "Sign in before approving.");
+    dict.set(
+        "agent_runtime.err_invalid_request",
+        "The runtime key request is invalid. {error}",
+    );
+    dict.set("agent_runtime.approving", "Approving agent runtime…");
+    dict.set(
+        "agent_runtime.approved_refresh_failed",
+        "Runtime key approved ({id}). Couldn't refresh the agent's recovery backup: {error}",
+    );
+    dict.set(
+        "agent_runtime.approved_current",
+        "Runtime key approved ({id}). The agent's recovery backup is up to date.",
+    );
+    dict.set(
+        "agent_runtime.err_approval_failed",
+        "Couldn't approve the runtime key. {error}",
+    );
+    dict.set("agent_runtime.approving_button", "Approving…");
+    dict.set("agent_runtime.approve", "Approve");
+    dict.set("manage.realms_title", "Manage workspaces");
+    dict.set(
+        "manage.realms_subtitle",
+        "Leave multiple workspaces at once. Their local data is removed after the server confirms.",
+    );
+    dict.set("manage.stats_shown", "{count} shown");
+    dict.set("manage.stats_total", "{count} total");
+    dict.set("manage.stats_selected", "{count} selected");
+    dict.set("manage.select_shown", "Select shown");
+    dict.set("manage.clear", "Clear");
+    dict.set("manage.leaving", "Leaving…");
+    dict.set("manage.leave_selected", "Leave selected");
+    dict.set("manage.realms_list_title", "Workspaces");
+    dict.set("manage.rows", "{count} rows");
+    dict.set(
+        "manage.realms_empty_hint",
+        "Workspaces will appear here once sync finishes.",
+    );
+    dict.set(
+        "manage.no_results_hint",
+        "Try a different search to see more.",
+    );
+    dict.set("manage.row_encrypted", "Encrypted");
+    dict.set("manage.row_unencrypted", "Unencrypted");
+    dict.set("manage.row_spaces", "{count} spaces");
+    dict.set("manage.contacts_title", "Manage contacts");
+    dict.set(
+        "manage.contacts_subtitle",
+        "Delete multiple contacts at once; removed contacts disappear from your list.",
+    );
+    dict.set("manage.search_contacts", "Search contacts");
+    dict.set("manage.deleting", "Deleting…");
+    dict.set("manage.delete_selected", "Delete selected");
+    dict.set("manage.delete_unavailable", "Not available yet");
+    dict.set("manage.contacts_list_title", "Contacts");
+    dict.set(
+        "manage.contacts_empty_hint",
+        "Your contacts appear here once loading finishes.",
+    );
+    dict.set("manage.contacts_no_results", "No matching contacts");
+    dict.set("manage.contact_no_scopes", "No shared scopes");
+    dict.set("manage.contact_dm", "DM {state}");
+    dict.set("manage.contact_no_dm", "No DM");
+    dict.set(
+        "durability_banner.title",
+        "This workspace's history is continuously sealed to a recovery holder",
+    );
+    dict.set("durability_banner.mode_single", "Single recovery key");
+    dict.set("durability_banner.mode_threshold", "Threshold recovery");
+    dict.set("durability_banner.body", "The recovery holder can decrypt all of this workspace's history. The holder stays offline, is not a group member, and receives no live messages — the key is only brought out when a recovery is needed.");
+    dict.set(
+        "durability_banner.verifying",
+        "Verifying the recovery holder's identity…",
+    );
+    dict.set("durability_banner.verified", "Verified");
+    dict.set("durability_banner.controlled_by", "controlled by {org}");
+    dict.set("durability_banner.unverifiable", "Unverifiable");
+    dict.set(
+        "durability_banner.unverifiable_detail",
+        "Recovery holder {did} (could not confirm an active recovery-key service)",
+    );
 }

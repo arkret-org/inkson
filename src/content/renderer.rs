@@ -749,7 +749,7 @@ fn AuthenticatedLongText(blob_ref: String, fallback: String, markdown: bool) -> 
                     full_text.set(text);
                     status.set(String::new());
                 }
-                Err(error) => status.set(error.to_string()),
+                Err(error) => status.set(crate::api_error::display_user_facing(&error)),
             }
         });
     });
@@ -801,7 +801,7 @@ pub fn AuthenticatedBlobImage(blob_ref: String, alt_text: String) -> Element {
                     src.set(url);
                     status.set(String::new());
                 }
-                Err(err) => status.set(err.to_string()),
+                Err(err) => status.set(crate::api_error::display_user_facing(&err)),
             }
         });
     });
@@ -842,7 +842,7 @@ fn AuthenticatedBlobVideo(blob_ref: String, media_type: String) -> Element {
                     src.set(url);
                     status.set(String::new());
                 }
-                Err(err) => status.set(err.to_string()),
+                Err(err) => status.set(crate::api_error::display_user_facing(&err)),
             }
         });
     });
@@ -882,7 +882,7 @@ fn AuthenticatedBlobAudio(blob_ref: String, media_type: String) -> Element {
                     src.set(url);
                     status.set(String::new());
                 }
-                Err(err) => status.set(err.to_string()),
+                Err(err) => status.set(crate::api_error::display_user_facing(&err)),
             }
         });
     });
@@ -939,7 +939,7 @@ fn AuthenticatedBlobDownload(blob_ref: String, media_type: String) -> Element {
                                         href.set(url);
                                         status.set(String::new());
                                     }
-                                    Err(err) => status.set(err.to_string()),
+                                    Err(err) => status.set(crate::api_error::display_user_facing(&err)),
                                 }
                             });
                         }

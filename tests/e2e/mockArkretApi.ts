@@ -2683,6 +2683,7 @@ export async function mockArkretApi(
           handle: body.handle,
           issuer: "did:web:server.local",
           audience,
+          created_at: "2026-04-28T12:00:00.000Z",
           member_delivery_binding: memberDeliveryBinding,
         },
         did_document: {
@@ -3308,6 +3309,7 @@ export async function mockArkretApi(
           handle: primaryHandle,
           subject: accountPrincipalId,
           binding_state: "verified",
+          created_at: "2026-04-28T12:00:00.000Z",
         };
       }
       return json(route, viewer);

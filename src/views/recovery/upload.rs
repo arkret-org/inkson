@@ -83,10 +83,17 @@ pub(crate) fn upload_recovery_key_account_backup(
     };
     let recovery_material_evidence = state_store.read().recovery_material_evidence();
     let needs_mls_backup_signal = crate::components::try_needs_mls_backup_signal();
-    status.set(
-        "Cold custody confirmed — publishing recovery policy and encrypted recovery material…"
-            .to_owned(),
-    );
+    // `tr()` reads the i18n signal out of Dioxus context, which is not
+    // available inside the spawned task below — the same constraint
+    // documented on `setup::realms::BootstrapProgressStrings`. The status
+    // signal carries resolved text (its consumers render it directly), so
+    // resolve every template here and move them across the boundary.
+    let status_publishing = crate::i18n::tr("recovery.upload.publishing");
+    let status_backed_up = crate::i18n::tr("recovery.upload.backed_up");
+    let status_policy_active = crate::i18n::tr("recovery.upload.policy_active");
+    let status_device_unauthorized = crate::i18n::tr("recovery.upload.device_unauthorized");
+    let status_unreachable_tpl = crate::i18n::tr("recovery.upload.unreachable");
+    status.set(status_publishing);
     spawn(async move {
         let _publication_guard = publication_guard;
         let actor_for_sidecar = actor.clone();
@@ -175,9 +182,9 @@ pub(crate) fn upload_recovery_key_account_backup(
                 }
                 if let Ok(mut slot) = status.try_write() {
                     *slot = if account_backup_id.is_some() {
-                        "Recovery Key generated; the recovery policy and encrypted account material are backed up. Write the 24 words down — they are the only way to restore on a new device.".to_owned()
+                        status_backed_up.clone()
                     } else {
-                        "Recovery Key generated and the recovery policy is active. Encrypted content will be backed up automatically the first time you use encryption.".to_owned()
+                        status_policy_active.clone()
                     };
                 }
                 if let Some(handler) = on_server_configured {
@@ -198,11 +205,11 @@ pub(crate) fn upload_recovery_key_account_backup(
                     crate::api_error::is_device_not_authorized_error(err.inner());
                 if let Ok(mut slot) = status.try_write() {
                     *slot = if device_unauthorized {
-                        "This device isn't authorized to set up the account Recovery Key. Authorize it from a device you already use, or restore with your existing 24-word Recovery Key.".to_owned()
+                        status_device_unauthorized.clone()
                     } else {
-                        format!(
-                            "Couldn't reach the server to set up recovery (nothing was changed): {}. Try again.",
-                            err.display()
+                        crate::i18n::substitute_args(
+                            status_unreachable_tpl.clone(),
+                            &[("error", err.display().to_string())],
                         )
                     };
                 }

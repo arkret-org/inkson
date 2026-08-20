@@ -307,7 +307,7 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
         .await
     })
     .await
-    .map_err(|err| anyhow::anyhow!(err.display()))
+    .map_err(|err| anyhow::anyhow!(err.display_diagnostic()))
 }
 
 pub(crate) fn mls_recovery_backup_configured(
@@ -455,7 +455,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         Ok(payload) => payload,
         Err(err) => {
             tracing::warn!(
-                error = %err.display(),
+                error = %err.display_diagnostic(),
                 "MLS backup detection could not list key backups after encrypted write"
             );
             if backup_completed_while_probe_was_running() {
@@ -526,7 +526,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
             }
             Err(err) => {
                 tracing::warn!(
-                    error = %err.display(),
+                    error = %err.display_diagnostic(),
                     "automatic MLS account-secret backup with recovery public key failed"
                 );
             }

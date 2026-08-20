@@ -12,7 +12,7 @@ pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactListR
         seen.insert(crate::models::contact_scope_wire(*scope).to_owned());
     }
     if seen.is_empty() {
-        "No shared scopes".to_owned()
+        crate::i18n::tr("manage.contact_no_scopes")
     } else {
         seen.into_iter().collect::<Vec<_>>().join(", ")
     }
@@ -56,14 +56,14 @@ pub(super) fn RealmsManagePage(
                         div { class: "workspace-manage-title-block",
                             span { class: "workspace-manage-icon", UiIcon { name: "home" } }
                             div {
-                                h2 { class: "settings-content-title", "Manage Realms" }
-                                div { class: "muted", "Bulk leave Realms and remove their local tree projections after the server confirms." }
+                                h2 { class: "settings-content-title", {crate::i18n::tr("manage.realms_title")} }
+                                div { class: "muted", {crate::i18n::tr("manage.realms_subtitle")} }
                             }
                         }
                         div { class: "workspace-manage-stats",
-                            span { class: "pill muted xs", "{filtered_rows.len()} shown" }
-                            span { class: "pill muted xs", "{realm_rows.len()} total" }
-                            span { class: "pill muted xs", "{selection_count} selected" }
+                            span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_shown", &[("count", filtered_rows.len().to_string())])} }
+                            span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_total", &[("count", realm_rows.len().to_string())])} }
+                            span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_selected", &[("count", selection_count.to_string())])} }
                         }
                     }
 
@@ -73,7 +73,7 @@ pub(super) fn RealmsManagePage(
                             Input {
                                 "data-testid": "realms-manage-search-input",
                                 value: "{query}",
-                                placeholder: "Search Realms",
+                                placeholder: crate::i18n::tr("sidebar.search_realms"),
                                 oninput: move |event: FormEvent| query.set(event.value()),
                             }
                         }
@@ -91,7 +91,7 @@ pub(super) fn RealmsManagePage(
                                         .collect::<BTreeSet<_>>();
                                     move |_| selection.set(realm_ids.clone())
                                 },
-                                "Select shown"
+                                {crate::i18n::tr("manage.select_shown")}
                             }
                             Button {
                                 variant: ButtonVariant::Secondary,
@@ -100,7 +100,7 @@ pub(super) fn RealmsManagePage(
                                 "data-testid": "realms-manage-clear",
                                 disabled: selection_count == 0 || busy(),
                                 onclick: move |_| selection.set(BTreeSet::new()),
-                                "Clear"
+                                {crate::i18n::tr("manage.clear")}
                             }
                             Button {
                                 variant: ButtonVariant::Destructive,
@@ -229,25 +229,31 @@ pub(super) fn RealmsManagePage(
                                         });
                                     }
                                 },
-                                if busy() { "Leaving..." } else { "Leave selected" }
+                                if busy() {
+                                    {crate::i18n::tr("manage.leaving")}
+                                } else {
+                                    {crate::i18n::tr("manage.leave_selected")}
+                                }
                             }
                         }
                     }
 
                     div { class: "event workspace-manage-list-card",
                         div { class: "event-head",
-                            span { "Realms" }
-                            span { "{filtered_rows.len()} rows" }
+                            span { {crate::i18n::tr("manage.realms_list_title")} }
+                            span { {crate::i18n::tr_args("manage.rows", &[("count", filtered_rows.len().to_string())])} }
                         }
                         if realm_rows.is_empty() {
                             div { class: "members-empty", "data-testid": "realms-manage-empty",
-                                div { class: "members-empty-title", if has_session { "No Realm tree loaded" } else { "Sign in to load Realms" } }
-                                div { class: "muted members-empty-hint", "Realms will appear here after sync loads the collaboration tree." }
+                                div { class: "members-empty-title",
+                                    {if has_session { crate::i18n::tr("sidebar.realms_empty") } else { crate::i18n::tr("sidebar.realms_sign_in") }}
+                                }
+                                div { class: "muted members-empty-hint", {crate::i18n::tr("manage.realms_empty_hint")} }
                             }
                         } else if filtered_rows.is_empty() {
                             div { class: "members-empty", "data-testid": "realms-manage-no-results",
-                                div { class: "members-empty-title", "No matching Realms" }
-                                div { class: "muted members-empty-hint", "Adjust the search query to show more rows." }
+                                div { class: "members-empty-title", {crate::i18n::tr("sidebar.realms_no_results")} }
+                                div { class: "muted members-empty-hint", {crate::i18n::tr("manage.no_results_hint")} }
                             }
                         } else {
                             div { class: "workspace-manage-list", "data-testid": "realms-manage-list",
@@ -255,7 +261,11 @@ pub(super) fn RealmsManagePage(
                                     {
                                         let realm_id = row.realm_id.clone();
                                         let checked = selected_ids.contains(&realm_id);
-                                        let security_label = if row.encrypted { "Encrypted" } else { "Unencrypted" };
+                                        let security_label = if row.encrypted {
+                                            crate::i18n::tr("manage.row_encrypted")
+                                        } else {
+                                            crate::i18n::tr("manage.row_unencrypted")
+                                        };
                                         let security_icon = if row.encrypted { "lock" } else { "unlock" };
                                         rsx! {
                                             label {
@@ -286,7 +296,9 @@ pub(super) fn RealmsManagePage(
                                                         UiIcon { name: security_icon }
                                                         "{security_label}"
                                                     }
-                                                    span { class: "pill muted xs", "{row.space_count} spaces" }
+                                                    span { class: "pill muted xs",
+                                                        {crate::i18n::tr_args("manage.row_spaces", &[("count", row.space_count.to_string())])}
+                                                    }
                                                 }
                                             }
                                         }
@@ -364,14 +376,14 @@ pub(super) fn ContactsManagePage(
                         div { class: "workspace-manage-title-block",
                             span { class: "workspace-manage-icon", UiIcon { name: "users" } }
                             div {
-                                h2 { class: "settings-content-title", "Manage Contacts" }
-                                div { class: "muted", "Bulk delete contacts and keep successful rows out of the current contact list." }
+                                h2 { class: "settings-content-title", {crate::i18n::tr("manage.contacts_title")} }
+                                div { class: "muted", {crate::i18n::tr("manage.contacts_subtitle")} }
                             }
                         }
                         div { class: "workspace-manage-stats",
-                            span { class: "pill muted xs", "{filtered_rows.len()} shown" }
-                            span { class: "pill muted xs", "{rows.len()} total" }
-                            span { class: "pill muted xs", "{selection_count} selected" }
+                            span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_shown", &[("count", filtered_rows.len().to_string())])} }
+                            span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_total", &[("count", rows.len().to_string())])} }
+                            span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_selected", &[("count", selection_count.to_string())])} }
                         }
                     }
 
@@ -381,7 +393,7 @@ pub(super) fn ContactsManagePage(
                             Input {
                                 "data-testid": "contacts-manage-search-input",
                                 value: "{query}",
-                                placeholder: "Search Contacts",
+                                placeholder: crate::i18n::tr("manage.search_contacts"),
                                 oninput: move |event: FormEvent| query.set(event.value()),
                             }
                         }
@@ -399,7 +411,7 @@ pub(super) fn ContactsManagePage(
                                         .collect::<BTreeSet<_>>();
                                     move |_| selection.set(peers.clone())
                                 },
-                                "Select shown"
+                                {crate::i18n::tr("manage.select_shown")}
                             }
                             Button {
                                 variant: ButtonVariant::Secondary,
@@ -408,7 +420,7 @@ pub(super) fn ContactsManagePage(
                                 "data-testid": "contacts-manage-clear",
                                 disabled: selection_count == 0 || busy(),
                                 onclick: move |_| selection.set(BTreeSet::new()),
-                                "Clear"
+                                {crate::i18n::tr("manage.clear")}
                             }
                             Button {
                                 variant: ButtonVariant::Destructive,
@@ -416,7 +428,7 @@ pub(super) fn ContactsManagePage(
                                 r#type: "button",
                                 "data-testid": "contacts-manage-delete-selected",
                                 disabled: true,
-                                title: "Unavailable until the Contact lineage basis is exposed",
+                                title: crate::i18n::tr("manage.delete_unavailable"),
                                 onclick: {
                                     let base = base_url.clone();
                                     move |_| {
@@ -493,7 +505,7 @@ pub(super) fn ContactsManagePage(
                                                         crate::components::feedback::toast_error(
                                                             "feedback.contacts_load_failed",
                                                             vec![],
-                                                            Some(err.display()),
+                                                            Some(err.display_diagnostic()),
                                                         )
                                                     }
                                                 }
@@ -521,27 +533,31 @@ pub(super) fn ContactsManagePage(
                                         });
                                     }
                                 },
-                                if busy() { "Deleting..." } else { "Delete selected" }
+                                if busy() {
+                                    {crate::i18n::tr("manage.deleting")}
+                                } else {
+                                    {crate::i18n::tr("manage.delete_selected")}
+                                }
                             }
                         }
                     }
 
                     div { class: "event workspace-manage-list-card",
                         div { class: "event-head",
-                            span { "Contacts" }
-                            span { "{filtered_rows.len()} rows" }
+                            span { {crate::i18n::tr("manage.contacts_list_title")} }
+                            span { {crate::i18n::tr_args("manage.rows", &[("count", filtered_rows.len().to_string())])} }
                         }
                         if rows.is_empty() {
                             div { class: "members-empty", "data-testid": "contacts-manage-empty",
                                 div { class: "members-empty-title",
                                     {if has_session { crate::i18n::tr("contacts.empty") } else { crate::i18n::tr("contacts.sign_in") }}
                                 }
-                                div { class: "muted members-empty-hint", "Accepted, pending, and tombstoned contact rows appear here after loading." }
+                                div { class: "muted members-empty-hint", {crate::i18n::tr("manage.contacts_empty_hint")} }
                             }
                         } else if filtered_rows.is_empty() {
                             div { class: "members-empty", "data-testid": "contacts-manage-no-results",
-                                div { class: "members-empty-title", "No matching contacts" }
-                                div { class: "muted members-empty-hint", "Adjust the search query to show more rows." }
+                                div { class: "members-empty-title", {crate::i18n::tr("manage.contacts_no_results")} }
+                                div { class: "muted members-empty-hint", {crate::i18n::tr("manage.no_results_hint")} }
                             }
                         } else {
                             div { class: "workspace-manage-list", "data-testid": "contacts-manage-list",
@@ -558,14 +574,18 @@ pub(super) fn ContactsManagePage(
                                             .direct_conversation
                                             .as_ref()
                                             .map(|summary| {
-                                                format!(
-                                                    "DM {}",
-                                                    crate::models::direct_conversation_binding_state_wire(
-                                                        summary.state,
-                                                    )
+                                                crate::i18n::tr_args(
+                                                    "manage.contact_dm",
+                                                    &[(
+                                                        "state",
+                                                        crate::models::direct_conversation_binding_state_wire(
+                                                            summary.state,
+                                                        )
+                                                        .to_owned(),
+                                                    )],
                                                 )
                                             })
-                                            .unwrap_or_else(|| "No DM".to_owned());
+                                            .unwrap_or_else(|| crate::i18n::tr("manage.contact_no_dm"));
                                         let contact_state =
                                             crate::models::contact_state_wire(contact.state);
                                         rsx! {

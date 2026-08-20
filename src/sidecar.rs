@@ -1913,7 +1913,7 @@ pub fn push_sidecar_display_mode(
         {
             Ok(_) => {}
             Err(error) => {
-                tracing::warn!(error = %error.display(), "Sidecar view-state sync failed")
+                tracing::warn!(error = %error.display_diagnostic(), "Sidecar view-state sync failed")
             }
         }
     });

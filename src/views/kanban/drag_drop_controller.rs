@@ -21,7 +21,7 @@ use crate::state::MoveSubmissionState;
 #[derive(Serialize)]
 #[serde(untagged)]
 enum QueuedSpaceOperationBody {
-    Create(arkret_sdk::SpaceCreatePayload),
+    Create(Box<arkret_sdk::SpaceCreatePayload>),
     Update(arkret_sdk::SpacePatchPayload),
 }
 
@@ -42,9 +42,9 @@ fn queued_space_operation_body(
     operation: &crate::operation::LocalOperation,
 ) -> anyhow::Result<QueuedSpaceOperationBody> {
     Ok(match operation.kind() {
-        arkret_sdk::EventKind::SpaceCreate => QueuedSpaceOperationBody::Create(
+        arkret_sdk::EventKind::SpaceCreate => QueuedSpaceOperationBody::Create(Box::new(
             operation.typed_payload::<arkret_wire::event_spec::SpaceCreate>()?,
-        ),
+        )),
         arkret_sdk::EventKind::SpaceUpdate => QueuedSpaceOperationBody::Update(
             operation.typed_payload::<arkret_wire::event_spec::SpaceUpdate>()?,
         ),
@@ -201,11 +201,7 @@ pub(super) fn submit_kanban_operation_event(
                 return;
             }
         };
-        store.enqueue_local_projection_command(
-            operation_id.clone(),
-            Some(realm_id),
-            record,
-        );
+        store.enqueue_local_projection_command(operation_id.clone(), Some(realm_id), record);
         // Land the op-log row inside this same write: the op-log-derived
         // pending Board surface (and the seed suppression reading it) must
         // observe the create before the options-sync effect re-runs, which

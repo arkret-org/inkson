@@ -164,6 +164,15 @@ fn chinese_translation_is_complete() {
         report.missing_keys
     );
 
+    // Both directions: a zh-only key renders as a raw key for English users,
+    // so the dictionaries must not drift apart in either direction.
+    let reverse = translation_completeness(&zh, &en);
+    assert!(
+        reverse.is_complete(),
+        "zh-only keys: {:?}",
+        reverse.missing_keys
+    );
+
     let complete = translation_completeness(&en, &en);
     assert!(complete.is_complete());
 }

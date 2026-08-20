@@ -718,7 +718,7 @@ pub(super) fn dispatch_calendar_rsvp(
                     operation_id: &operation_id,
                     actor_id: event.actor_id().to_string(),
                     created_at: arkret_sdk::canonical::format_timestamp_canonical(
-                        event.created_at()
+                        event.created_at(),
                     ),
                     write_state: "queued",
                     body,

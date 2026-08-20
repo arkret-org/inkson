@@ -95,6 +95,7 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
         "handle_claim": {
             "subject": "ak:did_core:web:bob.example",
             "audience": realm_id,
+            "created_at": "2026-06-12T08:00:00.000Z",
             "member_delivery_binding": {
                 "recipient_service_id": "ak:did_core:web:local.host",
                 "recipient_service_kind": "principal_server",
