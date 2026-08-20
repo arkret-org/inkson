@@ -269,10 +269,7 @@ pub fn handle_claim_rows(
                     .binding_state
                     .map(|s| format!("{s:?}").to_lowercase())
                     .unwrap_or_else(|| "(unset)".to_owned()),
-                created_at: claim
-                    .created_at
-                    .map(arkret_sdk::canonical::format_timestamp_canonical)
-                    .unwrap_or_default(),
+                created_at: arkret_sdk::canonical::format_timestamp_canonical(claim.created_at),
                 expires_at: claim
                     .expires_at
                     .map(arkret_sdk::canonical::format_timestamp_canonical)
@@ -467,7 +464,9 @@ mod tests {
         use arkret_sdk::Handle;
         let now = chrono::Utc::now();
         let claim = HandleClaim {
+            schema: HandleClaim::SCHEMA.to_owned(),
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
+            handle_aliases: Vec::new(),
             subject: Some(
                 crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
                     .unwrap(),
@@ -475,10 +474,20 @@ mod tests {
             issuer: Some(
                 crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
             ),
+            issuer_service_id: None,
             binding_state: Some(HandleBindingState::Verified),
-            created_at: Some(now - chrono::Duration::hours(1)),
+            claim_kind: None,
+            visibility: None,
+            audience: None,
+            challenge: None,
+            claim_scope: Default::default(),
+            member_delivery_binding: None,
+            claims: Vec::new(),
+            created_at: now - chrono::Duration::hours(1),
             expires_at: Some(now + chrono::Duration::days(30)),
-            ..Default::default()
+            verified_at: None,
+            source_refs: Vec::new(),
+            proofs: Vec::new(),
         };
         let accepted = vec!["ak:did_core:web:issuer.acme.example".to_owned()];
         let rendered = render_actor_mention(
@@ -534,15 +543,27 @@ mod tests {
             crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
                 .unwrap();
         let claim = HandleClaim {
+            schema: HandleClaim::SCHEMA.to_owned(),
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
+            handle_aliases: Vec::new(),
             subject: Some(subject.clone()),
             issuer: Some(
                 crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
             ),
+            issuer_service_id: None,
             binding_state: Some(HandleBindingState::Verified),
-            created_at: Some(now),
+            claim_kind: None,
+            visibility: None,
+            audience: None,
+            challenge: None,
+            claim_scope: Default::default(),
+            member_delivery_binding: None,
+            claims: Vec::new(),
+            created_at: now,
             expires_at: Some(now + chrono::Duration::days(30)),
-            ..Default::default()
+            verified_at: None,
+            source_refs: Vec::new(),
+            proofs: Vec::new(),
         };
         let res = DirectorySubjectHandleList {
             subject,

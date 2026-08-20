@@ -2,6 +2,38 @@ use arkret_wire::event_kind_str;
 
 use super::*;
 
+/// Closed set of shared-pin bodies, read back through their typed marker
+/// payloads so the recorded `payload` stays a closed discriminated shape.
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum SharedPinOperationBody {
+    Add(arkret_sdk::PinAddPayload),
+    Remove(arkret_sdk::PinRemovePayload),
+}
+
+/// Op-log record appended once a shared-pin write is accepted; field order
+/// matches the wire layout the previous `json!` literal produced.
+#[derive(serde::Serialize)]
+struct SharedPinOperationRecord<'a> {
+    event_id: &'a str,
+    kind: &'a str,
+    payload: SharedPinOperationBody,
+}
+
+fn shared_pin_operation_body(
+    operation: &crate::operation::LocalOperation,
+) -> anyhow::Result<SharedPinOperationBody> {
+    Ok(match operation.kind() {
+        arkret_sdk::EventKind::PinAdd => SharedPinOperationBody::Add(
+            operation.typed_payload::<arkret_wire::event_spec::PinAdd>()?,
+        ),
+        arkret_sdk::EventKind::PinRemove => SharedPinOperationBody::Remove(
+            operation.typed_payload::<arkret_wire::event_spec::PinRemove>()?,
+        ),
+        other => anyhow::bail!("unsupported shared pin kind {}", other.as_str()),
+    })
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatCommandContext {
     pub base_url: String,
@@ -508,6 +540,14 @@ impl ChatController {
                 return;
             }
         };
+        let body = match shared_pin_operation_body(&operation) {
+            Ok(body) => body,
+            Err(error) => {
+                self.status_msg.set(format!("Shared pin failed: {error:#}"));
+                self.message_context_menu.set(None);
+                return;
+            }
+        };
         if removing {
             self.shared_pins
                 .write()
@@ -544,14 +584,21 @@ impl ChatController {
             };
             match result {
                 Ok(submitted) => {
+                    let record = match serde_json::to_value(SharedPinOperationRecord {
+                        event_id: &submitted.event_id,
+                        kind: operation.kind().as_str(),
+                        payload: body,
+                    }) {
+                        Ok(record) => record,
+                        Err(error) => {
+                            status_msg.set(format!("Shared pin failed: {error}"));
+                            return;
+                        }
+                    };
                     state_store.write().append_raw_operation(
                         operation.local_operation_id().to_string(),
                         Some(realm_id),
-                        json!({
-                            "event_id": submitted.event_id.clone(),
-                            "kind": operation.kind().as_str(),
-                            "payload": operation.payload().clone(),
-                        }),
+                        record,
                     );
                     frontier_state.set(submitted.event_id);
                     status_msg.set(if removing {

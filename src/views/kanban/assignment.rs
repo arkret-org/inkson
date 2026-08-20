@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::json;
+use serde::Serialize;
 
 use super::model::*;
 use crate::state::LocalStateStore;
@@ -44,6 +44,45 @@ impl CardAssignmentMutation {
             Self::Create { operation, .. } | Self::Tombstone { operation, .. } => operation,
         }
     }
+}
+
+/// Closed set of assignment bodies: a created or tombstoned assignee
+/// Relation, read back through its typed marker payload so the queued
+/// record's `body` stays a closed discriminated shape.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum QueuedAssignmentBody {
+    Create(arkret_sdk::RelationCreatePayload),
+    Tombstone(arkret_sdk::RelationTombstonePayload),
+}
+
+/// Queued op-log record for one card-assignee mutation; field order matches
+/// the wire layout the previous `json!` literal produced.
+#[derive(Serialize)]
+struct QueuedAssignmentRecord<'a> {
+    kind: arkret_sdk::EventKind,
+    operation_id: &'a str,
+    actor_id: String,
+    created_at: String,
+    write_state: &'static str,
+    body: QueuedAssignmentBody,
+    assignment_strand_id: &'a str,
+    assignment_actor_id: &'a str,
+    assignment_relation_id: String,
+    activity_summary: String,
+}
+
+fn queued_assignment_body(
+    mutation: &CardAssignmentMutation,
+) -> anyhow::Result<QueuedAssignmentBody> {
+    Ok(match mutation {
+        CardAssignmentMutation::Create { operation, .. } => QueuedAssignmentBody::Create(
+            operation.typed_payload::<arkret_wire::event_spec::RelationCreate>()?,
+        ),
+        CardAssignmentMutation::Tombstone { operation, .. } => QueuedAssignmentBody::Tombstone(
+            operation.typed_payload::<arkret_wire::event_spec::RelationTombstone>()?,
+        ),
+    })
 }
 
 pub(super) fn assignment_activity_summary(
@@ -259,26 +298,42 @@ pub(super) fn dispatch_card_assignees_update(
     for mutation in &mutations {
         let operation = mutation.operation();
         let operation_id = operation.local_operation_id().to_string();
+        let body = match queued_assignment_body(mutation) {
+            Ok(body) => body,
+            Err(err) => {
+                let msg = format!("cannot queue assignee operation: {err:#}");
+                assignee_edit_status.set(msg.clone());
+                board_status.set(msg);
+                return false;
+            }
+        };
+        let record = match serde_json::to_value(QueuedAssignmentRecord {
+            kind: operation.kind().clone(),
+            operation_id: &operation_id,
+            actor_id: operation.actor_id().to_string(),
+            created_at: arkret_sdk::canonical::format_timestamp_canonical(operation.created_at()),
+            write_state: "queued",
+            body,
+            assignment_strand_id: &current.id,
+            assignment_actor_id: mutation.actor_id(),
+            assignment_relation_id: mutation
+                .relation_id()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| operation.local_operation_id().to_string()),
+            activity_summary: assignment_activity_summary(mutation, &assignee_labels),
+        }) {
+            Ok(record) => record,
+            Err(err) => {
+                let msg = format!("cannot queue assignee operation: {err}");
+                assignee_edit_status.set(msg.clone());
+                board_status.set(msg);
+                return false;
+            }
+        };
         state_store.write().enqueue_local_projection_command(
             operation_id.clone(),
             Some(realm_id.clone()),
-            json!({
-                "kind": operation.kind().as_str(),
-                "operation_id": operation_id,
-                "actor_id": operation.actor_id().to_string(),
-                "created_at": arkret_sdk::canonical::format_timestamp_canonical(
-                    operation.created_at()
-                ),
-                "write_state": "queued",
-                "body": operation.payload_value(),
-                "assignment_strand_id": current.id.clone(),
-                "assignment_actor_id": mutation.actor_id(),
-                "assignment_relation_id": mutation
-                    .relation_id()
-                    .map(ToOwned::to_owned)
-                    .unwrap_or_else(|| operation.local_operation_id().to_string()),
-                "activity_summary": assignment_activity_summary(mutation, &assignee_labels),
-            }),
+            record,
         );
     }
 
