@@ -664,6 +664,7 @@ pub(crate) async fn submit_secure_send(
                 // pre-commit epoch, so the next Send Secure retries at the
                 // correct `expected_prev_epoch` instead of skewing forever.
                 if let Some(snapshot) = new_mls_snapshot {
+                    #[allow(clippy::expect_used)]
                     let accepted_commit_ref = accepted_commit_event_id
                         .clone()
                         .expect("accepted commit id was captured above");

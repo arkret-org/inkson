@@ -1649,7 +1649,7 @@ fn realm_key_share_sender_signature_round_trips() {
     )
     .unwrap();
     let payload: arkret_sdk::RealmKeySharePayload =
-        serde_json::from_value(serde_json::to_value(&event.payload()).unwrap()).unwrap();
+        serde_json::from_value(serde_json::to_value(event.payload()).unwrap()).unwrap();
 
     // A real signature object was attached, and it verifies.
     assert!(

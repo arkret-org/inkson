@@ -1267,7 +1267,7 @@ mod tests {
     fn latest_alias_payload_folds_accepted_declaration_and_tombstone() {
         let declaration =
             build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_ID, "engineering").unwrap();
-        let declaration_value = serde_json::to_value(&declaration.payload()).unwrap();
+        let declaration_value = serde_json::to_value(declaration.payload()).unwrap();
         let tombstone =
             build_realm_alias_tombstone_event(REALM_ID, ACTOR_ID, declaration_value).unwrap();
         let rows = vec![

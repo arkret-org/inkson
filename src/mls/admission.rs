@@ -964,7 +964,7 @@ mod tests {
         catalog
             .validate_payload(
                 event.kind().as_str(),
-                &serde_json::to_value(&event.payload()).unwrap(),
+                &serde_json::to_value(event.payload()).unwrap(),
             )
             .unwrap_or_else(|err| {
                 panic!(

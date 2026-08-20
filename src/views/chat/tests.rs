@@ -37,6 +37,7 @@ fn sidecar_projection_message_for_realm(
         sender: "did:web:example.test:alice".to_owned(),
         executed_by: None,
         body: body.to_owned(),
+        content_format: None,
         timestamp: "12:00".to_owned(),
         created_at: None,
         strand_id: strand_id.to_owned(),
@@ -413,6 +414,7 @@ fn parses_message_event_with_operation_body_shape() {
         "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
     );
     assert_eq!(message.body, "restored from durable history");
+    assert_eq!(message.content_format, None);
     assert_eq!(message.sender, "did:web:alice.example");
     assert_eq!(
         message.mentions[0].target_id(),
@@ -431,7 +433,8 @@ fn parses_message_event_with_nested_envelope_payload_shape() {
             "payload": {
                 "content": {
                     "kind": "ak.content.text",
-                    "body": "nested payload message"
+                    "body": "nested payload message",
+                    "format": "markdown"
                 },
                 "strand_id": "ak:strand:A-KafHE4KSJLkmXVT_Mi2jvxt9YuOP_vQeOTOtjeaXSc",
                 "message_id": "chat-msg-nested"
@@ -455,6 +458,44 @@ fn parses_message_event_with_nested_envelope_payload_shape() {
         "ak:strand:A-KafHE4KSJLkmXVT_Mi2jvxt9YuOP_vQeOTOtjeaXSc"
     );
     assert_eq!(message.body, "nested payload message");
+    assert_eq!(
+        message.content_format,
+        Some(arkret_sdk::TextFormat::Markdown)
+    );
+}
+
+#[test]
+fn long_text_projection_preserves_its_declared_markdown_format() {
+    let mut event = json!({
+        "event_id": "ak:event:A3YyTPegfva2k0jRQeI4iVcOhvxyHN1MeQ2dpTfPOF0l",
+        "kind": "ak.message.create",
+        "actor_id": "ak:did_core:web:alice.example",
+        "payload": {
+            "strand_id": "ak:strand:A-KafHE4KSJLkmXVT_Mi2jvxt9YuOP_vQeOTOtjeaXSc",
+            "message_id": "chat-msg-long-text",
+            "content": {
+                "kind": "ak.content.long_text",
+                "body": "# fallback",
+                "format": "markdown",
+                "body_kind": "prefix",
+                "blob_ref": format!("ak:blob:sha256:{}", "a".repeat(64)),
+                "size_bytes": 262_145,
+                "media_type": "text/markdown"
+            }
+        }
+    });
+    sign_chat_fixture(&mut event);
+
+    let message = chat_message_from_event(
+        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
+        &event,
+    )
+    .unwrap();
+    assert_eq!(
+        message.content_format,
+        Some(arkret_sdk::TextFormat::Markdown)
+    );
+    assert!(message.body.starts_with('\u{1e}'));
 }
 
 #[test]
@@ -624,7 +665,7 @@ fn production_chat_message_create_operation(
         strand_id,
         local_message_id,
         body,
-        arkret_sdk::ContentBlock::text(body),
+        chat_content_block_for_body(body)?,
         mentions,
         reply_to,
     )
@@ -663,6 +704,7 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
         op.payload()["content"]["body"].as_str(),
         Some("hello from chat")
     );
+    assert_eq!(op.payload()["content"]["format"], "markdown");
     assert!(op.payload()["content"].get("blocks").is_none());
     assert!(!op.payload().contains_key("body"));
     assert!(!op.payload().contains_key("encrypted"));
@@ -676,9 +718,23 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
+}
+
+#[test]
+fn chat_inline_content_declares_markdown_at_the_utf8_boundary() {
+    let body = "a".repeat(arkret_sdk::CONTENT_TEXT_INLINE_MAX_BYTES);
+    let content = chat_content_block_for_body(&body).unwrap();
+    assert_eq!(content.kind, arkret_sdk::ContentBlockKind::Text);
+    assert_eq!(
+        content.text_format(),
+        Some(arkret_sdk::TextFormat::Markdown)
+    );
+
+    let over = "a".repeat(arkret_sdk::CONTENT_TEXT_INLINE_MAX_BYTES + 1);
+    assert!(chat_content_block_for_body(&over).is_err());
 }
 
 #[test]
@@ -721,7 +777,7 @@ fn chat_message_create_operation_keeps_public_update_notification_projection_out
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -751,7 +807,7 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -806,7 +862,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -858,7 +914,7 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -890,6 +946,7 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
         sender: "did:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "hello".to_owned(),
+        content_format: None,
         timestamp: "10:00".to_owned(),
         created_at: None,
         strand_id: "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q".to_owned(),
@@ -922,6 +979,7 @@ fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
         sender: "did:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "edited".to_owned(),
+        content_format: None,
         timestamp: "10:00".to_owned(),
         created_at: None,
         strand_id: "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q".to_owned(),
@@ -980,14 +1038,14 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
         .unwrap()
         .validate_payload(
             add.kind().as_str(),
-            &serde_json::to_value(&add.payload()).unwrap(),
+            &serde_json::to_value(add.payload()).unwrap(),
         )
         .unwrap();
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
             remove.kind().as_str(),
-            &serde_json::to_value(&remove.payload()).unwrap(),
+            &serde_json::to_value(remove.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -1015,7 +1073,7 @@ fn selected_discussion_shared_pin_uses_exact_strand_scope() {
         .unwrap()
         .validate_payload(
             add.kind().as_str(),
-            &serde_json::to_value(&add.payload()).unwrap(),
+            &serde_json::to_value(add.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -1609,6 +1667,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         strand_id: "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H".to_owned(),
         sender: "did:web:alice.example".to_owned(),
         body: "sensitive body".to_owned(),
+        content_format: None,
         timestamp: "10:00".to_owned(),
         created_at: None,
         pending: false,
@@ -1961,6 +2020,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
             sender: "did:web:bob.example".to_owned(),
             executed_by: None,
             body: String::new(),
+            content_format: None,
             timestamp: "10:05".to_owned(),
             created_at: None,
             strand_id: "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE".to_owned(),
@@ -2048,6 +2108,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
             sender: "did:web:bob.example".to_owned(),
             executed_by: None,
             body: body.to_owned(),
+            content_format: None,
             timestamp: "10:00".to_owned(),
             created_at: at(created_at),
             strand_id: "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE".to_owned(),
@@ -2290,6 +2351,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         sender: "did:web:bob.example".to_owned(),
         executed_by: None,
         body: "secret".to_owned(),
+        content_format: None,
         timestamp: "10:00".to_owned(),
         created_at: None,
         strand_id: "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE".to_owned(),
@@ -2533,11 +2595,17 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     // restore the author's own (otherwise undecryptable) message body.
     let temp = std::env::temp_dir().join(format!("inkson-x10_6-rebuild-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
+    let sidecar_content = serde_json::to_string(
+        &arkret_sdk::ContentBlock::markdown_text("secret discussion body")
+            .to_value()
+            .unwrap(),
+    )
+    .unwrap();
     store.save_private_plaintext(
         "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
         "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
         "message:chat-msg-enc",
-        "secret discussion body",
+        &sidecar_content,
     );
 
     let mut state = ClientLocalState {
@@ -2587,6 +2655,10 @@ fn rebuild_restores_authors_own_encrypted_message_from_sidecar() {
     );
     assert_eq!(restored[0].sender, "ak:did_core:web:alice.example");
     assert_eq!(restored[0].body, "secret discussion body");
+    assert_eq!(
+        restored[0].content_format,
+        Some(arkret_sdk::TextFormat::Markdown)
+    );
     assert!(matches!(
         restored[0].crypto_state,
         MessageCryptoState::Plaintext
@@ -2793,6 +2865,7 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
         sender: "did:web:alice.example".to_owned(),
         executed_by: None,
         body: String::new(),
+        content_format: None,
         timestamp: "10:00".to_owned(),
         created_at: None,
         strand_id: strand.to_owned(),
@@ -2817,11 +2890,17 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
         realm
     ));
 
+    let sidecar_content = serde_json::to_string(
+        &arkret_sdk::ContentBlock::markdown_text("restored after sidecar sync")
+            .to_value()
+            .unwrap(),
+    )
+    .unwrap();
     store.save_private_plaintext(
         realm,
         strand,
         &format!("message:{message_id}"),
-        "restored after sidecar sync",
+        &sidecar_content,
     );
 
     assert!(pending_messages_have_private_plaintext_sidecar(
@@ -2833,6 +2912,10 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
         realm
     ));
     assert_eq!(messages[0].body, "restored after sidecar sync");
+    assert_eq!(
+        messages[0].content_format,
+        Some(arkret_sdk::TextFormat::Markdown)
+    );
     assert_eq!(messages[0].crypto_state, MessageCryptoState::Plaintext);
     assert!(!restore_pending_messages_from_private_plaintext_sidecar(
         messages.as_mut_slice(),
@@ -3227,6 +3310,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         sender: "did:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "@alice:example.com/summary".to_owned(),
+        content_format: None,
         timestamp: "10:00".to_owned(),
         created_at: None,
         strand_id: "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q".to_owned(),
@@ -4591,12 +4675,16 @@ fn secure_content_block_round_trips_back_to_text() {
     // back out via `text_body_from_value`. This locks that symmetry without
     // standing up a full MLS group.
     let body = "secret hello with spaces";
-    let content_value = arkret_sdk::ContentBlock::text(body)
+    let content_value = arkret_sdk::ContentBlock::markdown_text(body)
         .to_value()
         .expect("content block serializes");
     let bytes = serde_json::to_vec(&content_value).expect("content block bytes");
     let parsed: Value = serde_json::from_slice(&bytes).expect("content block parses");
     assert_eq!(text_body_from_value(&parsed), Some(body));
+    assert_eq!(
+        content_format_from_value(&parsed),
+        Some(arkret_sdk::TextFormat::Markdown)
+    );
 }
 
 #[test]
@@ -4770,6 +4858,7 @@ fn chat_message_revise_operation_retypes_event_target_to_message_id() {
     );
     assert_eq!(op.payload()["content"]["kind"], "ak.content.text");
     assert_eq!(op.payload()["content"]["body"], "edited");
+    assert_eq!(op.payload()["content"]["format"], "markdown");
     assert!(!op.payload().contains_key("body"));
     for retired in ["target_ref", "target_event_id", "revision_of"] {
         assert!(!op.payload().contains_key(retired));
@@ -4778,7 +4867,7 @@ fn chat_message_revise_operation_retypes_event_target_to_message_id() {
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4802,11 +4891,12 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
     assert!(!op.payload().contains_key("target_ref"));
     assert_eq!(op.payload()["content"]["kind"], "ak.content.text");
     assert_eq!(op.payload()["content"]["body"], "edited");
+    assert_eq!(op.payload()["content"]["format"], "markdown");
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4834,7 +4924,7 @@ fn chat_message_redact_operation_retypes_event_target_to_message_id() {
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4859,7 +4949,7 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4885,7 +4975,7 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
         .unwrap()
         .validate_payload(
             op.kind().as_str(),
-            &serde_json::to_value(&op.payload()).unwrap(),
+            &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
 }
@@ -4917,6 +5007,7 @@ mod merge_duplicate_create_message_alignment_tests {
             sender: "did:web:bob.example".to_owned(),
             executed_by: None,
             body: body.to_owned(),
+            content_format: None,
             timestamp: "10:00".to_owned(),
             created_at,
             strand_id: "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE".to_owned(),

@@ -48,7 +48,7 @@ fn decode_long_text_marker(body: &str) -> Option<LongTextMarker> {
 const ATTACHMENT_MARKER_PREFIX: &str = "[Attachment:";
 const ATTACHMENT_MARKER_SUFFIX: char = ']';
 
-/// Structured content unit emitted by [`parse_message_body`].
+/// Structured content unit emitted by [`parse_message_body_with_format`].
 ///
 /// Every variant carries enough information for [`render_blocks`] to
 /// produce a self-contained Dioxus subtree without re-parsing.
@@ -110,13 +110,15 @@ pub enum ContentBlock {
     Unknown(String),
 }
 
-/// Parse a message body into a vector of [`ContentBlock`]s.
+/// Parse protocol message content according to its declared discriminator.
 ///
-/// The grammar is intentionally tiny: split on lines, lift any
-/// attachment markers and bare URLs into their own blocks, and feed
-/// everything else through pulldown-cmark. This keeps the renderer
-/// predictable and avoids the temptation to grow a bespoke parser.
-pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
+/// Missing formats and unsupported ProseMirror JSON deliberately render the
+/// `body` fallback as literal text. Only `format=markdown` enters the Markdown
+/// parser and its sanitization boundary.
+pub fn parse_message_body_with_format(
+    body: &str,
+    format: Option<arkret_sdk::TextFormat>,
+) -> Vec<ContentBlock> {
     if let Some(marker) = decode_long_text_marker(body) {
         return vec![ContentBlock::LongText {
             blob_ref: marker.blob_ref,
@@ -124,6 +126,37 @@ pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
             markdown: marker.format == "markdown",
         }];
     }
+    if body.trim().is_empty() {
+        return Vec::new();
+    }
+    match format {
+        Some(arkret_sdk::TextFormat::Markdown) => parse_rich_message_body(body, true),
+        Some(arkret_sdk::TextFormat::Plain | arkret_sdk::TextFormat::ProsemirrorJson) | None => {
+            vec![ContentBlock::Text(body.to_owned())]
+        }
+    }
+}
+
+/// Parse local, non-protocol editor previews that do not carry a Content Block
+/// format. This heuristic boundary must not be used for received chat Events.
+pub fn parse_local_preview_body(body: &str) -> Vec<ContentBlock> {
+    if let Some(marker) = decode_long_text_marker(body) {
+        return vec![ContentBlock::LongText {
+            blob_ref: marker.blob_ref,
+            fallback: marker.fallback,
+            markdown: marker.format == "markdown",
+        }];
+    }
+    parse_rich_message_body(body, false)
+}
+
+/// Parse a local editor preview whose source has no protocol discriminator.
+/// Received chat Events must use [`parse_message_body_with_format`].
+pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
+    parse_local_preview_body(body)
+}
+
+fn parse_rich_message_body(body: &str, declared_markdown: bool) -> Vec<ContentBlock> {
     let trimmed = body.trim();
     if trimmed.is_empty() {
         return Vec::new();
@@ -140,7 +173,7 @@ pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
         }
         let chunk = buf.join("\n");
         buf.clear();
-        push_text_chunk(&chunk, out);
+        push_text_chunk(&chunk, out, declared_markdown);
     };
 
     for line in trimmed.split('\n') {
@@ -162,7 +195,7 @@ pub fn parse_message_body(body: &str) -> Vec<ContentBlock> {
 /// entries for bare URLs while keeping the original prose intact. The
 /// preview is supplemental UI; it must not remove bytes from the visible
 /// message text because tests and users both expect round-trip text.
-fn push_text_chunk(chunk: &str, out: &mut Vec<ContentBlock>) {
+fn push_text_chunk(chunk: &str, out: &mut Vec<ContentBlock>, declared_markdown: bool) {
     let chunk = chunk.trim_matches('\n');
     if chunk.trim().is_empty() {
         return;
@@ -172,7 +205,7 @@ fn push_text_chunk(chunk: &str, out: &mut Vec<ContentBlock>) {
     let prose = chunk.trim().to_owned();
 
     if !prose.is_empty() {
-        if looks_like_markdown(&prose) {
+        if declared_markdown || looks_like_markdown(&prose) {
             let html = markdown_to_safe_html(&prose);
             out.push(ContentBlock::Markdown(html));
         } else {
@@ -1323,6 +1356,51 @@ mod tests {
         assert!(looks_like_markdown("- item"));
         assert!(looks_like_markdown("[link](https://example.com)"));
         assert!(!looks_like_markdown("just plain prose"));
+    }
+
+    #[test]
+    fn protocol_plain_and_missing_formats_never_guess_markdown() {
+        for body in [
+            "**literal**",
+            "# literal",
+            "[x](javascript:alert(1))",
+            "<script>alert(1)</script>",
+        ] {
+            assert_eq!(
+                parse_message_body_with_format(body, Some(arkret_sdk::TextFormat::Plain)),
+                vec![ContentBlock::Text(body.to_owned())]
+            );
+            assert_eq!(
+                parse_message_body_with_format(body, None),
+                vec![ContentBlock::Text(body.to_owned())]
+            );
+        }
+    }
+
+    #[test]
+    fn declared_markdown_uses_the_sanitized_renderer() {
+        let body = "# Heading\n\n- item\n\n[x](javascript:alert(1))\n\n```rs\nfn main() {}\n```\n\n<script>alert(1)</script>";
+        let blocks = parse_message_body_with_format(body, Some(arkret_sdk::TextFormat::Markdown));
+        let ContentBlock::Markdown(html) = &blocks[0] else {
+            panic!("declared markdown did not enter the markdown renderer");
+        };
+        assert!(html.contains("<h1>Heading</h1>"));
+        assert!(html.contains("<li>item</li>"));
+        assert!(html.contains("<pre><code class=\"language-rs\">"));
+        assert!(html.contains("href=\"#\""));
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn unsupported_prosemirror_uses_the_literal_fallback() {
+        assert_eq!(
+            parse_message_body_with_format(
+                "**fallback**",
+                Some(arkret_sdk::TextFormat::ProsemirrorJson),
+            ),
+            vec![ContentBlock::Text("**fallback**".to_owned())]
+        );
     }
 
     #[test]

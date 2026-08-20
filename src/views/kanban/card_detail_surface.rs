@@ -1025,7 +1025,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             } else {
                                                                 div { class: "card-detail-description", "data-testid": "card-description-body",
                                                                     {crate::content::render_blocks(
-                                                                        &crate::content::parse_message_body(&card.description_body),
+                                                                        &crate::content::parse_local_preview_body(&card.description_body),
                                                                     )}
                                                                 }
                                                             }
@@ -1073,7 +1073,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 } else {
                                                                     div { class: "card-detail-description card-synthesis-body",
                                                                         {crate::content::render_blocks(
-                                                                            &crate::content::parse_message_body(&card.synthesis),
+                                                                            &crate::content::parse_local_preview_body(&card.synthesis),
                                                                         )}
                                                                     }
                                                                 }
@@ -1389,7 +1389,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 } else {
                                                                                     div { class: "card-detail-description card-synthesis-body",
                                                                                         {crate::content::render_blocks(
-                                                                                            &crate::content::parse_message_body(&display_revision.body),
+                                                                                            &crate::content::parse_local_preview_body(&display_revision.body),
                                                                                         )}
                                                                                     }
                                                                                 }

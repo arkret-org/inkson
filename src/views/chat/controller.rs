@@ -656,6 +656,7 @@ impl ChatController {
         {
             message.revisions.push(message.body.clone());
             message.body = content.clone();
+            message.content_format = Some(arkret_sdk::TextFormat::Markdown);
             message.edited = true;
             message.pending = true;
             message.failed = false;
@@ -670,8 +671,21 @@ impl ChatController {
         let mut messages = self.messages;
         let mut status_msg = self.status_msg;
         spawn(async move {
-            let result =
-                match chat_message_revise_operation(&realm_id, &actor, &target_ref, &content) {
+            let result = match chat_content_block_for_body_with_upload(
+                &base_url,
+                api_token.clone(),
+                wait_for.clone(),
+                &realm_id,
+                &content,
+            )
+            .await
+            {
+                Ok(content_block) => match chat_message_revise_operation_with_content(
+                    &realm_id,
+                    &actor,
+                    &target_ref,
+                    content_block,
+                ) {
                     Ok(operation) => match authed_api_with_sync(&base_url, api_token, wait_for) {
                         Ok(api) => match api.event_submitter() {
                             Ok(submitter) => submitter.submit_sdk_event(&operation).await,
@@ -688,7 +702,17 @@ impl ChatController {
                         status_msg.set(format!("Message update failed: {error:#}"));
                         return;
                     }
-                };
+                },
+                Err(error) => {
+                    mark_message_command_failed(
+                        &mut messages,
+                        &message_id,
+                        format!("Message update failed: {error:#}"),
+                    );
+                    status_msg.set(format!("Message update failed: {error:#}"));
+                    return;
+                }
+            };
             match result {
                 Ok(_) => {
                     mark_message_command_succeeded(&mut messages, &message_id);
@@ -717,6 +741,7 @@ impl ChatController {
         {
             found.redacted = true;
             found.body.clear();
+            found.content_format = None;
             found.pending = true;
             found.failed = false;
             found.error = None;
@@ -884,6 +909,7 @@ impl ChatController {
                             "kind": event_kind_str::MESSAGE_CREATE,
                             "actor_id": actor,
                             "body": message.body,
+                            "content": operation.payload()["content"].clone(),
                             "strand_id": message.strand_id,
                             "message_id": retry_message_id,
                             "mentions": mention_values,

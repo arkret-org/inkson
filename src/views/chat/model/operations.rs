@@ -138,23 +138,29 @@ pub(crate) fn private_saved_targets_from_account_data(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn chat_message_revise_operation(
     realm_id: &str,
     actor: &str,
     event_id: &str,
     body: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
+    let content = chat_content_block_for_body(body)?;
+    chat_message_revise_operation_with_content(realm_id, actor, event_id, content)
+}
+
+pub(crate) fn chat_message_revise_operation_with_content(
+    realm_id: &str,
+    actor: &str,
+    event_id: &str,
+    content: arkret_sdk::ContentBlock,
+) -> anyhow::Result<crate::operation::LocalOperation> {
     // Route through the SDK-typed `message_revise_payload` builder rather than a
     // hand-rolled `json!` body: it validates ids at build time and addresses a
     // `ak:message:` target via the payload's `message_id` field (falling back to
     // `target_ref` for event/local refs), matching the schema's anyOf.
-    crate::operation::ak_ops::message_revise_content(
-        realm_id,
-        actor,
-        event_id,
-        arkret_sdk::ContentBlock::text(body),
-    )?
-    .build_sdk_event("inkson")
+    crate::operation::ak_ops::message_revise_content(realm_id, actor, event_id, content)?
+        .build_sdk_event("inkson")
 }
 
 pub(crate) fn chat_message_redact_operation(
@@ -345,7 +351,13 @@ pub(crate) fn chat_content_block_for_body(body: &str) -> anyhow::Result<arkret_s
     if let Some(error) = public_update_policy_error(body) {
         anyhow::bail!(error);
     }
-    Ok(arkret_sdk::ContentBlock::text(body))
+    let normalized = arkret_sdk::normalize_long_text(body)
+        .map_err(|error| anyhow::anyhow!("normalize message body: {error}"))?;
+    let content = arkret_sdk::ContentBlock::markdown_text(normalized);
+    content
+        .validate_inline_text()
+        .map_err(|error| anyhow::anyhow!("build inline message content: {error}"))?;
+    Ok(content)
 }
 
 pub(crate) async fn chat_content_block_for_body_with_upload(
@@ -361,7 +373,7 @@ pub(crate) async fn chat_content_block_for_body_with_upload(
     let normalized = arkret_sdk::normalize_long_text(body)
         .map_err(|error| anyhow::anyhow!("normalize message body: {error}"))?;
     if normalized.len() <= arkret_sdk::CONTENT_TEXT_INLINE_MAX_BYTES {
-        return Ok(arkret_sdk::ContentBlock::text(body));
+        return chat_content_block_for_body(&normalized);
     }
     let api = crate::transport::auth::authed_api_with_sync(
         base_url,
