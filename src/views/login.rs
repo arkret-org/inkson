@@ -1426,7 +1426,9 @@ async fn exchange_bound_handoff_session(
                 arkret_sdk::auth::session_grant::pre_registration_handoff_session_grant_request(
                     principal_id.clone(),
                     device_id.clone(),
-                    Vec::new(),
+                    arkret_sdk::STANDARD_INITIAL_SESSION_GRANT_OPERATIONS
+                        .map(|operation| operation.as_str().to_owned())
+                        .to_vec(),
                     handoff_grant,
                     arkret_sdk::DidCoreId::new(pending_handoff.audience.clone())
                         .map_err(|error| format!("invalid handoff audience: {error}"))?,
