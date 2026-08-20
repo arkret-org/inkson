@@ -13,8 +13,8 @@ use super::util::{
     random_url_safe_token,
 };
 use super::{
-    ARKRET_DEVICE_SCOPE_PREFIX, INKSON_OIDC_CLIENT_ID, OidcDiscoveryDocument, OidcEntryPoint,
-    OidcScaffoldBundle, PersistedOidcScaffold,
+    INKSON_OIDC_CLIENT_ID, OidcDiscoveryDocument, OidcEntryPoint, OidcScaffoldBundle,
+    PersistedOidcScaffold,
 };
 
 /// T1.Y1 — build the authorize scaffold (PKCE state/nonce/verifier + the full
@@ -26,7 +26,6 @@ pub fn build_oidc_authorize_scaffold(
     discovery: &OidcDiscoveryDocument,
     method: &arkret_sdk::AuthMethod,
     redirect_uri: &str,
-    device_id: &str,
     principal_audience: &str,
     entry_point: &OidcEntryPoint,
     ui_locale: &str,
@@ -49,8 +48,6 @@ pub fn build_oidc_authorize_scaffold(
         method,
         &client_id,
         redirect_uri,
-        device_id,
-        principal_audience,
         entry_point,
         ui_locale,
         &state,
@@ -70,16 +67,15 @@ pub fn build_oidc_authorize_scaffold(
 
 /// Build a standard OpenID Connect authorization-code + PKCE authorize URL
 /// from a discovery document and auth method. No Arkret-private scopes are
-/// required: `scope` defaults to `openid` plus any `methods[].scopes`, and the
-/// stable device binding rides as a `urn:arkret:client:device:{id}` scope.
+/// required: `scope` is `openid` plus the method's declared scopes. Device and
+/// Principal Server bindings belong to the typed AccountHandoff/session wire,
+/// not OAuth scope or RFC 8707 resource projection.
 #[allow(clippy::too_many_arguments)]
 fn build_standard_authorize_url(
     discovery: &OidcDiscoveryDocument,
     method: &arkret_sdk::AuthMethod,
     client_id: &str,
     redirect_uri: &str,
-    device_id: &str,
-    principal_audience: &str,
     entry_point: &OidcEntryPoint,
     ui_locale: &str,
     state: &str,
@@ -99,23 +95,6 @@ fn build_standard_authorize_url(
             scope_tokens.push(scope.to_owned());
         }
     }
-    // Standard offline_access for refresh tokens when the issuer advertises it.
-    if discovery
-        .scopes_supported
-        .iter()
-        .any(|scope| scope == "offline_access")
-        && !scope_tokens.iter().any(|scope| scope == "offline_access")
-    {
-        scope_tokens.push("offline_access".to_owned());
-    }
-    // Bind this OAuth session to the pending device id so every authority call
-    // in this sign-in strand observes one `org.arkret.device_id`. This is a
-    // parameterized capability scope accepted verbatim by the issuer; it is
-    // not gated by discovery scopes_supported.
-    let device_id = device_id.trim();
-    if !device_id.is_empty() {
-        scope_tokens.push(format!("{ARKRET_DEVICE_SCOPE_PREFIX}{device_id}"));
-    }
     let scope = scope_tokens.join(" ");
     let pkce_method = preferred_pkce_method(&discovery.code_challenge_methods_supported)
         .ok_or_else(|| anyhow::anyhow!("OIDC issuer must support PKCE S256"))?;
@@ -127,7 +106,6 @@ fn build_standard_authorize_url(
         query.append_pair("scope", &scope);
         query.append_pair("state", state);
         query.append_pair("nonce", nonce);
-        query.append_pair("resource", principal_audience);
         if !ui_locale.trim().is_empty() {
             query.append_pair("ui_locales", ui_locale.trim());
         }

@@ -1052,11 +1052,7 @@ export async function mockArkretApi(
         token_endpoint: "https://auth.local.host/oauth/token",
         userinfo_endpoint: "https://auth.local.host/oauth/userinfo",
         code_challenge_methods_supported: ["plain", "S256"],
-        scopes_supported: [
-          "openid",
-          "profile",
-          "urn:arkret:principal-server:session.bind",
-        ],
+        scopes_supported: ["openid", "profile"],
       });
     }
     if (url.hostname === "auth.local.host" && url.pathname === "/authorize") {
@@ -1092,12 +1088,7 @@ export async function mockArkretApi(
                 openid_configuration:
                   "https://auth.local.host/.well-known/openid-configuration",
                 client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
-                scopes: [
-                  "openid",
-                  "profile",
-                  "urn:arkret:principal-server:session.bind",
-                ],
-                grant_exchange: { proof_kind: "oidc_code_exchange" },
+                scopes: ["openid", "profile"],
               },
             ],
           },
@@ -1239,12 +1230,7 @@ export async function mockArkretApi(
               openid_configuration:
                 "https://auth.local.host/.well-known/openid-configuration",
               client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
-              scopes: [
-                "openid",
-                "profile",
-                "urn:arkret:principal-server:session.bind",
-              ],
-              grant_exchange: { proof_kind: "oidc_code_exchange" },
+              scopes: ["openid", "profile"],
             },
           ],
         },
@@ -1764,12 +1750,7 @@ export async function mockArkretApi(
               openid_configuration:
                 "https://auth.local.host/.well-known/openid-configuration",
               client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
-              scopes: [
-                "openid",
-                "profile",
-                "urn:arkret:principal-server:session.bind",
-              ],
-              grant_exchange: { proof_kind: "oidc_code_exchange" },
+              scopes: ["openid", "profile"],
             },
           ],
         },
@@ -2299,7 +2280,10 @@ export async function mockArkretApi(
             session_public_key:
               identityCreation.initial_session.session_public_key,
             audience: identityCreation.initial_session.audience,
-            granted_scope: identityCreation.initial_session.requested_scope,
+            granted_scope: [
+              "ak.self.account.read.describe",
+              "ak.self.events.read.scan",
+            ],
           },
         };
       })();

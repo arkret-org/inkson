@@ -1,10 +1,21 @@
 use super::*;
 
 impl LocalStateStore {
-    /// The currently-active account DID (the foreground account whose entry
-    /// `cached` mirrors), or `None` when signed out / before any account has
-    /// been adopted on this browser. Read through storage so every clone agrees.
+    /// The authenticated foreground account DID. A pending sign-in has its own
+    /// anonymous transaction namespace, so this returns `None` while that
+    /// transaction is active even though the last-selected account is retained.
     pub fn active_account_did(&self) -> Option<String> {
+        let root = self.read_root();
+        root.pending_login
+            .is_none()
+            .then_some(root.active_did)
+            .flatten()
+    }
+
+    /// Last account selected on this installation. This survives sign-in
+    /// failure/cancellation and is never used as authority for the pending
+    /// transaction.
+    pub fn last_selected_account_did(&self) -> Option<String> {
         self.read_root().active_did
     }
 
@@ -364,11 +375,10 @@ impl LocalStateStore {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned),
         };
-        // Publish the anonymous principal scope before flushing its state so
-        // the generic persistence path cannot route this snapshot back into
-        // the old DID.
+        // Publish the transaction marker before flushing its anonymous state.
+        // The last-selected account remains intact; effective_account_key()
+        // gives pending_login precedence and prevents cross-account writes.
         self.mutate_root(|root| {
-            root.active_did = None;
             root.pending_login = Some(pending);
         });
         self.cached = anonymous;

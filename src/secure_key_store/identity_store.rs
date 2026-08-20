@@ -10,7 +10,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
 use super::signing_seed::{
-    SigningSeedMaterial, ensure_signing_seed_at, load_signing_seed_at, store_signing_seed_at,
+    SigningSeedMaterial, ensure_signing_seed_at, ensure_signing_seed_at_durable,
+    load_signing_seed_at, store_signing_seed_at, store_signing_seed_at_durable,
 };
 use super::{SecureKeyStore, SecureKeyStoreError};
 
@@ -88,6 +89,25 @@ fn save_device_id(
     #[cfg(not(target_arch = "wasm32"))]
     {
         store.store_secret(storage_key, device_id.as_str())
+    }
+}
+
+async fn save_device_id_durable(
+    store: &dyn SecureKeyStore,
+    storage_key: &str,
+    device_id: &DeviceId,
+) -> Result<(), SecureKeyStoreError> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Device ids are intentionally non-secret browser routing metadata and
+        // live in localStorage, whose setItem contract completes synchronously.
+        save_device_id(store, storage_key, device_id)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        store
+            .store_secret_durable(storage_key, device_id.as_str())
+            .await
     }
 }
 
@@ -227,6 +247,17 @@ impl UserLocalStore {
         save_device_id(store, &self.key(DEVICE_ID_ENTRY), device_id)
     }
 
+    /// Crash-durable device-id write used while preparing an identity
+    /// transition. Ordinary metadata updates may continue using
+    /// [`Self::save_device_id`].
+    pub async fn save_device_id_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+        device_id: &DeviceId,
+    ) -> Result<(), SecureKeyStoreError> {
+        save_device_id_durable(store, &self.key(DEVICE_ID_ENTRY), device_id).await
+    }
+
     pub fn load_signing_seed(
         &self,
         store: &dyn SecureKeyStore,
@@ -241,12 +272,29 @@ impl UserLocalStore {
         ensure_signing_seed_at(store, &self.key(SIGNING_SEED_ENTRY))
     }
 
+    /// Load the account device signer or durably create it before a protocol
+    /// transition starts depending on that key.
+    pub async fn ensure_signing_seed_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+        ensure_signing_seed_at_durable(store, &self.key(SIGNING_SEED_ENTRY)).await
+    }
+
     pub fn save_signing_seed(
         &self,
         store: &dyn SecureKeyStore,
         seed: &[u8; 32],
     ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
         store_signing_seed_at(store, &self.key(SIGNING_SEED_ENTRY), seed)
+    }
+
+    pub async fn save_signing_seed_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+        seed: &[u8; 32],
+    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+        store_signing_seed_at_durable(store, &self.key(SIGNING_SEED_ENTRY), seed).await
     }
 
     pub fn save_grant_binding_seed_b64url(
@@ -256,6 +304,17 @@ impl UserLocalStore {
     ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
         let seed = decode_seed_b64url(seed_b64url)?;
         store_signing_seed_at(store, &self.key(GRANT_BINDING_SEED_ENTRY), &seed)
+    }
+
+    /// Persist the post-authentication grant-binding key before the account
+    /// scope is made visible to the rest of the application.
+    pub async fn save_grant_binding_seed_b64url_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+        seed_b64url: &str,
+    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+        let seed = decode_seed_b64url(seed_b64url)?;
+        store_signing_seed_at_durable(store, &self.key(GRANT_BINDING_SEED_ENTRY), &seed).await
     }
 
     /// Logout-only; the sole caller sits under `cfg(not(test))`, so this carries
@@ -321,6 +380,13 @@ impl PendingLocalStore {
         save_device_id(store, &self.key(DEVICE_ID_ENTRY), &self.device_id)
     }
 
+    pub async fn save_device_id_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+    ) -> Result<(), SecureKeyStoreError> {
+        save_device_id_durable(store, &self.key(DEVICE_ID_ENTRY), &self.device_id).await
+    }
+
     pub fn save_signing_seed(
         &self,
         store: &dyn SecureKeyStore,
@@ -336,6 +402,13 @@ impl PendingLocalStore {
         ensure_signing_seed_at(store, &self.key(SIGNING_SEED_ENTRY))
     }
 
+    pub async fn ensure_signing_seed_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+        ensure_signing_seed_at_durable(store, &self.key(SIGNING_SEED_ENTRY)).await
+    }
+
     pub fn load_signing_seed(
         &self,
         store: &dyn SecureKeyStore,
@@ -348,6 +421,13 @@ impl PendingLocalStore {
         store: &dyn SecureKeyStore,
     ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
         ensure_signing_seed_at(store, &self.key(GRANT_BINDING_SEED_ENTRY))
+    }
+
+    pub async fn ensure_grant_binding_seed_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+        ensure_signing_seed_at_durable(store, &self.key(GRANT_BINDING_SEED_ENTRY)).await
     }
 
     pub fn load_grant_binding_seed(
@@ -432,6 +512,36 @@ impl PendingLocalStore {
         Ok(())
     }
 
+    /// Prepare pending identity material in its final account namespace and
+    /// wait for every newly-created secret write to commit. The pending
+    /// namespace remains intact, so callers can retry after any partial error
+    /// and consume it only after the public account-state commit succeeds.
+    pub async fn copy_to_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+        user: &UserLocalStore,
+    ) -> Result<(), SecureKeyStoreError> {
+        if user.load_device_id(store)?.is_none() {
+            user.save_device_id_durable(store, &self.device_id).await?;
+        }
+        if user.load_signing_seed(store)?.is_none()
+            && let Some(material) = load_signing_seed_at(store, &self.key(SIGNING_SEED_ENTRY))?
+        {
+            user.save_signing_seed_durable(store, &material.seed)
+                .await?;
+        }
+        if store
+            .get_secret(&user.key(GRANT_BINDING_SEED_ENTRY))?
+            .is_none()
+            && let Some(seed) = store.get_secret(&self.key(GRANT_BINDING_SEED_ENTRY))?
+        {
+            store
+                .store_secret_durable(&user.key(GRANT_BINDING_SEED_ENTRY), &seed)
+                .await?;
+        }
+        Ok(())
+    }
+
     pub fn delete(&self, store: &dyn SecureKeyStore) -> Result<(), SecureKeyStoreError> {
         store.delete_secret(&self.key(SIGNING_SEED_ENTRY))?;
         store.delete_secret(&self.key(GRANT_BINDING_SEED_ENTRY))?;
@@ -441,8 +551,66 @@ impl PendingLocalStore {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::future::Future;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::pin::Pin;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::sync::Mutex;
+
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[derive(Debug, Default)]
+    struct TrackingDurableStore {
+        inner: MemorySecureKeyStore,
+        durable_keys: Mutex<Vec<String>>,
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl SecureKeyStore for TrackingDurableStore {
+        fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+            self.inner.store_secret_bytes(key, value)
+        }
+
+        fn store_secret_bytes_durable<'a>(
+            &'a self,
+            key: &'a str,
+            value: &'a [u8],
+        ) -> Pin<Box<dyn Future<Output = Result<(), SecureKeyStoreError>> + Send + 'a>> {
+            Box::pin(async move {
+                self.durable_keys.lock().unwrap().push(key.to_owned());
+                self.inner.store_secret_bytes(key, value)
+            })
+        }
+
+        fn get_secret_bytes(
+            &self,
+            key: &str,
+        ) -> Result<Option<garth::SecretBytes>, SecureKeyStoreError> {
+            self.inner.get_secret_bytes(key)
+        }
+
+        fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+            self.inner.delete_secret(key)
+        }
+
+        fn list_secret_keys(
+            &self,
+            prefix: Option<&str>,
+        ) -> Result<Vec<String>, SecureKeyStoreError> {
+            self.inner.list_secret_keys(prefix)
+        }
+
+        fn backend_info(&self) -> garth::SecureKeyStoreBackendInfo {
+            garth::SecureKeyStoreBackendInfo {
+                name: "tracking-durable",
+                hardware_backed: false,
+                exportable: true,
+            }
+        }
+    }
 
     fn device(suffix: &str) -> DeviceId {
         DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{suffix}")).unwrap()
@@ -517,5 +685,53 @@ mod tests {
         let key = user.key(DEVICE_ID_ENTRY);
         assert_ne!(key, DEVICE_ID_ENTRY);
         assert_eq!(key, "inkson.web:alice.example.device_id.v1");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn durable_prepare_commits_each_new_identity_binding() {
+        let store = TrackingDurableStore::default();
+        let pending = PendingLocalStore::new(device("000000000004"));
+        pending.save_signing_seed(&store, &[5_u8; 32]).unwrap();
+        pending
+            .ensure_grant_binding_seed_durable(&store)
+            .await
+            .unwrap();
+        let user = UserLocalStore::new(
+            DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+        );
+
+        pending.copy_to_durable(&store, &user).await.unwrap();
+
+        assert_eq!(
+            user.load_device_id(&store).unwrap(),
+            Some(device("000000000004"))
+        );
+        assert_eq!(
+            user.load_signing_seed(&store).unwrap().unwrap().seed,
+            [5_u8; 32]
+        );
+        assert!(
+            store
+                .get_secret(&user.key(GRANT_BINDING_SEED_ENTRY))
+                .unwrap()
+                .is_some()
+        );
+        let durable_keys = store.durable_keys.lock().unwrap();
+        assert!(
+            durable_keys
+                .iter()
+                .any(|key| key == &user.key(DEVICE_ID_ENTRY))
+        );
+        assert!(
+            durable_keys
+                .iter()
+                .any(|key| key == &user.key(SIGNING_SEED_ENTRY))
+        );
+        assert!(
+            durable_keys
+                .iter()
+                .any(|key| key == &user.key(GRANT_BINDING_SEED_ENTRY))
+        );
     }
 }

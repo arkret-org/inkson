@@ -9,6 +9,7 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 use dioxus_router::hooks::use_navigator;
 
+use crate::components::QrSharePanel;
 use crate::recovery_crypto::{RecoveryKeyConfirmationDiff, recovery_key_confirmation_diff};
 use crate::routes::Route;
 use crate::ui::button::{Button, ButtonVariant};
@@ -32,7 +33,7 @@ enum OnboardingSurface {
     IdentityCreation,
     /// The authenticated account is already bound, but this device is not.
     /// The Recovery Key proves root control and authorizes this device.
-    RootRecovery,
+    DeviceSetupRequired,
     /// A durable identity draft that nothing on this device can finish. It is
     /// shown as a dead end with an explicit way out, never as a Recovery Key
     /// prompt: asking for 24 words that cannot be used is indistinguishable
@@ -191,7 +192,7 @@ fn onboarding_surface(
             }) {
                 OnboardingSurface::IdentityCreation
             } else {
-                OnboardingSurface::RootRecovery
+                OnboardingSurface::DeviceSetupRequired
             };
         }
         let Some(server_state) = handoff.identity_creation_state else {
@@ -515,13 +516,14 @@ pub fn OnboardingPanel(
         reroute += 1;
     };
     match surface {
-        OnboardingSurface::RootRecovery => rsx! {
+        OnboardingSurface::DeviceSetupRequired => rsx! {
             div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
-                RootAnchoredDeviceRecovery {
+                DeviceSetupRequired {
                     state_store,
                     token,
                     account_did,
                     device_id,
+                    config_store,
                     needs_device_authorization,
                     device_authorization_check_complete,
                 }
@@ -580,12 +582,393 @@ pub fn OnboardingPanel(
     }
 }
 
+#[derive(Clone, Debug)]
+struct DeviceSetupPairingRequest {
+    request_id: arkret_sdk::DevicePairingRequestId,
+    pairing_code: arkret_sdk::DevicePairingCode,
+    device_id: arkret_sdk::DeviceId,
+    deep_link: String,
+    target_attestation: arkret_sdk::DevicePairingTargetAttestation,
+    pending_key: bool,
+}
+
+fn device_pairing_handoff_token(
+    request_id: &arkret_sdk::DevicePairingRequestId,
+    pairing_code: &arkret_sdk::DevicePairingCode,
+) -> anyhow::Result<String> {
+    Ok(arkret_sdk::base64url_encode(
+        arkret_sdk::canonical::canonical_json_bytes(&serde_json::json!({
+            "r": request_id,
+            "c": pairing_code,
+        }))?,
+    ))
+}
+
+fn device_pairing_deep_link(
+    base_url: &str,
+    token: &str,
+    challenge_proof: &arkret_sdk::DevicePairingChallengeProof,
+    target_attestation: &arkret_sdk::DevicePairingTargetAttestation,
+) -> anyhow::Result<String> {
+    let proof = arkret_sdk::base64url_encode(arkret_sdk::canonical::canonical_json_bytes(
+        challenge_proof,
+    )?);
+    let attestation = arkret_sdk::base64url_encode(arkret_sdk::canonical::canonical_json_bytes(
+        target_attestation,
+    )?);
+    Ok(format!(
+        "{}/_arkret/open/device-pairing/resolve#token={token}&proof={proof}&attestation={attestation}",
+        base_url.trim_end_matches('/'),
+    ))
+}
+
+async fn stage_device_setup_pairing(
+    handoff: &crate::state::PendingAccountHandoff,
+) -> anyhow::Result<DeviceSetupPairingRequest> {
+    let full_id = arkret_sdk::DidFullId::new(
+        handoff
+            .bound_principal_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("bound account principal is missing"))?,
+    )?;
+    let principal_id = arkret_sdk::project_full_id_to_core_id(&full_id)?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let user_store = crate::secure_key_store::UserLocalStore::new(principal_id.clone());
+    let retained = user_store
+        .load_device_id(secure_store.as_ref())?
+        .zip(user_store.load_signing_seed(secure_store.as_ref())?);
+    let (target_device, signing_seed, pending_key) = if let Some((device, material)) = retained {
+        (device, material.seed, false)
+    } else {
+        let device = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
+        let pending_store = crate::secure_key_store::PendingLocalStore::new(device.clone());
+        pending_store.activate();
+        let material = pending_store
+            .ensure_signing_seed_durable(secure_store.as_ref())
+            .await?;
+        (device, material.seed, true)
+    };
+    crate::event_signer::activate_device_signer_from_seed_for_device(
+        signing_seed,
+        Some(secure_store.as_ref()),
+        Some(target_device.as_str()),
+    )?;
+    let signer = crate::event_signer::bind_active_signer_device_id(target_device.as_str())?
+        .ok_or_else(|| anyhow::anyhow!("the target device signer is unavailable"))?;
+    let public_key = signer
+        .public_key_base64url()
+        .ok_or_else(|| anyhow::anyhow!("the target device key cannot be exported"))?;
+    let mut client_nonce_bytes = [0_u8; 16];
+    getrandom::fill(&mut client_nonce_bytes)
+        .map_err(|error| anyhow::anyhow!("generate device-pairing nonce: {error}"))?;
+    let client_nonce =
+        arkret_sdk::DevicePairingNonce::new(arkret_sdk::base64url_encode(client_nonce_bytes))
+            .map_err(anyhow::Error::msg)?;
+    let stage_body = arkret_sdk::DevicePairingStageRequestBody {
+        new_device_pubkey: arkret_sdk::PublicKey {
+            kty: arkret_sdk::NonEmptyString::new("OKP".to_owned()).map_err(anyhow::Error::msg)?,
+            kid: arkret_sdk::NonEmptyString::new(target_device.to_string())
+                .map_err(anyhow::Error::msg)?,
+            algorithm: arkret_sdk::NonEmptyString::new("Ed25519".to_owned())
+                .map_err(anyhow::Error::msg)?,
+            key: arkret_sdk::Base64UrlString::new(public_key.to_owned())
+                .map_err(anyhow::Error::msg)?,
+            key_digest: None,
+        },
+        client_nonce: client_nonce.clone(),
+        display_name: Some(
+            arkret_sdk::NonEmptyString::new("New browser".to_owned())
+                .map_err(anyhow::Error::msg)?,
+        ),
+        device_metadata: Some(arkret_sdk::DeviceMetadata {
+            platform: Some(
+                arkret_sdk::NonEmptyString::new("browser".to_owned())
+                    .map_err(anyhow::Error::msg)?,
+            ),
+            ..Default::default()
+        }),
+    };
+    let http = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?
+        .sdk_http_client()?;
+    let stage = http.device_pairing_stage(&stage_body).await?;
+    let challenge =
+        arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_stage(
+            client_nonce,
+            &stage,
+        );
+    let (challenge_bytes, transcript_digest) =
+        arkret_sdk::signatures::device_pairing::server_device_pairing_transcript(
+            &stage_body.new_device_pubkey,
+            &challenge,
+        )?;
+    let challenge_proof = arkret_sdk::DevicePairingChallengeProof {
+        transcript: arkret_sdk::DevicePairingChallengeTranscriptKind::ServerMediated,
+        kid: target_device.clone(),
+        signature_algorithm: arkret_sdk::NonEmptyString::new(signer.algorithm().to_owned())
+            .map_err(anyhow::Error::msg)?,
+        transcript_digest: transcript_digest.clone(),
+        signature: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
+            signer.sign_raw(&challenge_bytes)?,
+        ))
+        .map_err(anyhow::Error::msg)?,
+    };
+    let target_attestation = crate::identity::device_pairing::sign_target_attestation(
+        &signer,
+        full_id.as_str(),
+        target_device.as_str(),
+        transcript_digest,
+    )?;
+    let token =
+        device_pairing_handoff_token(&stage.device_pairing_request_id, &stage.pairing_code)?;
+    let deep_link = device_pairing_deep_link(
+        &handoff.principal_server_url,
+        &token,
+        &challenge_proof,
+        &target_attestation,
+    )?;
+    Ok(DeviceSetupPairingRequest {
+        request_id: stage.device_pairing_request_id,
+        pairing_code: stage.pairing_code,
+        device_id: target_device,
+        deep_link,
+        target_attestation,
+        pending_key,
+    })
+}
+
+async fn check_device_setup_pairing(
+    handoff: &crate::state::PendingAccountHandoff,
+    request: &DeviceSetupPairingRequest,
+) -> anyhow::Result<arkret_sdk::DevicePairingState> {
+    let full_id = arkret_sdk::DidFullId::new(
+        handoff
+            .bound_principal_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("bound account principal is missing"))?,
+    )?;
+    let http = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?
+        .sdk_http_client()?;
+    let outcome = http
+        .device_pairing_status(&arkret_sdk::DevicePairingStatusRequestBody {
+            device_pairing_request_id: request.request_id.clone(),
+            pairing_code: request.pairing_code.clone(),
+        })
+        .await?;
+    if outcome.state != arkret_sdk::DevicePairingState::Authorized {
+        return Ok(outcome.state);
+    }
+    crate::identity::device_pairing::verify_authorized_pairing_event(
+        &http,
+        &full_id,
+        &outcome,
+        &request.target_attestation,
+    )
+    .await?;
+    if request.pending_key {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let pending = crate::secure_key_store::PendingLocalStore::new(request.device_id.clone());
+        let user = crate::secure_key_store::UserLocalStore::new(
+            arkret_sdk::project_full_id_to_core_id(&full_id)?,
+        );
+        pending
+            .copy_to_durable(secure_store.as_ref(), &user)
+            .await?;
+        let promoted_device = user
+            .load_device_id(secure_store.as_ref())?
+            .ok_or_else(|| anyhow::anyhow!("authorized device was not retained"))?;
+        if promoted_device != request.device_id {
+            anyhow::bail!("another local device identity occupies this account namespace");
+        }
+    }
+    crate::event_signer::bind_active_signer_principal_device_id(
+        &full_id,
+        request.device_id.as_str(),
+    )?;
+    Ok(outcome.state)
+}
+
+#[component]
+fn DeviceSetupRequired(
+    state_store: SyncSignal<crate::state::LocalStateStore>,
+    token: Signal<String>,
+    mut account_did: Signal<String>,
+    mut device_id: Signal<String>,
+    config_store: Signal<crate::config::LocalConfigStore>,
+    needs_device_authorization: Signal<bool>,
+    device_authorization_check_complete: Signal<bool>,
+) -> Element {
+    let mut recovery_selected = use_signal(|| false);
+    let mut pairing_request = use_signal(|| None::<DeviceSetupPairingRequest>);
+    let mut pairing_status = use_signal(String::new);
+    let mut pairing_busy = use_signal(|| false);
+    let handoff = state_store.read().pending_account_handoff();
+    let recovery_device_id = handoff
+        .as_ref()
+        .map(|handoff| handoff.device_id.clone())
+        .unwrap_or_default();
+    if recovery_selected() {
+        return rsx! {
+            RootAnchoredDeviceRecovery {
+                state_store,
+                token,
+                account_did,
+                replacement_device_id: recovery_device_id,
+                needs_device_authorization,
+                device_authorization_check_complete,
+            }
+        };
+    }
+    let request = pairing_request.read().clone();
+    let qr_svg = request.as_ref().map_or_else(String::new, |request| {
+        qrcode::QrCode::with_error_correction_level(
+            request.deep_link.as_bytes(),
+            qrcode::EcLevel::M,
+        )
+        .map(|code| {
+            code.render::<qrcode::render::svg::Color<'_>>()
+                .min_dimensions(192, 192)
+                .quiet_zone(true)
+                .build()
+        })
+        .unwrap_or_default()
+    });
+    rsx! {
+        div { class: "event onboarding-card", "data-testid": "device-setup-required",
+            div { class: "onboarding-step-mark", "aria-hidden": "true", "1" }
+            h2 { "Authorize this device" }
+            p { class: "muted",
+                "This account is already linked, but this browser has no currently accepted device key. Create an approval request and scan it from an authorized device."
+            }
+            p { class: "muted",
+                "The account login alone cannot authorize a new device. No session was issued."
+            }
+            if handoff.as_ref().is_some_and(|handoff| handoff.bound_principal_id.is_some()) {
+                Button {
+                    variant: ButtonVariant::Primary,
+                    "data-testid": "device-setup-pairing-start",
+                    disabled: pairing_busy(),
+                    onclick: move |_| {
+                        let Some(handoff) = state_store.read().pending_account_handoff() else {
+                            pairing_status.set("The authenticated account handoff is missing. Sign in again.".to_owned());
+                            return;
+                        };
+                        pairing_busy.set(true);
+                        pairing_status.set("Creating a device approval request…".to_owned());
+                        spawn(async move {
+                            match stage_device_setup_pairing(&handoff).await {
+                                Ok(request) => {
+                                    pairing_request.set(Some(request));
+                                    pairing_status.set(
+                                        "Approval request created. Compare the code on your authorized device before approving."
+                                            .to_owned(),
+                                    );
+                                }
+                                Err(error) => pairing_status.set(format!(
+                                    "Could not create the device approval request: {error}"
+                                )),
+                            }
+                            pairing_busy.set(false);
+                        });
+                    },
+                    if pairing_busy() { "Preparing…" } else { "Request device approval" }
+                }
+            } else {
+                p { class: "error", "The bound-account handoff is incomplete. No device flow was started." }
+            }
+            if let Some(request) = request {
+                div { class: "device-pair-approval-code-block",
+                    span { class: "muted", "Compare this code before approving" }
+                    span {
+                        class: "device-pair-approval-code mono",
+                        "data-testid": "device-setup-pairing-code",
+                        "{request.pairing_code}"
+                    }
+                }
+                QrSharePanel {
+                    qr_svg,
+                    url: request.deep_link.clone(),
+                    qr_aria_label: "Device approval QR code".to_owned(),
+                    url_aria_label: "Device approval link".to_owned(),
+                    qr_test_id: "device-setup-pairing-qr".to_owned(),
+                    url_test_id: "device-setup-pairing-link".to_owned(),
+                    copy_test_id: "device-setup-pairing-copy".to_owned(),
+                    url_rows: 4,
+                }
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    "data-testid": "device-setup-pairing-status",
+                    disabled: pairing_busy(),
+                    onclick: move |_| {
+                        let Some(handoff) = state_store.read().pending_account_handoff() else {
+                            pairing_status.set("The authenticated account handoff is missing. Sign in again.".to_owned());
+                            return;
+                        };
+                        let Some(request) = pairing_request.read().clone() else {
+                            pairing_status.set("Create an approval request first.".to_owned());
+                            return;
+                        };
+                        pairing_busy.set(true);
+                        pairing_status.set("Checking device approval…".to_owned());
+                        spawn(async move {
+                            match check_device_setup_pairing(&handoff, &request).await {
+                                Ok(arkret_sdk::DevicePairingState::Authorized) => {
+                                    let principal = handoff.bound_principal_id.clone().unwrap_or_default();
+                                    account_did.set(principal.clone());
+                                    device_id.set(request.device_id.to_string());
+                                    crate::views::helpers::persist_config(
+                                        config_store,
+                                        handoff.principal_server_url.clone(),
+                                        principal,
+                                        request.device_id.to_string(),
+                                        String::new(),
+                                    );
+                                    pairing_status.set(
+                                        "Device authorization is accepted and verified. No session was issued; sign in again to request one."
+                                            .to_owned(),
+                                    );
+                                }
+                                Ok(arkret_sdk::DevicePairingState::PendingAuthorization) => {
+                                    pairing_status.set(
+                                        "Still waiting for explicit approval on an authorized device."
+                                            .to_owned(),
+                                    );
+                                }
+                                Ok(arkret_sdk::DevicePairingState::Expired) => {
+                                    pairing_request.set(None);
+                                    pairing_status.set(
+                                        "This approval request expired. Create a new request."
+                                            .to_owned(),
+                                    );
+                                }
+                                Err(error) => pairing_status.set(format!(
+                                    "Device approval could not be verified: {error}"
+                                )),
+                            }
+                            pairing_busy.set(false);
+                        });
+                    },
+                    if pairing_busy() { "Checking…" } else { "Check approval status" }
+                }
+            }
+            if !pairing_status().is_empty() {
+                p { class: "muted", role: "status", "data-testid": "device-setup-status", "{pairing_status}" }
+            }
+            Link { class: "secondary", to: Route::Login, "Sign in again after approval" }
+            Button {
+                variant: ButtonVariant::Ghost,
+                onclick: move |_| recovery_selected.set(true),
+                "Use Recovery Key instead"
+            }
+        }
+    }
+}
+
 #[component]
 fn RootAnchoredDeviceRecovery(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     mut token: Signal<String>,
     mut account_did: Signal<String>,
-    device_id: Signal<String>,
+    replacement_device_id: String,
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
@@ -620,7 +1003,7 @@ fn RootAnchoredDeviceRecovery(
                         return;
                     };
                     let recovery_words = words();
-                    let replacement_device_id = device_id();
+                    let replacement_device_id = replacement_device_id.clone();
                     busy.set(true);
                     status.set("Verifying Recovery Key and preparing a root-anchored device authorization…".to_owned());
                     spawn(async move {
@@ -783,8 +1166,6 @@ async fn issue_recovery_completion_grant(
                 device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
                 session_public_key: holder.canonical_session_public_jwk()?,
                 audience: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
-                requested_scope:
-                    crate::identity::principal_registration::standard_initial_session_scope(),
             };
             initial_session.validate()?;
             let request = workflow
@@ -826,7 +1207,6 @@ async fn issue_recovery_completion_grant(
         holder.seed_b64().as_str(),
     )?;
     {
-        let mut store = state_store.write();
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let prepared_keys = crate::views::login::prepare_completed_login_dpop_key(
             secure_store.as_ref(),
@@ -835,7 +1215,9 @@ async fn issue_recovery_completion_grant(
             &handoff.device_id,
             &dpop_record,
         )
+        .await
         .map_err(anyhow::Error::msg)?;
+        let mut store = state_store.write();
         store.adopt_pending_login(&principal_id);
         crate::views::login::commit_completed_login_dpop_key(
             &mut store,
@@ -1596,7 +1978,7 @@ fn RecoveryKeyWords(recovery_key: String) -> Element {
     }
 }
 
-fn activate_pending_registration_signer(
+async fn activate_pending_registration_signer(
     checkpoint: &crate::state::PendingPrincipalRegistration,
     device: &str,
     pending_store: &crate::secure_key_store::PendingLocalStore,
@@ -1604,7 +1986,9 @@ fn activate_pending_registration_signer(
 ) -> anyhow::Result<std::sync::Arc<crate::event_signer::InksonEventSigner>> {
     let signing_material =
         if checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
-            pending_store.ensure_signing_seed(secure_store)?
+            pending_store
+                .ensure_signing_seed_durable(secure_store)
+                .await?
         } else {
             pending_store
                 .load_signing_seed(secure_store)?
@@ -1698,7 +2082,8 @@ async fn create_and_bind_identity(
             device,
             &pending_store,
             secure_store.as_ref(),
-        )?;
+        )
+        .await?;
         let device_public_key_multibase = signer
             .public_key_multibase()
             .ok_or_else(|| anyhow::anyhow!("device signer has no Ed25519 public key"))?;
@@ -1712,9 +2097,15 @@ async fn create_and_bind_identity(
             )?;
             crate::identity::did_key::encode_x25519_multibase(&public_key)
         };
-        let dpop =
-            crate::identity::account_auth::grant_dpop::ensure_pending_device_key_with_secure_store(
-                &mut state_store.write(),
+        let (dpop, dpop_record) = crate::identity::account_auth::grant_dpop::prepare_pending_device_key_with_secure_store_durable(
+            secure_store.as_ref(),
+            &pending_store,
+        )
+        .await?;
+        state_store
+            .write()
+            .set_pending_dpop_device_key_with_secure_store(
+                Some(dpop_record),
                 secure_store.as_ref(),
                 &pending_store,
             )?;
@@ -1745,9 +2136,15 @@ async fn create_and_bind_identity(
         crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared
             | crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared
     ) {
-        let dpop =
-            crate::identity::account_auth::grant_dpop::ensure_pending_device_key_with_secure_store(
-                &mut state_store.write(),
+        let (dpop, dpop_record) = crate::identity::account_auth::grant_dpop::prepare_pending_device_key_with_secure_store_durable(
+            secure_store.as_ref(),
+            &pending_store,
+        )
+        .await?;
+        state_store
+            .write()
+            .set_pending_dpop_device_key_with_secure_store(
+                Some(dpop_record),
                 secure_store.as_ref(),
                 &pending_store,
             )?;
@@ -1832,7 +2229,6 @@ async fn create_and_bind_identity(
             .advance_registration_stage(crate::state::PendingPrincipalRegistrationStage::Accepted)
             .map_err(anyhow::Error::msg)?;
         {
-            let mut store = state_store.write();
             let prepared_keys = crate::views::login::prepare_completed_login_dpop_key(
                 secure_store.as_ref(),
                 &principal_id,
@@ -1840,7 +2236,9 @@ async fn create_and_bind_identity(
                 device,
                 &completion.dpop_device_key,
             )
+            .await
             .map_err(anyhow::Error::msg)?;
+            let mut store = state_store.write();
             store.adopt_pending_login(&principal_id);
             crate::views::login::commit_completed_login_dpop_key(
                 &mut store,
@@ -2179,8 +2577,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn prepared_registration_rehydrates_its_pending_signer_before_retry() {
+    #[tokio::test]
+    async fn prepared_registration_rehydrates_its_pending_signer_before_retry() {
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let handoff = test_handoff(
@@ -2213,6 +2611,7 @@ mod tests {
             &pending_store,
             &secure_store,
         )
+        .await
         .unwrap();
 
         assert_eq!(signer.signer_did(), checkpoint.did);
@@ -2224,8 +2623,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn prepared_registration_never_rotates_a_missing_pending_signer() {
+    #[tokio::test]
+    async fn prepared_registration_never_rotates_a_missing_pending_signer() {
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let handoff = test_handoff(
@@ -2249,6 +2648,7 @@ mod tests {
             &pending_store,
             &secure_store,
         )
+        .await
         .unwrap_err();
 
         assert!(
@@ -2542,13 +2942,13 @@ mod tests {
 
         assert_eq!(
             onboarding_surface(Some(&handoff), None),
-            OnboardingSurface::RootRecovery
+            OnboardingSurface::DeviceSetupRequired
         );
         let mut foreign = checkpoint;
         foreign.device_id = "ak:device:019f0000-0000-7000-8000-000000000099".to_owned();
         assert_eq!(
             onboarding_surface(Some(&handoff), Some(&foreign)),
-            OnboardingSurface::RootRecovery,
+            OnboardingSurface::DeviceSetupRequired,
             "a foreign checkpoint must not inherit the first-device continuation"
         );
     }

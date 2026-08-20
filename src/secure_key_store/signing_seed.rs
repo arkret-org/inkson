@@ -360,6 +360,23 @@ pub(super) fn store_signing_seed_at(
     })
 }
 
+/// Crash-durable counterpart used before a protocol transition starts
+/// depending on a newly-created device key. On wasm this awaits the IndexedDB
+/// transaction instead of returning after the in-memory cache update.
+pub(super) async fn store_signing_seed_at_durable(
+    store: &dyn SecureKeyStore,
+    key: &str,
+    seed: &[u8; 32],
+) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    require_wasm_indexeddb_ed25519_seed_store(store)?;
+    let encoded = STANDARD_NO_PAD.encode(seed);
+    store.store_secret_durable(key, &encoded).await?;
+    Ok(SigningSeedMaterial {
+        seed: *seed,
+        local_signing_did: ed25519_seed_to_did_key(seed),
+    })
+}
+
 /// Delete the signing seed for `scope` (`None` = bootstrap). Best-effort; a
 /// missing entry is not an error at the backend level.
 pub(super) fn delete_signing_seed_scoped(
@@ -409,6 +426,19 @@ pub(super) fn ensure_signing_seed_at(
     getrandom::fill(&mut seed)
         .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom signing seed: {err}")))?;
     store_signing_seed_at(store, key, &seed)
+}
+
+pub(super) async fn ensure_signing_seed_at_durable(
+    store: &dyn SecureKeyStore,
+    key: &str,
+) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+    if let Some(material) = load_signing_seed_at(store, key)? {
+        return Ok(material);
+    }
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed)
+        .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom signing seed: {err}")))?;
+    store_signing_seed_at_durable(store, key, &seed).await
 }
 
 // ---------------------------------------------------------------------------

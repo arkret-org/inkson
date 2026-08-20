@@ -5,7 +5,7 @@
 //! holds the `ak.session.grant` (issued by the Account Authority) plus the
 //! grant-binding (DPoP) key whose thumbprint is the grant's `cnf.jkt`. The grant
 //! itself is the live credential for `/_arkret/self/*`: every request presents
-//! `Authorization: Bearer <grant>` + a per-request `DPoP` proof.
+//! `Authorization: DPoP <grant>` + a matching per-request `DPoP` proof.
 //!
 //! The shared `SessionTransportProvider` owns durable restore, due and forced
 //! refresh, single-flight coordination, persistence, and authenticated client
@@ -27,15 +27,6 @@ use garth::{
     SessionEngine, SessionGrantState, SessionGrantStore, SessionGrantTransport,
     SessionRefreshOptions, SessionTransportProvider, TransportProvider,
 };
-use serde::Serialize;
-use url::Url;
-
-use crate::config::normalize_server_url;
-use crate::identity::account_auth::grant_dpop::DpopHandle;
-use crate::state::{LocalStateStore, PersistedSessionGrant};
-
-const SOFT_LOGOUT_RESTORE_OPERATION: &str = "resume_soft_logged_out_session";
-
 // The refresh decision layer (constants, `RefreshDecision`, the due/dead
 // predicates) is garth's — inkson only maps its persisted grant into
 // `garth::SessionGrantRefreshState` and supplies the wall clock. Semantics
@@ -43,6 +34,11 @@ const SOFT_LOGOUT_RESTORE_OPERATION: &str = "resume_soft_logged_out_session";
 // credential; `GrantExpired` still attempts rotation so only the refresh
 // endpoint's terminal error decides whether session material is cleared.
 pub use garth::{POLL_INTERVAL_SECS, REFRESH_SKEW_SECS};
+use url::Url;
+
+use crate::config::normalize_server_url;
+use crate::identity::account_auth::grant_dpop::DpopHandle;
+use crate::state::{LocalStateStore, PersistedSessionGrant};
 
 #[derive(Clone, Default)]
 struct ReplaceableSessionTransport {
@@ -151,12 +147,20 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
         let persisted = self
             .persisted(state)
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let proof = mint_session_grant_refresh_proof(&persisted)
+        let proof = mint_session_grant_refresh_proof(&persisted, self.device_handle.jkt())
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let request = arkret_sdk::auth::session_grant::human_session_grant_refresh_request(
+            persisted.grant_jwt.clone(),
+            Some(state.audience.clone()),
+            state
+                .device_id
+                .clone()
+                .ok_or_else(|| garth::Error::Protocol("human refresh device is absent".into()))?,
+            proof,
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         Ok(SessionRefreshOptions {
-            audience: Some(state.audience.clone()),
-            device_id: state.device_id.clone(),
-            proof: Some(proof),
+            request: Some(request),
             expected_dpop_jkt: Some(self.device_handle.jkt().to_owned()),
         })
     }
@@ -488,12 +492,7 @@ async fn session_transport_provider(
         device_handle: device_handle.clone(),
     };
     let refresh_options = SessionRefreshOptions {
-        audience: Some(session_audience(&grant.audience)?),
-        device_id: Some(
-            arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
-                .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?,
-        ),
-        proof: None,
+        request: None,
         expected_dpop_jkt: Some(device_handle.jkt().to_owned()),
     };
     let provider = match SessionTransportProvider::restore(
@@ -630,34 +629,17 @@ pub(crate) fn sdk_base_url_from_gate_account_base(gate_account_base: &str) -> an
     Ok(url)
 }
 
-#[derive(Debug, Serialize)]
-struct SoftLogoutDidProofClaims<'a> {
-    pub principal_id: &'a str,
-    pub device_id: &'a str,
-    pub audience: &'a str,
-    pub challenge: &'a str,
-    pub request_canonical_digest: &'a str,
-    pub issued_at: chrono::DateTime<Utc>,
-    pub expires_at: chrono::DateTime<Utc>,
-}
-
-#[derive(Debug, Serialize)]
-struct SoftLogoutRestoreRequestDigest<'a> {
-    pub operation: &'static str,
-    pub grant_jwt_digest: String,
-    pub principal_id: &'a str,
-    pub device_id: &'a str,
-    pub audience: &'a str,
-    pub grant_binding_key_id: &'a str,
-}
-
 fn mint_session_grant_refresh_proof(
     grant: &PersistedSessionGrant,
-) -> anyhow::Result<arkret_sdk::SessionGrantRefreshProof> {
+    holder_jkt: &str,
+) -> anyhow::Result<arkret_sdk::AcceptedDeviceRefreshPossessionProof> {
     let principal_core = persisted_grant_principal_core_id(grant)?;
-    let principal_id = principal_core.as_str();
-    let device_id = required_trimmed(&grant.device_id, "device_id")?;
-    let audience = required_trimmed(&grant.audience, "audience")?;
+    let device_id =
+        arkret_sdk::DeviceId::new(required_trimmed(&grant.device_id, "device_id")?.to_owned())?;
+    let audience = session_audience(&grant.audience)?;
+    let predecessor_session_grant_id = arkret_wire::SessionGrantId::new(
+        required_trimmed(&grant.grant_id, "grant_id")?.to_owned(),
+    )?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
     let principal_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())
@@ -665,46 +647,37 @@ fn mint_session_grant_refresh_proof(
     if arkret_sdk::project_full_id_to_core_id(&principal_full_id)? != principal_core {
         anyhow::bail!("active signer full_id does not project to the refresh principal_id");
     }
-    // §2.2: only the proof verification method carries the signer full_id.
     let verification_method =
         arkret_sdk::DidUrl::new(format!("{principal_full_id}#{device_id}"))
             .map_err(|error| anyhow::anyhow!("soft logout restore verification method: {error}"))?;
-    let request_canonical_digest = soft_logout_restore_request_canonical_digest(
+    let session_intent_digest = arkret_sdk::session_grant_refresh_request_digest(
         &grant.grant_jwt,
-        principal_id,
-        device_id,
-        audience,
-        &verification_method,
+        &predecessor_session_grant_id,
+        &principal_core,
+        &device_id,
+        &audience,
+        holder_jkt,
     )?;
-    let request_canonical_digest_hash = arkret_sdk::Hash::new(request_canonical_digest.clone())
-        .map_err(|error| anyhow::anyhow!("soft logout restore request digest: {error}"))?;
-    let challenge = soft_logout_refresh_challenge()?;
     let issued_at = Utc::now();
     let expires_at = issued_at + chrono::Duration::seconds(60);
-    let claims = SoftLogoutDidProofClaims {
-        principal_id,
+    let unsigned = arkret_wire::UnsignedAcceptedDeviceRefreshPossessionProof {
+        context: arkret_wire::AcceptedDevicePossessionProofContext::V1,
+        purpose: arkret_wire::AcceptedDeviceRefreshPossessionPurpose::SessionGrantRefresh,
+        predecessor_session_grant_id,
+        principal_id: principal_core,
         device_id,
         audience,
-        challenge: &challenge,
-        request_canonical_digest: &request_canonical_digest,
+        holder_jkt: holder_jkt.to_owned(),
+        session_intent_digest,
         issued_at,
         expires_at,
+        verification_method,
     };
-    let payload = crate::canonical::canonical_json_bytes(&claims)
-        .map_err(|error| anyhow::anyhow!("soft logout restore proof payload: {error}"))?;
-    let signature = signer
-        .detached_jws_over_payload_with_kid(&verification_method, &payload)
-        .map_err(|error| anyhow::anyhow!("sign soft logout restore proof: {error}"))?;
-    Ok(arkret_sdk::SessionGrantRefreshProof {
-        proof_kind: arkret_sdk::SessionGrantProofKind::DidBoundSignature,
-        challenge,
-        request_canonical_digest: request_canonical_digest_hash,
-        audience: session_audience(audience)?,
-        issued_at,
-        expires_at,
-        signature,
-        verification_method: Some(verification_method),
-    })
+    let signature = arkret_sdk::Base64UrlString::new(
+        URL_SAFE_NO_PAD.encode(signer.sign_raw(&unsigned.canonical_signing_bytes()?)?),
+    )
+    .map_err(|error| anyhow::anyhow!(error))?;
+    unsigned.attach_signature(signature).map_err(Into::into)
 }
 
 fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> {
@@ -719,38 +692,6 @@ fn session_audience(value: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
     let value = required_trimmed(value, "audience")?;
     arkret_sdk::DidCoreId::new(value.to_owned())
         .map_err(|error| anyhow::anyhow!("invalid session audience service core_id: {error}"))
-}
-
-fn soft_logout_restore_request_canonical_digest(
-    grant_jwt: &str,
-    principal_id: &str,
-    device_id: &str,
-    audience: &str,
-    grant_binding_key_id: &str,
-) -> anyhow::Result<String> {
-    crate::canonical::canonical_sha256(&SoftLogoutRestoreRequestDigest {
-        operation: SOFT_LOGOUT_RESTORE_OPERATION,
-        grant_jwt_digest: crate::identity::account_auth::session_grant_jwt_digest(grant_jwt),
-        principal_id,
-        device_id,
-        audience,
-        grant_binding_key_id,
-    })
-    .map_err(|error| anyhow::anyhow!("soft logout restore request canonicalization: {error}"))
-}
-
-/// Build the soft-logout refresh challenge from a pure 128-bit random nonce +
-/// millisecond timestamp. The DPoP jkt is intentionally not mixed in: the
-/// grant-binding key id is carried by the signed proof payload and request
-/// digest.
-fn soft_logout_refresh_challenge() -> anyhow::Result<String> {
-    let mut nonce = [0u8; 16];
-    getrandom::fill(&mut nonce).map_err(|err| anyhow::anyhow!("refresh challenge RNG: {err}"))?;
-    Ok(format!(
-        "sg-refresh-{}-{}",
-        Utc::now().timestamp_millis(),
-        URL_SAFE_NO_PAD.encode(nonce)
-    ))
 }
 
 #[cfg(test)]

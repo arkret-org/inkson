@@ -1187,7 +1187,12 @@ fn adopt_pending_login_preserves_returning_account_entry() {
     store.begin_pending_login("ak:device:fresh-2", Some("jkt-fresh"));
     assert!(
         store.active_account_did().is_none(),
-        "pre-DID login must detach from the previously active account"
+        "pending transaction must not expose an authenticated account"
+    );
+    assert_eq!(
+        store.last_selected_account_did().as_deref(),
+        Some("did:web:alice.example"),
+        "pending login must retain the last-selected account for cancellation/reload"
     );
     assert!(
         store.load().sync_cursor.is_none(),
@@ -1256,6 +1261,10 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
     store.begin_pending_login(&handoff.device_id, Some(&handoff.holder_jkt));
 
     assert!(store.active_account_did().is_none());
+    assert_eq!(
+        store.last_selected_account_did().as_deref(),
+        Some("did:web:old.example")
+    );
     assert!(store.pending_account_handoff().is_none());
     assert!(store.pending_principal_registration().is_none());
     assert!(store.load().sync_cursor.is_none());

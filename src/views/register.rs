@@ -34,12 +34,7 @@ enum RegistrationFailureKind {
 }
 
 #[component]
-pub fn RegistrationPanel(
-    mut device_id: Signal<String>,
-    mut token: Signal<String>,
-    mut account_did: Signal<String>,
-    config_store: Signal<crate::config::LocalConfigStore>,
-) -> Element {
+pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
     let mut principal_server = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
     let session = use_context::<crate::runtime::services::RuntimeServices>().session;
@@ -105,21 +100,12 @@ pub fn RegistrationPanel(
                         // device identity belongs to one principal, so it must
                         // never inherit the active/previous account's id.
                         let device = crate::config::new_device_id();
-                        // Explicit registration starts an anonymous account
-                        // transaction. Cancel the old account before changing
-                        // the local-state owner so no late poll/refresh can
-                        // write through the new pending scope.
+                        // Explicit registration starts a transaction-scoped
+                        // anonymous namespace. Stop the live session, but keep
+                        // last-known account/device configuration unchanged
+                        // until the new identity commits successfully.
                         session.invalidate("starting a new-account registration transaction");
                         token.set(String::new());
-                        account_did.set(String::new());
-                        device_id.set(device.clone());
-                        crate::views::helpers::persist_config(
-                            config_store,
-                            server.clone(),
-                            String::new(),
-                            device.clone(),
-                            String::new(),
-                        );
                         busy.set(true);
                         feedback.set(RegistrationFeedback::Progress);
                         spawn(async move {
@@ -163,7 +149,9 @@ pub fn RegistrationPanel(
                                     arkret_sdk::DeviceId::new(device.trim().to_owned())?,
                                 );
                                 pending_store.activate();
-                                pending_store.save_device_id(secure_store.as_ref())?;
+                                pending_store
+                                    .save_device_id_durable(secure_store.as_ref())
+                                    .await?;
                                 tracing::info!(
                                     target: "account_onboarding",
                                     device_id = %device,

@@ -284,6 +284,26 @@ pub fn ensure_pending_device_key_with_secure_store(
     Ok(handle)
 }
 
+/// Durable prepare half for a pending grant-binding key. This deliberately
+/// does not borrow [`LocalStateStore`] across `.await`: callers first wait for
+/// the seed commit, then publish the returned public record synchronously.
+/// That ordering prevents an OIDC/session exchange from depending on a key
+/// that exists only in the browser backend's volatile write cache.
+pub async fn prepare_pending_device_key_with_secure_store_durable(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    pending_store: &crate::secure_key_store::PendingLocalStore,
+) -> Result<(DpopHandle, DpopDeviceKeyRecord), AuthDpopError> {
+    let material = pending_store
+        .ensure_grant_binding_seed_durable(secure_store)
+        .await
+        .map_err(|error| {
+            AuthDpopError::SecureStore(format!(
+                "durably ensure pending grant-binding seed: {error}"
+            ))
+        })?;
+    handle_and_record_from_seed(material.seed)
+}
+
 /// Generate or load the DPoP key using the supplied secure-key backend.
 /// The on-disk state keeps only public metadata; private seed bytes live
 /// in the secure store.

@@ -23,11 +23,10 @@ const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v2";
 /// Reserved namespace for the pre-login (signed-out) account entry. Local state
 /// exists before any DID is known — drafts, UI scratch, the boot-time device
 /// material the secure store mirrors — and must survive a reload. The root
-/// index keeps `active_did = None` while signed out (per the spec), but the
-/// blob still has a home under this stable sentinel entry instead of being held
-/// only in memory. The first real login switches the active account to the
-/// resolved DID; this anonymous entry is left untouched (it is not a real
-/// account and never appears in `known_dids`).
+/// index retains the last-selected account independently from `pending_login`;
+/// while a transaction is pending this namespace takes precedence without
+/// erasing that account pointer. It is not a real account and never appears in
+/// `known_dids`.
 const ANONYMOUS_ACCOUNT_NAMESPACE: &str = "anonymous";
 
 /// Canonical local account namespace. Identity equality and every durable
@@ -781,17 +780,19 @@ impl LocalStateStore {
         *self.lock_persist_health() = Some(message);
     }
 
-    /// The account namespace the active blob persists under: the active DID
-    /// when signed in, else the reserved anonymous sentinel so pre-login local
-    /// state still has a durable home. This is a *storage* detail only — the
-    /// root index `active_did` stays `None` while signed out. Reads the root
-    /// through storage (no per-clone cache) so the flush hot path always writes
-    /// the `…account.<did>` key the most recently adopted account selected.
+    /// The namespace the cached blob persists under. A pending transaction
+    /// always selects the anonymous namespace; otherwise the last committed
+    /// account is selected. Reads the shared root on every call so no clone can
+    /// route pending writes into the retained account.
     fn effective_account_key(&self) -> String {
-        self.read_root()
-            .active_did
-            .map(|principal| account_storage_scope(&principal))
-            .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned())
+        let root = self.read_root();
+        if root.pending_login.is_some() {
+            ANONYMOUS_ACCOUNT_NAMESPACE.to_owned()
+        } else {
+            root.active_did
+                .map(|principal| account_storage_scope(&principal))
+                .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned())
+        }
     }
 
     /// Read the ACTIVE account's `ClientLocalState`. Resolves the namespace
@@ -799,7 +800,12 @@ impl LocalStateStore {
     /// root index, then reads that entry. `None` when the entry is
     /// absent.
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
-        let active_did = self.read_root().active_did;
+        let root = self.read_root();
+        let active_did = root
+            .pending_login
+            .is_none()
+            .then_some(root.active_did)
+            .flatten();
         let account_key = active_did.as_deref().unwrap_or(ANONYMOUS_ACCOUNT_NAMESPACE);
         let state = self.read_account_state(account_key).unwrap_or_default();
         #[cfg(not(test))]

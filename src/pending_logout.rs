@@ -7,7 +7,7 @@
 //!
 //! T1.Y3 — this is now a SINGLE client-visible call to the Account Authority
 //! `POST {gate_account_base}/logout` (service-surface §2.5.1) carrying
-//! `Authorization: Bearer <ak.session.grant>` + a grant-binding `DPoP` proof bound to
+//! `Authorization: DPoP <ak.session.grant>` + a grant-binding `DPoP` proof bound to
 //! that grant. The Account Authority internally terminates BOTH the Auth-side
 //! grant rotation chain + `browser_session` AND the Principal-side
 //! account/device session + to-device drop. The client MUST NOT fan out to two

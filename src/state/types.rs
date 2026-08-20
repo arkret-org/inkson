@@ -1409,15 +1409,15 @@ pub(crate) const MEMBER_HANDLE_NEGATIVE_CACHE_TTL_SECONDS: i64 = 5 * 60;
 ///
 /// ②(A+②) model (api-conventions.md §3.3): the grant itself is the live
 /// credential for `/_arkret/self/*`; soland does not mint a second
-/// client-visible local session credential. Each request presents `Authorization: Bearer
-/// <grant_jwt>` + a per-request `DPoP` proof bound to the device key. Keeping
+/// client-visible local session credential. Each request presents `Authorization: DPoP
+/// <grant_jwt>` + a matching per-request `DPoP` proof. Keeping
 /// the grant on disk lets the client keep using it directly and rotate it (DPoP
 /// grant-binding DPoP proof → fresh grant) before its own expiry — no user-visible re-login
 /// as long as the grant chain is still rotatable.
 ///
-/// `session_private_key_pem` is retained for the introspection-proof helper; the
-/// rotation proof is signed by the durable grant-binding DPoP key whose
-/// thumbprint is the grant's `cnf.jkt`.
+/// `session_private_key_pem` is the ephemeral holder/DPoP key material. The
+/// rotation request separately proves the durable accepted-device key; neither
+/// key substitutes for the other.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedSessionGrant {
     /// The signed grant JWT (long-lived, signed by coauth).

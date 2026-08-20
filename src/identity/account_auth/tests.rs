@@ -207,7 +207,7 @@ fn test_oidc_method() -> arkret_sdk::AuthMethod {
         client_id: Some("inkson-test".to_owned()),
         scopes: vec!["openid".to_owned(), "profile".to_owned()],
         grant_exchange: arkret_sdk::AuthGrantExchange {
-            proof_kind: arkret_sdk::SessionGrantProofKind::OidcCodeExchange,
+            kind: arkret_sdk::AuthGrantExchangeKind::AccountHandoff,
         },
     }
 }
@@ -222,7 +222,6 @@ fn state_and_nonce_diverge_for_same_caller() {
         &discovery,
         &method,
         "https://app.example/auth/callback",
-        "device-aaaa-1111",
         "https://principal.example/api",
         &OidcEntryPoint::SignIn,
         "en",
@@ -232,7 +231,6 @@ fn state_and_nonce_diverge_for_same_caller() {
         &discovery,
         &method,
         "https://app.example/auth/callback",
-        "device-aaaa-1111",
         "https://principal.example/api",
         &OidcEntryPoint::SignIn,
         "en",
@@ -250,7 +248,6 @@ fn persisted_scaffold_carries_returning_account_candidate() {
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "ak:device:01964137-0000-7000-8000-000000000001",
         "ak:did_core:webvh:z6mkfixture",
         &OidcEntryPoint::SignIn,
         "en",
@@ -280,18 +277,6 @@ fn persisted_scaffold_carries_returning_account_candidate() {
         Some(&expected)
     );
     assert!(scaffold.expected_device_id.is_some());
-    let mut old_payload = serde_json::to_value(scaffold).unwrap();
-    old_payload
-        .as_object_mut()
-        .unwrap()
-        .remove("expected_principal_full_id");
-    old_payload
-        .as_object_mut()
-        .unwrap()
-        .remove("expected_device_id");
-    let restored: PersistedOidcScaffold = serde_json::from_value(old_payload).unwrap();
-    assert_eq!(restored.expected_principal_full_id, None);
-    assert_eq!(restored.expected_device_id, None);
 }
 
 /// `code_challenge` MUST be S256(code_verifier) when discovery supports S256.
@@ -301,7 +286,6 @@ fn bundle_challenge_is_s256_of_verifier_when_supported() {
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "device-bbbb-2222",
         "https://principal.example/api",
         &OidcEntryPoint::SignIn,
         "en",
@@ -326,7 +310,6 @@ fn authorize_scaffold_rejects_plain_only_pkce_discovery() {
         &discovery,
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "device-plain-only",
         "https://principal.example/api",
         &OidcEntryPoint::SignIn,
         "en",
@@ -342,7 +325,6 @@ fn authorize_url_forces_reauthentication() {
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "device-cccc-3333",
         "https://principal.example/api",
         &OidcEntryPoint::SignIn,
         "zh",
@@ -384,7 +366,6 @@ fn create_identity_authorize_url_uses_prompt_create() {
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "device-create-3333",
         "https://principal.example/api",
         &OidcEntryPoint::CreateIdentity,
         "zh",
@@ -405,15 +386,14 @@ fn create_identity_authorize_url_uses_prompt_create() {
     );
 }
 
-/// The authorize URL MUST request `openid`, the method scopes, and the
-/// pending device-binding scope used throughout this sign-in strand.
+/// The authorize URL carries only OIDC account-authentication scopes. Device,
+/// audience and long-lived IdP refresh authority are not projected into it.
 #[test]
-fn authorize_url_requests_standard_and_device_scope() {
+fn authorize_url_has_no_arkret_device_resource_or_offline_scope() {
     let bundle = build_oidc_authorize_scaffold(
         &test_discovery(),
         &test_oidc_method(),
         "https://app.example/auth/callback",
-        "device-dddd-4444",
         "https://principal.example/api",
         &OidcEntryPoint::SignIn,
         "en",
@@ -429,10 +409,9 @@ fn authorize_url_requests_standard_and_device_scope() {
     let scopes: Vec<&str> = requested_scope.split_ascii_whitespace().collect();
     assert!(scopes.contains(&"openid"));
     assert!(scopes.contains(&"profile"));
-    assert!(
-        scopes.contains(&format!("{ARKRET_DEVICE_SCOPE_PREFIX}device-dddd-4444").as_str()),
-        "authorize URL must request the device-binding scope, got: {requested_scope}"
-    );
+    assert!(!scopes.contains(&"offline_access"));
+    assert!(scopes.iter().all(|scope| !scope.starts_with("urn:arkret:")));
+    assert!(parsed.query_pairs().all(|(key, _)| key != "resource"));
 }
 
 /// `client_id` falls back to the native inkson id when the method omits it.
@@ -444,7 +423,6 @@ fn authorize_url_falls_back_to_native_client_id() {
         &test_discovery(),
         &method,
         "https://app.example/auth/callback",
-        "device-eeee-5555",
         "https://principal.example/api",
         &OidcEntryPoint::SignIn,
         "en",

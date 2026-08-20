@@ -12,10 +12,6 @@ use crate::state::{
     PendingAccountHandoff, PendingPrincipalRegistration, PendingPrincipalRegistrationStage,
 };
 
-pub(crate) fn standard_initial_session_scope() -> Vec<arkret_sdk::InitialSessionGrantOperation> {
-    arkret_sdk::STANDARD_INITIAL_SESSION_GRANT_OPERATIONS.to_vec()
-}
-
 pub fn prepare_registration_checkpoint(
     handoff: &PendingAccountHandoff,
     device_id: &str,
@@ -388,7 +384,6 @@ pub fn prepare_genesis_draft(
         device_id: arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
         session_public_key: dpop.canonical_session_public_jwk()?,
         audience,
-        requested_scope: standard_initial_session_scope(),
     };
     initial.validate()?;
     let mut prepared = checkpoint.clone();
@@ -847,17 +842,6 @@ async fn verify_registration_terminal_evidence(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn founding_session_scope_stays_within_account_authority_ceiling() {
-        assert_eq!(
-            standard_initial_session_scope(),
-            vec![
-                arkret_sdk::InitialSessionGrantOperation::AccountReadDescribe,
-                arkret_sdk::InitialSessionGrantOperation::EventsReadScan,
-            ]
-        );
-    }
 
     #[test]
     fn identity_binding_challenge_retry_obeys_server_window_and_deadline_guards() {
