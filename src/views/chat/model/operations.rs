@@ -240,10 +240,6 @@ fn reaction_encrypted_envelope(
     realm_id: &str,
     payload: &arkret_sdk::EncryptedPayload,
 ) -> anyhow::Result<arkret_sdk::EncryptedEnvelope> {
-    let aad = payload
-        .aad
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("reaction encryption omitted its bound AAD"))?;
     let group_state_ref = crate::mls::group_events::mls_base_epoch_ref_for_scope(
         state_store,
         realm_id,
@@ -252,13 +248,9 @@ fn reaction_encrypted_envelope(
         payload.epoch,
     )
     .map_err(anyhow::Error::msg)?;
-    arkret_sdk::mls::encrypted_envelope_from_payload(
-        payload,
-        aad,
-        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
-        arkret_sdk::AadVisibilityCeiling::from_declared(None),
-        group_state_ref,
-    )
+    let group_state_ref = arkret_sdk::EventId::new(group_state_ref)
+        .map_err(|error| anyhow::anyhow!("invalid reaction group-state Event id: {error}"))?;
+    arkret_sdk::mls::encrypted_envelope_from_payload(payload, group_state_ref)
     .map_err(|error| anyhow::anyhow!("reaction encrypted envelope build failed: {error}"))
 }
 

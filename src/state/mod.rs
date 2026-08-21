@@ -293,14 +293,6 @@ fn realm_tree_projection_profiles(body: &Value) -> Vec<String> {
     profiles
 }
 
-/// First string value the projection declares for `field`.
-fn realm_tree_projection_field(body: &Value, field: &str) -> Option<String> {
-    realm_tree_projection_containers(body)
-        .into_iter()
-        .find_map(|container| container.get(field).and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-}
-
 fn realm_tree_projection_value_is_minimal_metadata(body: &Value) -> bool {
     realm_tree_projection_profiles(body)
         .iter()

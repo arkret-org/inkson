@@ -2117,15 +2117,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         return;
                                     }
                                 };
-                                // §4.5 — the sidecar rides the epoch the message
-                                // was encrypted under, which `build_secure_send`
-                                // already resolved (including any forced commit).
-                                // An empty digest list means Realm policy forbids
-                                // the sidecar and the event goes out without one.
-                                let mention_digests = mention_sidecar_digests(
-                                    &mentions,
-                                    secure_build.mention_routing_key.as_deref(),
-                                );
                                 let base = base.clone();
                                 let realm_for_record = realm.clone();
                                 let device_for_sidecar_backup = did.clone();
@@ -2188,7 +2179,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         secure_build,
                                         &realm_for_record,
                                         None,
-                                        mention_digests,
                                     )
                                     .await;
                                     let resp = match outcome {

@@ -832,7 +832,6 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         build,
         &intent.source_realm_id,
         None,
-        Vec::new(),
     )
     .await;
     let result = match outcome {

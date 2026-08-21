@@ -113,21 +113,10 @@ impl EncryptedPatchPlan {
                     "encrypted patch values do not share one MLS group and epoch".to_owned(),
                 );
             }
-            let aad = payload
-                .aad
-                .clone()
-                .ok_or_else(|| "encrypted patch payload is missing canonical AAD".to_owned())?;
-            let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(
-                &payload,
-                aad,
-                arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
-                // `hidden` is at or below every possible Realm ceiling, so the
-                // fail-closed `from_declared(None)` resolution always admits it.
-                // A caller that starts emitting `routing_digest` MUST pass the
-                // Realm's accepted `aad_visibility` component here instead.
-                arkret_sdk::AadVisibilityCeiling::from_declared(None),
-                &group_state_ref,
-            )
+            let group_state_ref = arkret_sdk::EventId::new(group_state_ref.clone())
+                .map_err(|error| format!("invalid patch group-state Event id: {error}"))?;
+            let envelope =
+                arkret_sdk::mls::encrypted_envelope_from_payload(&payload, group_state_ref)
             .map_err(|error| format!("build encrypted Strand patch envelope: {error}"))?;
             sealed.push(
                 serde_json::to_value(envelope).map_err(|error| {

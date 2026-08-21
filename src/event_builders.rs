@@ -937,15 +937,6 @@ pub fn recommended_realm_policy_bundle_value(
         content_scheme: Some(resolve_realm_content_scheme(content_scheme).to_owned()),
         content_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
         metadata_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
-        // `encryption-and-audit.md` §2.8 — a genesis Realm that does not declare
-        // `aad_visibility` gets the fail-closed `hidden` ceiling, and every
-        // later `routing_digest` envelope is rejected with
-        // `aad_visibility_policy_violation`. Declaring it here is what makes
-        // the AAD event-ref digest reachable at all; the value is the narrowest
-        // one that supports digest-based dedupe.
-        aad_visibility: Some(arkret_sdk::RealmAadVisibilityPolicy {
-            event_id_kind: arkret_sdk::EncryptedEnvelopeAadVisibility::RoutingDigest,
-        }),
         ..arkret_sdk::RealmPolicyBundlePayload::new(1)
     }
 }

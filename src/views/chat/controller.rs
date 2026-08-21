@@ -1001,10 +1001,6 @@ impl ChatController {
                         return;
                     }
                 };
-                let mention_digests = mention_sidecar_digests(
-                    &message.mentions,
-                    build.mention_routing_key.as_deref(),
-                );
                 let local_operation_id = build.message_local_operation_id.to_string();
                 let api = match authed_api_with_sync(&base_url, api_token.clone(), wait_for) {
                     Ok(api) => api,
@@ -1024,7 +1020,6 @@ impl ChatController {
                     build,
                     &message.realm_id,
                     None,
-                    mention_digests,
                 )
                 .await;
                 match outcome {

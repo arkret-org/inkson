@@ -344,26 +344,13 @@ impl LocalStateStore {
     /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
     /// realm-tree projection declare the
     /// `ak.profile.mls.minimal_metadata_realm.v1` profile? The committer uses
-    /// this to decide whether the ≤1h epoch-lifetime cap and the
-    /// `aad_visibility=hidden` MUST apply to a given Realm. Unknown / absent
-    /// projection ⇒ `false` (the realm is treated as a normal realm).
+    /// this to decide whether the ≤1h epoch-lifetime cap applies to a given
+    /// Realm. Unknown / absent projection ⇒ `false` (the realm is treated as a
+    /// normal realm).
     pub fn realm_projection_is_minimal_metadata(&self, realm_id: &str) -> bool {
         self.load()
             .realm_tree_projections
             .get(realm_id)
             .is_some_and(realm_tree_projection_value_is_minimal_metadata)
-    }
-
-    /// `push-notifications.md` §4.5 — the Realm's effective mention-routing
-    /// policy, resolved through the SDK so hardened profiles keep overriding a
-    /// declared `recipient_registered_token` and an absent, unknown or
-    /// unprojected policy fails closed to `Disabled`.
-    pub fn realm_mention_routing_hint(&self, realm_id: &str) -> arkret_sdk::MentionRoutingHint {
-        let Some(body) = self.load().realm_tree_projections.get(realm_id).cloned() else {
-            return arkret_sdk::MentionRoutingHint::Disabled;
-        };
-        let profiles = realm_tree_projection_profiles(&body);
-        let declared = realm_tree_projection_field(&body, "mention_routing_hint");
-        arkret_sdk::effective_mention_routing_hint(&profiles, declared.as_deref())
     }
 }

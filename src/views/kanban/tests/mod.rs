@@ -169,6 +169,7 @@ pub(super) fn test_encrypted_content_envelope(
         epoch: 1,
         content_type: KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE.to_owned(),
         ciphertext: ciphertext.to_owned(),
+        counter: None,
         aad: Some(aad.clone()),
         purpose: None,
         aead_profile: None,
@@ -181,10 +182,10 @@ pub(super) fn test_encrypted_content_envelope(
     };
     arkret_sdk::mls::encrypted_envelope_from_payload(
         &payload,
-        aad,
-        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
-        arkret_sdk::AadVisibilityCeiling::from_declared(None),
-        format!("sha256:{}", "cd".repeat(32)),
+        arkret_sdk::EventId::new(
+            "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
+        )
+        .expect("fixture group-state Event id"),
     )
     .expect("canonical encrypted_content envelope")
 }

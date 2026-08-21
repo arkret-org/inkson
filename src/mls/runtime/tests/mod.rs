@@ -30,7 +30,6 @@ fn seed_next_governance_proof(
     )
 }
 
-mod aad;
 mod commit;
 mod genesis_backup;
 mod message;

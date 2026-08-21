@@ -448,11 +448,7 @@ pub async fn set_realm_policy_events(
         // The cell is a `cas_register`: this revision restates the COMPLETE
         // enabled component set, and anything omitted is cleared. Starting from
         // the recommended genesis bundle keeps `content_scheme` (whose one-way
-        // ratchet would otherwise reject the write), the encryption floors and
-        // the `aad_visibility` ceiling — dropping that last one would lower the
-        // ceiling to `hidden` and start rejecting every `routing_digest`
-        // envelope, which presents as "dedupe suddenly broke", not as a policy
-        // edit.
+        // ratchet would otherwise reject the write) and the encryption floors.
         let mut policy_bundle = recommended_realm_policy_bundle_value(None);
         if !preserve_recommended_encryption_floor {
             policy_bundle.content_scheme = None;
@@ -510,8 +506,8 @@ pub async fn set_realm_durability_policy(
     }
     // Same `cas_register` restatement rule as the join-policy write: begin from
     // the recommended component set so this revision does not clear
-    // `content_scheme`, the encryption floors or the `aad_visibility` ceiling
-    // on its way to setting one component.
+    // `content_scheme` or the encryption floors on its way to setting one
+    // component.
     let mut policy_bundle = recommended_realm_policy_bundle_value(None);
     policy_bundle.policy_revision = policy_revision;
     policy_bundle.durability_policy = Some(policy.clone());

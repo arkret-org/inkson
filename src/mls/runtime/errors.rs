@@ -61,11 +61,6 @@ pub enum MlsRuntimeError {
     Serialize(String),
     Export(String),
     Salt(String),
-    /// SEC-08 — a `minimal_metadata_realm` send tried to use a non-hidden
-    /// `aad_visibility`, which `enforce_minimal_metadata_aad` rejects
-    /// (`encryption-and-audit.md` §2.9). Fail-closed: the message/reaction is
-    /// never emitted with a wider visibility than the profile permits.
-    AadPolicy(String),
 }
 
 impl MlsRuntimeError {
@@ -96,8 +91,7 @@ impl MlsRuntimeError {
             | Self::Decrypt(reason)
             | Self::Serialize(reason)
             | Self::Export(reason)
-            | Self::Salt(reason)
-            | Self::AadPolicy(reason) => MlsRuntimeStatus::Denied(reason.clone()),
+            | Self::Salt(reason) => MlsRuntimeStatus::Denied(reason.clone()),
         }
     }
 
@@ -122,9 +116,6 @@ impl MlsRuntimeError {
             }
             Self::Export(reason) => format!("MLS state export failed: {reason}"),
             Self::Salt(reason) => format!("MLS snapshot salt generation failed: {reason}"),
-            Self::AadPolicy(reason) => {
-                format!("MLS minimal-metadata AAD policy violation: {reason}")
-            }
         }
     }
 }

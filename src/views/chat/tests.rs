@@ -870,31 +870,6 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
 }
 
 #[test]
-fn mention_sidecar_is_omitted_without_an_epoch_routing_key() {
-    // Realm policy that never opted in — and a device that cannot reach its
-    // MLS group — both arrive here as `None`, and both must send no sidecar
-    // rather than a tag derived from anything else.
-    let realm = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
-    let mentions = vec![MentionNode::mention(arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("did:web:agent.example").unwrap(),
-    ))];
-    // The digests are an input to authoring now, so "no sidecar" is an empty
-    // digest list rather than a member missing from a built Event.
-    assert!(mention_sidecar_digests(&mentions, None).is_empty());
-    let event = production_chat_message_create_operation(
-        realm,
-        "did:web:alice.example",
-        "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "ak:message:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
-        "hello agent",
-        &mentions,
-        None,
-    )
-    .expect("builds");
-    assert!(!event.payload().contains_key("mention_sidecar_digest"));
-}
-
-#[test]
 fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",

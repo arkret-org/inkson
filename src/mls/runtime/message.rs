@@ -530,15 +530,17 @@ fn decrypt_application_payload_for_scope_internal(
                         payload.group_id.clone(),
                         payload.epoch,
                     )
-                && let Ok(nonce_and_ct) =
+                && let Ok(ciphertext) =
                     arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
-                && payload.verify_mls_payload_digest(&nonce_and_ct).is_ok()
+                && payload.verify_mls_payload_digest(&ciphertext).is_ok()
+                && let Some(counter) = payload.counter
                 && let Ok(plaintext) = group.decrypt_content_exporter_aead(
                     &secret,
                     verified_sender_domain?,
                     key_ref,
                     payload.epoch,
-                    &nonce_and_ct,
+                    counter,
+                    &ciphertext,
                     payload_aad,
                 )
             {
@@ -778,8 +780,8 @@ fn try_history_decrypt_standalone(
     {
         return None;
     }
-    let nonce_and_ct = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
-    payload.verify_mls_payload_digest(&nonce_and_ct).ok()?;
+    let ciphertext = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
+    payload.verify_mls_payload_digest(&ciphertext).ok()?;
     let key_ref = payload.key_ref.as_ref()?;
     if key_ref
         != &arkret_sdk::KeyRefObject::mls_exporter_aead(payload.group_id.clone(), payload.epoch)
@@ -821,13 +823,15 @@ fn try_history_decrypt_with_secret(
         return None;
     }
     let aead_profile = payload.aead_profile.as_deref()?;
+    let counter = payload.counter?;
     arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
         secret,
         verified_sender_domain,
         key_ref,
         payload.epoch,
+        counter,
         aead_profile,
-        &nonce_and_ct,
+        &ciphertext,
         aad,
     )
     .ok()
@@ -1820,16 +1824,13 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     ),
     MlsRuntimeError,
 > {
-    let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
-        MlsRuntimeError::Serialize(format!("invalid Realm id for encrypted AAD: {error:?}"))
-    })?;
-    let aad_scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: aad_realm_id,
-    };
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, event_kind_str::STRAND_UPDATE)
-        .map_err(|error| {
-        MlsRuntimeError::Serialize(format!("invalid scope for encrypted AAD: {error:?}"))
-    })?;
+    let effective_scope = runtime_effective_scope(realm_id, None, None)?;
+    let snapshot = state_store
+        .mls_snapshot_for_scope(&effective_scope)
+        .ok_or(MlsRuntimeError::MissingWelcome)?;
+    let group_state_ref = state_store
+        .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
+        .ok_or(MlsRuntimeError::EncryptionTransitionPending)?;
     encrypt_values_with_device_snapshot_for_effective_scope(
         state_store,
         secure_store,
@@ -1838,7 +1839,8 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         device_id,
         content_type,
         plaintext_values,
-        aad,
+        event_kind_str::STRAND_UPDATE,
+        group_state_ref,
         None,
         None,
     )
@@ -1853,7 +1855,8 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     device_id: &str,
     content_type: &str,
     plaintext_values: &[Vec<u8>],
-    aad: arkret_sdk::EncryptedEnvelopeAad,
+    event_kind: &str,
+    group_state_ref: arkret_sdk::EventId,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
@@ -1902,17 +1905,10 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         snapshot.app_messages_observed,
         state_store.realm_has_pending_mls_binding(realm_id),
     );
-    let commit_envelope = if should_commit {
-        Some(self_update_with_verified_governance_binding(
-            state_store,
-            realm_id,
-            circle,
-            sidecar_binding,
-            &mut group,
-        )?)
-    } else {
-        None
-    };
+    if should_commit {
+        return Err(MlsRuntimeError::EncryptionTransitionPending);
+    }
+    let commit_envelope = None;
     // §2.10 content scheme dispatch (capability axis): when this Realm declares
     // `content_scheme=mls_exporter_aead_v1`, author content under the
     // history-shareable exporter-aead scheme so a late joiner granted the
@@ -1921,19 +1917,33 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     // any forced commit above and is bound with key_ref + typed routing AAD in
     // the SDK's closed immutable header.
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
-    let exporter_key_ref = use_exporter_aead
-        .then(|| arkret_sdk::KeyRefObject::mls_exporter_aead(group.group_id(), group.epoch()));
     for plaintext in plaintext_values {
-        let encrypted = if let Some(key_ref) = exporter_key_ref.as_ref() {
+        let scheme = if use_exporter_aead {
+            arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+        } else {
+            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420
+        };
+        let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+            "1.0",
+            content_type,
+            scheme,
+            effective_scope.clone(),
+            event_kind,
+            group.epoch(),
+            group_state_ref.clone(),
+            device_id,
+            use_exporter_aead.then(|| group.next_content_counter()),
+            arkret_sdk::EventContentRoutingContext::None,
+        )
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+        let encrypted = if use_exporter_aead {
             group.encrypt_payload_exporter_aead(
-                content_type,
                 realm_id,
-                key_ref.clone(),
-                aad.clone(),
+                header,
                 plaintext,
             )
         } else {
-            group.encrypt_payload_with_aad(content_type, Some(aad.clone()), plaintext)
+            group.encrypt_payload(header, plaintext)
         }
         .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
         encrypted_values.push(
@@ -2034,7 +2044,6 @@ type DeviceSnapshotEncryption = (
     Option<PreparedMlsCommit>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
-    Option<Vec<u8>>,
 );
 
 /// Encrypt one message content plaintext — and optionally a second
@@ -2050,7 +2059,8 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     actor_id: &str,
     device_id: &str,
     content_type: &str,
-    aad: arkret_sdk::EncryptedEnvelopeAad,
+    event_kind: &str,
+    group_state_ref: arkret_sdk::EventId,
     plaintext: &[u8],
     metadata_content_type: Option<&str>,
     metadata_plaintext: Option<&[u8]>,
@@ -2069,11 +2079,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     let snapshot = state_store
         .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    // SEC-08 (§2.9) — fail-closed: a `minimal_metadata_realm` message MUST use
-    // `aad_visibility=hidden`. Enforce before any optional commit/encrypt so a
-    // non-hidden AAD never advances the epoch nor produces ciphertext.
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
-    assert_minimal_metadata_aad(&aad_visibility_of(&aad), is_minimal_metadata)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: send/encrypt under the Seal-view epoch floor so encrypting from a
@@ -2095,34 +2101,39 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         snapshot.app_messages_observed,
         state_store.realm_has_pending_mls_binding(realm_id),
     );
-    let commit_envelope = if should_commit {
-        Some(self_update_with_verified_governance_binding(
-            state_store,
-            realm_id,
-            circle,
-            sidecar_binding,
-            &mut group,
-        )?)
-    } else {
-        None
-    };
+    if should_commit {
+        return Err(MlsRuntimeError::EncryptionTransitionPending);
+    }
+    let commit_envelope = None;
     // §2.10 content scheme dispatch — see `encrypt_values_with_device_snapshot`.
-    // The routing `aad`, exact key reference, epoch, purpose and suite are all
-    // bound by the exporter-AEAD immutable header.
-    let exporter_key_ref = use_exporter_aead
-        .then(|| arkret_sdk::KeyRefObject::mls_exporter_aead(group.group_id(), group.epoch()));
     let encrypt_one =
         |group: &mut arkret_sdk::ArkretMlsGroup, payload_content_type: &str, bytes: &[u8]| {
-            if let Some(key_ref) = exporter_key_ref.as_ref() {
+            let scheme = if use_exporter_aead {
+                arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+            } else {
+                arkret_sdk::EncryptedPayloadScheme::MlsRfc9420
+            };
+            let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+                "1.0",
+                payload_content_type,
+                scheme,
+                effective_scope.clone(),
+                event_kind,
+                group.epoch(),
+                group_state_ref.clone(),
+                device_id,
+                use_exporter_aead.then(|| group.next_content_counter()),
+                arkret_sdk::EventContentRoutingContext::None,
+            )
+            .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+            if use_exporter_aead {
                 group.encrypt_payload_exporter_aead(
-                    payload_content_type,
                     realm_id,
-                    key_ref.clone(),
-                    aad.clone(),
+                    header,
                     bytes,
                 )
             } else {
-                group.encrypt_payload_with_aad(payload_content_type, Some(aad.clone()), bytes)
+                group.encrypt_payload(header, bytes)
             }
             .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))
         };
@@ -2160,10 +2171,6 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     } else {
         None
     };
-    // `push-notifications.md` §4.5 — the mention routing key MUST come from the
-    // same epoch the ciphertext above was produced under, so it is read here
-    // (after any forced commit) rather than from the caller's stale snapshot.
-    let mention_routing_key = super::mention_routing_key_from_group(state_store, realm_id, &group)?;
     let schedule_hash = group.schedule_hash();
     let member_dids = group.member_principal_ids();
     let post_state = group
@@ -2194,7 +2201,6 @@ pub(crate) fn encrypt_message_with_device_snapshot(
             commit_envelope,
             Some(new_envelope.with_app_messages_observed(sent)),
             pending_history_secrets,
-            mention_routing_key,
         ));
     }
     new_envelope = new_envelope
@@ -2211,7 +2217,6 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         None,
         None,
         pending_history_secrets,
-        mention_routing_key,
     ))
 }
 
@@ -2325,45 +2330,6 @@ fn runtime_effective_scope(
             })?,
         }),
         None => Ok(arkret_sdk::ScopeRef::Realm { realm_id }),
-    }
-}
-
-/// SEC-08 — fail-closed committer-side assertion that a `minimal_metadata_realm`
-/// send uses `aad_visibility=hidden` (`encryption-and-audit.md` §2.9).
-///
-/// Thin wrapper over the SDK's [`arkret_sdk::enforce_minimal_metadata_aad`]
-/// that maps the SDK protocol error into [`MlsRuntimeError::AadPolicy`] so the
-/// runtime's typed error surface stays uniform. This mirrors soland's
-/// server-side reject, giving client + server defence in depth: a minimal Realm
-/// can never emit a non-hidden AAD, and the server would reject it if it
-/// somehow did.
-pub fn assert_minimal_metadata_aad(
-    visibility: &arkret_sdk::EncryptedEnvelopeAadVisibility,
-    is_minimal_metadata: bool,
-) -> Result<(), MlsRuntimeError> {
-    arkret_sdk::enforce_minimal_metadata_aad(visibility, is_minimal_metadata)
-        .map_err(|err| MlsRuntimeError::AadPolicy(err.to_string()))
-}
-
-/// SEC-08 — infer the [`arkret_sdk::EncryptedEnvelopeAadVisibility`] discriminator from a
-/// canonical `ak.schema.encrypted_envelope.v1` AAD value.
-///
-/// The schema discriminator is structural (`encryption-and-audit.md` §2.9): a
-/// `hidden` envelope omits both `event_id` and `event_ref_digest`; an
-/// `opaque_id` envelope carries `event_id`; a `routing_digest` envelope carries
-/// `event_ref_digest`. Used by [`assert_minimal_metadata_aad`] on the message
-/// path so a minimal Realm cannot ship a non-hidden AAD even if a caller
-/// constructed one. `event_id` is checked first so a malformed value carrying
-/// both fields resolves to the *less* private (and therefore rejected) form.
-pub(crate) fn aad_visibility_of(
-    aad: &arkret_sdk::EncryptedEnvelopeAad,
-) -> arkret_sdk::EncryptedEnvelopeAadVisibility {
-    if aad.event_id.is_some() {
-        arkret_sdk::EncryptedEnvelopeAadVisibility::OpaqueId
-    } else if aad.event_ref_digest.is_some() {
-        arkret_sdk::EncryptedEnvelopeAadVisibility::RoutingDigest
-    } else {
-        arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden
     }
 }
 

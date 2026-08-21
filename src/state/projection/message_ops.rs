@@ -245,15 +245,12 @@ mod tests {
             json!({
                 "strand_id": "ak:strand:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "encrypted_payload": {
-                    "schema": "ak.schema.encrypted_envelope.v1",
-                    "suite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
-                    "key_ref": {
-                        "kind": "mls_group",
-                        "group_id": "AQIDBA",
+                    "version": "1.0",
+                    "content_type": "application/vnd.arkret.sidecar-control+json",
+                    "encryption_context": {
                         "epoch": 1,
                         "group_state_ref": "ak:event:AbHexNOxiiU334tA-ZHyM5pRxJxbMY0jvwlMVDY3Xjrz"
                     },
-                    "aad_visibility": "hidden",
                     "ciphertext": "AQIDBA"
                 }
             }),

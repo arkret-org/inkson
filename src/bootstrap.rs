@@ -445,31 +445,6 @@ pub(crate) fn local_mls_key_package_publish_hint(
     }
 }
 
-/// Canonical `sha256:` ref of this device's currently published single-use
-/// KeyPackage, or `None` when no publish ref is durably recorded. Direct
-/// Conversation repair dispatch requires this exact value; callers must fail
-/// closed on `None` instead of substituting the id-form marker or any locally
-/// regenerated package.
-pub(crate) fn local_mls_key_package_published_ref(
-    base_url: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> Option<String> {
-    let base_scope = server_key(base_url);
-    if base_scope.is_empty() || actor_id.trim().is_empty() || device_id.trim().is_empty() {
-        return None;
-    }
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    crate::mls::runtime::load_mls_key_package_publish_ref(
-        secure_store.as_ref(),
-        &base_scope,
-        actor_id,
-        device_id,
-    )
-    .ok()
-    .flatten()
-}
-
 pub(crate) async fn ensure_local_mls_key_package_published(
     base_url: String,
     session_credential: String,

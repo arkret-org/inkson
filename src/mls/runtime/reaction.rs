@@ -3,8 +3,7 @@
 use arkret_wire::event_kind_str;
 
 use super::{
-    MlsRuntimeError, PreparedMlsCommit, assert_minimal_metadata_aad, load_device_snapshot_secret,
-    should_force_epoch_advance,
+    MlsRuntimeError, PreparedMlsCommit, load_device_snapshot_secret, should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
 
@@ -127,16 +126,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
 
-    // SEC-08 (§2.9) — fail-closed AAD policy: this path always builds a
-    // `hidden` AAD below, but for a `minimal_metadata_realm` Realm the hidden
-    // requirement is a MUST. Assert it up front (with the same SDK helper
-    // soland rejects with) so any future edit that widens visibility on a
-    // minimal Realm fails loudly here instead of leaking message-id metadata.
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
-    assert_minimal_metadata_aad(
-        &arkret_sdk::EncryptedEnvelopeAadVisibility::Hidden,
-        is_minimal_metadata,
-    )?;
 
     // SEC-08 (§2.9) — minimal-metadata epoch lifetime ≤ 1h. A reaction normally
     // reuses the current epoch (no commit), so on a minimal Realm we MUST roll

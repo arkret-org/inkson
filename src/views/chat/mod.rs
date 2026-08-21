@@ -1159,7 +1159,6 @@ async fn submit_source_routed_sidecar_message(
         build,
         source_realm_id,
         None,
-        Vec::new(),
     )
     .await;
     let (event_id, status) = match outcome {
@@ -1320,38 +1319,6 @@ fn composer_mention_nodes(
         ));
     }
     mentions
-}
-
-/// The §4.5 E2EE mention-routing sidecar digests this send should carry.
-///
-/// `routing_key` is the Realm's current-epoch mention routing key. It is `None`
-/// whenever the sidecar must not be produced — a plaintext Realm, a Realm whose
-/// effective `mention_routing_hint` is `disabled`, or a device that cannot reach
-/// its MLS group — and the message then goes out with no sidecar rather than
-/// with a tag derived from anything else.
-///
-/// Returned as data rather than written onto a built Event:
-/// `mention_sidecar_digest` is a producer-signed payload member, so it has to be
-/// in place before the identity is derived from that payload.
-pub(super) fn mention_sidecar_digests(
-    mentions: &[MentionNode],
-    routing_key: Option<&[u8]>,
-) -> Vec<String> {
-    let mention_dids = mentions
-        .iter()
-        .filter_map(|node| {
-            node.as_mention()
-                .map(|mention| mention.subject_id.as_str().to_owned())
-        })
-        .collect::<Vec<_>>();
-    if mention_dids.is_empty() {
-        return Vec::new();
-    }
-    let Some(routing_key) = routing_key else {
-        return Vec::new();
-    };
-    crate::messaging::mentions::mention_sidecar_digestes(routing_key, &mention_dids)
-        .unwrap_or_default()
 }
 
 fn chat_visible_read_receipt_should_send(

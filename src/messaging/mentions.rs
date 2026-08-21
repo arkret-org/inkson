@@ -1,19 +1,10 @@
-//! G3.Y2 — @mention picker state + sidecar hash helper.
+//! G3.Y2 — @mention picker state.
 //!
 //! The chat composer hosts an @mention picker that surfaces the current
 //! Space's participants as the user types `@`. We keep the picker state
 //! in a small struct so the chat view can render `mention-picker` /
 //! `mention-suggestion` / `mention-chip` testids off of a single
 //! signal instead of juggling three.
-//!
-//! The sidecar-hash helper covers the E2EE notification routing path
-//! described in `discovery/push-notifications.md §4.5` (the wire field is
-//! `mention_sidecar_digest` in `artifacts/schemas/event-payload.schema.json`)
-//! — the server must be able to route a
-//! notification to the mentioned actor without learning that actor's
-//! DID in plaintext. We compute the epoch-scoped MLS exporter HMAC and surface it
-//! as `content.mention_sidecar_digest` inside the outgoing
-//! `ak.message.create` payload.
 
 use serde::{Deserialize, Serialize};
 
@@ -220,40 +211,6 @@ pub fn replace_active_mention_token(
     format!("{before}{mention}{spacer}{after}")
 }
 
-/// E2EE-safe mention routing hash.
-///
-/// Per `discovery/push-notifications.md §4.5`, when the Realm is
-/// encrypted the client MUST NOT put `mentions: [did, ...]` on the
-/// outer event in plaintext — the server only sees a list of opaque
-/// hashes (`content.mention_sidecar_digest`) it can match against per-actor
-/// inbox subscriptions without learning the mentioned DID.
-///
-/// `routing_key` is the epoch's mention routing key —
-/// `MLS-Exporter("arkret-mention-routing-v1", realm_id, 32)` — which the
-/// caller reads from the live MLS group. The realm and the epoch are already
-/// bound into that key, so they are not repeated here.
-///
-/// Returns lowercase hex.
-pub fn mention_sidecar_digest(routing_key: &[u8], did: &str) -> Result<String, String> {
-    let did = arkret_sdk::DidFullId::new(did).map_err(|error| error.to_string())?;
-    let out = arkret_sdk::mls::mention_routing_hmac_from_key(routing_key, &did)
-        .map_err(|error| error.to_string())?;
-    Ok(crate::canonical::hex_encode(&out))
-}
-
-/// Build the full sidecar hash list for a `ak.message.create` payload.
-/// The output is `["hash1", "hash2", ...]` matching the wire shape
-/// expected by the notification routing layer.
-pub fn mention_sidecar_digestes(
-    routing_key: &[u8],
-    mentioned_dids: &[String],
-) -> Result<Vec<String>, String> {
-    mentioned_dids
-        .iter()
-        .map(|did| mention_sidecar_digest(routing_key, did))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,30 +358,5 @@ mod tests {
             replace_active_mention_token("hello", None, "bob:local.host"),
             "hello @bob:local.host "
         );
-    }
-
-    #[test]
-    fn sidecar_hash_is_deterministic_and_hex() {
-        let hash_a = mention_sidecar_digest(&[0x11; 32], "did:web:alice.example").unwrap();
-        let hash_b = mention_sidecar_digest(&[0x11; 32], "did:web:alice.example").unwrap();
-        assert_eq!(hash_a, hash_b);
-        assert_eq!(hash_a.len(), 64); // SHA-256 hex
-        assert!(hash_a.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn sidecar_hash_changes_with_epoch_exporter() {
-        let a = mention_sidecar_digest(&[0x11; 32], "did:web:alice.example").unwrap();
-        let b = mention_sidecar_digest(&[0x22; 32], "did:web:alice.example").unwrap();
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn sidecar_hash_does_not_leak_did_substring() {
-        // Even with a known exporter, the hash output must not contain the
-        // raw DID — that's the whole point of the sidecar.
-        let did = "did:web:alice.example";
-        let hash = mention_sidecar_digest(&[0x11; 32], did).unwrap();
-        assert!(!hash.contains("alice"));
     }
 }
