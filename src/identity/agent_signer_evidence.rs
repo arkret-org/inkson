@@ -28,7 +28,9 @@ struct EventAgentSelector {
     verification_method: DidUrl,
     event_id: arkret_sdk::EventId,
     event_digest: Hash,
-    event_admitted_seal_id: arkret_sdk::SealId,
+    producer_accepted_at: chrono::DateTime<chrono::Utc>,
+    producer_signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    producer_signer_resolution_evidence_digest: Hash,
     receiver_service_id: DidCoreId,
 }
 
@@ -225,6 +227,10 @@ pub(crate) fn verify_cached_event(
             saw_rejected = true;
             continue;
         };
+        let Some(admission) = origin_admission(&event) else {
+            saw_rejected = true;
+            continue;
+        };
         let selector = EventAgentSelector {
             realm_id: event.realm_id.clone(),
             agent_id: agent_id.clone(),
@@ -237,8 +243,22 @@ pub(crate) fn verify_cached_event(
                     continue;
                 }
             },
-            event_admitted_seal_id: match event.seal_ref.clone() {
-                Some(seal_id) => seal_id,
+            producer_accepted_at: admission.accepted_at,
+            producer_signer_resolution_evidence_ref: match admission
+                .producer_signer_resolution_evidence_ref
+                .clone()
+            {
+                Some(value) => value,
+                None => {
+                    saw_rejected = true;
+                    continue;
+                }
+            },
+            producer_signer_resolution_evidence_digest: match admission
+                .producer_signer_resolution_evidence_digest
+                .clone()
+            {
+                Some(value) => value,
                 None => {
                     saw_rejected = true;
                     continue;
@@ -254,7 +274,9 @@ pub(crate) fn verify_cached_event(
             realm_id,
             event_id,
             event_digest,
-            event_admitted_seal_id,
+            producer_accepted_at,
+            producer_signer_resolution_evidence_ref,
+            producer_signer_resolution_evidence_digest,
             receiver_service_id,
         } = &entry.verification_context
         else {
@@ -264,7 +286,11 @@ pub(crate) fn verify_cached_event(
         if realm_id != &selector.realm_id
             || event_id != &selector.event_id
             || event_digest != &selector.event_digest
-            || event_admitted_seal_id != &selector.event_admitted_seal_id
+            || producer_accepted_at != &selector.producer_accepted_at
+            || producer_signer_resolution_evidence_ref
+                != &selector.producer_signer_resolution_evidence_ref
+            || producer_signer_resolution_evidence_digest
+                != &selector.producer_signer_resolution_evidence_digest
             || receiver_service_id != &selector.receiver_service_id
         {
             saw_rejected = true;
@@ -322,7 +348,13 @@ async fn verify_for_cache(
         realm_id: selector.realm_id.clone(),
         event_id: selector.event_id.clone(),
         event_digest: selector.event_digest.clone(),
-        event_admitted_seal_id: selector.event_admitted_seal_id.clone(),
+        producer_accepted_at: selector.producer_accepted_at,
+        producer_signer_resolution_evidence_ref: selector
+            .producer_signer_resolution_evidence_ref
+            .clone(),
+        producer_signer_resolution_evidence_digest: selector
+            .producer_signer_resolution_evidence_digest
+            .clone(),
         receiver_service_id: selector.receiver_service_id.clone(),
     };
     let entry =
@@ -342,13 +374,19 @@ async fn materialize_verified_cache_entry(
     let snapshot = &admission.agent_authority_snapshot;
     let binding = &snapshot.core.signing_key_binding;
     let gate = &admission.controller_account_gate_attestation;
-    let outer = match &evidence {
+    let (outer_source_service_id, outer_verification_method) = match &evidence {
         AgentSignerEvidence::CurrentAdmission {
             outer_attestation, ..
-        }
-        | AgentSignerEvidence::HistoricalEvent {
+        } => (
+            &outer_attestation.source_service_id,
+            &outer_attestation.verification_method,
+        ),
+        AgentSignerEvidence::HistoricalEvent {
             outer_attestation, ..
-        } => outer_attestation,
+        } => (
+            &outer_attestation.source_service_id,
+            &outer_attestation.verification_method,
+        ),
     };
     let mut verification_method_public_keys = BTreeMap::new();
     let controller_method = &binding.controller_proof.verification_method;
@@ -362,13 +400,28 @@ async fn materialize_verified_cache_entry(
             &snapshot.lease.verification_method,
         ),
         (&gate.authority_service_id, &gate.verification_method),
-        (&outer.source_service_id, &outer.verification_method),
+        (outer_source_service_id, outer_verification_method),
     ] {
         if verification_method_public_keys.contains_key(method.as_str()) {
             continue;
         }
         let key = resolve_source_service_method_key(http, anchor, service_id, method).await?;
         verification_method_public_keys.insert(method.as_str().to_owned(), key);
+    }
+    if let Some(receipt) = historical_receipt(&evidence) {
+        let method =
+            arkret_sdk::signatures::agent_evidence::historical_receipt_verification_method(receipt)
+                .ok()?;
+        if !verification_method_public_keys.contains_key(method.as_str()) {
+            let key = resolve_source_service_method_key(
+                http,
+                anchor,
+                &receipt.receiver_service_id,
+                &method,
+            )
+            .await?;
+            verification_method_public_keys.insert(method.as_str().to_owned(), key);
+        }
     }
     for seal in seal_lineage(&evidence) {
         for method in seal_signature_methods(seal)? {
@@ -875,7 +928,12 @@ fn validate_cached_historical(
     // The ordinary resolver only exposes the current DID/service document.
     // Until the client has ingested and validated the complete DID history,
     // it cannot honestly resolve a protected receipt kid at accepted_at.
-    let resolve_receiver = |_: &DidUrl, _: chrono::DateTime<chrono::Utc>| None;
+    let resolve_receiver = |method: &DidUrl, _: chrono::DateTime<chrono::Utc>| {
+        entry
+            .verification_method_public_keys
+            .get(method.as_str())
+            .cloned()
+    };
     match validate_historical_agent_signer_evidence(
         Some(&entry.evidence),
         &HistoricalAgentSignerEvidenceValidationContext {
@@ -883,7 +941,11 @@ fn validate_cached_historical(
             event_id: &selector.event_id,
             event_digest: &selector.event_digest,
             realm_id: &selector.realm_id,
-            event_admitted_seal_id: &selector.event_admitted_seal_id,
+            producer_accepted_at: selector.producer_accepted_at,
+            producer_signer_resolution_evidence_ref: &selector
+                .producer_signer_resolution_evidence_ref,
+            producer_signer_resolution_evidence_digest: &selector
+                .producer_signer_resolution_evidence_digest,
             receiver_service_id: &selector.receiver_service_id,
             resolve_receiver_historical_key: &resolve_receiver,
         },
@@ -1042,6 +1104,11 @@ fn historical_receipt_matches_selector(
         && receipt.verification_method == selector.verification_method
         && receipt.event_id == selector.event_id
         && receipt.event_digest == selector.event_digest
+        && receipt.producer_accepted_at == selector.producer_accepted_at
+        && receipt.producer_signer_resolution_evidence_ref
+            == selector.producer_signer_resolution_evidence_ref
+        && receipt.producer_signer_resolution_evidence_digest
+            == selector.producer_signer_resolution_evidence_digest
         && receipt.receiver_service_id == selector.receiver_service_id
 }
 
@@ -1065,6 +1132,15 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
         .verification_method
         .clone();
     Some((event, agent_id, verification_method))
+}
+
+fn origin_admission(
+    event: &arkret_sdk::Event,
+) -> Option<&arkret_sdk::PrincipalServerAdmissionProof> {
+    event.proofs.iter().find_map(|proof| match proof {
+        arkret_sdk::EventProof::PrincipalServerAdmission(value) => Some(value),
+        arkret_sdk::EventProof::Producer(_) => None,
+    })
 }
 
 fn actor_id_from_full(full_id: &DidFullId) -> Option<DidCoreId> {
@@ -1117,14 +1193,20 @@ fn selector_from_object(
         event_agent_identity(&Value::Object(object.clone()))?;
     let realm_id = event.realm_id.clone();
     let event_digest = arkret_sdk::signed_event_digest_claim(&event).ok()?;
-    let event_admitted_seal_id = event.seal_ref?;
+    let admission = origin_admission(&event)?;
     Some(EventAgentSelector {
         realm_id,
         agent_id,
         verification_method,
-        event_id: event.event_id,
+        event_id: event.event_id.clone(),
         event_digest,
-        event_admitted_seal_id,
+        producer_accepted_at: admission.accepted_at,
+        producer_signer_resolution_evidence_ref: admission
+            .producer_signer_resolution_evidence_ref
+            .clone()?,
+        producer_signer_resolution_evidence_digest: admission
+            .producer_signer_resolution_evidence_digest
+            .clone()?,
         receiver_service_id: receiver_service_id.clone(),
     })
 }
@@ -1137,7 +1219,9 @@ impl Ord for EventAgentSelector {
             self.verification_method.as_str(),
             self.event_id.as_str(),
             self.event_digest.as_str(),
-            self.event_admitted_seal_id.as_str(),
+            self.producer_accepted_at,
+            self.producer_signer_resolution_evidence_ref.as_ref(),
+            self.producer_signer_resolution_evidence_digest.as_str(),
             self.receiver_service_id.as_str(),
         )
             .cmp(&(
@@ -1146,7 +1230,9 @@ impl Ord for EventAgentSelector {
                 other.verification_method.as_str(),
                 other.event_id.as_str(),
                 other.event_digest.as_str(),
-                other.event_admitted_seal_id.as_str(),
+                other.producer_accepted_at,
+                other.producer_signer_resolution_evidence_ref.as_ref(),
+                other.producer_signer_resolution_evidence_digest.as_str(),
                 other.receiver_service_id.as_str(),
             ))
     }

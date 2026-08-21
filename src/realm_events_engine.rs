@@ -576,6 +576,8 @@ mod tests {
                 producer_verification_method: producer.verification_method.clone(),
                 producer_signing_key: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
                     .unwrap(),
+                producer_signer_resolution_evidence_ref: None,
+                producer_signer_resolution_evidence_digest: None,
                 signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
                     "ak:signer_evidence:sha256:{}",
                     "11".repeat(32)

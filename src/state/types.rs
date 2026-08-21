@@ -828,7 +828,9 @@ pub enum CachedAgentSignerEvidenceContext {
         realm_id: arkret_sdk::RealmId,
         event_id: arkret_sdk::EventId,
         event_digest: arkret_sdk::Hash,
-        event_admitted_seal_id: arkret_sdk::SealId,
+        producer_accepted_at: chrono::DateTime<chrono::Utc>,
+        producer_signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
+        producer_signer_resolution_evidence_digest: arkret_sdk::Hash,
         receiver_service_id: arkret_sdk::DidCoreId,
     },
 }
