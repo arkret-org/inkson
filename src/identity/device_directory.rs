@@ -221,7 +221,8 @@ async fn accepted_device_evidence(
         attestation.attestation.principal_server_id.clone(),
     );
     authority.validate().ok()?;
-    let expires_at_ms = u64::try_from(attestation.attestation.expires_at.timestamp_millis()).ok()?;
+    let expires_at_ms =
+        u64::try_from(attestation.attestation.expires_at.timestamp_millis()).ok()?;
     Some((
         key,
         record.device_authorize_event_id.clone(),
@@ -248,9 +249,7 @@ pub async fn resolve_device_signing_key_with_http(
     let outcome = crate::transport::keys::query_keys(sdk_http, actor, device).await?;
     let resolved = accepted_device_evidence(&outcome, anchor, actor, device).await;
     let key = resolved.as_ref().map(|(key, ..)| key.clone());
-    let authorize_event_id = resolved
-        .as_ref()
-        .map(|(_, event_id, _, _)| event_id.clone());
+    let authorize_event_id = resolved.as_ref().map(|(_, event_id, ..)| event_id.clone());
     let authority = resolved
         .as_ref()
         .map(|(_, _, authority, _)| authority.clone());

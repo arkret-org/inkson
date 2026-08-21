@@ -155,7 +155,55 @@ fn returning_device_block_message(reason: ReturningDeviceBlockReason) -> &'stati
     }
 }
 
+/// Record how the persisted identity-creation checkpoint participates in the
+/// sign-in transaction that is starting.
+fn record_registration_checkpoint_disposition(
+    pending_handoff: Option<&crate::state::PendingAccountHandoff>,
+    disposition: Option<garth::RegistrationCheckpointDisposition>,
+) {
+    use garth::RegistrationCheckpointDisposition as Disposition;
+
+    use crate::identity::account_auth::transition::{
+        LoginCorrelation, LoginStage, record_login_transition,
+    };
+
+    let reason = match disposition {
+        None => "no_registration_checkpoint",
+        Some(Disposition::ContinuesIdentityCreation) => "checkpoint_continues_identity_creation",
+        Some(Disposition::DiscardStale) => "stale_checkpoint_pruned",
+        Some(Disposition::Quarantine) => "foreign_checkpoint_quarantined",
+    };
+    let correlation = pending_handoff.map_or_else(LoginCorrelation::default, |handoff| {
+        LoginCorrelation::for_handoff(handoff)
+    });
+    record_login_transition(
+        LoginStage::SignInStart,
+        "registration_checkpoint_classification",
+        LoginStage::OidcCallback,
+        reason,
+        None,
+        &correlation,
+    );
+}
+
+/// Counter values an operator can read straight off a stuck diagnostics
+/// screen. They separate an authorized login from device setup, a typed block,
+/// an exact retry, a contradiction and a recovery surface.
+fn login_transition_counter_summary() -> String {
+    let counters = crate::identity::account_auth::transition::login_transition_counters()
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("Login transitions: {counters}.")
+}
+
 fn local_evidence_diagnostics_message(reason: &LocalEvidenceUnavailableReason) -> String {
+    let detail = local_evidence_diagnostics_detail(reason);
+    format!("{detail} {}", login_transition_counter_summary())
+}
+
+fn local_evidence_diagnostics_detail(reason: &LocalEvidenceUnavailableReason) -> String {
     match reason {
         LocalEvidenceUnavailableReason::HydrationInProgress => {
             "Local device security data is still loading. No session or device setup was started; retry after loading completes."
@@ -475,12 +523,42 @@ pub fn LoginPanel(
             } else {
                 None
             };
-            let (pending_handoff, has_pending_checkpoint) = {
+            let (pending_handoff, pending_checkpoint) = {
                 let store = reset_state_store.read();
-                let pending_handoff = store.pending_account_handoff();
-                let has_pending_checkpoint = store.pending_principal_registration().is_some();
-                (pending_handoff, has_pending_checkpoint)
+                (
+                    store.pending_account_handoff(),
+                    store.pending_principal_registration(),
+                )
             };
+            let checkpoint_disposition = pending_checkpoint.as_ref().map(|checkpoint| {
+                crate::identity::account_auth::registration_checkpoint_disposition(
+                    checkpoint,
+                    pending_handoff.as_ref(),
+                    Utc::now(),
+                )
+            });
+            if checkpoint_disposition
+                == Some(garth::RegistrationCheckpointDisposition::DiscardStale)
+                && let Some(checkpoint) = pending_checkpoint.as_ref()
+            {
+                if let Err(error) =
+                    crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
+                        checkpoint,
+                    )
+                {
+                    tracing::warn!(%error, "clear stale identity-creation request artifact failed");
+                }
+                if let Err(error) = reset_state_store
+                    .write()
+                    .set_pending_principal_registration(None)
+                {
+                    tracing::warn!(%error, "prune stale identity-creation checkpoint failed");
+                }
+            }
+            record_registration_checkpoint_disposition(
+                pending_handoff.as_ref(),
+                checkpoint_disposition,
+            );
             let pending_device = pending_handoff
                 .as_ref()
                 .map(|handoff| handoff.device_id.clone())
@@ -501,11 +579,15 @@ pub fn LoginPanel(
             } else {
                 crate::config::new_device_id()
             };
-            // A registration checkpoint must continue its fenced server flow.
-            // Otherwise retain the old account/device only as a candidate for
-            // comparison with the Bound handoff returned after authentication.
+            // Only a checkpoint this exact transaction can still finish owns
+            // the authentication. A stale, terminal, fenced-out or foreign
+            // draft never suppresses the returning candidate: the old
+            // account/device is carried as a candidate and compared against
+            // the Bound handoff returned by the Account Authority.
             #[allow(clippy::expect_used)]
-            let (expected_principal, expected_device) = if has_pending_checkpoint {
+            let (expected_principal, expected_device) = if checkpoint_disposition
+                == Some(garth::RegistrationCheckpointDisposition::ContinuesIdentityCreation)
+            {
                 (None, None)
             } else {
                 (
@@ -920,6 +1002,97 @@ fn authenticated_account_route(
             }
         }
     }
+}
+
+fn local_evidence_unavailable_code(reason: &LocalEvidenceUnavailableReason) -> &'static str {
+    match reason {
+        LocalEvidenceUnavailableReason::HydrationInProgress => "hydration_in_progress",
+        LocalEvidenceUnavailableReason::StorageFailure { .. } => "storage_failure",
+        LocalEvidenceUnavailableReason::InvalidSignerReference => "invalid_signer_reference",
+        LocalEvidenceUnavailableReason::AmbiguousReturningDevices => "ambiguous_returning_devices",
+    }
+}
+
+/// Record the one authoritative routing decision taken after the Account
+/// Authority answered, so a later surface can always be traced back to the
+/// disposition and the normalization outcome that selected it.
+fn record_authenticated_account_route(
+    pending_handoff: &crate::state::PendingAccountHandoff,
+    disposition: &AccountHandoffDisposition,
+    route: &AuthenticatedAccountRoute,
+) {
+    use crate::identity::account_auth::transition::{
+        LoginStage, LoginTransitionOutcome, note_bound_admission_outcome, record_login_transition,
+    };
+
+    let authoritative_input = match disposition {
+        AccountHandoffDisposition::IdentityCreationActive(_) => "identity_creation_active",
+        AccountHandoffDisposition::IdentityCreationBusy { .. } => "identity_creation_busy",
+        AccountHandoffDisposition::Bound { .. } => "bound_account_handoff",
+    };
+    let mut correlation =
+        crate::identity::account_auth::transition::LoginCorrelation::for_handoff(pending_handoff);
+    let bound = matches!(disposition, AccountHandoffDisposition::Bound { .. });
+    if bound {
+        // The bound disposition is the input local normalization consumed.
+        record_login_transition(
+            LoginStage::AccountHandoff,
+            authoritative_input,
+            LoginStage::LocalNormalization,
+            "hydrated_local_evidence_normalized",
+            None,
+            &correlation,
+        );
+    }
+    let (next_state, reason, outcome) = match route {
+        AuthenticatedAccountRoute::IdentityCreation => (
+            LoginStage::IdentityCreation,
+            "identity_creation_owns_this_authentication",
+            None,
+        ),
+        AuthenticatedAccountRoute::IdentityCreationBusy => (
+            LoginStage::IdentityCreation,
+            "identity_creation_lease_held_by_another_holder",
+            None,
+        ),
+        AuthenticatedAccountRoute::ReturningSession(device_id) => {
+            correlation = correlation.with_device_id(device_id.as_str());
+            (
+                LoginStage::SessionIssuance,
+                "returning_device_normalized",
+                None,
+            )
+        }
+        AuthenticatedAccountRoute::DeviceSetupRequired => (
+            LoginStage::DeviceSetup,
+            "no_returning_device",
+            Some(LoginTransitionOutcome::DeviceSetupRequired),
+        ),
+        AuthenticatedAccountRoute::Diagnostics(reason) => (
+            LoginStage::LoginDiagnostics,
+            local_evidence_unavailable_code(reason),
+            Some(LoginTransitionOutcome::Contradiction),
+        ),
+    };
+    if outcome.is_some() {
+        note_bound_admission_outcome(&pending_handoff.request_id);
+    }
+    record_login_transition(
+        if bound {
+            LoginStage::LocalNormalization
+        } else {
+            LoginStage::AccountHandoff
+        },
+        if bound {
+            "local_evidence_normalization"
+        } else {
+            authoritative_input
+        },
+        next_state,
+        reason,
+        outcome,
+        &correlation,
+    );
 }
 
 fn can_resume_returning_handoff_for_callback(
@@ -1445,6 +1618,7 @@ async fn finish_oidc_callback(
         persist_pending_account_handoff(&mut store, pending_handoff.clone())
             .map_err(|error| format!("Persist account handoff checkpoint failed: {error}"))?;
     }
+    record_authenticated_account_route(&pending_handoff, &disposition, &account_route);
     if let (
         AuthenticatedAccountRoute::ReturningSession(returning_device),
         AccountHandoffDisposition::Bound {
@@ -1497,6 +1671,10 @@ async fn finish_oidc_callback(
     })
 }
 
+/// Issue or exactly replay one bound-account session grant and emit the single
+/// structured record that ties this transaction's handoff, issuance operation
+/// and device gate outcome together.
+#[allow(clippy::too_many_arguments)]
 async fn exchange_bound_handoff_session(
     principal_server_url: &str,
     sdk_base_url: &url::Url,
@@ -1506,6 +1684,87 @@ async fn exchange_bound_handoff_session(
     full_id: arkret_sdk::DidFullId,
     device_id: arkret_sdk::DeviceId,
     dpop_handle: &crate::identity::account_auth::grant_dpop::DpopHandle,
+) -> Result<CompletedLogin, ReturningSessionExchangeError> {
+    use crate::identity::account_auth::transition::{
+        LoginStage, LoginTransitionOutcome, note_bound_admission_outcome, record_login_transition,
+    };
+
+    let mut correlation =
+        crate::identity::account_auth::transition::LoginCorrelation::for_handoff(pending_handoff)
+            .with_principal_id(full_id.as_str())
+            .with_device_id(device_id.as_str());
+    let outcome = issue_bound_handoff_session(
+        principal_server_url,
+        sdk_base_url,
+        pending_handoff,
+        handoff_grant,
+        principal_id,
+        full_id,
+        device_id,
+        dpop_handle,
+        &mut correlation,
+    )
+    .await;
+    let (next_state, reason, metric) = match &outcome {
+        Ok(_) => (
+            LoginStage::Workspace,
+            "accepted_device_session_issued",
+            LoginTransitionOutcome::AuthorizedLogin,
+        ),
+        Err(ReturningSessionExchangeError::DeviceSetupRequired(_)) => (
+            LoginStage::DeviceSetup,
+            "device_unauthorized",
+            LoginTransitionOutcome::DeviceSetupRequired,
+        ),
+        Err(ReturningSessionExchangeError::Blocked(reason, _)) => (
+            LoginStage::LoginDiagnostics,
+            returning_device_block_code(*reason),
+            LoginTransitionOutcome::TypedBlock,
+        ),
+        Err(ReturningSessionExchangeError::Retryable(_)) => (
+            LoginStage::SessionIssuance,
+            "retryable_issuance_outcome",
+            LoginTransitionOutcome::RetryExactIssue,
+        ),
+        Err(ReturningSessionExchangeError::Fatal(_)) => (
+            LoginStage::LoginDiagnostics,
+            "session_issuance_contradiction",
+            LoginTransitionOutcome::Contradiction,
+        ),
+    };
+    if !matches!(outcome, Err(ReturningSessionExchangeError::Fatal(_))) {
+        note_bound_admission_outcome(&pending_handoff.request_id);
+    }
+    record_login_transition(
+        LoginStage::SessionIssuance,
+        "session_grant_admission",
+        next_state,
+        reason,
+        Some(metric),
+        &correlation,
+    );
+    outcome
+}
+
+fn returning_device_block_code(reason: ReturningDeviceBlockReason) -> &'static str {
+    match reason {
+        ReturningDeviceBlockReason::RevocationPending => "device_revocation_pending",
+        ReturningDeviceBlockReason::Revoked => "device_revoked",
+        ReturningDeviceBlockReason::GenerationFenced => "device_generation_fenced",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn issue_bound_handoff_session(
+    principal_server_url: &str,
+    sdk_base_url: &url::Url,
+    pending_handoff: &crate::state::PendingAccountHandoff,
+    handoff_grant: &str,
+    principal_id: arkret_sdk::DidCoreId,
+    full_id: arkret_sdk::DidFullId,
+    device_id: arkret_sdk::DeviceId,
+    dpop_handle: &crate::identity::account_auth::grant_dpop::DpopHandle,
+    correlation: &mut crate::identity::account_auth::transition::LoginCorrelation,
 ) -> Result<CompletedLogin, ReturningSessionExchangeError> {
     let now = Utc::now();
     let proof_expires_at = std::cmp::min(
@@ -1614,6 +1873,15 @@ async fn exchange_bound_handoff_session(
             request
         }
     };
+    if let arkret_sdk::SessionGrantRequestBody::Human(human) = &request {
+        correlation.session_grant_request_id = Some(human.request_id.to_string());
+        correlation.session_intent_digest = Some(
+            human
+                .accepted_device_possession_proof
+                .session_intent_digest
+                .to_string(),
+        );
+    }
     let http = ClientBuilder::new(sdk_base_url.clone())
         .allow_insecure_localhost()
         .auth(Auth::Dpop(
@@ -1639,6 +1907,7 @@ async fn exchange_bound_handoff_session(
     let session_grant = session_engine
         .current_state()
         .ok_or_else(|| "Account Authority handoff session issue did not yield state.".to_owned())?;
+    correlation.session_grant_id = Some(session_grant.grant_id.as_str().to_owned());
     if session_grant.principal_id != principal_id
         || session_grant.device_id.as_ref() != Some(&device_id)
     {

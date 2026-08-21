@@ -3,22 +3,33 @@
 use serde_json::Value;
 
 const FORBIDDEN_SECRET_FIELD_NAMES: &[&str] = &[
+    "access_token",
+    "account_handoff_grant",
     "account_mls_secret",
+    "authorization_code",
+    "code_verifier",
     "device_private_key",
     "device_seed",
+    "grant_jwt",
     "hkdf_prk",
+    "id_token",
     "mls_secret",
     "mnemonic",
+    "password",
     "plaintext_keybag",
     "prk",
     "private_key",
     "recovery_key",
     "recovery_phrase",
     "recovery_secret",
+    "refresh_token",
+    "renewal_credential",
     "root_private_key",
     "root_seed",
     "secret_b64u",
     "seed",
+    "session_credential",
+    "session_private_key_pem",
 ];
 
 const PRIVATE_KEY_BLOCK_MARKERS: &[&str] = &[
@@ -152,6 +163,30 @@ mod tests {
         ];
 
         for surface in surfaces {
+            assert!(
+                find_json_violation("surface", &surface).is_some(),
+                "{surface}"
+            );
+        }
+    }
+
+    #[test]
+    fn scans_authentication_credentials_and_passwords() {
+        let credentials = [
+            json!({"surface": "log", "account_handoff_grant": "eyJhbGciOi"}),
+            json!({"surface": "log", "grant_jwt": "eyJhbGciOi"}),
+            json!({"surface": "log", "session_credential": "eyJhbGciOi"}),
+            json!({"surface": "log", "session_private_key_pem": "opaque"}),
+            json!({"surface": "log", "access_token": "opaque"}),
+            json!({"surface": "log", "refresh_token": "opaque"}),
+            json!({"surface": "log", "id_token": "opaque"}),
+            json!({"surface": "log", "authorization_code": "opaque"}),
+            json!({"surface": "log", "code_verifier": "opaque"}),
+            json!({"surface": "log", "password": "1amTester!"}),
+            json!({"surface": "log", "message": "password=1amTester!"}),
+        ];
+
+        for surface in credentials {
             assert!(
                 find_json_violation("surface", &surface).is_some(),
                 "{surface}"

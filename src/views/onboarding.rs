@@ -956,7 +956,39 @@ fn DeviceSetupRequired(
             Link { class: "secondary", to: Route::Login, "Sign in again after approval" }
             Button {
                 variant: ButtonVariant::Ghost,
-                onclick: move |_| recovery_selected.set(true),
+                "data-testid": "device-setup-use-recovery-key",
+                onclick: move |_| {
+                    // The 24-word surface opens only from this explicit
+                    // secondary choice, and only after the bound handoff
+                    // already reached a typed admission outcome.
+                    let handoff = state_store.read().pending_account_handoff();
+                    let (correlation, bound) = handoff.as_ref().map_or_else(
+                        || {
+                            (
+                                crate::identity::account_auth::transition::LoginCorrelation::default(),
+                                false,
+                            )
+                        },
+                        |handoff| {
+                            (
+                                crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff),
+                                handoff.bound_principal_id.is_some(),
+                            )
+                        },
+                    );
+                    if crate::identity::account_auth::transition::record_recovery_surface_opened(
+                        crate::identity::account_auth::transition::RecoveryEntryReason::UserSelectedInDeviceSetup,
+                        &correlation,
+                        bound,
+                    ) {
+                        recovery_selected.set(true);
+                    } else {
+                        pairing_status.set(
+                            "This account's sign-in has no authoritative device decision yet, so Recovery Key entry stays closed. Sign in again and retry device approval."
+                                .to_owned(),
+                        );
+                    }
+                },
                 "Use Recovery Key instead"
             }
         }

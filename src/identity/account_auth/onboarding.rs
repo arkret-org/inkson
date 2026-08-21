@@ -294,18 +294,63 @@ pub(crate) fn checkpoint_continues_bound_creation(
         )
 }
 
+/// Classify the persisted identity-creation checkpoint against the sign-in
+/// transaction that is starting.
+///
+/// Only a checkpoint that this exact transaction can still finish may claim
+/// the authentication. Everything else is excluded from the transaction input
+/// so it can never suppress a returning device candidate; of those, only
+/// current-transaction temporaries that are provably fenced out, expired or
+/// terminal may be erased.
+pub fn registration_checkpoint_disposition(
+    checkpoint: &crate::state::PendingPrincipalRegistration,
+    handoff: Option<&PendingAccountHandoff>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> garth::RegistrationCheckpointDisposition {
+    let facts = match handoff {
+        Some(handoff) => {
+            let bound_continuation = checkpoint_continues_bound_creation(checkpoint, handoff);
+            let belongs = bound_continuation
+                || crate::identity::principal_registration::checkpoint_belongs_to_handoff(
+                    checkpoint, handoff,
+                );
+            let lease_matches = bound_continuation
+                || (handoff.lease_id.as_deref() == Some(checkpoint.lease_id.as_str())
+                    && handoff.lease_fence == Some(checkpoint.lease_fence));
+            let identity_creation_terminal = handoff.identity_creation_state
+                == Some(arkret_sdk::IdentityCreationLeaseState::Completed)
+                || (handoff.bound_principal_id.is_some() && !bound_continuation);
+            garth::RegistrationCheckpointFacts {
+                continues_current_transaction: belongs,
+                lease_matches,
+                lease_expired: handoff
+                    .lease_expires_at
+                    .is_some_and(|expires_at| expires_at <= now),
+                identity_creation_terminal,
+            }
+        }
+        // Without an account handoff there is no transaction to continue. The
+        // draft is retained untouched; absence of a handoff is not authority
+        // to erase durable identity material.
+        None => garth::RegistrationCheckpointFacts {
+            continues_current_transaction: false,
+            lease_matches: false,
+            lease_expired: false,
+            identity_creation_terminal: false,
+        },
+    };
+    garth::classify_registration_checkpoint(facts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn bound_continuation_fixture(
-        stage: PendingPrincipalRegistrationStage,
-    ) -> (
-        LocalStateStore,
+    fn active_creation_fixture() -> (
         PendingAccountHandoff,
         crate::state::PendingPrincipalRegistration,
     ) {
-        let mut handoff = PendingAccountHandoff {
+        let handoff = PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
             gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000010".to_owned(),
@@ -329,13 +374,23 @@ mod tests {
             bound_principal_id: None,
         };
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
-        let mut checkpoint =
-            crate::identity::principal_registration::prepare_registration_checkpoint(
-                &handoff,
-                &handoff.device_id,
-                &recovery_key,
-            )
-            .unwrap();
+        let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
+            &handoff,
+            &handoff.device_id,
+            &recovery_key,
+        )
+        .unwrap();
+        (handoff, checkpoint)
+    }
+
+    fn bound_continuation_fixture(
+        stage: PendingPrincipalRegistrationStage,
+    ) -> (
+        LocalStateStore,
+        PendingAccountHandoff,
+        crate::state::PendingPrincipalRegistration,
+    ) {
+        let (mut handoff, mut checkpoint) = active_creation_fixture();
         checkpoint.stage = stage;
         handoff.lease_id = None;
         handoff.lease_fence = None;
@@ -477,6 +532,104 @@ mod tests {
             store.pending_principal_registration().as_ref(),
             Some(&checkpoint),
             "a fresh authenticated request id must not delete the same bound DID/device/account continuation"
+        );
+    }
+
+    #[test]
+    fn a_live_current_transaction_checkpoint_owns_the_authentication() {
+        let (handoff, checkpoint) = active_creation_fixture();
+
+        assert_eq!(
+            registration_checkpoint_disposition(&checkpoint, Some(&handoff), chrono::Utc::now()),
+            garth::RegistrationCheckpointDisposition::ContinuesIdentityCreation
+        );
+    }
+
+    #[test]
+    fn bound_post_binding_continuation_still_owns_the_authentication() {
+        let (_store, handoff, checkpoint) =
+            bound_continuation_fixture(PendingPrincipalRegistrationStage::Accepted);
+
+        assert_eq!(
+            registration_checkpoint_disposition(&checkpoint, Some(&handoff), chrono::Utc::now()),
+            garth::RegistrationCheckpointDisposition::ContinuesIdentityCreation
+        );
+    }
+
+    #[test]
+    fn orphaned_and_cross_account_checkpoints_are_quarantined_not_deleted() {
+        let (handoff, checkpoint) = active_creation_fixture();
+
+        assert_eq!(
+            registration_checkpoint_disposition(&checkpoint, None, chrono::Utc::now()),
+            garth::RegistrationCheckpointDisposition::Quarantine,
+            "a checkpoint with no account handoff is not this transaction's temporary"
+        );
+
+        let mut foreign_account = handoff.clone();
+        foreign_account.account_subject =
+            Some(arkret_sdk::Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap());
+        assert_eq!(
+            registration_checkpoint_disposition(
+                &checkpoint,
+                Some(&foreign_account),
+                chrono::Utc::now()
+            ),
+            garth::RegistrationCheckpointDisposition::Quarantine
+        );
+
+        let mut foreign_authority = handoff.clone();
+        foreign_authority.gate_account_base =
+            "https://other.example/_arkret/gate/account".to_owned();
+        assert_eq!(
+            registration_checkpoint_disposition(
+                &checkpoint,
+                Some(&foreign_authority),
+                chrono::Utc::now()
+            ),
+            garth::RegistrationCheckpointDisposition::Quarantine
+        );
+    }
+
+    #[test]
+    fn stale_terminal_and_fenced_out_checkpoints_are_discardable() {
+        let (handoff, checkpoint) = active_creation_fixture();
+
+        let mut expired = handoff.clone();
+        expired.lease_expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(1));
+        assert_eq!(
+            registration_checkpoint_disposition(&checkpoint, Some(&expired), chrono::Utc::now()),
+            garth::RegistrationCheckpointDisposition::DiscardStale
+        );
+
+        let mut fenced_out = handoff.clone();
+        fenced_out.lease_fence = Some(checkpoint.lease_fence + 1);
+        assert_eq!(
+            registration_checkpoint_disposition(&checkpoint, Some(&fenced_out), chrono::Utc::now()),
+            garth::RegistrationCheckpointDisposition::DiscardStale
+        );
+
+        let mut completed = handoff.clone();
+        completed.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Completed);
+        assert_eq!(
+            registration_checkpoint_disposition(&checkpoint, Some(&completed), chrono::Utc::now()),
+            garth::RegistrationCheckpointDisposition::DiscardStale
+        );
+
+        // The account bound a different identity than this draft created.
+        let mut bound_elsewhere = handoff.clone();
+        bound_elsewhere.lease_id = None;
+        bound_elsewhere.lease_fence = None;
+        bound_elsewhere.lease_expires_at = None;
+        bound_elsewhere.identity_creation_state = None;
+        bound_elsewhere.bound_principal_id = Some("did:webvh:z6mkfixture:other.example".to_owned());
+        assert_eq!(
+            registration_checkpoint_disposition(
+                &checkpoint,
+                Some(&bound_elsewhere),
+                chrono::Utc::now()
+            ),
+            garth::RegistrationCheckpointDisposition::DiscardStale
         );
     }
 }

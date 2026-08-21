@@ -8,6 +8,7 @@ pub mod grant_dpop;
 mod handoff;
 mod onboarding;
 mod proof;
+pub mod transition;
 mod util;
 
 #[cfg(test)]
