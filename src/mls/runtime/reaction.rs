@@ -2,18 +2,9 @@
 
 use arkret_wire::event_kind_str;
 
-use super::{
-    MlsRuntimeError, PreparedMlsCommit, load_device_snapshot_secret, should_force_epoch_advance,
-};
+use super::{MlsRuntimeError, load_device_snapshot_secret, should_force_epoch_advance};
 use crate::secure_key_store::SecureKeyStore;
 
-/// MLS exporter label for the v1 reaction routing tag
-/// (`encryption-and-audit.md` §2.9). Bound, together with `context =
-/// realm_id` and the current group epoch's exporter secret, into the
-/// keyed-HMAC routing tag.
-pub const REACTION_ROUTING_LABEL_V1: &str = "arkret-reaction-routing-v1";
-/// Length (bytes) of the MLS exporter output used as the HMAC key.
-pub const REACTION_ROUTING_EXPORT_LEN: usize = 32;
 /// Content type for the encrypted real-emoji payload of a reaction.
 pub const REACTION_ENCRYPTED_CONTENT_TYPE: &str = "application/vnd.arkret.reaction+json";
 
@@ -21,80 +12,14 @@ pub const REACTION_ENCRYPTED_CONTENT_TYPE: &str = "application/vnd.arkret.reacti
 /// wire `reaction_payload.key`, plus the structured encrypted payload that
 /// carries the real emoji.
 pub struct EncryptedReaction {
-    /// `sha256:<hex>` keyed-HMAC routing tag for `reaction_payload.key`.
+    /// 43-character base64url keyed-HMAC routing tag used by both
+    /// `reaction_payload.key` and the encrypted envelope routing context.
     pub routing_tag: String,
     /// MLS application-message payload carrying the real emoji JSON. The
     /// caller wraps this in an `EncryptedEnvelope` only after it has resolved
     /// the accepted group-state Event for the payload epoch (or built the
     /// forced commit Event returned alongside it).
     pub encrypted_payload: arkret_sdk::EncryptedPayload,
-    /// SEC-08 (`encryption-and-audit.md` §2.9) — present ONLY when this
-    /// reaction force-advanced the MLS epoch because the
-    /// `minimal_metadata_realm` 1h cap was exceeded. The caller MUST submit
-    /// this `ak.mls.commit` and, on server-accept, persist
-    /// [`Self::forced_commit_snapshot`] (X14 persist-on-accept). When `None`
-    /// the reaction rode the current epoch and its snapshot was already
-    /// persisted internally (epoch unchanged ⇒ no epoch-skew risk).
-    pub forced_commit: Option<PreparedMlsCommit>,
-    /// Post-forced-commit snapshot the caller persists on server-accept. Set
-    /// iff [`Self::forced_commit`] is `Some`.
-    pub forced_commit_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
-}
-
-/// Pure derivation of the §2.9 v1 routing tag from an MLS exporter secret.
-///
-/// `tag = "sha256:" || hex(HMAC-SHA256(exporter_secret, NFC(canonical_emoji)))`.
-/// Split out from [`reaction_routing_tag_v1`] so it can be unit-tested with a
-/// fixed exporter secret (the MLS half is exercised separately).
-#[allow(clippy::expect_used)]
-pub fn reaction_routing_tag_from_exporter(exporter_secret: &[u8], canonical_emoji: &str) -> String {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    use unicode_normalization::UnicodeNormalization;
-
-    let nfc: String = canonical_emoji.nfc().collect();
-    let mut mac = <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(exporter_secret)
-        .expect("HMAC-SHA256 accepts a key of any length");
-    mac.update(nfc.as_bytes());
-    let tag = mac.finalize().into_bytes();
-    format!("sha256:{}", crate::canonical::hex_encode(&tag))
-}
-
-/// Restore this device's MLS group for `realm_id` and derive the §2.9 v1
-/// reaction routing tag for `canonical_emoji` at the current epoch.
-///
-/// Read-only on the MLS group — it only reads the epoch's exporter secret,
-/// so it neither commits, advances the ratchet, nor mutates persisted
-/// snapshot state. Returns the `sha256:<hex>` wire form for
-/// `reaction_payload.key`.
-pub fn reaction_routing_tag_v1(
-    state_store: &mut crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    canonical_emoji: &str,
-) -> Result<String, MlsRuntimeError> {
-    let snapshot = state_store
-        .mls_snapshot_for(realm_id)
-        .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
-        .map_err(MlsRuntimeError::DeviceSecret)?;
-    // COR-04: read-only exporter read for the routing tag — floor 0 is intentional
-    // (no commit, no ratchet advance, no snapshot mutation).
-    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
-        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
-    let exporter = group
-        .export_secret(
-            REACTION_ROUTING_LABEL_V1,
-            realm_id.as_bytes(),
-            REACTION_ROUTING_EXPORT_LEN,
-        )
-        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
-    Ok(reaction_routing_tag_from_exporter(
-        &exporter,
-        canonical_emoji,
-    ))
 }
 
 /// Seal an E2EE reaction: derive the v1 routing tag and encrypt the real
@@ -113,6 +38,8 @@ pub fn encrypt_reaction_with_device_snapshot(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
+    target_ref: &arkret_sdk::EventId,
+    created_at: chrono::DateTime<chrono::Utc>,
     canonical_emoji: &str,
 ) -> Result<EncryptedReaction, MlsRuntimeError> {
     let snapshot = state_store
@@ -136,52 +63,95 @@ pub fn encrypt_reaction_with_device_snapshot(
     // COR-08: use the injectable clock (same source as `snapshot.epoch_started_at`)
     // so the §2.9 1h epoch-lifetime comparison is not split across two clock sources.
     let now = crate::clock::now_utc();
-    let forced_commit = if should_force_epoch_advance(
+    if should_force_epoch_advance(
         is_minimal_metadata,
         snapshot.epoch_started_at,
         now,
         snapshot.app_messages_observed,
         state_store.realm_has_pending_mls_binding(realm_id),
     ) {
-        Some(
-            super::message::self_update_with_verified_governance_binding(
-                state_store,
-                realm_id,
-                None,
-                None,
-                &mut group,
-            )?,
-        )
-    } else {
-        None
-    };
+        // A new application Event cannot name the pending Commit as its
+        // group-state reference before that Commit is accepted. The normal MLS
+        // rotation path authors and submits the transition; this operation is
+        // retried only after sync installs the accepted successor state.
+        return Err(MlsRuntimeError::EncryptionTransitionPending);
+    }
 
-    // Routing tag is derived from the post-(optional-commit) epoch exporter
-    // secret; the application message below does not change the epoch further.
-    let exporter = group
-        .export_secret(
-            REACTION_ROUTING_LABEL_V1,
-            realm_id.as_bytes(),
-            REACTION_ROUTING_EXPORT_LEN,
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
+            .map_err(|error| MlsRuntimeError::Serialize(error.to_string()))?,
+    };
+    let use_exporter_aead = super::message::realm_content_scheme_is_exporter_aead_for_send(
+        state_store,
+        realm_id,
+        None,
+    )?;
+    super::message::verify_exporter_sender_domain_for_send(
+        device_id,
+        is_minimal_metadata,
+        use_exporter_aead,
+    )?;
+    let scheme = if use_exporter_aead {
+        arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+    } else {
+        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420
+    };
+    let routing_window = u64::try_from(created_at.timestamp_millis().div_euclid(3_600_000))
+        .map_err(|_| {
+            MlsRuntimeError::Serialize("reaction timestamp precedes Unix epoch".to_owned())
+        })?;
+    let routing_tag = group
+        .reaction_routing_tag(
+            realm_id,
+            scheme.clone(),
+            &effective_scope,
+            target_ref,
+            routing_window,
+            canonical_emoji,
         )
-        .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
-    let routing_tag = reaction_routing_tag_from_exporter(&exporter, canonical_emoji);
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
 
     // The decrypted plaintext MUST validate as
     // event-payload.schema.json#/$defs/reaction_encrypted_payload_plaintext —
     // a JSON object whose `key` is the real emoji / short tag.
     let plaintext = serde_json::to_vec(&serde_json::json!({ "key": canonical_emoji }))
         .map_err(|err| MlsRuntimeError::Serialize(err.to_string()))?;
-    let aad_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
-        .map_err(|err| MlsRuntimeError::Serialize(format!("invalid AAD realm id: {err}")))?;
-    let aad_scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: aad_realm_id,
-    };
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, event_kind_str::REACTION_ADD)
-        .map_err(|err| MlsRuntimeError::Serialize(format!("invalid AAD scope: {err}")))?;
-    let encrypted_payload = group
-        .encrypt_payload_with_aad(REACTION_ENCRYPTED_CONTENT_TYPE, Some(aad), &plaintext)
-        .map_err(|err| MlsRuntimeError::Encrypt(err.to_string()))?;
+    let group_state_ref = crate::mls::group_events::mls_base_epoch_ref_for_scope(
+        state_store,
+        realm_id,
+        None,
+        &group.group_id(),
+        group.epoch(),
+    )
+    .map_err(MlsRuntimeError::Encrypt)?;
+    let group_state_ref = arkret_sdk::EventId::new(group_state_ref)
+        .map_err(|error| MlsRuntimeError::Serialize(error.to_string()))?;
+    let sender_domain = group
+        .local_content_sender_domain()
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+    let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+        "1.0",
+        REACTION_ENCRYPTED_CONTENT_TYPE,
+        scheme,
+        effective_scope,
+        event_kind_str::REACTION_ADD,
+        group.epoch(),
+        group_state_ref,
+        sender_domain,
+        use_exporter_aead.then(|| group.next_content_counter()),
+        arkret_sdk::EventContentRoutingContext::Reaction {
+            target_ref: target_ref.clone(),
+            routing_window,
+            routing_tag: routing_tag.clone(),
+        },
+    )
+    .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+    let encrypted_payload = if use_exporter_aead {
+        group.encrypt_payload_exporter_aead(realm_id, header, &plaintext)
+    } else {
+        group.encrypt_payload(header, &plaintext)
+    }
+    .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -198,33 +168,17 @@ pub fn encrypt_reaction_with_device_snapshot(
         &salt,
     );
 
-    if forced_commit.is_some() {
-        // X14 — a forced epoch advance must NOT be persisted before the server
-        // accepts the `ak.mls.commit`, or the local epoch races ahead and every
-        // later write is rejected with `mls_epoch_skew`. Hand the snapshot back
-        // for the caller to persist on accept.
-        Ok(EncryptedReaction {
-            routing_tag,
-            encrypted_payload,
-            forced_commit,
-            forced_commit_snapshot: Some(new_envelope.with_app_messages_observed(1)),
-        })
-    } else {
-        // No epoch change → persist the advanced application ratchet now (no
-        // epoch-skew risk, and persisting prevents nonce reuse on the next
-        // reaction). Carry the epoch-start clock forward so a stream of
-        // reactions can never reset the §2.9 1h cap.
-        let new_envelope = new_envelope
-            .carry_epoch_started_at(&snapshot)
-            .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
-        state_store
-            .save_mls_snapshot(realm_id.to_owned(), new_envelope)
-            .map_err(MlsRuntimeError::Commit)?;
-        Ok(EncryptedReaction {
-            routing_tag,
-            encrypted_payload,
-            forced_commit: None,
-            forced_commit_snapshot: None,
-        })
-    }
+    // No epoch change: persist the advanced application ratchet now so the
+    // next reaction cannot reuse a generation. Carry the epoch-start clock
+    // forward so a stream of reactions cannot reset the one-hour cap.
+    let new_envelope = new_envelope
+        .carry_epoch_started_at(&snapshot)
+        .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
+    state_store
+        .save_mls_snapshot(realm_id.to_owned(), new_envelope)
+        .map_err(MlsRuntimeError::Commit)?;
+    Ok(EncryptedReaction {
+        routing_tag,
+        encrypted_payload,
+    })
 }

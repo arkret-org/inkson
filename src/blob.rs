@@ -22,7 +22,7 @@
 
 use arkret_crypto::blob_aead::{self, DEFAULT_SEGMENT_SIZE, StreamEncryptParams};
 use arkret_models_crypto::EncryptedAttachment;
-pub use arkret_sdk::KeyRefObject;
+pub use arkret_sdk::EncryptedAttachmentKeyRef;
 use sha2::{Digest, Sha256};
 
 /// MLS exporter content-key length (XChaCha20-Poly1305 key).
@@ -139,7 +139,7 @@ fn encrypt_asset(
     plaintext: &[u8],
     content_key: &[u8; MLS_ATTACHMENT_KEY_LEN],
     epoch: u64,
-    key_ref: &KeyRefObject,
+    key_ref: &EncryptedAttachmentKeyRef,
     media_type: &str,
     force_whole_file: bool,
 ) -> anyhow::Result<EncryptedClientAsset> {
@@ -204,7 +204,7 @@ pub fn encrypt_mls_attachment_bundle(
     thumbnail_plaintext: Option<&[u8]>,
     mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
     epoch: u64,
-    key_ref: KeyRefObject,
+    key_ref: EncryptedAttachmentKeyRef,
     media_type: &str,
     thumbnail_media_type: Option<&str>,
 ) -> anyhow::Result<EncryptedAttachmentBundle> {
@@ -249,7 +249,7 @@ pub fn encrypt_mls_asset(
     plaintext: &[u8],
     mls_exported_secret: &[u8; MLS_ATTACHMENT_KEY_LEN],
     epoch: u64,
-    key_ref: KeyRefObject,
+    key_ref: EncryptedAttachmentKeyRef,
     media_type: &str,
 ) -> anyhow::Result<EncryptedClientAsset> {
     encrypt_asset(
@@ -286,10 +286,15 @@ mod tests {
         assert_eq!(a.len(), "ak:blob:sha256:".len() + 64);
     }
 
-    fn test_key_ref() -> KeyRefObject {
-        KeyRefObject {
-            algorithm: "MLS".to_owned(),
-            group_state_ref: "ak:event:AQNy1zG98lAoTz0YOf-2Yp2-GXeJioPlyg8nW6qxW-OB".to_owned(),
+    fn test_key_ref() -> EncryptedAttachmentKeyRef {
+        EncryptedAttachmentKeyRef {
+            algorithm: arkret_sdk::EncryptedAttachmentKeyAlgorithm::Mls,
+            group_state_ref: arkret_sdk::EncryptedAttachmentGroupStateRef::Event(
+                arkret_sdk::EventId::new(
+                    "ak:event:AQNy1zG98lAoTz0YOf-2Yp2-GXeJioPlyg8nW6qxW-OB".to_owned(),
+                )
+                .unwrap(),
+            ),
         }
     }
 

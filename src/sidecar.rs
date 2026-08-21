@@ -935,6 +935,7 @@ fn decrypt_sidecar_scoped_envelope(
     device_id: &str,
     sidecar_id: &str,
     envelope_value: &serde_json::Value,
+    event: &serde_json::Value,
 ) -> Option<Vec<u8>> {
     let envelope =
         serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(envelope_value.clone()).ok()?;
@@ -942,13 +943,23 @@ fn decrypt_sidecar_scoped_envelope(
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
         sidecar_id: arkret_sdk::SidecarId::new(sidecar_id.to_owned()).ok()?,
     };
-    envelope.validate_for_scope(&effective_scope).ok()?;
-    let payload_value =
-        serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
-            .ok()?;
-    let payload: arkret_sdk::EncryptedPayload = serde_json::from_value(payload_value).ok()?;
+    let sender_domain = crate::views::chat::verified_chat_sender_domain_for_realm(
+        realm_id,
+        event,
+        Some(store),
+        Some((controller_id, device_id)),
+    )?;
+    let event_kind = event.get("kind")?.as_str()?;
+    let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
+        store,
+        &envelope,
+        &effective_scope,
+        event_kind,
+        &sender_domain,
+        None,
+    )?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    crate::mls::runtime::decrypt_application_payload_for_scope(
+    crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
         store,
         secure_store.as_ref(),
         realm_id,
@@ -956,6 +967,7 @@ fn decrypt_sidecar_scoped_envelope(
         device_id,
         &payload,
         &effective_scope,
+        &sender_domain,
     )
 }
 
@@ -1053,7 +1065,7 @@ pub(crate) fn refold_sidecar_exchanges_from_history(
         controller_id,
         realm_id,
         extra_scope_hints,
-        &move |store_ref, circle_id, envelope_value| {
+        &move |store_ref, circle_id, envelope_value, event| {
             decrypt_sidecar_scoped_envelope(
                 store_ref,
                 &realm,
@@ -1061,6 +1073,7 @@ pub(crate) fn refold_sidecar_exchanges_from_history(
                 &device,
                 circle_id,
                 envelope_value,
+                event,
             )
         },
     )
@@ -1220,10 +1233,15 @@ pub(crate) async fn sync_sidecar_exchange_background(
     Ok(outcome)
 }
 
-/// Circle-scoped envelope decrypt hook: `(store, circle_id, envelope_value)`
+/// Sidecar-scoped envelope decrypt hook. The signed outer Event is required to
+/// reconstruct the authenticated header.
 /// → plaintext bytes (`None` fails closed to non-echo).
-type SidecarEnvelopeDecrypt<'a> =
-    &'a dyn Fn(&crate::state::LocalStateStore, &str, &serde_json::Value) -> Option<Vec<u8>>;
+type SidecarEnvelopeDecrypt<'a> = &'a dyn Fn(
+    &crate::state::LocalStateStore,
+    &str,
+    &serde_json::Value,
+    &serde_json::Value,
+) -> Option<Vec<u8>>;
 
 /// Decrypt-injectable core of [`refold_sidecar_exchanges_from_history`]
 /// (tests substitute the MLS decrypt with a passthrough).
@@ -1338,6 +1356,9 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             let Ok(event_digest) = event.event_digest_with_digest_suite(digest_suite) else {
                 continue;
             };
+            let Ok(event_value) = serde_json::to_value(&event) else {
+                continue;
+            };
             if kind == &arkret_sdk::EventKind::MessageCreate {
                 // The accepted request Event's complete envelope carries the
                 // canonical digest, actor_seq, and top-level HLC. The authoring
@@ -1367,8 +1388,12 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(encrypted_metadata) = event.payload.get("encrypted_metadata") else {
                     continue;
                 };
-                let Some(plaintext) = decrypt(store_ref, sidecar_id.as_str(), encrypted_metadata)
-                else {
+                let Some(plaintext) = decrypt(
+                    store_ref,
+                    sidecar_id.as_str(),
+                    encrypted_metadata,
+                    &event_value,
+                ) else {
                     continue;
                 };
                 let Some(metadata) =
@@ -1428,8 +1453,12 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(encrypted_payload) = event.payload.get("encrypted_payload") else {
                     continue;
                 };
-                let Some(plaintext) = decrypt(store_ref, sidecar_id.as_str(), encrypted_payload)
-                else {
+                let Some(plaintext) = decrypt(
+                    store_ref,
+                    sidecar_id.as_str(),
+                    encrypted_payload,
+                    &event_value,
+                ) else {
                     continue;
                 };
                 let Some(control) =
@@ -2264,6 +2293,7 @@ mod tests {
         _: &crate::state::LocalStateStore,
         _: &str,
         value: &serde_json::Value,
+        _: &serde_json::Value,
     ) -> Option<Vec<u8>> {
         serde_json::to_vec(value).ok()
     }
@@ -2674,6 +2704,7 @@ mod tests {
         // fails, so ONLY the envelope-upgrade path can improve the fact.
         let author_device_decrypt = |_: &crate::state::LocalStateStore,
                                      _: &str,
+                                     _: &serde_json::Value,
                                      _: &serde_json::Value|
          -> Option<Vec<u8>> { None };
         let changed = refold_sidecar_exchanges_with_decrypt(
@@ -2747,6 +2778,7 @@ mod tests {
 
         let no_history_decrypt = |_: &crate::state::LocalStateStore,
                                   _: &str,
+                                  _: &serde_json::Value,
                                   _: &serde_json::Value|
          -> Option<Vec<u8>> { None };
         let outcome = refold_sidecar_exchanges_with_decrypt_report(

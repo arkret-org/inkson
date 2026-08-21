@@ -265,6 +265,54 @@ fn decrypt_application_payload_for_effective_scope_internal(
     )
 }
 
+/// Reconstruct the authenticated pre-encryption header from a minimal wire
+/// envelope plus context already verified from the signed outer Event and the
+/// exact winning MLS group state. Any missing or stale coordinate fails closed.
+pub(crate) fn encrypted_payload_from_verified_event_context(
+    state_store: &crate::state::LocalStateStore,
+    envelope: &arkret_sdk::EncryptedEnvelope,
+    effective_scope: &arkret_sdk::ScopeRef,
+    event_kind: &str,
+    verified_sender_domain: &[u8],
+    reaction_routing_window: Option<u64>,
+) -> Option<arkret_sdk::EncryptedPayload> {
+    let scheme = match effective_scope {
+        arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } => state_store.circle_content_scheme(realm_id.as_str(), circle_id.as_str()),
+        arkret_sdk::ScopeRef::Sidecar { .. } => Some("mls_rfc9420".to_owned()),
+        _ => state_store.realm_content_scheme(effective_scope.realm_id_opt()?.as_str()),
+    }?;
+    let scheme = match scheme.trim() {
+        "mls_rfc9420" => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        "mls_exporter_aead_v1" => arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1,
+        _ => return None,
+    };
+    let group_id = effective_scope.canonical_mls_group_id().ok()?;
+    let accepted_ref = state_store
+        .mls_group_state_ref_for_scope(
+            effective_scope,
+            &group_id,
+            envelope.encryption_context.epoch(),
+        )
+        .ok()?;
+    if accepted_ref != *envelope.encryption_context.group_state_ref() {
+        return None;
+    }
+    let sender_domain = std::str::from_utf8(verified_sender_domain).ok()?;
+    let header = envelope
+        .reconstruct_pre_encryption_header(
+            scheme,
+            effective_scope.clone(),
+            event_kind,
+            sender_domain,
+            reaction_routing_window,
+        )
+        .ok()?;
+    arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(envelope, header).ok()
+}
+
 pub fn decrypt_application_payload_for_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -520,28 +568,13 @@ fn decrypt_application_payload_for_scope_internal(
             if payload.scheme == arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
                 && snapshot.epoch == payload.epoch
                 && let Ok(secret) = group.derive_and_retain_history_secret(realm_id)
-                && let Some(key_ref) = payload.key_ref.as_ref()
-                && let Some(payload_aad) = payload.aad.as_ref()
-                && payload.purpose.as_deref()
-                    == Some(arkret_sdk::mls::MLS_EXPORTER_AEAD_CONTENT_PURPOSE)
-                && payload_aad.realm_id.as_str() == realm_id
-                && key_ref
-                    == &arkret_sdk::KeyRefObject::mls_exporter_aead(
-                        payload.group_id.clone(),
-                        payload.epoch,
-                    )
-                && let Ok(ciphertext) =
-                    arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
-                && payload.verify_mls_payload_digest(&ciphertext).is_ok()
-                && let Some(counter) = payload.counter
+                && let Ok(ciphertext) = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
+                && payload.verify_payload_digest().is_ok()
                 && let Ok(plaintext) = group.decrypt_content_exporter_aead(
                     &secret,
                     verified_sender_domain?,
-                    key_ref,
-                    payload.epoch,
-                    counter,
+                    &payload.pre_encryption_header,
                     &ciphertext,
-                    payload_aad,
                 )
             {
                 return Some(plaintext);
@@ -757,16 +790,13 @@ pub fn ordinary_agent_mls_author_view(
 }
 
 /// Tier-3 history decrypt: use the exact granted `history_secret` named by an
-/// `mls_exporter_aead_v1` payload. The provider binds the payload's typed AAD,
-/// key reference and epoch into the immutable AEAD header. A malformed payload
+/// `mls_exporter_aead_v1` payload. The provider binds the payload's exact
+/// pre-encryption header and epoch into the AEAD transcript. A malformed payload
 /// or missing exact-epoch secret returns `None`; this path never scans other
 /// epoch keys. Does NOT touch the receive ratchet.
 ///
-/// Group-free: uses the SDK's
-/// [`arkret_sdk::mls::decrypt_content_exporter_aead_standalone`] so a device
-/// that holds the granted `history_secret` but has **no** local MLS snapshot
-/// for the Realm (e.g. a member granted history before processing its own
-/// Welcome) can still read pre-join content.
+/// Group-free decryption also needs the exact verified historical ciphersuite;
+/// the minimal wire envelope intentionally carries no algorithm selector.
 fn try_history_decrypt_standalone(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
@@ -776,63 +806,34 @@ fn try_history_decrypt_standalone(
 ) -> Option<Vec<u8>> {
     if payload.scheme != arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
         || payload.group_id.trim().is_empty()
-        || payload.purpose.as_deref() != Some(arkret_sdk::mls::MLS_EXPORTER_AEAD_CONTENT_PURPOSE)
+        || payload.pre_encryption_header.effective_scope != *effective_scope
     {
         return None;
     }
-    let ciphertext = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
-    payload.verify_mls_payload_digest(&ciphertext).ok()?;
-    let key_ref = payload.key_ref.as_ref()?;
-    if key_ref
-        != &arkret_sdk::KeyRefObject::mls_exporter_aead(payload.group_id.clone(), payload.epoch)
+    if payload
+        .pre_encryption_header
+        .effective_scope
+        .realm_id_opt()?
+        .as_str()
+        != realm_id
     {
-        return None;
-    }
-    let aad = payload.aad.as_ref()?;
-    if aad.realm_id.as_str() != realm_id {
-        return None;
-    }
-    // There is no local group snapshot on this path, so the suite has to come
-    // from the envelope. `encryption-and-audit.md` §2.10.2 requires the producer
-    // to carry it; a payload without it is not decryptable here rather than
-    // decryptable under a guessed suite.
-    if effective_scope.realm_id_opt()?.as_str() != realm_id {
         return None;
     }
     let secret =
         state_store.history_secret_for(effective_scope, &payload.group_id, payload.epoch)?;
-    try_history_decrypt_with_secret(realm_id, payload, verified_sender_domain?, &secret)
-}
-
-fn try_history_decrypt_with_secret(
-    realm_id: &str,
-    payload: &arkret_sdk::EncryptedPayload,
-    verified_sender_domain: &[u8],
-    secret: &[u8],
-) -> Option<Vec<u8>> {
-    let nonce_and_ct = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
-    payload.verify_mls_payload_digest(&nonce_and_ct).ok()?;
-    let key_ref = payload.key_ref.as_ref()?;
-    if key_ref
-        != &arkret_sdk::KeyRefObject::mls_exporter_aead(payload.group_id.clone(), payload.epoch)
-    {
-        return None;
-    }
-    let aad = payload.aad.as_ref()?;
-    if aad.realm_id.as_str() != realm_id {
-        return None;
-    }
-    let aead_profile = payload.aead_profile.as_deref()?;
-    let counter = payload.counter?;
-    arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
-        secret,
-        verified_sender_domain,
-        key_ref,
+    let sender_domain = verified_sender_domain?;
+    let cipher_suite = state_store.history_epoch_cipher_suite(
+        effective_scope,
+        &payload.group_id,
         payload.epoch,
-        counter,
-        aead_profile,
+    )?;
+    let ciphertext = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
+    arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
+        &secret,
+        sender_domain,
+        &payload.pre_encryption_header,
+        &cipher_suite,
         &ciphertext,
-        aad,
     )
     .ok()
 }
@@ -853,7 +854,7 @@ pub(crate) fn decrypt_external_history_candidates_for_event(
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Option<Vec<u8>>, MlsRuntimeError> {
     if payload.scheme != arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
-        || payload.purpose.as_deref() != Some(arkret_sdk::mls::MLS_EXPORTER_AEAD_CONTENT_PURPOSE)
+        || payload.pre_encryption_header.effective_scope != *effective_scope
         || effective_scope.realm_id_opt().map(|realm| realm.as_str()) != Some(realm_id)
     {
         return Ok(None);
@@ -894,8 +895,23 @@ pub(crate) fn decrypt_external_history_candidates_for_event(
     for candidate in candidates {
         let secret = arkret_sdk::base64url_decode(candidate.secret_b64u.as_bytes())
             .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
-        let plaintext =
-            try_history_decrypt_with_secret(realm_id, payload, verified_sender_domain, &secret);
+        let cipher_suite = state_store
+            .history_epoch_cipher_suite(effective_scope, &payload.group_id, payload.epoch)
+            .ok_or_else(|| {
+                MlsRuntimeError::Decrypt(
+                    "verified history epoch ciphersuite is unavailable".to_owned(),
+                )
+            })?;
+        let ciphertext = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
+            .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
+        let plaintext = arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
+            &secret,
+            verified_sender_domain,
+            &payload.pre_encryption_header,
+            &cipher_suite,
+            &ciphertext,
+        )
+        .ok();
         let existing = state_store.history_candidate_binding(
             &event_binding_key,
             &candidate.material_key.candidate_digest,
@@ -981,6 +997,9 @@ pub(crate) fn derive_and_retain_realm_history_secret(
                 })?,
             },
             &snapshot.group_id,
+            group
+                .group_ciphersuite_canonical_id()
+                .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?,
             [(epoch, history_secret.to_vec())],
         )
         .map_err(MlsRuntimeError::DeviceSecret)?
@@ -1830,7 +1849,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let group_state_ref = state_store
         .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
-        .ok_or(MlsRuntimeError::EncryptionTransitionPending)?;
+        .map_err(|_| MlsRuntimeError::EncryptionTransitionPending)?;
     encrypt_values_with_device_snapshot_for_effective_scope(
         state_store,
         secure_store,
@@ -1913,9 +1932,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     // `content_scheme=mls_exporter_aead_v1`, author content under the
     // history-shareable exporter-aead scheme so a late joiner granted the
     // epoch's `history_secret` can decrypt it. Otherwise keep the default
-    // forward-secret `mls_rfc9420` PrivateMessage path. The epoch is read AFTER
-    // any forced commit above and is bound with key_ref + typed routing AAD in
-    // the SDK's closed immutable header.
+    // forward-secret `mls_rfc9420` PrivateMessage path. The epoch is read after
+    // the rotation gate and the SDK reconstructs the authenticated header from
+    // the signed outer Event plus this minimal encrypted envelope.
     let mut encrypted_values = Vec::with_capacity(plaintext_values.len());
     for plaintext in plaintext_values {
         let scheme = if use_exporter_aead {
@@ -1923,6 +1942,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         } else {
             arkret_sdk::EncryptedPayloadScheme::MlsRfc9420
         };
+        let sender_domain = group
+            .local_content_sender_domain()
+            .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
         let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
             "1.0",
             content_type,
@@ -1931,17 +1953,13 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
             event_kind,
             group.epoch(),
             group_state_ref.clone(),
-            device_id,
+            sender_domain,
             use_exporter_aead.then(|| group.next_content_counter()),
             arkret_sdk::EventContentRoutingContext::None,
         )
         .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
         let encrypted = if use_exporter_aead {
-            group.encrypt_payload_exporter_aead(
-                realm_id,
-                header,
-                plaintext,
-            )
+            group.encrypt_payload_exporter_aead(realm_id, header, plaintext)
         } else {
             group.encrypt_payload(header, plaintext)
         }
@@ -1972,6 +1990,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
                 secure_store,
                 &effective_scope,
                 &group.group_id(),
+                group
+                    .group_ciphersuite_canonical_id()
+                    .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?,
                 [(group.epoch(), history_secret.to_vec())],
             )
             .map_err(MlsRuntimeError::DeviceSecret)?
@@ -2026,16 +2047,15 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     ))
 }
 
-/// Encrypt a single message plaintext under the Realm MLS group, binding
-/// `aad` into the payload digest, and return the structured
+/// Encrypt a single message plaintext under the Realm MLS group, binding the
+/// closed pre-encryption header, and return the structured
 /// [`arkret_sdk::EncryptedPayload`] (not yet wrapped as a wire envelope).
 ///
 /// The caller assembles the spec-canonical `ak.schema.encrypted_envelope.v1`
 /// wire shape via [`arkret_sdk::encrypted_envelope_from_payload`] once it
-/// knows the accepted group-state reference for this epoch (genesis, latest
-/// winning commit, or a forced commit returned by this helper). `aad` MUST be
-/// the canonical `EncryptedEnvelopeAad` value, so the digest verification
-/// round-trips.
+/// knows the accepted group-state reference for this epoch (genesis or latest
+/// winning commit). The exact header is retained only in the local payload and
+/// reduced to the minimal wire shape at Event assembly time.
 type DeviceSnapshotEncryption = (
     arkret_sdk::Hash,
     Vec<arkret_sdk::DidCoreId>,
@@ -2113,6 +2133,9 @@ pub(crate) fn encrypt_message_with_device_snapshot(
             } else {
                 arkret_sdk::EncryptedPayloadScheme::MlsRfc9420
             };
+            let sender_domain = group
+                .local_content_sender_domain()
+                .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
             let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
                 "1.0",
                 payload_content_type,
@@ -2121,17 +2144,13 @@ pub(crate) fn encrypt_message_with_device_snapshot(
                 event_kind,
                 group.epoch(),
                 group_state_ref.clone(),
-                device_id,
+                sender_domain,
                 use_exporter_aead.then(|| group.next_content_counter()),
                 arkret_sdk::EventContentRoutingContext::None,
             )
             .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
             if use_exporter_aead {
-                group.encrypt_payload_exporter_aead(
-                    realm_id,
-                    header,
-                    bytes,
-                )
+                group.encrypt_payload_exporter_aead(realm_id, header, bytes)
             } else {
                 group.encrypt_payload(header, bytes)
             }
@@ -2165,6 +2184,9 @@ pub(crate) fn encrypt_message_with_device_snapshot(
                 secure_store,
                 &effective_scope,
                 &group.group_id(),
+                group
+                    .group_ciphersuite_canonical_id()
+                    .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?,
                 [(group.epoch(), history_secret.to_vec())],
             )
             .map_err(MlsRuntimeError::DeviceSecret)?
@@ -2267,46 +2289,6 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
     .into_iter()
     .collect::<std::collections::BTreeSet<_>>();
     Some(members == joined)
-}
-
-pub(super) fn self_update_with_verified_governance_binding(
-    state_store: &crate::state::LocalStateStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
-    sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
-    group: &mut arkret_sdk::ArkretMlsGroup,
-) -> Result<PreparedMlsCommit, MlsRuntimeError> {
-    let previous_governance_binding = group
-        .current_governance_binding()
-        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
-        .ok_or_else(|| {
-            MlsRuntimeError::Commit(
-                "MLS commit requires the current governance binding predecessor".to_owned(),
-            )
-        })?;
-    let effective_scope = runtime_effective_scope(realm_id, circle_id, sidecar_binding)?;
-    let request = crate::mls::governance_proof::proof_request_for_scope(
-        state_store,
-        effective_scope,
-        group.group_id(),
-        group.epoch(),
-        group.epoch().saturating_add(1),
-    )
-    .map_err(MlsRuntimeError::Commit)?;
-    let mut binding = crate::mls::governance_proof::cached_verified_binding(state_store, &request)
-        .map_err(MlsRuntimeError::Commit)?;
-    if let Some(sidecar_binding) = sidecar_binding {
-        binding =
-            crate::mls::governance_proof::bind_sidecar_scope(&binding, sidecar_binding.clone())
-                .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
-    }
-    let envelope = group
-        .update_governance_binding(&binding)
-        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
-    Ok(PreparedMlsCommit {
-        envelope,
-        previous_governance_binding,
-    })
 }
 
 fn runtime_effective_scope(

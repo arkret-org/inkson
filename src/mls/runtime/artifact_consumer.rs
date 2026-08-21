@@ -247,6 +247,9 @@ pub(crate) async fn converge_accepted_mls_commits(
                         secure_store.as_ref(),
                         &scope,
                         &post_state.group_id,
+                        group.group_ciphersuite_canonical_id().map_err(|error| {
+                            format!("resolve accepted Commit ciphersuite: {error}")
+                        })?,
                         retained,
                     )
                     .map_err(|error| format!("prepare accepted Commit history secret: {error}"))?
@@ -336,17 +339,40 @@ pub(crate) fn converge_external_history_candidate_decryptions(
                 }) else {
                     continue;
                 };
-                if envelope.validate_for_scope(&effective_scope).is_err() {
-                    continue;
-                }
-                let Ok(payload) = arkret_sdk::mls::encrypted_envelope_to_payload(&envelope) else {
-                    continue;
-                };
                 let Some(sender_domain) = crate::views::chat::verified_chat_sender_domain_for_realm(
                     &realm_id,
                     event,
                     Some(&store),
                     Some((actor_id, device_id)),
+                ) else {
+                    continue;
+                };
+                let Some(event_kind) = event.get("kind").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let reaction_routing_window = if matches!(
+                    event_kind,
+                    arkret_wire::event_kind_str::REACTION_ADD
+                        | arkret_wire::event_kind_str::REACTION_REMOVE
+                ) {
+                    let Some(created_at) = event
+                        .get("created_at")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|value| value.parse::<chrono::DateTime<chrono::Utc>>().ok())
+                    else {
+                        continue;
+                    };
+                    Some(created_at.timestamp_millis().div_euclid(3_600_000) as u64)
+                } else {
+                    None
+                };
+                let Some(payload) = super::message::encrypted_payload_from_verified_event_context(
+                    &store,
+                    &envelope,
+                    &effective_scope,
+                    event_kind,
+                    &sender_domain,
+                    reaction_routing_window,
                 ) else {
                     continue;
                 };

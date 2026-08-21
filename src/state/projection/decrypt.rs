@@ -22,43 +22,18 @@ pub(crate) fn try_local_mls_decrypt_core_for_effective_scope(
     payload_value: &Value,
     circle_id: Option<&str>,
 ) -> Option<Vec<u8>> {
-    let realm_id_typed = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
-    let effective_scope = match circle_id {
-        Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-            realm_id: realm_id_typed,
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).ok()?,
-        },
-        None => arkret_sdk::ScopeRef::Realm {
-            realm_id: realm_id_typed,
-        },
-    };
-    try_local_mls_decrypt_core_for_scope(
+    let _ = (
         state_store,
         realm_id,
         actor_id,
         device_id,
         payload_value,
-        &effective_scope,
-    )
-}
-
-pub(crate) fn try_local_mls_decrypt_core_for_scope(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    payload_value: &Value,
-    effective_scope: &arkret_sdk::ScopeRef,
-) -> Option<Vec<u8>> {
-    try_local_mls_decrypt_core_for_scope_from_verified_sender(
-        state_store,
-        realm_id,
-        actor_id,
-        device_id,
-        payload_value,
-        effective_scope,
-        None,
-    )
+        circle_id,
+    );
+    // A projected patch value no longer carries enough outer Event context to
+    // reconstruct the authenticated header. Keep it opaque until the reducer
+    // projection threads the verified sender and Event kind alongside it.
+    None
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -69,38 +44,32 @@ pub(crate) fn try_local_mls_decrypt_core_for_scope_from_verified_sender(
     device_id: &str,
     payload_value: &Value,
     effective_scope: &arkret_sdk::ScopeRef,
-    verified_sender_domain: Option<&[u8]>,
+    event_kind: &str,
+    verified_sender_domain: &[u8],
+    reaction_routing_window: Option<u64>,
 ) -> Option<Vec<u8>> {
     // Network Events must use the canonical EncryptedEnvelope. Falling back to
-    // a raw EncryptedPayload would turn a missing/invalid scope_digest into an
-    // authentication bypass, so malformed or pre-contract envelopes stay
-    // opaque and require an explicit migration outside the receive path.
+    // a raw internal EncryptedPayload would bypass reconstruction of the
+    // authenticated header, so malformed envelopes stay opaque.
     let envelope =
         serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(payload_value.clone()).ok()?;
-    envelope.validate_for_scope(effective_scope).ok()?;
-    let payload = arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?;
+    let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
+        state_store,
+        &envelope,
+        effective_scope,
+        event_kind,
+        verified_sender_domain,
+        reaction_routing_window,
+    )?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    match verified_sender_domain {
-        Some(sender) => {
-            crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
-                state_store,
-                secure_store.as_ref(),
-                realm_id,
-                actor_id,
-                device_id,
-                &payload,
-                effective_scope,
-                sender,
-            )
-        }
-        None => crate::mls::runtime::decrypt_application_payload_for_scope(
-            state_store,
-            secure_store.as_ref(),
-            realm_id,
-            actor_id,
-            device_id,
-            &payload,
-            effective_scope,
-        ),
-    }
+    crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+        state_store,
+        secure_store.as_ref(),
+        realm_id,
+        actor_id,
+        device_id,
+        &payload,
+        effective_scope,
+        verified_sender_domain,
+    )
 }

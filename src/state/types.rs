@@ -1201,6 +1201,12 @@ pub struct ClientLocalState {
     /// strings, which round-trips cleanly.
     #[serde(default, skip_serializing)]
     pub history_secrets: BTreeMap<String, BTreeMap<u64, Vec<u8>>>,
+    /// Replay-verified MLS ciphersuite for each retained history-secret epoch.
+    /// The minimal encrypted envelope intentionally carries no algorithm
+    /// selector, so group-free history decryption must use this exact frozen
+    /// value rather than a current registry default or an identifier prefix.
+    #[serde(default)]
+    pub history_epoch_cipher_suites: BTreeMap<String, BTreeMap<u64, String>>,
     /// Garth-owned bounded external candidate ledger. Secret bytes remain in
     /// the hardened secure store and never enter this metadata snapshot.
     #[serde(default)]
@@ -1523,6 +1529,7 @@ impl Default for ClientLocalState {
             mls_decrypted_plaintext: BTreeMap::new(),
             authenticated_identity_links: BTreeMap::new(),
             history_secrets: BTreeMap::new(),
+            history_epoch_cipher_suites: BTreeMap::new(),
             history_candidate_state: garth::HistoryCandidateStoreSnapshot::default(),
             history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
             realm_remarks: BTreeMap::new(),

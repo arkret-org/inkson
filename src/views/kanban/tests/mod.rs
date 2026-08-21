@@ -152,8 +152,7 @@ fn toast_editor_cleanup_revokes_callback_before_destroying_editor() {
 ///
 /// `StrandProjectionView.encrypted_content` carries the SDK
 /// `EncryptedEnvelope`, so the fixtures build the whole
-/// `encrypted-envelope.schema.json` object (AAD, visibility axis, key ref and
-/// both digests) instead of a three-key stand-in.
+/// minimal `encrypted-envelope.schema.json` object instead of a three-key stand-in.
 pub(super) fn test_encrypted_content_envelope(
     realm_id: &str,
     ciphertext: &str,
@@ -161,33 +160,39 @@ pub(super) fn test_encrypted_content_envelope(
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).expect("fixture realm id"),
     };
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&scope, "ak.strand.update")
-        .expect("hidden AAD for the fixture scope");
+    let group_state_ref =
+        arkret_sdk::EventId::new("ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM")
+            .expect("fixture group-state Event id");
+    let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+        "1.0",
+        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
+        arkret_wire::EncryptedPayloadScheme::MlsRfc9420,
+        scope.clone(),
+        "ak.strand.update",
+        1,
+        group_state_ref,
+        "ak:device:fixture",
+        None,
+        arkret_sdk::EventContentRoutingContext::None,
+    )
+    .expect("fixture pre-encryption header");
+    let payload_digest =
+        arkret_sdk::EncryptedPayload::payload_digest_for_header(&header, ciphertext.to_owned())
+            .expect("fixture payload digest");
     let payload = arkret_sdk::EncryptedPayload {
         scheme: arkret_wire::EncryptedPayloadScheme::MlsRfc9420,
-        group_id: arkret_sdk::base64url_encode([7u8; 32]),
+        group_id: scope
+            .canonical_mls_group_id()
+            .expect("fixture MLS group id"),
         epoch: 1,
         content_type: KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE.to_owned(),
         ciphertext: ciphertext.to_owned(),
         counter: None,
-        aad: Some(aad.clone()),
-        purpose: None,
-        aead_profile: None,
-        payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "ab".repeat(32)))
-            .expect("fixture payload digest"),
-        key_ref: Some(arkret_sdk::KeyRefObject::mls_rfc9420(
-            arkret_sdk::base64url_encode([7u8; 32]),
-            1,
-        )),
+        pre_encryption_header: header,
+        payload_digest,
     };
-    arkret_sdk::mls::encrypted_envelope_from_payload(
-        &payload,
-        arkret_sdk::EventId::new(
-            "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM",
-        )
-        .expect("fixture group-state Event id"),
-    )
-    .expect("canonical encrypted_content envelope")
+    arkret_sdk::mls::encrypted_envelope_from_payload(&payload)
+        .expect("canonical encrypted_content envelope")
 }
 
 /// Helper for `relocate_card` tests — builds a KanbanCard with the

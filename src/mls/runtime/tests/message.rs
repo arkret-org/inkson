@@ -25,6 +25,31 @@ fn seed_complete_rfc9420_projection(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn test_message_header(
+    group: &arkret_sdk::ArkretMlsGroup,
+    realm: &str,
+) -> arkret_sdk::EventContentPreEncryptionHeader {
+    arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+        "1.0",
+        "application/json",
+        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        },
+        arkret_wire::event_kind_str::MESSAGE_CREATE,
+        group.epoch(),
+        arkret_sdk::EventId::new(
+            "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM".to_owned(),
+        )
+        .unwrap(),
+        group.local_content_sender_domain().unwrap(),
+        None,
+        arkret_sdk::EventContentRoutingContext::None,
+    )
+    .unwrap()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let mut state = temp_state_store("creator-bootstrap");
@@ -103,10 +128,13 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
         .unwrap()
         .expect("creator snapshot");
 
-    let aad_scope = arkret_sdk::ScopeRef::Realm {
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
     };
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.message.create").unwrap();
+    let snapshot = state.mls_snapshot_for_scope(&effective_scope).unwrap();
+    let group_state_ref = state
+        .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
+        .unwrap();
     let (_, _, content_payload, metadata_payload, commit, snapshot, _) =
         encrypt_message_with_device_snapshot(
             &mut state,
@@ -115,7 +143,8 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
             actor,
             device,
             "application/vnd.arkret.message+json",
-            aad,
+            arkret_wire::event_kind_str::MESSAGE_CREATE,
+            group_state_ref,
             br#"{"kind":"ak.content.text","body":"routed"}"#,
             Some(arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
             Some(br#"{"sidecar_exchange_binding":{}}"#.as_slice()),
@@ -496,11 +525,13 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let base_envelope = state.mls_snapshot_for(realm).unwrap();
 
+    let m1_header = test_message_header(&alice_group, realm);
     let m1 = alice_group
-        .encrypt_payload("application/json", br#"{"body":"m1"}"#)
+        .encrypt_payload(m1_header, br#"{"body":"m1"}"#)
         .unwrap();
+    let m2_header = test_message_header(&alice_group, realm);
     let m2 = alice_group
-        .encrypt_payload("application/json", br#"{"body":"m2"}"#)
+        .encrypt_payload(m2_header, br#"{"body":"m2"}"#)
         .unwrap();
 
     // Decrypt m1: plaintext returned AND the persisted snapshot advanced
@@ -570,8 +601,9 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
             circle_snapshot.clone(),
         )
         .expect("valid effective scope");
+    let header = test_message_header(&alice_group, realm);
     let encrypted = alice_group
-        .encrypt_payload("application/json", br#"{"body":"sidecar"}"#)
+        .encrypt_payload(header, br#"{"body":"sidecar"}"#)
         .unwrap();
 
     assert!(
@@ -617,14 +649,13 @@ fn out_of_order_skipped_keys_survive_restart() {
 
     let mut alice_group =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    let m1 = alice_group
-        .encrypt_payload("application/json", br#""one""#)
-        .unwrap();
-    let _m2 = alice_group
-        .encrypt_payload("application/json", br#""two""#)
-        .unwrap();
+    let m1_header = test_message_header(&alice_group, realm);
+    let m1 = alice_group.encrypt_payload(m1_header, br#""one""#).unwrap();
+    let m2_header = test_message_header(&alice_group, realm);
+    let _m2 = alice_group.encrypt_payload(m2_header, br#""two""#).unwrap();
+    let m3_header = test_message_header(&alice_group, realm);
     let m3 = alice_group
-        .encrypt_payload("application/json", br#""three""#)
+        .encrypt_payload(m3_header, br#""three""#)
         .unwrap();
 
     // Out-of-order: m3 first (within OpenMLS's default
@@ -701,9 +732,8 @@ fn plaintext_cache_outlives_group_state() {
 
     let mut alice_group =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    let m1 = alice_group
-        .encrypt_payload("application/json", br#""cached""#)
-        .unwrap();
+    let header = test_message_header(&alice_group, realm);
+    let m1 = alice_group.encrypt_payload(header, br#""cached""#).unwrap();
     let first = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
         .expect("first decrypt");
     assert_eq!(first, br#""cached""#);

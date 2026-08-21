@@ -486,7 +486,7 @@ where
                                 first_observed_at: now,
                                 expires_at: now + chrono::Duration::days(30),
                             };
-                        candidates.push((material_key, secret, attribution));
+                        candidates.push((material_key, secret, attribution, suite.cipher_suite));
                         offset = next;
                     }
                     Ok(candidates)
@@ -515,9 +515,31 @@ where
                         continue;
                     }
                 };
-                for (material_key, secret, attribution) in candidates {
-                    state_store
-                        .write()
+                let history_scope = match &accepted.request.effective_scope {
+                    arkret_sdk::HistoryEffectiveScope::Realm { realm_id } => {
+                        arkret_sdk::ScopeRef::Realm {
+                            realm_id: realm_id.clone(),
+                        }
+                    }
+                    arkret_sdk::HistoryEffectiveScope::Circle {
+                        realm_id,
+                        circle_id,
+                    } => arkret_sdk::ScopeRef::Circle {
+                        realm_id: realm_id.clone(),
+                        circle_id: circle_id.clone(),
+                    },
+                };
+                for (material_key, secret, attribution, cipher_suite) in candidates {
+                    let mut state = state_store.write();
+                    state
+                        .record_history_epoch_cipher_suite(
+                            &history_scope,
+                            &accepted.request.effective_scope.canonical_mls_group_id()?,
+                            material_key.epoch,
+                            &cipher_suite,
+                        )
+                        .map_err(anyhow::Error::msg)?;
+                    state
                         .receive_history_candidate(
                             secure_store,
                             material_key,

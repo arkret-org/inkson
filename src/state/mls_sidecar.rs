@@ -128,6 +128,7 @@ fn projection_mls_genesis_event_ids(
 pub(crate) struct PendingHistorySecrets {
     scope_group_key: String,
     by_epoch: BTreeMap<u64, Vec<u8>>,
+    cipher_suite: String,
 }
 
 impl PendingHistorySecrets {
@@ -300,6 +301,7 @@ impl LocalStateStore {
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         effective_scope: &arkret_sdk::ScopeRef,
         group_id: &str,
+        cipher_suite: &str,
         secrets: impl IntoIterator<Item = (u64, Vec<u8>)>,
     ) -> Result<Option<PendingHistorySecrets>, crate::secure_key_store::SecureKeyStoreError> {
         let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id)
@@ -327,16 +329,27 @@ impl LocalStateStore {
         Ok((new_secret_count > 0).then_some(PendingHistorySecrets {
             scope_group_key,
             by_epoch,
+            cipher_suite: cipher_suite.to_owned(),
         }))
     }
 
     /// Publish an update after its secure-store write succeeds.
     pub(crate) fn publish_history_secrets(&mut self, pending: PendingHistorySecrets) {
+        let epochs = pending.by_epoch.keys().copied().collect::<Vec<_>>();
         self.cached
             .history_secrets
-            .entry(pending.scope_group_key)
+            .entry(pending.scope_group_key.clone())
             .or_default()
             .extend(pending.by_epoch);
+        let suites = self
+            .cached
+            .history_epoch_cipher_suites
+            .entry(pending.scope_group_key)
+            .or_default();
+        for epoch in epochs {
+            suites.insert(epoch, pending.cipher_suite.clone());
+        }
+        let _ = self.flush();
     }
 
     /// All local-authoritative `history_secret`s for an exact scope/group, as
@@ -393,6 +406,49 @@ impl LocalStateStore {
             return Some(secret.clone());
         }
         None
+    }
+
+    /// Return the replay-verified MLS ciphersuite bound to one retained epoch.
+    pub fn history_epoch_cipher_suite(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+    ) -> Option<String> {
+        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
+        self.load()
+            .history_epoch_cipher_suites
+            .get(&scope_group_key)
+            .and_then(|by_epoch| by_epoch.get(&epoch))
+            .cloned()
+    }
+
+    /// Persist an exact replay-derived ciphersuite for externally received
+    /// candidate material. A conflicting value is a cryptographic transcript
+    /// contradiction and must not overwrite the first verified binding.
+    pub(crate) fn record_history_epoch_cipher_suite(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+        cipher_suite: &str,
+    ) -> Result<(), String> {
+        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id)?;
+        let by_epoch = self
+            .cached
+            .history_epoch_cipher_suites
+            .entry(scope_group_key)
+            .or_default();
+        if let Some(existing) = by_epoch.get(&epoch) {
+            if existing != cipher_suite {
+                return Err(
+                    "verified history epoch ciphersuite conflicts with durable state".to_owned(),
+                );
+            }
+            return Ok(());
+        }
+        by_epoch.insert(epoch, cipher_suite.to_owned());
+        self.flush().map_err(|error| error.to_string())
     }
 
     /// Snapshot of every persisted MLS envelope. Used by the boot

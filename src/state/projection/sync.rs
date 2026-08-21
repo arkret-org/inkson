@@ -206,7 +206,9 @@ pub fn projection_events_from_sync_realms(
                                     device_id,
                                     encrypted_content,
                                     &effective_scope,
-                                    sender_domain.as_deref(),
+                                    event_kind_str::MESSAGE_CREATE,
+                                    sender_domain.as_deref()?,
+                                    None,
                                 )
                             })
                             .and_then(|plaintext| serde_json::from_slice::<Value>(&plaintext).ok())

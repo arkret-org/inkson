@@ -950,26 +950,18 @@ fn decrypt_chat_encrypted_content_value(
             &realm_scope
         }
     };
-    envelope.validate_for_scope(effective_scope).ok()?;
-    let payload_value =
-        serde_json::to_value(arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?)
-            .ok()?;
-    let payload: arkret_sdk::EncryptedPayload = serde_json::from_value(payload_value).ok()?;
+    let verified_sender_domain = verified_sender_domain?;
+    let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
+        state_store,
+        &envelope,
+        effective_scope,
+        arkret_wire::event_kind_str::MESSAGE_CREATE,
+        verified_sender_domain,
+        None,
+    )?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let plaintext = match verified_sender_domain {
-        Some(sender_domain) => {
-            crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
-                state_store,
-                secure_store.as_ref(),
-                realm_id,
-                actor_id,
-                device_id,
-                &payload,
-                effective_scope,
-                sender_domain,
-            )
-        }
-        None => crate::mls::runtime::decrypt_application_payload_for_scope(
+    let plaintext =
+        crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
             state_store,
             secure_store.as_ref(),
             realm_id,
@@ -977,8 +969,8 @@ fn decrypt_chat_encrypted_content_value(
             device_id,
             &payload,
             effective_scope,
-        ),
-    }?;
+            verified_sender_domain,
+        )?;
     serde_json::from_slice::<Value>(&plaintext).ok()
 }
 
@@ -1148,7 +1140,7 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
         let Some(store) = state_store else {
             return ChatProofVerdict::Unresolved;
         };
-        let coordinates = minimal_metadata_content_coordinates(&candidates);
+        let coordinates = minimal_metadata_content_coordinates(realm_id, &candidates);
         let mls_view = if let Some((group_id, epoch, group_state_ref)) = &coordinates {
             let Some((self_actor, self_device)) = decrypt_identity else {
                 return ChatProofVerdict::Unresolved;
@@ -1287,7 +1279,7 @@ fn verify_minimal_metadata_chat_author(
     // selector; a proof-bearing minimal-metadata content row without them has
     // no leaf to bind to.
     let Some((group_id, epoch, group_state_ref)) =
-        minimal_metadata_content_coordinates(&candidates)
+        minimal_metadata_content_coordinates(realm_id, &candidates)
     else {
         return ChatProofVerdict::Rejected;
     };
@@ -1357,9 +1349,12 @@ fn verify_minimal_metadata_chat_author(
     }
 }
 
-/// Extract `(group_id, epoch, key_ref.group_state_ref)` from the first
-/// candidate layer carrying an `encrypted_content` envelope.
-fn minimal_metadata_content_coordinates(candidates: &[&Value]) -> Option<(String, u64, String)> {
+/// Reconstruct `(group_id, epoch, group_state_ref)` from the Realm scope and
+/// the first candidate layer carrying a minimal `encrypted_content` envelope.
+fn minimal_metadata_content_coordinates(
+    realm_id: &str,
+    candidates: &[&Value],
+) -> Option<(String, u64, String)> {
     let content = candidates.iter().find_map(|candidate| {
         candidate.get("encrypted_content").or_else(|| {
             candidate
@@ -1367,13 +1362,17 @@ fn minimal_metadata_content_coordinates(candidates: &[&Value]) -> Option<(String
                 .and_then(|content| content.get("encrypted_content"))
         })
     })?;
+    let envelope = serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(content.clone()).ok()?;
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
+    };
     Some((
-        content.get("group_id")?.as_str()?.to_owned(),
-        content.get("epoch")?.as_u64()?,
-        content
-            .get("key_ref")?
-            .get("group_state_ref")?
-            .as_str()?
+        effective_scope.canonical_mls_group_id().ok()?,
+        envelope.encryption_context.epoch(),
+        envelope
+            .encryption_context
+            .group_state_ref()
+            .as_str()
             .to_owned(),
     ))
 }

@@ -137,7 +137,7 @@ fn run_local_mls_encrypt_for_event(
     let group_state_ref = state_store
         .read()
         .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
-        .ok_or(crate::mls::runtime::MlsRuntimeError::EncryptionTransitionPending)?;
+        .map_err(|_| crate::mls::runtime::MlsRuntimeError::EncryptionTransitionPending)?;
     let (
         schedule_hash,
         member_dids,
@@ -366,7 +366,9 @@ pub(crate) fn build_secure_send(
                 .map_err(|error| format!("invalid MLS group-state Event id: {error}"))?,
         };
         if encrypted_payload.pre_encryption_header.group_state_ref != group_state_ref {
-            return Err("MLS encrypted payload group-state reference changed after sealing".to_owned());
+            return Err(
+                "MLS encrypted payload group-state reference changed after sealing".to_owned(),
+            );
         }
         let encrypted_envelope =
             arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted_payload)
@@ -516,10 +518,14 @@ pub(crate) fn build_sidecar_exchange_control_send(
                 .map_err(|error| format!("invalid MLS group-state Event id: {error}"))?,
         };
         if encrypted_payload.pre_encryption_header.group_state_ref != group_state_ref {
-            return Err("Sidecar close encrypted payload group-state reference changed after sealing".to_owned());
+            return Err(
+                "Sidecar close encrypted payload group-state reference changed after sealing"
+                    .to_owned(),
+            );
         }
-        let encrypted_payload =
-            arkret_sdk::mls::encrypted_envelope_from_payload(&encrypted_payload)
+        let encrypted_payload = arkret_sdk::mls::encrypted_envelope_from_payload(
+            &encrypted_payload,
+        )
         .map_err(|error| format!("Sidecar close encrypted envelope build failed: {error}"))?;
         let payload = arkret_sdk::AgentSidecarExchangeControlPayload {
             sidecar_id: plan_sidecar_id,

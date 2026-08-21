@@ -104,6 +104,8 @@ impl EncryptedPatchPlan {
             return Ok(self.patch);
         }
         let group_state_ref = self.resolve_group_state_ref(commit, genesis)?;
+        let group_state_ref = arkret_sdk::EventId::new(group_state_ref)
+            .map_err(|error| format!("invalid patch group-state Event id: {error}"))?;
         let mut sealed = Vec::with_capacity(self.payloads.len());
         for value in &self.payloads {
             let payload = serde_json::from_value::<arkret_sdk::EncryptedPayload>(value.clone())
@@ -113,11 +115,13 @@ impl EncryptedPatchPlan {
                     "encrypted patch values do not share one MLS group and epoch".to_owned(),
                 );
             }
-            let group_state_ref = arkret_sdk::EventId::new(group_state_ref.clone())
-                .map_err(|error| format!("invalid patch group-state Event id: {error}"))?;
-            let envelope =
-                arkret_sdk::mls::encrypted_envelope_from_payload(&payload, group_state_ref)
-            .map_err(|error| format!("build encrypted Strand patch envelope: {error}"))?;
+            if payload.pre_encryption_header.group_state_ref != group_state_ref {
+                return Err(
+                    "encrypted patch group-state reference changed after sealing".to_owned(),
+                );
+            }
+            let envelope = arkret_sdk::mls::encrypted_envelope_from_payload(&payload)
+                .map_err(|error| format!("build encrypted Strand patch envelope: {error}"))?;
             sealed.push(
                 serde_json::to_value(envelope).map_err(|error| {
                     format!("serialize encrypted Strand patch envelope: {error}")
@@ -293,9 +297,14 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             fresh_summary.as_ref(),
         )?
     };
-    let envelope_aad =
-        arkret_sdk::EncryptedEnvelopeAad::hidden(&effective_scope, event_kind_str::STRAND_UPDATE)
-            .map_err(|error| format!("invalid scope for encrypted AAD: {error:?}"))?;
+    let snapshot = state_store
+        .mls_snapshot_for_scope(&effective_scope)
+        .ok_or_else(|| "MLS snapshot is unavailable after bootstrap".to_owned())?;
+    let accepted_group_state_ref = state_store
+        .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
+        .map_err(|_| {
+            "MLS group-state Event must be accepted before encrypting a Strand update".to_owned()
+        })?;
     let (
         schedule_hash,
         _member_dids,
@@ -311,7 +320,8 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         device_id,
         KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         &plaintext_values,
-        envelope_aad,
+        event_kind_str::STRAND_UPDATE,
+        accepted_group_state_ref.clone(),
         None,
         sidecar_binding,
     )
@@ -348,25 +358,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             serde_json::from_value::<arkret_sdk::EncryptedPayload>(value)
                 .map_err(|error| format!("invalid encrypted patch payload: {error}"))
         })?;
-    // `group_state_ref` names the Event that established this epoch. When that
-    // Event is part of this same write it has no identity yet, so the envelope
-    // is sealed by [`EncryptedPatchPlan::seal`] after the commit (or genesis)
-    // has been authored. Only an epoch that is already accepted can resolve the
-    // reference here.
-    let accepted_group_state_ref =
-        if commit_event.is_some() || (first_payload.epoch == 0 && genesis_event.is_some()) {
-            None
-        } else {
-            Some(
-                state_store
-                    .mls_group_state_ref_for_scope(
-                        &effective_scope,
-                        first_payload.group_id.as_str(),
-                        first_payload.epoch,
-                    )?
-                    .to_string(),
-            )
-        };
+    let accepted_group_state_ref = Some(accepted_group_state_ref.to_string());
     // X5.1 — encryption succeeded. Persist the author's own plaintext into
     // the local-only sidecar so a later re-projection (refresh / board
     // switch / live poll) can render the author's own content, which can

@@ -212,7 +212,7 @@ pub(crate) fn chat_reaction_add_operation(
 }
 
 /// E2EE reaction (encryption-and-audit.md §2.9): the plaintext `key` carries
-/// the v1 keyed-HMAC routing tag (`sha256:<hex>`) so the server can still
+/// the v1 keyed-HMAC routing tag (43-character base64url) so the server can still
 /// OR-Set dedup / rate-limit without learning the emoji; the real emoji
 /// travels inside `encrypted_payload`.
 pub(crate) fn chat_reaction_add_operation_encrypted(
@@ -221,6 +221,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
     event_id: &str,
     routing_tag: &str,
     encrypted_payload: &arkret_sdk::EncryptedEnvelope,
+    created_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let payload = arkret_sdk::ReactionPayload {
         target_ref: event_id.into(),
@@ -232,26 +233,8 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
         realm_id, actor, payload,
     )
     .target_ref(event_id)
+    .created_at(created_at)
     .build_sdk_event("inkson")
-}
-
-fn reaction_encrypted_envelope(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    payload: &arkret_sdk::EncryptedPayload,
-) -> anyhow::Result<arkret_sdk::EncryptedEnvelope> {
-    let group_state_ref = crate::mls::group_events::mls_base_epoch_ref_for_scope(
-        state_store,
-        realm_id,
-        None,
-        payload.group_id.as_str(),
-        payload.epoch,
-    )
-    .map_err(anyhow::Error::msg)?;
-    let group_state_ref = arkret_sdk::EventId::new(group_state_ref)
-        .map_err(|error| anyhow::anyhow!("invalid reaction group-state Event id: {error}"))?;
-    arkret_sdk::mls::encrypted_envelope_from_payload(payload, group_state_ref)
-    .map_err(|error| anyhow::anyhow!("reaction encrypted envelope build failed: {error}"))
 }
 
 /// Build the `ak.reaction.add` operation for a tapped emoji, choosing the
@@ -272,6 +255,9 @@ pub(crate) fn build_chat_reaction_add_operation(
         return chat_reaction_add_operation(realm_id, actor, event_id, emoji).map(Some);
     }
     let realm_id = trim_realm_id(realm_id);
+    let target_ref = arkret_sdk::EventId::new(event_id.to_owned())
+        .map_err(|error| anyhow::anyhow!("invalid reaction target Event id: {error}"))?;
+    let created_at = crate::clock::now_utc();
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let sealed = match crate::mls::runtime::encrypt_reaction_with_device_snapshot(
         &mut state_store.write(),
@@ -279,26 +265,24 @@ pub(crate) fn build_chat_reaction_add_operation(
         &realm_id,
         actor,
         device_id,
+        &target_ref,
+        created_at,
         emoji,
     ) {
         Ok(sealed) => sealed,
         Err(_) => return Ok(None),
     };
-    // A forced epoch advance needs the commit Event to be submitted and
-    // accepted before its EventId can become this reaction's group-state ref.
-    // This single-event UI path cannot perform that two-event transaction, so
-    // fail closed and let the next action retry after normal MLS rotation.
-    if sealed.forced_commit.is_some() {
-        return Ok(None);
-    }
-    let encrypted_payload =
-        reaction_encrypted_envelope(&state_store.read(), &realm_id, &sealed.encrypted_payload)?;
+    let encrypted_payload = arkret_sdk::mls::encrypted_envelope_from_payload(
+        &sealed.encrypted_payload,
+    )
+    .map_err(|error| anyhow::anyhow!("reaction encrypted envelope build failed: {error}"))?;
     chat_reaction_add_operation_encrypted(
         &realm_id,
         actor,
         event_id,
         &sealed.routing_tag,
         &encrypted_payload,
+        created_at,
     )
     .map(Some)
 }
