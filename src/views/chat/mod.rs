@@ -594,8 +594,7 @@ fn sign_prepared_sidecar_event(
     device_id: &str,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
-    let controller_actor =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_id)?);
+    let controller_actor = arkret_sdk::project_full_id_to_core_id(controller_id)?;
     if draft.kind.as_str() != expected_kind {
         anyhow::bail!(
             "prepared Sidecar Event kind mismatch: expected {expected_kind}, got {}",

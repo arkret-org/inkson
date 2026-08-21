@@ -77,6 +77,7 @@ export function mockArkretContract(req) {
         handle: "alice:local.host",
         subject: principalId,
         binding_state: "verified",
+        created_at: "2026-04-28T12:00:00.000Z",
       },
       profile: {
         id: "ak:actor_profile:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP",

@@ -25,13 +25,15 @@ mod types;
 /// Whether the host can turn an accepted media-service binding into the
 /// authenticated `garth::RouteResolution` required before token exchange.
 ///
-/// Inkson does not currently ship that host adapter. Keeping this explicit at
-/// the product boundary prevents call buttons and inbound-ring navigation from
-/// reaching a path that can only construct `verified_media_routes: []` and is
-/// therefore guaranteed to fail closed.
+/// Inkson now ships that host adapter: `crate::media::service_route` fetches
+/// and verifies the media service's signed resolution + describe material and
+/// runs it through `garth::ServiceRouteEvaluator` (durable anti-rollback
+/// floor, gap/fork quarantine) before any token exchange. The call surface is
+/// therefore reachable; an individual join still fails closed with a visible
+/// error when route evaluation cannot produce verified material.
 #[must_use]
 pub const fn media_route_adapter_available() -> bool {
-    false
+    true
 }
 
 pub use panel::CallPanel;

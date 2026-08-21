@@ -12,8 +12,12 @@ pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)>
             "inbox, mentions, approvals",
             Route::Notifications,
         ),
-        ("Search", "messages across realms", Route::Search),
-        ("Directory", "search realms, orgs, actors", Route::Directory),
+        ("Search", "messages across workspaces", Route::Search),
+        (
+            "Directory",
+            "search workspaces, orgs, actors",
+            Route::Directory,
+        ),
         (
             "Onboarding",
             "DID, handle, device, recovery",
@@ -40,7 +44,7 @@ pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)>
             Route::Quarantine,
         ),
         (
-            "New Realm",
+            "New Workspace",
             "create security boundary",
             Route::SetupSection {
                 section: "realms".to_owned(),
@@ -98,8 +102,8 @@ pub(super) fn CommandPalette(
                             let node_id_label = short_protocol_id(&node.id);
                             let target_realm_id = node.projection_realm_id().to_owned();
                             let node_kind_label = match node.kind {
-                                RealmTreeNodeKind::Realm => "Realm",
-                                RealmTreeNodeKind::Space => "Space",
+                                RealmTreeNodeKind::Realm => crate::i18n::tr("friendly.realm"),
+                                RealmTreeNodeKind::Space => crate::i18n::tr("friendly.space"),
                             };
                             rsx! {
                                 Button {

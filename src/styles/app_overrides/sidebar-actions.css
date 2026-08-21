@@ -73,11 +73,11 @@
 .sidebar-row-menu-button:hover,
 .sidebar-row-menu-button:focus-visible,
 .sidebar-row-menu-host.is-open .sidebar-row-menu-button {
-  color: #1a1a1a;
-  background: #ffb547;
-  border-color: #ffb547;
+  color: var(--cta-amber-ink);
+  background: var(--cta-amber-a);
+  border-color: var(--cta-amber-a);
   transform: translateY(-1px);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 10px rgba(255, 181, 71, 0.2);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 10px color-mix(in srgb, var(--cta-amber-a) 20%, transparent);
   outline: none;
 }
 .sidebar-row-menu-host.is-open .sidebar-row-menu-button {
@@ -163,21 +163,21 @@
 }
 
 .sidebar-nav-icon.realm-security-secure {
-  color: var(--success, #1f7a4d);
+  color: var(--success);
 }
 
 .sidebar-nav-icon.realm-security-unsafe {
-  color: var(--danger, #b42318);
+  color: var(--danger);
 }
 
 .sidebar-nav-item:hover .sidebar-nav-icon.realm-security-secure,
 .sidebar-nav-item.is-active .sidebar-nav-icon.realm-security-secure {
-  color: var(--success, #1f7a4d);
+  color: var(--success);
 }
 
 .sidebar-nav-item:hover .sidebar-nav-icon.realm-security-unsafe,
 .sidebar-nav-item.is-active .sidebar-nav-icon.realm-security-unsafe {
-  color: var(--danger, #b42318);
+  color: var(--danger);
 }
 
 .sidebar-collapse-toggle,
@@ -504,7 +504,7 @@
   height: 8px;
   border-radius: 999px;
   border: 2px solid var(--surface);
-  background: #2563eb;
+  background: var(--info);
   box-sizing: border-box;
   pointer-events: none;
 }

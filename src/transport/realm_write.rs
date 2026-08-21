@@ -710,12 +710,16 @@ pub async fn ban_member(
 /// `ak.capability.grant{actions:[ak.realm.admin], subject}` event.
 /// The Grant id is derived from the accepted Event id. P1's
 /// `apply_capability` folds this into the soland authz index, so subsequent
-/// `ak.realm.admin` checks for `subject` pass.
+/// `ak.realm.admin` checks for `subject` pass. `root_basis` is the caller's
+/// resolved authority-root coordinates
+/// (`IssuerRootBasis::from_resolved_root`) the grant's `realm_root` issuer
+/// authority binds to.
 pub async fn grant_realm_admin(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
     subject: &str,
+    root_basis: ak_ops::IssuerRootBasis,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ak_ops::capability_grant_actions(
         realm_id,
@@ -724,6 +728,7 @@ pub async fn grant_realm_admin(
         &[CapabilityActionId::REALM_ADMIN],
         None,
         Value::Null,
+        root_basis,
     )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
@@ -988,7 +993,7 @@ mod tests {
     fn latest_alias_payload_folds_accepted_declaration_and_tombstone() {
         let declaration =
             build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_ID, "engineering").unwrap();
-        let declaration_value = serde_json::to_value(&declaration.payload()).unwrap();
+        let declaration_value = serde_json::to_value(declaration.payload()).unwrap();
         let tombstone =
             build_realm_alias_tombstone_event(REALM_ID, ACTOR_ID, declaration_value).unwrap();
         let rows = vec![

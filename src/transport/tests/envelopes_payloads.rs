@@ -532,7 +532,7 @@ fn space_create_payload_matches_spec_schema() {
         .is_empty()
         && let Err(error) = catalog.validate_payload(
             event.kind().as_str(),
-            &serde_json::to_value(&event.payload()).expect("event payload serializes"),
+            &serde_json::to_value(event.payload()).expect("event payload serializes"),
         )
     {
         panic!(

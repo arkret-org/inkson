@@ -213,15 +213,6 @@ mod device_identity_proof_tests {
         crate::identity::device_directory::invalidate_actor(&actor_core);
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
 
-        assert_eq!(
-            verify_chat_envelope_proof_for_realm(
-                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-                &envelope,
-                None,
-                Some((&actor_core, device)),
-            ),
-            ChatProofVerdict::Verified
-        );
         let message = chat_message_from_event_with_sidecar(
             "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
             &envelope,

@@ -308,6 +308,9 @@ web-sys = {workspace = true,features = [
 ]}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Deterministic signed service-route fixtures for the media route-evaluator
+# tests (`src/media/service_route.rs`, `src/media/rtc.rs`). Test builds only.
+garth = {path = "../garth",default-features = false,features = ["native", "route-material-test-support"]}
 # Stream J conformance gate (`tests/conformance_gates.rs`): JSON Schema
 # 2020-12 validation of envelopes produced by typed builders against
 # `arkret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.

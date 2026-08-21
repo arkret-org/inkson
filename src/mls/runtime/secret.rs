@@ -466,6 +466,59 @@ pub fn delete_mls_key_package_publish_marker(
     store.delete_secret(&key)
 }
 
+pub fn mls_key_package_publish_ref_key(
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    let server = secure_key_component(server_scope, "server_scope")?;
+    let actor = secure_key_component(actor_id, "actor_id")?;
+    let device = secure_key_component(device_id, "device_id")?;
+    Ok(format!(
+        "{MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX}.{server}.{actor}.{device}"
+    ))
+}
+
+pub fn store_mls_key_package_publish_ref(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+    key_package_ref: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key_package_ref = key_package_ref.trim();
+    if key_package_ref.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "key_package_ref is required for MLS KeyPackage publish ref".to_owned(),
+        ));
+    }
+    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
+    store.store_secret(&key, key_package_ref)
+}
+
+pub fn load_mls_key_package_publish_ref(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Option<String>, SecureKeyStoreError> {
+    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
+    Ok(store
+        .get_secret(&key)?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
+}
+
+pub fn delete_mls_key_package_publish_ref(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
+    store.delete_secret(&key)
+}
+
 /// Load (without creating) the snapshot secret for `(actor, device)`.
 ///
 /// Delegates to the account-scoped secret. `device_id` no longer scopes the

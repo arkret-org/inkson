@@ -11,12 +11,12 @@
   bottom: 4px;
   width: 3px;
   border-radius: 3px;
-  background: var(--accent, #1f6b4f);
+  background: var(--accent);
   cursor: help;
 }
 
 .discussion-message.has-circle-accent-rail .circle-accent-rail:hover {
-  background: color-mix(in srgb, var(--accent, #1f6b4f) 85%, #18212f);
+  background: color-mix(in srgb, var(--accent) 85%, var(--surface-inv));
 }
 
 /* AKP-0007 P3B.2.3 — composer banner colour tokens. */
@@ -26,9 +26,9 @@
   gap: 10px;
   padding: 10px 12px;
   margin-bottom: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent, #1f6b4f) 35%, var(--border, #d8e0e8));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent, #1f6b4f) 10%, var(--surface, #ffffff));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
 }
 
 .circle-composer-banner .banner-icon {
@@ -55,9 +55,9 @@
   white-space: nowrap;
 }
 .mention-token.is-local {
-  border-color: color-mix(in srgb, #22c55e 42%, var(--border));
-  background: color-mix(in srgb, #22c55e 18%, transparent);
-  color: #bbf7d0;
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success-ink);
 }
 .mention-token.is-remote {
   border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
@@ -95,7 +95,7 @@
   padding: 1px 4px;
   font-size: 10px;
   font-weight: 700;
-  color: var(--accent-ink, #1e293b);
+  color: var(--accent-ink);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .chat-outbox-banner {
@@ -422,7 +422,7 @@
 
 .participant-row.agent,
 .participant-agent-row {
-  background: color-mix(in srgb, var(--accent-2, #6f42c1) 8%, transparent);
+  background: color-mix(in srgb, var(--accent-2) 8%, transparent);
 }
 
 .participant-agent-group {
@@ -518,7 +518,7 @@
 
 .participant-badge.self {
   background: var(--accent);
-  color: #111827;
+  color: var(--cta-amber-ink);
 }
 
 .participant-badge.admin {
@@ -1178,10 +1178,10 @@
 
 .sidebar-toolbar-link.add-realm-cta,
 .sidebar-toolbar-link.add-contact-cta {
-  color: #1a1a1a;
-  background: linear-gradient(135deg, #ffb547 0%, #ff8a3d 100%);
-  border-color: color-mix(in srgb, #ff8a3d 64%, transparent);
-  box-shadow: 0 4px 10px rgba(255, 138, 61, 0.16);
+  color: var(--cta-amber-ink);
+  background: linear-gradient(135deg, var(--cta-amber-a) 0%, var(--cta-amber-b) 100%);
+  border-color: color-mix(in srgb, var(--cta-amber-b) 64%, transparent);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--cta-amber-b) 16%, transparent);
 }
 
 .realm-tree-item {

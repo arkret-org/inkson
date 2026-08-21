@@ -90,7 +90,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                     }
                     Ok(None) => {}
                     Err(error) => tracing::warn!(
-                        error = %error.display(),
+                        error = %error.display_diagnostic(),
                         "agent runtime approval notification refresh failed"
                     ),
                 }
@@ -145,7 +145,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                     }
                     Err(err) => {
                         tracing::warn!(
-                            error = %err.display(),
+                            error = %err.display_diagnostic(),
                             "agent runtime approval polling failed"
                         );
                         true
@@ -193,18 +193,18 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
             },
             "data-testid": "agent-runtime-approval-modal",
             "aria-labelledby": "agent-runtime-approval-title",
-            "aria-label": "An agent runtime is requesting access to your account",
+            "aria-label": crate::i18n::tr("agent_runtime.aria_label"),
             div { class: "modal event agent-runtime-approval-dialog",
                 div { class: "modal-head event-head",
-                    h3 { id: "agent-runtime-approval-title", "Agent runtime approval requested" }
-                    span { class: "muted", "agent pairing" }
+                    h3 { id: "agent-runtime-approval-title", {crate::i18n::tr("agent_runtime.title")} }
+                    span { class: "muted", {crate::i18n::tr("agent_runtime.subtitle")} }
                 }
                 div { class: "modal-body",
                     p { class: "muted",
-                        "An agent runtime is asking to finish pairing. Approve only if you started this request and the code matches the runtime screen."
+                        {crate::i18n::tr("agent_runtime.body")}
                     }
                     if request.replacement {
-                        p { class: "warning", "This replaces a runtime key on an active or paused Agent." }
+                        p { class: "warning", {crate::i18n::tr("agent_runtime.replacement_warning")} }
                     }
                     div {
                         class: "device-pair-approval-device",
@@ -215,14 +215,18 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                             span { class: "muted mono", "{agent_id_label}" }
                         }
                         if !request.agent_slug.trim().is_empty() {
-                            span { class: "muted", "Slug: {request.agent_slug}" }
+                            span { class: "muted",
+                                {crate::i18n::tr_args("agent_runtime.slug", &[("slug", request.agent_slug.clone())])}
+                            }
                         }
                         if !request.approval_requested_at.trim().is_empty() {
-                            span { class: "muted", "Requested {request.approval_requested_at}" }
+                            span { class: "muted",
+                                {crate::i18n::tr_args("agent_runtime.requested", &[("time", request.approval_requested_at.clone())])}
+                            }
                         }
                     }
                     div { class: "device-pair-approval-code-block",
-                        span { class: "muted", "Compare this code before approving" }
+                        span { class: "muted", {crate::i18n::tr("agent_runtime.compare_code")} }
                         strong {
                             class: "device-pair-approval-code mono",
                             "data-testid": "agent-runtime-approval-code",
@@ -232,11 +236,13 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                     div {
                         class: "device-pair-approval-device",
                         "data-testid": "agent-runtime-approval-runtime-key",
-                        span { class: "muted", "Runtime key" }
+                        span { class: "muted", {crate::i18n::tr("agent_runtime.runtime_key")} }
                         strong { class: "mono", "{fingerprint_label}" }
                         span { class: "muted mono", "{verification_label}" }
                         if !request.proof_expires_at.trim().is_empty() {
-                            span { class: "muted", "Proof expires {request.proof_expires_at}" }
+                            span { class: "muted",
+                                {crate::i18n::tr_args("agent_runtime.proof_expires", &[("time", request.proof_expires_at.clone())])}
+                            }
                         }
                     }
                     if !status_value.is_empty() {
@@ -255,7 +261,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                 let api_token = token();
                                 let agent_id = reject_agent_id.clone();
                                 approving.set(true);
-                                status.set("Rejecting request and rotating the pairing code...".to_owned());
+                                status.set(crate::i18n::tr("agent_runtime.rejecting"));
                                 spawn(async move {
                                     let result = with_authed_sdk_client(&base, api_token, move |http| {
                                         let agent_id = agent_id.clone();
@@ -273,17 +279,17 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     match result {
                                         Ok(_) => {
                                             pending.set(None);
-                                            status.set("Request rejected and pairing code rotated.".to_owned());
+                                            status.set(crate::i18n::tr("agent_runtime.rejected"));
                                         }
-                                        Err(error) => status.set(format!(
-                                            "Could not rotate the pairing code. {}",
-                                            error.display()
+                                        Err(error) => status.set(crate::i18n::tr_args(
+                                            "agent_runtime.err_rotate_failed",
+                                            &[("error", error.display())],
                                         )),
                                     }
                                 });
                             }
                         },
-                        "Reject and rotate code"
+                        {crate::i18n::tr("agent_runtime.reject_rotate")}
                     }
                     Button {
                         variant: ButtonVariant::Secondary,
@@ -295,7 +301,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                             status.set(String::new());
                             approving.set(false);
                         },
-                        "Dismiss"
+                        {crate::i18n::tr("agent_runtime.dismiss")}
                     }
                     Button {
                         variant: ButtonVariant::Primary,
@@ -307,7 +313,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                             }
                             let controller = account_did();
                             if controller.trim().is_empty() {
-                                status.set("Cannot approve without an active account.".to_owned());
+                                status.set(crate::i18n::tr("agent_runtime.err_no_account"));
                                 return;
                             }
                             let body = match parse_runtime_key_approval_request(
@@ -315,9 +321,9 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                             ) {
                                 Ok(body) => body,
                                 Err(err) => {
-                                    status.set(format!(
-                                        "Runtime key request is invalid. {}",
-                                        runtime_key_pairing_error_message(err)
+                                    status.set(crate::i18n::tr_args(
+                                        "agent_runtime.err_invalid_request",
+                                        &[("error", runtime_key_pairing_error_message(err))],
                                     ));
                                     return;
                                 }
@@ -333,7 +339,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                             let request_key = approve_request.request_key.clone();
                             let key_state = approve_request.key_state.clone();
                             let approval_agent_id = approve_request.agent_id.clone();
-                            status.set("Approving agent runtime...".to_owned());
+                            status.set(crate::i18n::tr("agent_runtime.approving"));
                             approving.set(true);
                             spawn(async move {
                                 let result = with_authed_api(&base, api_token, move |api| {
@@ -410,7 +416,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         }
                                         if !outcome.is_active() {
                                             anyhow::bail!(
-                                                "Agent authorization is still awaiting its accepted PCR frontier"
+                                                "the agent's control workspace has not finished accepting this change yet — wait a moment and try again"
                                             );
                                         }
                                         let recovery_refresh_error = bootstrap_provisioned_agent(
@@ -436,39 +442,51 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                         let next = owned_agents_rev.peek().saturating_add(1);
                                         owned_agents_rev.set(next);
                                         status.set(if let Some(error) = recovery_refresh_error {
-                                            format!(
-                                                "Runtime key approved: {}. Agent PCR recovery refresh failed: {error}",
-                                                short_protocol_id(
-                                                    outcome.authorize_event_ref.as_str(),
-                                                )
+                                            crate::i18n::tr_args(
+                                                "agent_runtime.approved_refresh_failed",
+                                                &[
+                                                    (
+                                                        "id",
+                                                        short_protocol_id(
+                                                            outcome.authorize_event_ref.as_str(),
+                                                        ),
+                                                    ),
+                                                    ("error", error),
+                                                ],
                                             )
                                         } else {
-                                            format!(
-                                                "Runtime key approved: {}. Agent PCR recovery is current.",
-                                                short_protocol_id(
-                                                    outcome.authorize_event_ref.as_str(),
-                                                )
+                                            crate::i18n::tr_args(
+                                                "agent_runtime.approved_current",
+                                                &[(
+                                                    "id",
+                                                    short_protocol_id(
+                                                        outcome.authorize_event_ref.as_str(),
+                                                    ),
+                                                )],
                                             )
                                         });
                                     }
                                     Err(err) => {
                                         tracing::warn!(
-                                            error = %err.display(),
+                                            error = %err.display_diagnostic(),
                                             agent_id = %approval_agent_id,
                                             "agent runtime approval failed"
                                         );
-                                        status.set(format!(
-                                            "Runtime key approval failed. {}",
-                                            runtime_key_pairing_error_message(err.display())
+                                        status.set(crate::i18n::tr_args(
+                                            "agent_runtime.err_approval_failed",
+                                            &[(
+                                                "error",
+                                                runtime_key_pairing_error_message(err.display_diagnostic()),
+                                            )],
                                         ));
                                     }
                                 }
                             });
                         },
                         if busy {
-                            "Approving..."
+                            {crate::i18n::tr("agent_runtime.approving_button")}
                         } else {
-                            "Approve"
+                            {crate::i18n::tr("agent_runtime.approve")}
                         }
                     }
                 }

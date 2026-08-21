@@ -1,16 +1,22 @@
 //! G3.Y3 — Capability authority viewer (`/settings/capabilities`).
 //!
-//! Read-only-ish UI for inspecting `ak.capability.*` rows attached to
-//! the current actor: capabilities held (subject), capabilities granted
-//! out (issuer), plus the reducer-derived authority audit for each row. The cotest
-//! `authz/capability-chain` scenario is already live; this view focuses
-//! on inspection until revoke and relinquish controls are available.
+//! UI for inspecting `ak.capability.*` rows attached to the current
+//! actor — capabilities held (subject), capabilities granted out
+//! (issuer), plus the reducer-derived authority audit for each row —
+//! and for the one self-service write this surface owns:
+//! `ak.capability.relinquish` on grants where the current actor is the
+//! subject. Relinquish is subject-only (`authz/capabilities.md` §10.4):
+//! it MUST NOT require the actor to hold `ak.capability.revoke`, and the
+//! reducer rejects any non-subject attempt with
+//! `grant_relinquish_not_subject`. Issuer-side revoke stays on the
+//! Realm-admin surface.
 //!
 //! Spec seals:
 //! - `authz/capabilities.md` §3 — capability schema.
 //! - `authz/capabilities.md` §3.2 — issuer authority.
 //! - `authz/capabilities.md` §3.3 — revoke + cascade.
 //! - `authz/capabilities.md` §3.4 — audit trail.
+//! - `authz/capabilities.md` §10.4 — subject-only relinquish.
 
 use arkret_models_collaboration::governance::grant_constraint::{
     CapabilityGrant, CapabilitySubject, IssuerAuthorityRef,
@@ -21,6 +27,8 @@ use crate::components::{EmptyState, EmptyStateKind};
 use crate::transport::auth::with_authed_sdk_client;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
+use crate::ui::input::Input;
+use crate::ui::label::Label;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
 
 /// One row in the user's capability list. Backed by either the user
@@ -31,6 +39,10 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 #[derive(Clone, Debug, PartialEq)]
 struct CapabilityRow {
     capability_id: String,
+    /// Realm the grant governs — the scope the relinquish control event is
+    /// submitted into. Falls back to the Realm the row was queried from when
+    /// the grant itself carries no `realm_id`.
+    realm_id: String,
     action: String,
     scope: String,
     issuer_did: String,
@@ -40,9 +52,14 @@ struct CapabilityRow {
 }
 
 /// Map one authoritative SDK [`CapabilityGrant`] onto a display row.
-fn decode_capability_row(grant: &CapabilityGrant) -> CapabilityRow {
+fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> CapabilityRow {
     CapabilityRow {
         capability_id: grant.id.as_str().to_owned(),
+        realm_id: grant
+            .realm_id
+            .as_ref()
+            .map(|realm_id| realm_id.as_str().to_owned())
+            .unwrap_or_else(|| queried_realm_id.to_owned()),
         action: grant.actions.first().cloned().unwrap_or_default(),
         scope: grant
             .resources
@@ -89,6 +106,15 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
     let mut rows = use_signal(Vec::<CapabilityRow>::new);
     let mut status = use_signal(String::new);
     let mut detail_for = use_signal(|| Option::<String>::None);
+    // Subject-only relinquish confirmation: capability_id of the pending row
+    // plus an optional audit-trail reason (`capabilities.md` §10.4 — no
+    // revoke authority is required or attached).
+    let mut relinquish_for = use_signal(|| Option::<String>::None);
+    let mut relinquish_reason = use_signal(String::new);
+    // Grants where this core id is the subject get the relinquish control.
+    let my_core_id = crate::mls_api_helpers::principal_core_id(&account_did())
+        .map(|id| id.as_str().to_owned())
+        .unwrap_or_default();
 
     // Fire a single effective-grants probe per token change.
     use_effect(move || {
@@ -124,15 +150,22 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                         &principal_server_id,
                     )
                     .await?;
-                    grants.extend(response.grants);
+                    grants.extend(
+                        response
+                            .grants
+                            .into_iter()
+                            .map(|grant| (realm_id.clone(), grant)),
+                    );
                 }
                 Ok::<_, anyhow::Error>(grants)
             })
             .await
             {
                 Ok(grants) => {
-                    let decoded: Vec<CapabilityRow> =
-                        grants.iter().map(decode_capability_row).collect();
+                    let decoded: Vec<CapabilityRow> = grants
+                        .iter()
+                        .map(|(realm_id, grant)| decode_capability_row(grant, realm_id.as_str()))
+                        .collect();
                     status.set(format!("Loaded {} capabilities", decoded.len()));
                     rows.set(decoded);
                 }
@@ -200,6 +233,156 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                                             },
                                             "Detail"
                                         }
+                                        // Subject-only self-service: any member
+                                        // may drop a grant they hold, with no
+                                        // revoke authority involved.
+                                        if !my_core_id.is_empty() && row.subject_did == my_core_id {
+                                            Button {
+                                                variant: ButtonVariant::Destructive,
+                                                "data-testid": "capability-relinquish-button",
+                                                "data-capability-id": "{row.capability_id}",
+                                                onclick: {
+                                                    let id = row.capability_id.clone();
+                                                    move |_| {
+                                                        relinquish_reason.set(String::new());
+                                                        relinquish_for.set(Some(id.clone()));
+                                                    }
+                                                },
+                                                "Relinquish"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(capability_id) = relinquish_for.read().clone() {
+                if let Some(row) = rows.read().iter().find(|r| r.capability_id == capability_id).cloned() {
+                    {
+                        let capability_id_label = short_protocol_id(&row.capability_id);
+                        rsx! {
+                            Dialog {
+                                open: true,
+                                on_open_change: move |open: bool| {
+                                    if !open {
+                                        relinquish_for.set(None);
+                                    }
+                                },
+                                "data-testid": "capability-relinquish-modal",
+                                "data-capability-id": "{row.capability_id}",
+                                div {
+                                    class: "event modal",
+                                    div { class: "event-head",
+                                        span { "Relinquish capability" }
+                                        Button {
+                                            variant: ButtonVariant::Ghost,
+                                            size: ButtonSize::Icon,
+                                            class: "btn",
+                                            "data-testid": "capability-relinquish-close",
+                                            "aria-label": "Close relinquish confirmation",
+                                            onclick: move |_| relinquish_for.set(None),
+                                            "×"
+                                        }
+                                    }
+                                    div { class: "muted", title: "{row.capability_id}",
+                                        "{capability_id_label} · {row.action}"
+                                    }
+                                    div { class: "muted", "data-testid": "capability-relinquish-impact",
+                                        "This permanently gives up the grant for yourself via "
+                                        "`ak.capability.relinquish`. It is subject-only: no revoke "
+                                        "authority is required or attached, and nobody else can use this "
+                                        "path on your behalf. The issuer can re-grant later if needed."
+                                    }
+                                    Label {
+                                        html_for: "capability-relinquish-reason-input",
+                                        "Reason (optional, audit trail)"
+                                    }
+                                    Input {
+                                        id: "capability-relinquish-reason-input",
+                                        "data-testid": "capability-relinquish-reason-input",
+                                        value: "{relinquish_reason}",
+                                        placeholder: "no longer needed",
+                                        oninput: move |event: FormEvent| relinquish_reason.set(event.value()),
+                                    }
+                                    div { class: "actions",
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "capability-relinquish-cancel",
+                                            onclick: move |_| relinquish_for.set(None),
+                                            "Cancel"
+                                        }
+                                        Button {
+                                            variant: ButtonVariant::Destructive,
+                                            "data-testid": "capability-relinquish-confirm",
+                                            onclick: {
+                                                let row = row.clone();
+                                                move |_| {
+                                                    let base = base_url();
+                                                    let api_token = token();
+                                                    let actor = account_did().trim().to_owned();
+                                                    if actor.is_empty() {
+                                                        status.set("relinquish failed: account is not connected".to_owned());
+                                                        return;
+                                                    }
+                                                    let realm_id = match arkret_sdk::RealmId::new(row.realm_id.clone()) {
+                                                        Ok(realm_id) => realm_id,
+                                                        Err(err) => {
+                                                            status.set(format!(
+                                                                "relinquish build failed: invalid realm id: {err}"
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let grant_id = match arkret_sdk::GrantId::new(row.capability_id.clone()) {
+                                                        Ok(grant_id) => grant_id,
+                                                        Err(err) => {
+                                                            status.set(format!(
+                                                                "relinquish build failed: invalid grant id: {err}"
+                                                            ));
+                                                            return;
+                                                        }
+                                                    };
+                                                    let reason_val = relinquish_reason().trim().to_owned();
+                                                    let payload = arkret_sdk::CapabilityRelinquishPayload {
+                                                        grant_id,
+                                                        reason: (!reason_val.is_empty()).then_some(reason_val),
+                                                    };
+                                                    relinquish_for.set(None);
+                                                    let capability_for_msg = row.capability_id.clone();
+                                                    spawn(async move {
+                                                        match crate::transport::auth::with_event_submitter(
+                                                            &base,
+                                                            api_token,
+                                                            |sub| async move {
+                                                                crate::transport::realm_write::relinquish_capability(
+                                                                    &sub, realm_id, &actor, payload,
+                                                                )
+                                                                .await
+                                                            },
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(resp) => status.set(format!(
+                                                                "relinquish submitted for {}: event_id={} — the grant is void once the control move seals",
+                                                                short_protocol_id(&capability_for_msg),
+                                                                short_protocol_id(&resp.event_id),
+                                                            )),
+                                                            Err(err) => {
+                                                                let text = err.display();
+                                                                let hint = relinquish_failure_hint(&text)
+                                                                    .map(|hint| format!(" — {hint}"))
+                                                                    .unwrap_or_default();
+                                                                status.set(format!("relinquish failed: {text}{hint}"));
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            "Relinquish grant"
+                                        }
                                     }
                                 }
                             }
@@ -265,6 +448,26 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
     }
 }
 
+/// Operator guidance for the known relinquish rejection reasons, appended to
+/// the raw error text in the status line.
+fn relinquish_failure_hint(error_text: &str) -> Option<&'static str> {
+    if error_text.contains("grant_relinquish_not_subject") {
+        Some(
+            "the server rejected this because the signer is not the grant's subject — only the \
+             subject may relinquish a grant; ask the issuer (or Realm owner) to revoke it instead",
+        )
+    } else if error_text.contains("capability_target_unresolved")
+        || error_text.contains("dependency_pending")
+    {
+        Some(
+            "the grant is not yet resolved in the server projection — the relinquish stays \
+             pending until the grant row lands; retry after sync if it does not settle",
+        )
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -302,10 +505,18 @@ mod tests {
 
     #[test]
     fn maps_sdk_grant_to_capability_row() {
-        let row = decode_capability_row(&sample_grant(json!("ak:did_core:web:bob.example")));
+        let row = decode_capability_row(
+            &sample_grant(json!("ak:did_core:web:bob.example")),
+            "ak:realm:Afallback0000000000000000000000000000000000000",
+        );
         assert_eq!(
             row.capability_id,
             "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X"
+        );
+        // The grant's own realm_id wins over the queried-realm fallback.
+        assert_eq!(
+            row.realm_id,
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
         );
         assert_eq!(row.action, "ak.message.create");
         assert_eq!(row.issuer_did, "ak:did_core:web:alice.example");
@@ -316,10 +527,20 @@ mod tests {
 
     #[test]
     fn selector_subject_renders_as_json() {
-        let row = decode_capability_row(&sample_grant(json!({
-            "kind": "condition",
-            "required_claims": []
-        })));
+        let row = decode_capability_row(
+            &sample_grant(json!({
+                "kind": "condition",
+                "required_claims": []
+            })),
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+        );
         assert!(row.subject_did.contains("condition"));
+    }
+
+    #[test]
+    fn relinquish_failure_hint_covers_the_subject_guard() {
+        assert!(relinquish_failure_hint("rejected: grant_relinquish_not_subject").is_some());
+        assert!(relinquish_failure_hint("capability_target_unresolved").is_some());
+        assert_eq!(relinquish_failure_hint("network timeout"), None);
     }
 }

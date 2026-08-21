@@ -106,7 +106,6 @@ pub(crate) fn parse_realm_bootstrap_members(
     Ok(members)
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Build the ordered Realm genesis batch.
 ///
 /// The Realm id is **not** an input: spec realm-and-space.md section 2.5.0
@@ -393,10 +392,10 @@ fn build_realm_bootstrap_membership_intent(
     };
 
     let actor_id = facets.actor_id.as_str();
-    let recipient_service_id = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(
+    let recipient_service_id = arkret_sdk::project_full_id_to_core_id(
         &arkret_sdk::DidFullId::new(facets.notary_did.clone())
             .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
-    )?);
+    )?;
     let mut service_origin = url::Url::parse(&facets.notary_service_origin)
         .map_err(|err| anyhow::anyhow!("invalid creator service origin: {err}"))?;
     if service_origin.scheme() == "http"
@@ -726,9 +725,8 @@ pub fn build_direct_conversation_founding_steps(
     _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     let created_at = event_timestamp();
-    let founder_actor =
-        arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(founder_id)?);
-    let peer_actor = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(peer_id)?);
+    let founder_actor = arkret_sdk::project_full_id_to_core_id(founder_id)?;
+    let peer_actor = arkret_sdk::project_full_id_to_core_id(peer_id)?;
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
@@ -797,7 +795,7 @@ pub fn build_direct_conversation_founding_steps(
             let create = &authored[0];
             let strand_payload = arkret_sdk::direct_conversation_main_strand_create_payload(
                 create.realm_id.clone(),
-                arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&founder)?),
+                arkret_sdk::project_full_id_to_core_id(&founder)?,
                 created_at,
             );
             Ok(vec![

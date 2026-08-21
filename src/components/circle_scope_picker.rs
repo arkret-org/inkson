@@ -10,7 +10,8 @@ use crate::circle::{CircleScope, CircleSummary};
 use crate::ui::select::{Select, SelectOption};
 
 /// Dropdown picker. Renders a `<select>` with one option per Circle the
-/// caller passed in plus a default "Realm (everyone)" option. Emits the
+/// caller passed in plus a default everyone-in-workspace option (label
+/// resolved via `circle.scope.realm_everyone`). Emits the
 /// chosen [`CircleScope`] via `onchange`.
 ///
 /// `circles` should already be filtered to the strict subset the active
@@ -30,6 +31,11 @@ pub fn CircleScopePicker(
     onchange: EventHandler<CircleScope>,
 ) -> Element {
     let tid = test_id.unwrap_or_else(|| "circle-scope-picker".to_owned());
+    // Localized at the render site: `CircleScope::label()` returns
+    // &'static str and cannot call tr(), so the picker's descriptive
+    // strings resolve here instead.
+    let everyone_label = crate::i18n::tr("circle.scope.realm_everyone");
+    let scope_help = crate::i18n::tr("circle.scope.help");
     let current_id = match &selected {
         CircleScope::Realm => String::from("__realm__"),
         CircleScope::Circle { circle_id, .. } => circle_id.clone(),
@@ -66,8 +72,8 @@ pub fn CircleScopePicker(
                 SelectOption::<String> {
                     index: 0usize,
                     value: "__realm__".to_string(),
-                    text_value: "Realm (everyone)",
-                    "Realm (everyone)"
+                    text_value: "{everyone_label}",
+                    "{everyone_label}"
                 }
                 for (i, circle) in circles.iter().enumerate() {
                     SelectOption::<String> {
@@ -80,7 +86,7 @@ pub fn CircleScopePicker(
                 }
             }
             p { class: "field-help muted",
-                "Choose a Circle to restrict visibility to a strict subset of Realm members."
+                "{scope_help}"
             }
         }
     }
@@ -190,7 +196,7 @@ mod tests {
         // a Realm-scope selection. The component itself is a Dioxus
         // surface; full render coverage lives in the e2e harness.
         let selected = CircleScope::default();
-        assert_eq!(selected.label(), "Realm");
+        assert_eq!(selected.label(), "Workspace");
     }
 
     #[test]

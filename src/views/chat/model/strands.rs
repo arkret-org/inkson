@@ -470,7 +470,7 @@ fn pending_message_private_plaintext_sidecar_body(
     message: &ChatMessage,
     store: &LocalStateStore,
     default_realm_id: &str,
-) -> Option<String> {
+) -> Option<(String, Option<arkret_sdk::TextFormat>)> {
     if !message.crypto_state.is_pending() || message.redacted {
         return None;
     }
@@ -503,7 +503,9 @@ fn pending_message_private_plaintext_sidecar_body(
     if lookup_realm_id.is_empty() {
         return None;
     }
-    store.private_plaintext_for(lookup_realm_id, strand_id, &format!("message:{message_id}"))
+    store
+        .private_plaintext_for(lookup_realm_id, strand_id, &format!("message:{message_id}"))
+        .map(super::events::content_from_private_sidecar)
 }
 
 pub(crate) fn pending_messages_have_private_plaintext_sidecar(
@@ -523,13 +525,17 @@ pub(crate) fn restore_pending_messages_from_private_plaintext_sidecar(
 ) -> bool {
     let mut changed = false;
     for message in messages.iter_mut() {
-        let Some(body) =
+        let Some((body, content_format)) =
             pending_message_private_plaintext_sidecar_body(message, store, default_realm_id)
         else {
             continue;
         };
-        if message.body != body || message.crypto_state != MessageCryptoState::Plaintext {
+        if message.body != body
+            || message.content_format != content_format
+            || message.crypto_state != MessageCryptoState::Plaintext
+        {
             message.body = body;
+            message.content_format = content_format;
             message.crypto_state = MessageCryptoState::Plaintext;
             changed = true;
         }

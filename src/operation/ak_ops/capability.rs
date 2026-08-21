@@ -6,6 +6,35 @@ use serde_json::Value;
 
 use super::{TypedOperationBuilder, trim_realm_id};
 
+/// Authority-root coordinates a new grant's `realm_root`
+/// `issuer_authority_refs` entry binds to.
+///
+/// Realm creation locks the v1 root to controller epoch 0 / generation 0, so
+/// [`Default`] is exactly the genesis basis. After `ak.realm.owner.transfer`
+/// or `ak.realm.authority.reset` the values MUST come from the resolved root
+/// ([`crate::security_state::realm_authority_root_value_for_realm`]), or the
+/// grant is minted against a superseded root and its authority audit binds
+/// the wrong epoch/generation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IssuerRootBasis {
+    pub controller_epoch_at_issuance: u64,
+    pub authority_generation: u64,
+}
+
+impl IssuerRootBasis {
+    /// Coordinates from the locally resolved authority root; genesis (0/0)
+    /// when the projection has not resolved the root cell — identical to the
+    /// create-locked value for a Realm that never transferred or reset.
+    pub fn from_resolved_root(
+        root: Option<&arkret_policy::realm_bootstrap::RealmAuthorityRootValue>,
+    ) -> Self {
+        root.map_or_else(Self::default, |root| Self {
+            controller_epoch_at_issuance: root.controller_epoch,
+            authority_generation: root.authority_generation,
+        })
+    }
+}
+
 /// `ak.capability.revoke` — drop a standing grant, addressed by `grant_id`.
 /// `reason` shows up in the audit trail and lets the UI explain why the
 /// capability was dropped.
@@ -58,6 +87,7 @@ pub fn capability_grant_actions(
     actions: &[&str],
     expires_at: Option<&str>,
     constraints: Value,
+    root_basis: IssuerRootBasis,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
     capability_grant_actions_with_resources(
@@ -70,6 +100,7 @@ pub fn capability_grant_actions(
         )],
         expires_at,
         constraints,
+        root_basis,
     )
 }
 
@@ -88,6 +119,7 @@ pub fn capability_grant_actions_with_resources(
     resources: Vec<arkret_sdk::WireResourceSelector>,
     expires_at: Option<&str>,
     constraints: Value,
+    root_basis: IssuerRootBasis,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm = trim_realm_id(realm_id);
     let realm_typed = arkret_sdk::RealmId::new(realm.clone())?;
@@ -121,14 +153,16 @@ pub fn capability_grant_actions_with_resources(
         resources,
         capability_action_registry_digest: registry_digest,
         constraints: constraints_typed,
-        // Realm creation locks the v1 authority root to controller epoch 0 and
-        // generation 0. Owner transfer/reset is not a v1 authoring surface;
-        // when it is introduced this value must come from the resolved root.
+        // The root coordinates come from the caller-resolved authority root
+        // (`IssuerRootBasis::from_resolved_root`): a Realm that never ran
+        // `ak.realm.owner.transfer` / `ak.realm.authority.reset` is still the
+        // create-locked epoch 0 / generation 0, and after either transition
+        // the grant must bind the superseding root, not genesis.
         issuer_authority_refs: vec![arkret_sdk::IssuerAuthorityRef::RealmRoot {
             realm_id: realm_typed,
             cell_ref: arkret_wire::REALM_AUTHORITY_ROOT_CELL.to_owned(),
-            controller_epoch_at_issuance: 0,
-            authority_generation: 0,
+            controller_epoch_at_issuance: root_basis.controller_epoch_at_issuance,
+            authority_generation: root_basis.authority_generation,
         }],
         issued_at: crate::clock::now_utc_millis(),
         not_before: None,
@@ -147,6 +181,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn grant_binds_the_resolved_root_epoch_and_generation() {
+        let operation = capability_grant_actions(
+            "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
+            "did:web:issuer.example",
+            "did:web:subject.example",
+            &["ak.message.create"],
+            None,
+            Value::Null,
+            IssuerRootBasis {
+                controller_epoch_at_issuance: 2,
+                authority_generation: 1,
+            },
+        )
+        .unwrap()
+        .build_sdk_event("inkson")
+        .unwrap();
+        assert_eq!(
+            operation.payload()["grant"]["issuer_authority_refs"],
+            json!([{
+                "kind": "realm_root",
+                "realm_id": "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
+                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
+                "controller_epoch_at_issuance": 2,
+                "authority_generation": 1
+            }])
+        );
+    }
+
+    #[test]
     fn aggregate_admin_grant_authorship_binds_the_registry_snapshot() {
         let operation = capability_grant_actions(
             "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
@@ -155,6 +218,7 @@ mod tests {
             &["ak.realm.admin"],
             None,
             Value::Null,
+            IssuerRootBasis::default(),
         )
         .unwrap()
         .build_sdk_event("inkson")

@@ -391,12 +391,12 @@
 .member-head-icon-btn-accent {
   border-color: transparent;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #fff;
+  color: var(--text-on-accent);
 }
 
 .member-head-icon-btn-accent:hover {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #fff;
+  color: var(--text-on-accent);
   filter: brightness(1.06);
 }
 

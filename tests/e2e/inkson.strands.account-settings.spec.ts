@@ -782,7 +782,9 @@ test("diagnostic and preview surfaces stay behind clear user-facing states", asy
   await expect(page.getByTestId("directory-panel")).toBeVisible();
   await expect(page.getByTestId("directory-three-axes-banner")).not.toHaveAttribute("open", "");
 
+  // The Garth route-evaluator adapter is wired, so /call renders the real
+  // dialer; joins remain fail-closed behind evaluator-verified route material.
   await page.goto("/call", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("call-route-unavailable")).toBeVisible();
-  await expect(page.getByTestId("call-panel")).toHaveCount(0);
+  await expect(page.getByTestId("call-panel")).toBeVisible();
+  await expect(page.getByTestId("call-route-unavailable")).toHaveCount(0);
 });

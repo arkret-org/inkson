@@ -586,7 +586,7 @@ async fn locked_did_fetch_client(url: &str) -> Option<reqwest::Client> {
         .ok()
 }
 
-async fn fetch_did_bytes(
+pub(crate) async fn fetch_did_bytes(
     http: &reqwest::Client,
     url: &str,
     max_bytes: usize,
@@ -691,7 +691,7 @@ fn did_document_content_type_allowed(content_type: &str) -> bool {
 /// The URL helper only ever yields `https://…/did.json`, so plaintext hosts are
 /// rejected by construction; the SDK `insert_from_https_response` re-validates
 /// the URL, content-type and document `id`.
-async fn fetch_did_web_document(
+pub(crate) async fn fetch_did_web_document(
     http: &reqwest::Client,
     did: &DidFullId,
 ) -> Option<DidWebDocumentOutcome> {

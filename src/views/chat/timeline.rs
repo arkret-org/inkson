@@ -54,8 +54,13 @@ pub(super) fn render_message_text_block(
     }
 }
 
-pub(super) fn render_message_body(body: &str, mentions: &[MentionNode], base_url: &str) -> Element {
-    let blocks = crate::content::parse_message_body(body);
+pub(super) fn render_message_body(
+    body: &str,
+    format: Option<arkret_sdk::TextFormat>,
+    mentions: &[MentionNode],
+    base_url: &str,
+) -> Element {
+    let blocks = crate::content::parse_message_body_with_format(body, format);
     if mentions.is_empty() {
         return crate::content::render_blocks(&blocks);
     }

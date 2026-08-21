@@ -32,6 +32,8 @@ pub enum DidResolutionHealth {
     },
 }
 
+/// Presentation carries i18n keys, not copy: the banner resolves them through
+/// `tr()` at render time so both shipped locales work.
 struct DidResolutionHealthPresentation {
     token: &'static str,
     label: &'static str,
@@ -83,34 +85,34 @@ impl DidResolutionHealth {
                 DidResolutionHealthReason::IdentityDescribeFailedFreshCache => {
                     DidResolutionHealthPresentation {
                         token: "degraded",
-                        label: "degraded",
-                        title: "Identity resolution degraded",
-                        detail: "Live identity checks are unreachable; fresh cached identity evidence is available for display only.",
+                        label: "did_health.label.degraded",
+                        title: "did_health.title.degraded",
+                        detail: "did_health.detail.fresh_cache",
                     }
                 }
                 DidResolutionHealthReason::IdentityDescribeFailedStaleCache => {
                     DidResolutionHealthPresentation {
                         token: "degraded",
-                        label: "stale cache",
-                        title: "Identity resolution degraded",
-                        detail: "Live identity checks are unreachable; cached identity evidence is stale and trust decisions fail closed.",
+                        label: "did_health.label.stale_cache",
+                        title: "did_health.title.degraded",
+                        detail: "did_health.detail.stale_cache",
                     }
                 }
                 DidResolutionHealthReason::UnsupportedIdentityProtocol => {
                     DidResolutionHealthPresentation {
                         token: "degraded",
-                        label: "metadata",
-                        title: "Identity metadata mismatch",
-                        detail: "The identity service did not advertise the required v1 protocol shape; trust checks remain guarded.",
+                        label: "did_health.label.metadata",
+                        title: "did_health.title.metadata_mismatch",
+                        detail: "did_health.detail.metadata_mismatch",
                     }
                 }
                 DidResolutionHealthReason::IdentityDescribeFailedNoCache
                 | DidResolutionHealthReason::UnsupportedPrincipalServer => {
                     DidResolutionHealthPresentation {
                         token: "degraded",
-                        label: "degraded",
-                        title: "Identity resolution degraded",
-                        detail: "Live identity checks are partially unavailable; trust decisions remain guarded.",
+                        label: "did_health.label.degraded",
+                        title: "did_health.title.degraded",
+                        detail: "did_health.detail.partial",
                     }
                 }
             }),
@@ -118,17 +120,17 @@ impl DidResolutionHealth {
                 DidResolutionHealthReason::IdentityDescribeFailedNoCache => {
                     DidResolutionHealthPresentation {
                         token: "outage",
-                        label: "outage",
-                        title: "Identity resolution unavailable",
-                        detail: "Live identity checks are unreachable and no cached identity evidence is available; trust decisions fail closed.",
+                        label: "did_health.label.outage",
+                        title: "did_health.title.unavailable",
+                        detail: "did_health.detail.no_cache",
                     }
                 }
                 DidResolutionHealthReason::UnsupportedPrincipalServer => {
                     DidResolutionHealthPresentation {
                         token: "outage",
-                        label: "server metadata",
-                        title: "Identity service unavailable",
-                        detail: "This server did not advertise the required v1 principal-server metadata; identity authority checks are blocked.",
+                        label: "did_health.label.server_metadata",
+                        title: "did_health.title.service_unavailable",
+                        detail: "did_health.detail.server_metadata",
                     }
                 }
                 DidResolutionHealthReason::IdentityDescribeFailedFreshCache
@@ -136,9 +138,9 @@ impl DidResolutionHealth {
                 | DidResolutionHealthReason::UnsupportedIdentityProtocol => {
                     DidResolutionHealthPresentation {
                         token: "outage",
-                        label: "outage",
-                        title: "Identity resolution unavailable",
-                        detail: "Identity authority checks are blocked until the service recovers.",
+                        label: "did_health.label.outage",
+                        title: "did_health.title.unavailable",
+                        detail: "did_health.detail.blocked",
                     }
                 }
             }),
@@ -163,9 +165,9 @@ pub fn DidResolutionHealthBanner(health: Signal<DidResolutionHealth>) -> Element
         "polite"
     };
     let token = presentation.token;
-    let title = presentation.title;
-    let label = presentation.label;
-    let detail = presentation.detail;
+    let title = crate::i18n::tr(presentation.title);
+    let label = crate::i18n::tr(presentation.label);
+    let detail = crate::i18n::tr(presentation.detail);
 
     rsx! {
         div {

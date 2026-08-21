@@ -3,7 +3,7 @@
 use serde_json::json;
 
 use super::backup_summary::{
-    backup_class_counts, backup_inventory_status, parse_backup_list, parse_backup_summary,
+    BackupInventoryStatus, backup_inventory_status, parse_backup_list, parse_backup_summary,
     sorted_backups_latest_first,
 };
 use super::state::{decode_recovery_public_key_multibase, recovery_state_has_user_material};
@@ -46,30 +46,35 @@ fn parse_backup_summary_rejects_missing_id() {
 }
 
 #[test]
-fn backup_inventory_status_marks_empty_server_as_incomplete() {
-    assert!(backup_inventory_status(&[]).contains("checked separately"));
+fn backup_inventory_status_marks_empty_server_as_empty() {
+    assert_eq!(backup_inventory_status(&[]), BackupInventoryStatus::Empty);
 }
 
 #[test]
-fn backup_inventory_status_counts_classes() {
+fn backup_inventory_status_reports_count_and_latest() {
     let rows = parse_backup_list(&json!({
         "backups": [
             {
                 "backup_id": "ak:backup:b",
                 "backup_kind": "secret_storage",
+                "created_at": "2026-05-15T00:00:00.000Z",
                 "encryption": {"recipient_method": "recovery_public_key"}
             },
             {
                 "backup_id": "ak:backup:c",
                 "backup_kind": "mls_history",
+                "created_at": "2026-05-16T00:00:00.000Z",
                 "encryption": {"recipient_method": "secret_storage_key"}
             }
         ]
     }));
-    let counts = backup_class_counts(&rows);
-    assert_eq!(counts.secret_storage, 1);
-    assert_eq!(counts.mls_history, 1);
-    assert!(!backup_inventory_status(&rows).contains("incomplete"));
+    assert_eq!(
+        backup_inventory_status(&rows),
+        BackupInventoryStatus::Loaded {
+            count: 2,
+            latest: "2026-05-16 00:00 UTC".to_owned(),
+        }
+    );
 }
 
 #[test]

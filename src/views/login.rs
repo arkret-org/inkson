@@ -495,6 +495,7 @@ pub fn LoginPanel(
             } else {
                 false
             };
+            #[allow(clippy::expect_used)]
             let device = if resume_account_handoff {
                 pending_device.expect("resumable handoff has a device id")
             } else {
@@ -503,6 +504,7 @@ pub fn LoginPanel(
             // A registration checkpoint must continue its fenced server flow.
             // Otherwise retain the old account/device only as a candidate for
             // comparison with the Bound handoff returned after authentication.
+            #[allow(clippy::expect_used)]
             let (expected_principal, expected_device) = if has_pending_checkpoint {
                 (None, None)
             } else {
@@ -879,6 +881,7 @@ enum AuthenticatedAccountRoute {
     Diagnostics(LocalEvidenceUnavailableReason),
 }
 
+#[allow(clippy::expect_used)]
 fn authenticated_account_route(
     disposition: &AccountHandoffDisposition,
     candidate_principal: Option<&arkret_sdk::DidFullId>,

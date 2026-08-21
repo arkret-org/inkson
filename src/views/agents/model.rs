@@ -33,8 +33,7 @@ pub fn build_agent_provision_intent(
     requested_scope_digest: &Hash,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = crate::clock::now_utc();
-    let controller_actor_id =
-        DidCoreId::from(arkret_sdk::project_full_id_to_core_id(controller_full_id)?);
+    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(controller_full_id)?;
     Ok(crate::operation::LocalOperation::new(
         arkret_bootstrap::build_agent_provision_intent(
             &controller_actor_id,
@@ -710,6 +709,7 @@ pub fn prepare_agent_key_authorize_pairing(
             &request.proof_of_possession.runtime_key_binding_digest,
             &request.proof_of_possession,
         )?;
+    #[allow(clippy::expect_used)]
     let issued_at = chrono::DateTime::<Utc>::from_timestamp_millis(Utc::now().timestamp_millis())
         .expect("current UTC timestamp must fit the canonical millisecond wire range");
     let runtime_attestation = request.runtime_attestation.clone();

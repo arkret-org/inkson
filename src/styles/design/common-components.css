@@ -435,8 +435,8 @@ button[data-style="link"]:disabled:hover {
    DID identified by selector mention metadata is rendered. */
 .member-badge { font-weight: 600; letter-spacing: 0.02em; }
 .member-badge-agent {
-  background: var(--accent-2, #6f42c1);
-  color: #fff;
+  background: var(--accent-2);
+  color: var(--text-on-accent);
 }
 
 .actor-identity-label {
@@ -609,10 +609,10 @@ button[data-style="link"]:disabled:hover {
   flex-shrink: 0;
 }
 .avatar-img.sm { width: 36px; height: 36px; }
-.avatar-img.lg { width: 64px; height: 64px; border: 1px solid var(--border-default, #333); }
+.avatar-img.lg { width: 64px; height: 64px; border: 1px solid var(--border); }
 .avatar-img.generated-avatar {
   display: block;
-  background: #f0f3f6;
+  background: var(--surface-2);
   box-shadow: var(--shadow-sm);
 }
 .avatar-img.generated-avatar svg {
@@ -688,8 +688,8 @@ label.avatar-upload-button:active,
   aspect-ratio: 1;
   border-radius: 50%;
   overflow: hidden;
-  border: 1px solid var(--border-default, #333);
-  background: var(--bg-elevated, #1a1d22);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
 }
 .avatar-crop-controls {
   display: grid;

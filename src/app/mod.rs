@@ -1966,8 +1966,8 @@ fn AppBootstrap() -> Element {
                                 Link {
                                     class: "sidebar-toolbar-action sidebar-toolbar-link add-realm-cta",
                                     "data-testid": "sidebar-new-realm-cta",
-                                    title: "Create a new Realm",
-                                    "aria-label": "Create a new Realm",
+                                    title: crate::i18n::tr("setup.new_realm"),
+                                    "aria-label": crate::i18n::tr("setup.new_realm"),
                                     to: Route::SetupSection { section: "realms".to_owned() },
                                     UiIcon { name: "plus" }
                                 }
@@ -1985,8 +1985,8 @@ fn AppBootstrap() -> Element {
                                 Link {
                                     class: if matches!(content_route, Route::RealmsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
                                     "data-testid": "realm-sidebar-manage-home-button",
-                                    title: "Manage Realms",
-                                    "aria-label": "Manage Realms",
+                                    title: crate::i18n::tr("manage.realms_title"),
+                                    "aria-label": crate::i18n::tr("manage.realms_title"),
                                     to: Route::RealmsManage,
                                     UiIcon { name: "home" }
                                 }
@@ -1994,8 +1994,8 @@ fn AppBootstrap() -> Element {
                                 Link {
                                     class: if matches!(content_route, Route::ContactsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
                                     "data-testid": "realm-sidebar-manage-home-button",
-                                    title: "Manage Contacts",
-                                    "aria-label": "Manage Contacts",
+                                    title: crate::i18n::tr("manage.contacts_title"),
+                                    "aria-label": crate::i18n::tr("manage.contacts_title"),
                                     to: Route::ContactsManage,
                                     onclick: {
                                         let base = base_url();
@@ -2182,12 +2182,12 @@ fn AppBootstrap() -> Element {
                                                                                 }
                                                                                 Err(err) => {
                                                                                     tracing::error!(
-                                                                                        error = %err.display(),
+                                                                                        error = %err.display_diagnostic(),
                                                                                         agent_id = %agent_id_for_log,
                                                                                         "owned agent direct conversation open failed"
                                                                                     );
                                                                                     crate::components::feedback::toast_error(
-                                                                                        "feedback.direct_open_failed", vec![], Some(err.display()),
+                                                                                        "feedback.direct_open_failed", vec![], Some(err.display_diagnostic()),
                                                                                     );
                                                                                     None
                                                                                 }
@@ -2388,14 +2388,14 @@ fn AppBootstrap() -> Element {
                                                                 }
                                                                 Err(err) => {
                                                                     tracing::error!(
-                                                                        error = %err.display(),
+                                                                        error = %err.display_diagnostic(),
                                                                         peer = %peer_for_log,
                                                                         "direct conversation open failed"
                                                                     );
                                                                     crate::components::feedback::toast_error(
                                                                         "feedback.direct_open_failed",
                                                                         vec![],
-                                                                        Some(err.display()),
+                                                                        Some(err.display_diagnostic()),
                                                                     );
                                                                     None
                                                                 }
@@ -2652,12 +2652,12 @@ fn AppBootstrap() -> Element {
                                                                             }
                                                                             Err(err) => {
                                                                                 tracing::error!(
-                                                                                    error = %err.display(),
+                                                                                    error = %err.display_diagnostic(),
                                                                                     agent_id = %agent_id_for_log,
                                                                                     "contact agent direct conversation open failed"
                                                                                 );
                                                                                 crate::components::feedback::toast_error(
-                                                                                    "feedback.direct_open_failed", vec![], Some(err.display()),
+                                                                                    "feedback.direct_open_failed", vec![], Some(err.display_diagnostic()),
                                                                                 );
                                                                                 None
                                                                             }
@@ -2899,16 +2899,16 @@ fn AppBootstrap() -> Element {
                                             span {
                                                 class: "pill muted xs",
                                                 "data-testid": "realm-tree-kind-realm",
-                                                title: "Realm — security / sync / E2EE boundary (spec realm-and-space.md §2)",
-                                                "Realm"
+                                                title: crate::i18n::tr("friendly.realm.description"),
+                                                {crate::i18n::tr("friendly.realm")}
                                             }
                                         },
                                         RealmTreeNodeKind::Space => rsx! {
                                             span {
                                                 class: "pill muted xs",
                                                 "data-testid": "realm-tree-kind-space",
-                                                title: "Space — navigation container inside a Realm (spec realm-and-space.md §3)",
-                                                "Space"
+                                                title: crate::i18n::tr("friendly.space.description"),
+                                                {crate::i18n::tr("friendly.space")}
                                             }
                                         },
                                     }

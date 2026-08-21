@@ -3183,10 +3183,11 @@ fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool 
 /// `ak.component.realm.authority_root.v1` in v1, and its registered
 /// `value_projection` derives `controller_id` from the envelope `actor_id`.
 /// Both members are create-locked, so a resolved value never changes and is
-/// cached per process. (`ak.realm.owner.transfer` will move the controller in
-/// a later protocol phase; admission re-validates the claim against the
-/// Event's own Seal basis either way, so a stale cache can only fail closed,
-/// never over-claim.)
+/// cached per process. (`ak.realm.owner.transfer` — now authorable from the
+/// Realm-admin governance card — moves the controller after genesis; this
+/// cache deliberately stays create-locked, and admission re-validates the
+/// claim against the Event's own Seal basis either way, so a stale cache can
+/// only fail closed, never over-claim.)
 #[derive(Clone, Debug, PartialEq)]
 enum RealmCreateAuthority {
     /// The create carries the create-locked
@@ -3798,6 +3799,7 @@ mod tests {
             &["ak.message.create"],
             None,
             Value::Null,
+            crate::operation::ak_ops::IssuerRootBasis::default(),
         )
         .unwrap()
         .build_sdk_event("inkson")

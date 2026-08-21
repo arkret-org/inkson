@@ -313,7 +313,7 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     assert!(!op.payload().contains_key("components"));
     assert!(!op.payload().contains_key("patch"));
     assert_registered_payload_valid(&op);
-    assert_payload_field_names_are_spec_canonical(&op.payload());
+    assert_payload_field_names_are_spec_canonical(op.payload());
 }
 
 #[test]
@@ -361,7 +361,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
     assert!(!op.payload().contains_key("preconditions"));
     assert!(!op.payload().contains_key("effects"));
     assert_registered_payload_valid(&op);
-    assert_payload_field_names_are_spec_canonical(&op.payload());
+    assert_payload_field_names_are_spec_canonical(op.payload());
 }
 
 #[test]
@@ -719,7 +719,11 @@ fn canonical_digest_is_stable_across_key_order() {
                 reordered.as_object_mut().unwrap().insert(
                     "payload".to_owned(),
                     serde_json::from_value(json!({
-                        "content": {"body": "hello", "kind": "ak.content.text"},
+                        "content": {
+                            "body": "hello",
+                            "format": "plain",
+                            "kind": "ak.content.text"
+                        },
                         "strand_id": "ak:strand:AXA352XtBodUhnMN_nDxOloEHVn0_yAotxiYxbyU38Df",
                         "track_name": "discussion"
                     }))
@@ -1260,7 +1264,7 @@ mod realm_organization_builder_tests {
             "organization_principal_id"
         );
         assert_eq!(event.payload()["authorization"]["proof"], "c2ln");
-        assert_payload_field_names_are_spec_canonical(&event.payload());
+        assert_payload_field_names_are_spec_canonical(event.payload());
         assert_registered_payload_valid(&event);
     }
 

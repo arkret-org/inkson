@@ -98,9 +98,9 @@
 .circle-security-warning,
 .circle-status {
   padding: 12px 14px;
-  border: 1px solid var(--warning-border, #a66f00);
+  border: 1px solid var(--warning);
   border-radius: 10px;
-  background: var(--warning-surface, #fff7df);
+  background: var(--warning-soft);
 }
 
 .circle-empty {

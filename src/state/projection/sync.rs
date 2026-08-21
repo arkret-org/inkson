@@ -17,17 +17,34 @@ fn projection_actor_id(event: &Value) -> Option<&str> {
 
 /// Extract the display text from a decrypted canonical Content Block JSON.
 ///
-/// The secure send path encodes the body via `ContentBlock::text(..).to_value()`,
-/// whose canonical shape is `{ "text": .. }`; composite content carries
+/// The secure send path encodes the body as a canonical Content Block with
+/// `body` plus its declared format; composite content carries
 /// ordered blocks under `parts[]`.
 fn projection_text_from_content_value(value: &Value) -> Option<&str> {
-    value.get("text").and_then(Value::as_str).or_else(|| {
-        value
-            .get("parts")
-            .and_then(Value::as_array)
-            .and_then(|parts| parts.first())
-            .and_then(projection_text_from_content_value)
-    })
+    value
+        .get("body")
+        .or_else(|| value.get("text"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            value
+                .get("parts")
+                .and_then(Value::as_array)
+                .and_then(|parts| parts.first())
+                .and_then(projection_text_from_content_value)
+        })
+}
+
+fn projection_text_from_private_sidecar(value: String) -> String {
+    serde_json::from_str::<Value>(&value)
+        .ok()
+        .filter(|content| {
+            content
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.starts_with("ak.content."))
+        })
+        .and_then(|content| projection_text_from_content_value(&content).map(ToOwned::to_owned))
+        .unwrap_or(value)
 }
 
 /// Project the `realms[*].timeline.events` of an account-subscribe response
@@ -203,7 +220,7 @@ pub fn projection_events_from_sync_realms(
                     None
                 };
                 if let Some(plaintext) = sidecar_body.or(decrypted_body) {
-                    body = plaintext;
+                    body = projection_text_from_private_sidecar(plaintext);
                 }
             }
             if late_recovery_rejection.is_some() {

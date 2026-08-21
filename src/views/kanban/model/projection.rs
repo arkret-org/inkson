@@ -16,6 +16,7 @@ pub(crate) fn truthy_env_value(value: Option<&str>) -> bool {
     value.is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
 
+#[allow(clippy::expect_used)]
 pub(crate) fn initial_board_space_options(seed_fallback_allowed: bool) -> Vec<BoardSpaceOption> {
     if seed_fallback_allowed {
         vec![BoardSpaceOption {

@@ -2,6 +2,38 @@ use arkret_wire::event_kind_str;
 
 use super::*;
 
+/// Closed set of shared-pin bodies, read back through their typed marker
+/// payloads so the recorded `payload` stays a closed discriminated shape.
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum SharedPinOperationBody {
+    Add(Box<arkret_sdk::PinAddPayload>),
+    Remove(arkret_sdk::PinRemovePayload),
+}
+
+/// Op-log record appended once a shared-pin write is accepted; field order
+/// matches the wire layout the previous `json!` literal produced.
+#[derive(serde::Serialize)]
+struct SharedPinOperationRecord<'a> {
+    event_id: &'a str,
+    kind: &'a str,
+    payload: SharedPinOperationBody,
+}
+
+fn shared_pin_operation_body(
+    operation: &crate::operation::LocalOperation,
+) -> anyhow::Result<SharedPinOperationBody> {
+    Ok(match operation.kind() {
+        arkret_sdk::EventKind::PinAdd => SharedPinOperationBody::Add(Box::new(
+            operation.typed_payload::<arkret_wire::event_spec::PinAdd>()?,
+        )),
+        arkret_sdk::EventKind::PinRemove => SharedPinOperationBody::Remove(
+            operation.typed_payload::<arkret_wire::event_spec::PinRemove>()?,
+        ),
+        other => anyhow::bail!("unsupported shared pin kind {}", other.as_str()),
+    })
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatCommandContext {
     pub base_url: String,
@@ -463,7 +495,10 @@ impl ChatController {
                 Err(error) => Err(error),
             };
             if let Err(error) = result {
-                status_msg.set(format!("Private save stayed local: {error}"));
+                status_msg.set(format!(
+                    "Private save stayed local: {}",
+                    crate::api_error::display_user_facing(&error)
+                ));
             }
         });
     }
@@ -508,6 +543,14 @@ impl ChatController {
                 return;
             }
         };
+        let body = match shared_pin_operation_body(&operation) {
+            Ok(body) => body,
+            Err(error) => {
+                self.status_msg.set(format!("Shared pin failed: {error:#}"));
+                self.message_context_menu.set(None);
+                return;
+            }
+        };
         if removing {
             self.shared_pins
                 .write()
@@ -544,14 +587,21 @@ impl ChatController {
             };
             match result {
                 Ok(submitted) => {
+                    let record = match serde_json::to_value(SharedPinOperationRecord {
+                        event_id: &submitted.event_id,
+                        kind: operation.kind().as_str(),
+                        payload: body,
+                    }) {
+                        Ok(record) => record,
+                        Err(error) => {
+                            status_msg.set(format!("Shared pin failed: {error}"));
+                            return;
+                        }
+                    };
                     state_store.write().append_raw_operation(
                         operation.local_operation_id().to_string(),
                         Some(realm_id),
-                        json!({
-                            "event_id": submitted.event_id.clone(),
-                            "kind": operation.kind().as_str(),
-                            "payload": operation.payload().clone(),
-                        }),
+                        record,
                     );
                     frontier_state.set(submitted.event_id);
                     status_msg.set(if removing {
@@ -568,7 +618,10 @@ impl ChatController {
                             !(pin.matches_scope(&pin_scope) && pin.target_ref == target_ref)
                         });
                     }
-                    status_msg.set(format!("Shared pin failed: {error}"));
+                    status_msg.set(format!(
+                        "Shared pin failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ));
                 }
             }
         });
@@ -656,6 +709,7 @@ impl ChatController {
         {
             message.revisions.push(message.body.clone());
             message.body = content.clone();
+            message.content_format = Some(arkret_sdk::TextFormat::Markdown);
             message.edited = true;
             message.pending = true;
             message.failed = false;
@@ -670,8 +724,21 @@ impl ChatController {
         let mut messages = self.messages;
         let mut status_msg = self.status_msg;
         spawn(async move {
-            let result =
-                match chat_message_revise_operation(&realm_id, &actor, &target_ref, &content) {
+            let result = match chat_content_block_for_body_with_upload(
+                &base_url,
+                api_token.clone(),
+                wait_for.clone(),
+                &realm_id,
+                &content,
+            )
+            .await
+            {
+                Ok(content_block) => match chat_message_revise_operation_with_content(
+                    &realm_id,
+                    &actor,
+                    &target_ref,
+                    content_block,
+                ) {
                     Ok(operation) => match authed_api_with_sync(&base_url, api_token, wait_for) {
                         Ok(api) => match api.event_submitter() {
                             Ok(submitter) => submitter.submit_sdk_event(&operation).await,
@@ -683,12 +750,34 @@ impl ChatController {
                         mark_message_command_failed(
                             &mut messages,
                             &message_id,
-                            format!("Message update failed: {error:#}"),
+                            format!(
+                                "Message update failed: {}",
+                                crate::api_error::display_user_facing(&error)
+                            ),
                         );
-                        status_msg.set(format!("Message update failed: {error:#}"));
+                        status_msg.set(format!(
+                            "Message update failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        ));
                         return;
                     }
-                };
+                },
+                Err(error) => {
+                    mark_message_command_failed(
+                        &mut messages,
+                        &message_id,
+                        format!(
+                            "Message update failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        ),
+                    );
+                    status_msg.set(format!(
+                        "Message update failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ));
+                    return;
+                }
+            };
             match result {
                 Ok(_) => {
                     mark_message_command_succeeded(&mut messages, &message_id);
@@ -698,9 +787,15 @@ impl ChatController {
                     mark_message_command_failed(
                         &mut messages,
                         &message_id,
-                        format!("Message update failed: {error}"),
+                        format!(
+                            "Message update failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        ),
                     );
-                    status_msg.set(format!("Message update failed: {error}"));
+                    status_msg.set(format!(
+                        "Message update failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ));
                 }
             }
         });
@@ -717,6 +812,7 @@ impl ChatController {
         {
             found.redacted = true;
             found.body.clear();
+            found.content_format = None;
             found.pending = true;
             found.failed = false;
             found.error = None;
@@ -779,9 +875,15 @@ impl ChatController {
                     mark_message_command_failed(
                         &mut messages,
                         &message_id,
-                        format!("Message removal failed: {error}"),
+                        format!(
+                            "Message removal failed: {}",
+                            crate::api_error::display_user_facing(&error)
+                        ),
                     );
-                    status_msg.set(format!("Message removal failed: {error}"));
+                    status_msg.set(format!(
+                        "Message removal failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ));
                 }
             }
         });
@@ -1017,6 +1119,7 @@ impl ChatController {
                             "kind": event_kind_str::MESSAGE_CREATE,
                             "actor_id": actor,
                             "body": message.body,
+                            "content": operation.payload()["content"].clone(),
                             "strand_id": message.strand_id,
                             "message_id": retry_message_id,
                             "mentions": mention_values,

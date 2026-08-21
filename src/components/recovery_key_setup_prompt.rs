@@ -29,15 +29,21 @@ fn begin_recovery_key_setup(
     mut status: Signal<String>,
     mut copied: Signal<bool>,
     mut device_unauthorized: Signal<bool>,
+    mut generation_failed: Signal<bool>,
 ) {
+    generation_failed.set(false);
     if account_did().trim().is_empty() {
-        status.set("Recovery Key setup requires an active account.".to_owned());
+        status.set(crate::i18n::tr("recovery_setup.err_requires_account"));
         return;
     }
     let recovery_key = match generate_recovery_key() {
         Ok(key) => key,
         Err(err) => {
-            status.set(format!("Recovery Key generation failed: {err}"));
+            generation_failed.set(true);
+            status.set(crate::i18n::tr_args(
+                "recovery_setup.err_generation_failed",
+                &[("error", err.to_string())],
+            ));
             return;
         }
     };
@@ -45,10 +51,7 @@ fn begin_recovery_key_setup(
     confirmation_input.set(String::new());
     device_unauthorized.set(false);
     generated_recovery_key.set(recovery_key);
-    status.set(
-        "Write the 24 words down offline, then re-enter them. Nothing has been published yet."
-            .to_owned(),
-    );
+    status.set(crate::i18n::tr("recovery_setup.status_after_generate"));
 }
 #[component]
 pub fn RecoveryKeySetupPrompt(
@@ -70,6 +73,9 @@ pub fn RecoveryKeySetupPrompt(
     let mut auto_generate_started = use_signal(|| false);
     let mut device_unauthorized = use_signal(|| false);
     let mut publishing = use_signal(|| false);
+    // Tracks generation failure explicitly; the status text is localized, so
+    // string-matching it would break in non-English locales.
+    let mut generation_failed = use_signal(|| false);
     let navigator = use_navigator();
 
     use_effect(move || {
@@ -81,6 +87,7 @@ pub fn RecoveryKeySetupPrompt(
             copied.set(false);
             device_unauthorized.set(false);
             publishing.set(false);
+            generation_failed.set(false);
             return;
         }
         if auto_generate_started()
@@ -90,7 +97,7 @@ pub fn RecoveryKeySetupPrompt(
             return;
         }
         auto_generate_started.set(true);
-        status.set("Generating Recovery Key...".to_owned());
+        status.set(crate::i18n::tr("recovery_setup.generating"));
         begin_recovery_key_setup(
             account_did,
             generated_recovery_key,
@@ -98,6 +105,7 @@ pub fn RecoveryKeySetupPrompt(
             status,
             copied,
             device_unauthorized,
+            generation_failed,
         );
     });
 
@@ -110,9 +118,7 @@ pub fn RecoveryKeySetupPrompt(
     let current_status = status();
     let is_device_unauthorized = device_unauthorized();
     let is_publishing = publishing();
-    let generation_failed = !is_device_unauthorized
-        && generated_now.trim().is_empty()
-        && (current_status.contains("failed") || current_status.contains("could not be saved"));
+    let has_generation_failed = generation_failed() && generated_now.trim().is_empty();
 
     rsx! {
         Dialog {
@@ -124,15 +130,12 @@ pub fn RecoveryKeySetupPrompt(
                 if generated_recovery_key().trim().is_empty() {
                     open.set(false);
                 } else {
-                    status.set(
-                        "Store these 24 words first, then use the saved confirmation button."
-                            .to_owned(),
-                    );
+                    status.set(crate::i18n::tr("recovery_setup.save_first_guard"));
                 }
             },
             "data-testid": "recovery-key-setup-modal",
             "aria-labelledby": "recovery-key-setup-title",
-            "aria-label": "Set up 24-word Recovery Key",
+            "aria-label": crate::i18n::tr("recovery_setup.aria_label"),
             div {
                 class: "modal event mls-recovery-modal mls-backup-banner recovery-key-setup-dialog",
                 "data-testid": "recovery-key-setup-banner",
@@ -145,31 +148,28 @@ pub fn RecoveryKeySetupPrompt(
                         if generated_recovery_key().trim().is_empty() {
                             open.set(false);
                         } else {
-                            status.set(
-                                "Store these 24 words first, then use the saved confirmation button."
-                                    .to_owned(),
-                            );
+                            status.set(crate::i18n::tr("recovery_setup.save_first_guard"));
                         }
                     }
                 },
                 div { class: "modal-head event-head",
-                    h3 { id: "recovery-key-setup-title", "Set up your 24-word Recovery Key" }
-                    span { class: "muted", "required before encryption" }
+                    h3 { id: "recovery-key-setup-title", {crate::i18n::tr("recovery_setup.title")} }
+                    span { class: "muted", {crate::i18n::tr("recovery_setup.subtitle")} }
                 }
                 div { class: "modal-body mls-recovery-modal-body",
                     if is_device_unauthorized {
                         div { class: "form-hint-warn", "data-testid": "recovery-key-setup-device-unauthorized",
-                            "This device isn't authorized to publish recovery material. The words remain only on this screen; authorize the device, then retry with the same confirmed key, or restore with the existing Recovery Key."
+                            {crate::i18n::tr("recovery_setup.device_unauthorized")}
                         }
                     } else {
                         div { class: "muted",
-                            "Generate the 24 words here, write them down offline, then continue with encrypted Realms. Arkret cannot recover these words for you."
+                            {crate::i18n::tr("recovery_setup.intro")}
                         }
                     }
                     if !generated_now.trim().is_empty() {
                         div { class: "workflow-form",
                             Label { html_for: "recovery-key-setup-generated-key",
-                                "Recovery Key (24 words)"
+                                {crate::i18n::tr("recovery_setup.generated_key_label")}
                             }
                             Textarea {
                                 id: "recovery-key-setup-generated-key",
@@ -190,9 +190,9 @@ pub fn RecoveryKeySetupPrompt(
                                         }
                                     },
                                     if copied() {
-                                        "Copied"
+                                        {crate::i18n::tr("recovery_setup.copied")}
                                     } else {
-                                        "Copy words"
+                                        {crate::i18n::tr("recovery_setup.copy_words")}
                                     }
                                 }
                                 Button {
@@ -212,25 +212,25 @@ pub fn RecoveryKeySetupPrompt(
                                             );
                                         }
                                     },
-                                    "Download .txt"
+                                    {crate::i18n::tr("recovery_setup.download")}
                                 }
                             }
                             div { class: "form-hint-warn", "data-testid": "recovery-key-setup-generated-key-warning",
-                                "Store these words now. The plaintext Recovery Key is not uploaded and will not be shown again after you close this prompt."
+                                {crate::i18n::tr("recovery_setup.save_warning")}
                             }
                             Label { html_for: "recovery-key-setup-confirm-key",
-                                "Re-enter the saved Recovery Key"
+                                {crate::i18n::tr("recovery_setup.confirm_label")}
                             }
                             Textarea {
                                 id: "recovery-key-setup-confirm-key",
                                 "data-testid": "recovery-key-setup-confirm-key",
                                 rows: "3",
                                 value: "{confirmation_now}",
-                                placeholder: "Type or paste the 24 words you saved",
+                                placeholder: crate::i18n::tr("recovery_setup.confirm_placeholder"),
                                 oninput: move |event: FormEvent| confirmation_input.set(event.value()),
                             }
                             div { class: "muted", "data-testid": "recovery-key-setup-confirm-hint",
-                                "You can continue only after the saved copy matches exactly. If the copy is wrong, generate a new key and save that one instead."
+                                {crate::i18n::tr("recovery_setup.confirm_hint")}
                             }
                         }
                     }
@@ -247,22 +247,22 @@ pub fn RecoveryKeySetupPrompt(
                                 open.set(false);
                                 navigator.push(crate::routes::Route::Recovery);
                             },
-                            "Restore with existing Recovery Key"
+                            {crate::i18n::tr("recovery_setup.restore_button")}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "recovery-key-setup-dismiss",
                             onclick: move |_| open.set(false),
-                            "Close"
+                            {crate::i18n::tr("recovery_setup.close")}
                         }
                     } else if generated_now.trim().is_empty() {
-                        if generation_failed {
+                        if has_generation_failed {
                             Button {
                                 variant: ButtonVariant::Primary,
                                 "data-testid": "recovery-key-setup-submit",
                                 onclick: move |_| {
                                     auto_generate_started.set(true);
-                                    status.set("Generating Recovery Key...".to_owned());
+                                    status.set(crate::i18n::tr("recovery_setup.generating"));
                                     begin_recovery_key_setup(
                                         account_did,
                                         generated_recovery_key,
@@ -270,23 +270,24 @@ pub fn RecoveryKeySetupPrompt(
                                         status,
                                         copied,
                                         device_unauthorized,
+                                        generation_failed,
                                     );
                                 },
-                                "Try again"
+                                {crate::i18n::tr("recovery_setup.try_again")}
                             }
                         } else {
                             Button {
                                 variant: ButtonVariant::Primary,
                                 "data-testid": "recovery-key-setup-loading",
                                 disabled: true,
-                                "Generating..."
+                                {crate::i18n::tr("recovery_setup.generating_button")}
                             }
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
                             "data-testid": "recovery-key-setup-dismiss",
                             onclick: move |_| open.set(false),
-                            "Not now"
+                            {crate::i18n::tr("recovery_setup.not_now")}
                         }
                     } else {
                         Button {
@@ -295,7 +296,7 @@ pub fn RecoveryKeySetupPrompt(
                             disabled: is_publishing,
                             onclick: move |_| {
                                 auto_generate_started.set(true);
-                                status.set("Generating a replacement Recovery Key...".to_owned());
+                                status.set(crate::i18n::tr("recovery_setup.generating_replacement"));
                                 begin_recovery_key_setup(
                                     account_did,
                                     generated_recovery_key,
@@ -303,9 +304,10 @@ pub fn RecoveryKeySetupPrompt(
                                     status,
                                     copied,
                                     device_unauthorized,
+                                    generation_failed,
                                 );
                             },
-                            "Generate a new key"
+                            {crate::i18n::tr("recovery_setup.regenerate")}
                         }
                         Button {
                             variant: ButtonVariant::Primary,
@@ -323,14 +325,16 @@ pub fn RecoveryKeySetupPrompt(
                                     ) {
                                         RecoveryKeyConfirmationDiff::Match => {}
                                         RecoveryKeyConfirmationDiff::WordCount { entered } => {
-                                            status.set(format!(
-                                                "You entered {entered} of 24 words. Complete the phrase, then confirm again."
+                                            status.set(crate::i18n::tr_args(
+                                                "recovery_setup.err_word_count",
+                                                &[("entered", entered.to_string())],
                                             ));
                                             return;
                                         }
                                         RecoveryKeyConfirmationDiff::MismatchAt { index } => {
-                                            status.set(format!(
-                                                "Word {index} does not match this Recovery Key. Fix it and confirm again."
+                                            status.set(crate::i18n::tr_args(
+                                                "recovery_setup.err_word_mismatch",
+                                                &[("index", index.to_string())],
                                             ));
                                             return;
                                         }
@@ -339,16 +343,12 @@ pub fn RecoveryKeySetupPrompt(
                                     if actor.trim().is_empty()
                                         || saved_recovery_key.trim().is_empty()
                                     {
-                                        status.set(
-                                            "Recovery Key setup requires an active account."
-                                                .to_owned(),
-                                        );
+                                        status.set(crate::i18n::tr(
+                                            "recovery_setup.err_requires_account",
+                                        ));
                                         return;
                                     }
-                                    status.set(
-                                        "Cold custody confirmed. Publishing the recovery policy and first encrypted backup…"
-                                            .to_owned(),
-                                    );
+                                    status.set(crate::i18n::tr("recovery_setup.publishing"));
                                     publishing.set(true);
                                     let accepted_key = saved_recovery_key.clone();
                                     let accepted_actor = actor.clone();
@@ -364,10 +364,9 @@ pub fn RecoveryKeySetupPrompt(
                                                     )
                                                     else {
                                                     publishing.set(false);
-                                                    status.set(
-                                                        "Recovery material was accepted, but public local metadata could not be saved."
-                                                            .to_owned(),
-                                                    );
+                                                    status.set(crate::i18n::tr(
+                                                        "recovery_setup.metadata_save_failed",
+                                                    ));
                                                     return;
                                                 };
                                                 let mut store = state_store.write();
@@ -407,7 +406,7 @@ pub fn RecoveryKeySetupPrompt(
                                     );
                                 }
                             },
-                            "Confirm saved key"
+                            {crate::i18n::tr("recovery_setup.confirm_button")}
                         }
                     }
                 }

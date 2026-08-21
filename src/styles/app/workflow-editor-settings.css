@@ -7,9 +7,9 @@
 }
 .card-detail-edit-status {
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 42%, var(--border, var(--ak-line)));
+  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border, var(--ak-line)));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--warning-soft, #fff8e5) 28%, transparent);
+  background: color-mix(in srgb, var(--warning-soft) 28%, transparent);
   color: var(--text, var(--ak-ink));
   font-size: 12px;
   line-height: 1.45;
@@ -73,7 +73,7 @@
 .tab.active {
   border-color: var(--ak-brand);
   background: var(--ak-brand);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 .settings-shell {
   display: grid;

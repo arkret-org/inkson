@@ -12,13 +12,6 @@ pub(crate) struct BackupSummaryRow {
     pub(crate) created_at: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct BackupClassCounts {
-    pub(crate) secret_storage: usize,
-    pub(crate) mls_history: usize,
-    pub(crate) other: usize,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RecoveryState {
     /// SHA-256 fingerprint of the current Recovery Key (never the plaintext).

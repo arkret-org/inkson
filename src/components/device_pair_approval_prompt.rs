@@ -99,15 +99,15 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
             },
             "data-testid": "device-pair-approval-modal",
             "aria-labelledby": "device-pair-approval-title",
-            "aria-label": "A new device is requesting access to your account",
+            "aria-label": crate::i18n::tr("device_pair.aria_label"),
             div { class: "modal event",
                 div { class: "modal-head event-head",
-                    h3 { id: "device-pair-approval-title", "New device wants to join your account" }
-                    span { class: "muted", "device pairing" }
+                    h3 { id: "device-pair-approval-title", {crate::i18n::tr("device_pair.title")} }
+                    span { class: "muted", {crate::i18n::tr("device_pair.subtitle")} }
                 }
                 div { class: "modal-body",
                     p { class: "muted",
-                        "A device is asking to be added to your account. Approve it only if you started this — compare the code below on both devices first."
+                        {crate::i18n::tr("device_pair.body")}
                     }
                     div {
                         class: "device-pair-approval-device",
@@ -118,14 +118,18 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
                             span { class: "muted mono", "{device_id_label}" }
                         }
                         if !platform.trim().is_empty() {
-                            span { class: "muted", "Platform: {platform}" }
+                            span { class: "muted",
+                                {crate::i18n::tr_args("device_pair.platform", &[("platform", platform.clone())])}
+                            }
                         }
                         if !expires_at.trim().is_empty() {
-                            span { class: "muted", "Request expires {expires_at}" }
+                            span { class: "muted",
+                                {crate::i18n::tr_args("device_pair.expires", &[("time", expires_at.clone())])}
+                            }
                         }
                     }
                     div { class: "device-pair-approval-code-block",
-                        span { class: "muted", "Compare this code on both devices" }
+                        span { class: "muted", {crate::i18n::tr("device_pair.compare_code")} }
                         strong {
                             class: "device-pair-approval-code mono",
                             "data-testid": "device-pair-approval-code",
@@ -147,7 +151,7 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
                                 .dismiss_pairing_to_device_message(&reject_device, &reject_code);
                             status.set(String::new());
                         },
-                        "Reject"
+                        {crate::i18n::tr("device_pair.reject")}
                     }
                     Button {
                         variant: ButtonVariant::Primary,
@@ -159,7 +163,7 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
                             let device = approve_device.clone();
                             let code = approve_code.clone();
                             let payload = approve_payload.clone();
-                            status.set("Approving…".to_owned());
+                            status.set(crate::i18n::tr("device_pair.approving"));
                             spawn(async move {
                                 match crate::transport::auth::with_authed_api(
                                     &base,
@@ -186,12 +190,15 @@ pub fn DevicePairApprovalPrompt(token: Signal<String>, device_id: Signal<String>
                                         status.set(String::new());
                                     }
                                     Err(err) => {
-                                        status.set(format!("Approval failed: {}", err.display()));
+                                        status.set(crate::i18n::tr_args(
+                                            "device_pair.err_approval_failed",
+                                            &[("error", err.display())],
+                                        ));
                                     }
                                 }
                             });
                         },
-                        "Approve"
+                        {crate::i18n::tr("device_pair.approve")}
                     }
                 }
             }

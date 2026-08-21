@@ -637,6 +637,20 @@ pub(super) fn save_card_calendar_edit(
     }
 }
 
+/// Queued op-log record for one calendar RSVP write; field order matches
+/// the wire layout the previous `json!` literal produced, with `body` read
+/// back through its typed marker payload.
+#[derive(serde::Serialize)]
+struct QueuedCalendarRsvpRecord<'a> {
+    kind: &'a str,
+    operation_id: &'a str,
+    actor_id: String,
+    created_at: String,
+    write_state: &'static str,
+    body: arkret_sdk::RsvpSetPayload,
+    activity_summary: String,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_calendar_rsvp(
     base_url: String,
@@ -702,18 +716,34 @@ pub(super) fn dispatch_calendar_rsvp(
             Ok(event) => {
                 let operation_id = event.local_operation_id().to_string();
                 let kind = event.kind().as_str().to_owned();
+                let body = match event.typed_payload::<arkret_wire::event_spec::RsvpSet>() {
+                    Ok(body) => body,
+                    Err(err) => {
+                        board_status.set(format!("cannot queue RSVP: {err:#}"));
+                        return;
+                    }
+                };
+                let record = match serde_json::to_value(QueuedCalendarRsvpRecord {
+                    kind: &kind,
+                    operation_id: &operation_id,
+                    actor_id: event.actor_id().to_string(),
+                    created_at: arkret_sdk::canonical::format_timestamp_canonical(
+                        event.created_at(),
+                    ),
+                    write_state: "queued",
+                    body,
+                    activity_summary: format!("RSVP {status}"),
+                }) {
+                    Ok(record) => record,
+                    Err(err) => {
+                        board_status.set(format!("cannot queue RSVP: {err}"));
+                        return;
+                    }
+                };
                 state_store.write().enqueue_local_projection_command(
                     operation_id.clone(),
                     Some(realm_id.clone()),
-                    serde_json::json!({
-                        "kind": kind,
-                        "operation_id": operation_id.clone(),
-                        "actor_id": event.actor_id().to_string(),
-                        "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
-                        "write_state": "queued",
-                        "body": event.payload().clone(),
-                        "activity_summary": format!("RSVP {status}"),
-                    }),
+                    record,
                 );
                 board_status.set(format!(
                     "submitting RSVP {}",

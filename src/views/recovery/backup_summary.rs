@@ -1,6 +1,6 @@
 //! Backup-list parsing, recency sorting, and inventory-status formatting.
 
-use super::types::{BackupClassCounts, BackupSummaryRow};
+use super::types::BackupSummaryRow;
 
 pub(crate) fn parse_backup_summary(v: &serde_json::Value) -> Option<BackupSummaryRow> {
     let backup_id = v.get("backup_id")?.as_str()?.to_owned();
@@ -29,18 +29,6 @@ pub(crate) fn parse_backup_list(payload: &serde_json::Value) -> Vec<BackupSummar
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(parse_backup_summary).collect())
         .unwrap_or_default()
-}
-
-pub(crate) fn backup_class_counts(rows: &[BackupSummaryRow]) -> BackupClassCounts {
-    let mut counts = BackupClassCounts::default();
-    for row in rows {
-        match row.backup_kind.as_str() {
-            "secret_storage" => counts.secret_storage += 1,
-            "mls_history" => counts.mls_history += 1,
-            _ => counts.other += 1,
-        }
-    }
-    counts
 }
 
 fn backup_created_epoch_ms(row: &BackupSummaryRow) -> Option<i64> {
@@ -77,19 +65,27 @@ pub(crate) fn fmt_backup_timestamp(iso: &str) -> String {
         .unwrap_or_else(|_| iso.to_owned())
 }
 
-pub(crate) fn backup_inventory_status(rows: &[BackupSummaryRow]) -> String {
-    let counts = backup_class_counts(rows);
+/// Inventory summary for the backup-history panel: whether the server
+/// listed any backups, and if so how many plus the latest timestamp.
+/// Copy is localized by the caller (`recovery.panel.inventory_*` keys);
+/// this type carries data only so it can cross the spawned-task boundary
+/// where `tr()` has no Dioxus context.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BackupInventoryStatus {
+    Empty,
+    Loaded { count: usize, latest: String },
+}
+
+pub(crate) fn backup_inventory_status(rows: &[BackupSummaryRow]) -> BackupInventoryStatus {
     if rows.is_empty() {
-        return "Loaded 0 backup timestamps from the server. Recovery policy status is checked separately from encrypted backup inventory.".to_owned();
+        return BackupInventoryStatus::Empty;
     }
     let latest = sorted_backups_latest_first(rows)
         .first()
         .map(|row| fmt_backup_timestamp(&row.created_at))
         .unwrap_or_else(|| "Unknown time".to_owned());
-    let message = format!(
-        "Loaded {} backup timestamp(s). Last backup: {latest}",
-        rows.len()
-    );
-    let _ = counts;
-    message
+    BackupInventoryStatus::Loaded {
+        count: rows.len(),
+        latest,
+    }
 }

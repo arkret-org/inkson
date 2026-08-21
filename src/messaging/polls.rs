@@ -522,7 +522,7 @@ mod tests {
             .unwrap()
             .validate_payload(
                 op.kind().as_str(),
-                &serde_json::to_value(&op.payload()).unwrap(),
+                &serde_json::to_value(op.payload()).unwrap(),
             )
             .unwrap();
     }
@@ -550,7 +550,7 @@ mod tests {
             .unwrap()
             .validate_payload(
                 op.kind().as_str(),
-                &serde_json::to_value(&op.payload()).unwrap(),
+                &serde_json::to_value(op.payload()).unwrap(),
             )
             .unwrap();
     }

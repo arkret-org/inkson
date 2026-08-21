@@ -931,6 +931,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             sender: actor.clone(),
                                             executed_by: None,
                                             body: format!("[poll] {}", draft_snapshot.question),
+                                            content_format: None,
                                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                             created_at: Some(chrono::Utc::now()),
                                             strand_id: selected_strand.clone(),
@@ -1066,6 +1067,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             sender: actor.clone(),
                                             executed_by: None,
                                             body: format!("[poll] {}", draft_snapshot.question),
+                                            content_format: None,
                                             timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                             created_at: Some(chrono::Utc::now()),
                                             strand_id: selected_strand.clone(),
@@ -1181,10 +1183,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let device_id_for_sidecar = sidecar_device_id.clone();
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
-                                    return;
-                                }
-                                if let Err(error) = chat_content_block_for_body(&body) {
-                                    status_msg.set(format!("Message send failed: {error:#}"));
                                     return;
                                 }
                                 let inserted_candidates =
@@ -1350,6 +1348,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     sender: actor.clone(),
                                     executed_by: None,
                                     body: body.clone(),
+                                    content_format: Some(arkret_sdk::TextFormat::Markdown),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     created_at: Some(chrono::Utc::now()),
                                     strand_id: channel.strand_id.clone(),
@@ -1521,6 +1520,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                         "kind": event_kind_str::MESSAGE_CREATE,
                                                         "actor_id": actor_for_store,
                                                         "body": body_for_store,
+                                                        "content": op.payload()["content"].clone(),
                                                         "strand_id": strand_id_for_store,
                                                         "message_id": message_id_for_store,
                                                         "mentions": mention_values_for_store,
@@ -1795,6 +1795,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         sender: actor.clone(),
                                         executed_by: None,
                                         body: body.clone(),
+                                        content_format: Some(arkret_sdk::TextFormat::Markdown),
                                         timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                         created_at: Some(chrono::Utc::now()),
                                         strand_id: source_strand_id.clone(),
@@ -1918,6 +1919,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     sender: actor.clone(),
                                     executed_by: None,
                                     body: body.clone(),
+                                    content_format: Some(arkret_sdk::TextFormat::Markdown),
                                     timestamp: chrono::Utc::now().format("%H:%M").to_string(),
                                     created_at: Some(chrono::Utc::now()),
                                     strand_id: strand_id.clone(),
@@ -2065,6 +2067,22 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         return;
                                     }
                                 };
+                                let content_for_sidecar = match String::from_utf8(
+                                    secure_content_bytes.clone(),
+                                ) {
+                                    Ok(content) => content,
+                                    Err(err) => {
+                                        fail_optimistic_chat_send(
+                                            messages,
+                                            chat_draft,
+                                            status_msg,
+                                            &message_id,
+                                            &body,
+                                            format!("Send Secure could not preserve message content: {err}"),
+                                        );
+                                        return;
+                                    }
+                                };
                                 let seal_view = state_store.read().seal_view_for_realm(&realm);
                                 // Shared MLS core: encrypt → forced ak.mls.commit
                                 // envelope (governance / prev→post epoch /
@@ -2133,7 +2151,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 // keyed on the event's `strand_id` matches.
                                 let strand_id_for_sidecar = strand_id.clone();
                                 let strand_id_for_record = strand_id.clone();
-                                let body_for_sidecar = body.clone();
+                                let content_for_sidecar = content_for_sidecar.clone();
                                 // P2: recoverable draft — if the encrypted send
                                 // fails we restore the composer text instead of
                                 // losing it.
@@ -2264,7 +2282,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &realm_for_record,
                                             &strand_id_for_sidecar,
                                             &format!("message:{protocol_message_id}"),
-                                            &body_for_sidecar,
+                                            &content_for_sidecar,
                                         );
                                     }
                                     // BUG A (X9): clear the optimistic bubble's

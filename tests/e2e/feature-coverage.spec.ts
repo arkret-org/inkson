@@ -664,23 +664,24 @@ test.describe("feature coverage placeholders", () => {
   // ---- WebRTC call ----
   // UI surface: call
   // spec: crypto-media/webrtc-signaling.md
-  test("call: host without authenticated route adapter exposes no media actions", async ({
+  test("call: authenticated route adapter exposes the call surface", async ({
     page,
   }) => {
-    // The core media client rejects an empty verified_media_routes set. Until
-    // this host can produce authenticated Garth route evaluations, the route
-    // must be an honest unavailable state rather than a clickable path that
-    // is guaranteed to fail during token exchange.
+    // The host now ships the Garth route-evaluator adapter
+    // (`crate::media::service_route`): the call route renders the real dialer
+    // instead of the honest-unavailable banner. Joins remain fail-closed —
+    // token exchange only runs with evaluator-verified route material, and a
+    // failed evaluation surfaces in `call-error` without reaching the issuer.
     await page.goto("/call", {
       waitUntil: "domcontentloaded",
       timeout: 120_000,
     });
-    await expect(page.getByTestId("call-route-unavailable")).toBeVisible({
+    await expect(page.getByTestId("call-panel")).toBeVisible({
       timeout: 60_000,
     });
-    await expect(page.getByTestId("call-panel")).toHaveCount(0);
-    await expect(page.getByTestId("call-start-voice-button")).toHaveCount(0);
-    await expect(page.getByTestId("call-start-group-button")).toHaveCount(0);
+    await expect(page.getByTestId("call-route-unavailable")).toHaveCount(0);
+    await expect(page.getByTestId("call-start-voice-button")).toBeVisible();
+    await expect(page.getByTestId("call-start-group-button")).toBeVisible();
   });
 
   // ---- Push gateway masking ----

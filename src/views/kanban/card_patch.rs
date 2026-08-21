@@ -22,7 +22,7 @@ fn strand_content_patch_value(text: &str) -> Result<Value, String> {
             "card content exceeds the {KANBAN_CONTENT_TEXT_MAX_CHARS} character inline limit for ak.content.text"
         ));
     }
-    let block = arkret_sdk::ContentBlock::text(text).with_field("format", json!("markdown"));
+    let block = arkret_sdk::ContentBlock::markdown_text(text);
     let value = serde_json::to_value(&block)
         .map_err(|err| format!("cannot serialize card content block: {err}"))?;
     Ok(json!({ "$op": "set", "value": value }))

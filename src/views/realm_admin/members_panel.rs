@@ -2655,7 +2655,19 @@ pub fn RealmMembersPanel(
     let self_is_known_governance = active_members.iter().any(|member| {
         same_principal_core(&member.actor_id, &account_did) && member.is_governance_principal()
     });
-    let self_leave_disabled_reason = if self_is_known_governance && governance_member_count <= 1 {
+    // Authority-root controller: `capabilities.md` §10.4 L858 — the root
+    // controller's only exit is `ak.realm.owner.transfer`, regardless of how
+    // many other admins exist, so this outranks the softer last-admin guard.
+    let self_is_root_controller = active_members
+        .iter()
+        .any(|member| same_principal_core(&member.actor_id, &account_did) && member.is_owner);
+    let self_leave_disabled_reason = if self_is_root_controller {
+        Some(
+            "Transfer Realm ownership first (ak.realm.owner.transfer, Realm settings → Security \
+             → Realm governance) — the root controller has no other exit path."
+                .to_owned(),
+        )
+    } else if self_is_known_governance && governance_member_count <= 1 {
         Some("Transfer or add Realm admin authority before leaving.".to_owned())
     } else {
         None
@@ -3170,7 +3182,10 @@ pub fn RealmMembersPanel(
                                                         {
                                                             Ok(did) => did,
                                                             Err(error) => {
-                                                                status_msg.set(format!("invite target resolve failed: {error}"));
+                                                                status_msg.set(format!(
+                                                                    "invite target resolve failed: {}",
+                                                                    crate::api_error::display_user_facing(&error)
+                                                                ));
                                                                 return;
                                                             }
                                                         };
@@ -3295,7 +3310,10 @@ pub fn RealmMembersPanel(
                                                                     )),
                                                                 }
                                                             }
-                                                            Err(error) => status_msg.set(format!("invite failed: {error}")),
+                                                            Err(error) => status_msg.set(format!(
+                                                                "invite failed: {}",
+                                                                crate::api_error::display_user_facing(&error)
+                                                            )),
                                                         }
                                                     }
                                                     Err(error) => status_msg.set(format!("invalid server URL: {error}")),

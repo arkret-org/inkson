@@ -1,6 +1,7 @@
 //! Drag/drop command controller for optimistic board moves and retries.
 
 use arkret_wire::event_kind_str;
+use serde::Serialize;
 
 use super::*;
 // Imports the drag-and-drop helpers relied on while they lived in the
@@ -11,6 +12,150 @@ use crate::move_builder::{
 };
 use crate::rank::RankError;
 use crate::state::MoveSubmissionState;
+
+/// Closed set of operation bodies `submit_kanban_operation_event` enqueues:
+/// board (container Space) creation and list patches (column order, rename).
+///
+/// Reading the erased payload back through its typed marker keeps the queued
+/// record's `body` a closed discriminated shape instead of an open JSON map.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum QueuedSpaceOperationBody {
+    Create(Box<arkret_sdk::SpaceCreatePayload>),
+    Update(arkret_sdk::SpacePatchPayload),
+}
+
+/// Queued op-log record written by `submit_kanban_operation_event`; field
+/// order matches the wire layout the previous `json!` literal produced.
+#[derive(Serialize)]
+struct QueuedSpaceOperationRecord<'a> {
+    kind: arkret_sdk::EventKind,
+    operation_id: &'a str,
+    actor_id: &'a str,
+    created_at: &'a str,
+    write_state: &'static str,
+    body: QueuedSpaceOperationBody,
+    local_target_ref: &'a str,
+}
+
+fn queued_space_operation_body(
+    operation: &crate::operation::LocalOperation,
+) -> anyhow::Result<QueuedSpaceOperationBody> {
+    Ok(match operation.kind() {
+        arkret_sdk::EventKind::SpaceCreate => QueuedSpaceOperationBody::Create(Box::new(
+            operation.typed_payload::<arkret_wire::event_spec::SpaceCreate>()?,
+        )),
+        arkret_sdk::EventKind::SpaceUpdate => QueuedSpaceOperationBody::Update(
+            operation.typed_payload::<arkret_wire::event_spec::SpaceUpdate>()?,
+        ),
+        other => anyhow::bail!("unsupported queued space operation kind {}", other.as_str()),
+    })
+}
+
+/// Queued op-log record written by `submit_kanban_card_create`.
+#[derive(Serialize)]
+struct QueuedCardCreateRecord<'a> {
+    kind: &'static str,
+    operation_id: &'a str,
+    actor_id: &'a str,
+    created_at: String,
+    cell: String,
+    effect: serde_json::Value,
+    wire_kind: &'a str,
+    body: arkret_sdk::StrandCreatePayload,
+    local_target_ref: &'a str,
+    write_state: &'static str,
+}
+
+/// Closed set of lifecycle bodies: Space container archive/restore and
+/// Strand archive/restore.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum QueuedLifecycleBody {
+    Space(arkret_sdk::SpaceStateTransitionPayload),
+    Strand(arkret_sdk::ObjectLifecyclePayload),
+}
+
+/// Queued op-log record written by the lifecycle dispatchers and the board
+/// archive cascade.
+#[derive(Serialize)]
+struct QueuedLifecycleRecord<'a> {
+    kind: arkret_sdk::EventKind,
+    operation_id: &'a str,
+    actor_id: &'a str,
+    created_at: String,
+    write_state: &'static str,
+    body: QueuedLifecycleBody,
+}
+
+fn queued_lifecycle_record(
+    event: &crate::operation::LocalOperation,
+    actor_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let body = match event.kind() {
+        arkret_sdk::EventKind::SpaceArchive => QueuedLifecycleBody::Space(
+            event.typed_payload::<arkret_wire::event_spec::SpaceArchive>()?,
+        ),
+        arkret_sdk::EventKind::SpaceRestore => QueuedLifecycleBody::Space(
+            event.typed_payload::<arkret_wire::event_spec::SpaceRestore>()?,
+        ),
+        arkret_sdk::EventKind::StrandArchive => QueuedLifecycleBody::Strand(
+            event.typed_payload::<arkret_wire::event_spec::StrandArchive>()?,
+        ),
+        arkret_sdk::EventKind::StrandRestore => QueuedLifecycleBody::Strand(
+            event.typed_payload::<arkret_wire::event_spec::StrandRestore>()?,
+        ),
+        other => anyhow::bail!("unsupported lifecycle operation kind {}", other.as_str()),
+    };
+    let operation_id = event.local_operation_id().to_string();
+    Ok(serde_json::to_value(QueuedLifecycleRecord {
+        kind: event.kind().clone(),
+        operation_id: &operation_id,
+        actor_id,
+        created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
+        write_state: "queued",
+        body,
+    })?)
+}
+
+/// Closed set of bodies for a queued strand-position CAS write.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum QueuedStrandPositionBody {
+    Move(arkret_sdk::StrandMovePayload),
+    Reorder(arkret_sdk::StrandReorderPayload),
+}
+
+/// Queued op-log record written by `submit_strand_position_cas_move`.
+#[derive(Serialize)]
+struct QueuedStrandPositionRecord<'a> {
+    kind: &'static str,
+    move_id: &'a str,
+    cell: String,
+    board_space_id: &'a str,
+    strand_id: &'a str,
+    expected_position: serde_json::Value,
+    target_position: serde_json::Value,
+    body: QueuedStrandPositionBody,
+    write_state: &'static str,
+}
+
+fn queued_strand_position_body(
+    event: &crate::operation::LocalOperation,
+    kind: &str,
+) -> anyhow::Result<QueuedStrandPositionBody> {
+    if kind == event_kind_str::STRAND_MOVE {
+        Ok(QueuedStrandPositionBody::Move(
+            event.typed_payload::<arkret_wire::event_spec::StrandMove>()?,
+        ))
+    } else if kind == event_kind_str::STRAND_REORDER {
+        Ok(QueuedStrandPositionBody::Reorder(
+            event.typed_payload::<arkret_wire::event_spec::StrandReorder>()?,
+        ))
+    } else {
+        anyhow::bail!("unsupported strand position kind {kind}")
+    }
+}
 
 pub(super) fn submit_kanban_operation_event(
     base_url: String,
@@ -30,23 +175,33 @@ pub(super) fn submit_kanban_operation_event(
     let kind = operation.kind().as_str().to_owned();
     let actor_id = operation.actor_id().to_string();
     let created_at = arkret_sdk::canonical::format_timestamp_canonical(operation.created_at());
+    let body = match queued_space_operation_body(&operation) {
+        Ok(body) => body,
+        Err(err) => {
+            board_status.set(format!("cannot queue {kind} operation: {err:#}"));
+            return;
+        }
+    };
     {
         let mut store = state_store.write();
-        store.enqueue_local_projection_command(
-            operation_id.clone(),
-            Some(realm_id),
-            json!({
-                "kind": kind,
-                "operation_id": operation_id,
-                "actor_id": actor_id,
-                "created_at": created_at,
-                "write_state": "queued",
-                "body": operation.payload().clone(),
-                // A create names its object only once accepted, so until then the
-                // record keys it by the write's holder-local handle.
-                "local_target_ref": operation.local_object_handle(),
-            }),
-        );
+        let record = match serde_json::to_value(QueuedSpaceOperationRecord {
+            kind: operation.kind().clone(),
+            operation_id: &operation_id,
+            actor_id: &actor_id,
+            created_at: &created_at,
+            write_state: "queued",
+            body,
+            // A create names its object only once accepted, so until then the
+            // record keys it by the write's holder-local handle.
+            local_target_ref: operation.local_object_handle(),
+        }) {
+            Ok(record) => record,
+            Err(err) => {
+                board_status.set(format!("cannot queue {kind} operation: {err}"));
+                return;
+            }
+        };
+        store.enqueue_local_projection_command(operation_id.clone(), Some(realm_id), record);
         // Land the op-log row inside this same write: the op-log-derived
         // pending Board surface (and the seed suppression reading it) must
         // observe the create before the options-sync effect re-runs, which
@@ -309,24 +464,38 @@ pub(super) fn submit_kanban_card_create(
         "strand_id": subject,
     });
     let op_id = event.local_operation_id().to_string();
+    let body = match event.typed_payload::<arkret_wire::event_spec::StrandCreate>() {
+        Ok(body) => body,
+        Err(err) => {
+            board_status.set(format!("cannot queue card create: {err:#}"));
+            return;
+        }
+    };
+    let record = match serde_json::to_value(QueuedCardCreateRecord {
+        kind,
+        operation_id: &op_id,
+        actor_id: &actor_id,
+        created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
+        cell: cell_id,
+        effect: value,
+        wire_kind: &wire_kind,
+        body,
+        // A create payload carries no object id, so the record has to say
+        // which handle this write's object is keyed by until the accepted
+        // Event names it.
+        local_target_ref: &subject,
+        write_state: "queued",
+    }) {
+        Ok(record) => record,
+        Err(err) => {
+            board_status.set(format!("cannot queue card create: {err}"));
+            return;
+        }
+    };
     state_store.write().enqueue_local_projection_command(
         op_id.clone(),
         Some(realm_id.clone()),
-        json!({
-            "kind": kind,
-            "operation_id": op_id,
-            "actor_id": actor_id.clone(),
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
-            "cell": cell_id,
-            "effect": value,
-            "wire_kind": wire_kind.clone(),
-            "body": event.payload().clone(),
-            // A create payload carries no object id, so the record has to say
-            // which handle this write's object is keyed by until the accepted
-            // Event names it.
-            "local_target_ref": subject,
-            "write_state": "queued",
-        }),
+        record,
     );
     board_status.set(format!(
         "submitting {wire_kind} event {}",
@@ -552,17 +721,17 @@ pub(super) fn dispatch_space_container_lifecycle(
     // state immediately via `project_board` (`apply_space_*`). On submit
     // failure we mark the op `dropped`, which `raw_operation_allows_overlay`
     // excludes — reverting the optimistic flip without a direct signal write.
+    let record = match queued_lifecycle_record(&event, &actor_id) {
+        Ok(record) => record,
+        Err(err) => {
+            board_status.set(format!("lifecycle update failed: {err:#}"));
+            return;
+        }
+    };
     state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id.clone()),
-        json!({
-            "kind": kind,
-            "operation_id": operation_id,
-            "actor_id": actor_id,
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
-            "write_state": "queued",
-            "body": event.payload().clone(),
-        }),
+        record,
     );
     let base = base_url.clone();
     let api_token = token();
@@ -642,17 +811,17 @@ pub(super) fn dispatch_strand_lifecycle(
     // Append the lifecycle op so the `columns` `use_memo` folds the optimistic
     // flip via `project_board` (`ak.strand.archive` / `ak.strand.restore`). On
     // submit failure we mark it `dropped` to revert — no direct signal write.
+    let record = match queued_lifecycle_record(&event, &actor_id) {
+        Ok(record) => record,
+        Err(err) => {
+            board_status.set(format!("lifecycle update failed: {err:#}"));
+            return;
+        }
+    };
     state_store.write().enqueue_local_projection_command(
         operation_id.clone(),
         Some(realm_id.clone()),
-        json!({
-            "kind": kind,
-            "operation_id": operation_id,
-            "actor_id": actor_id,
-            "created_at": arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
-            "write_state": "queued",
-            "body": event.payload().clone(),
-        }),
+        record,
     );
     let base = base_url.clone();
     let api_token = token();
@@ -765,25 +934,29 @@ pub(super) fn dispatch_board_archive_cascade(
 
     // Append all archive ops so the board empties immediately via the memo;
     // a partial-cascade failure reverts every op by marking it `dropped`.
+    // Serialize every queued record up front so a typing failure aborts
+    // before any optimistic op is appended.
+    let mut records: Vec<serde_json::Value> = Vec::with_capacity(events.len());
+    for event in &events {
+        match queued_lifecycle_record(event, &actor_id) {
+            Ok(record) => records.push(record),
+            Err(err) => {
+                board_status.set(format!("cannot archive board: {err:#}"));
+                return;
+            }
+        }
+    }
     let operation_ids: Vec<String> = {
         let mut store = state_store.write();
         events
             .iter()
-            .map(|event| {
+            .zip(records)
+            .map(|(event, record)| {
                 let operation_id = event.local_operation_id().to_string();
                 store.enqueue_local_projection_command(
                     operation_id.clone(),
                     Some(realm_id.clone()),
-                    json!({
-                        "kind": event.kind().as_str(),
-                        "operation_id": operation_id,
-                        "actor_id": actor_id,
-                        "created_at": arkret_sdk::canonical::format_timestamp_canonical(
-                            event.created_at()
-                        ),
-                        "write_state": "queued",
-                        "body": event.payload_value(),
-                    }),
+                    record,
                 );
                 operation_id
             })
@@ -903,37 +1076,51 @@ pub(super) fn submit_strand_position_cas_move(
     };
     let move_id = event.local_operation_id().to_string();
     let cell_id = strand_position_cell_id(&board_space_id, &strand_id);
+    let body = match queued_strand_position_body(&event, kind) {
+        Ok(body) => body,
+        Err(err) => {
+            board_status.set(format!("cannot submit {kind}: {err:#}"));
+            return;
+        }
+    };
+    let record = match serde_json::to_value(QueuedStrandPositionRecord {
+        kind,
+        move_id: &move_id,
+        cell: cell_id,
+        board_space_id: &board_space_id,
+        strand_id: &strand_id,
+        expected_position: match &expected {
+            StrandPositionExpectation::Initial => serde_json::Value::Null,
+            StrandPositionExpectation::At {
+                list_space_id,
+                rank,
+            } => json!({"space_id": list_space_id, "rank": rank}),
+        },
+        target_position: match &effect {
+            StrandPositionEffect::SetPosition {
+                list_space_id,
+                rank,
+            } => json!({"space_id": list_space_id, "rank": rank}),
+            StrandPositionEffect::Remove => serde_json::Value::Null,
+        },
+        // Canonical move/reorder payload so the event-sourced
+        // `project_board` reducer (`apply_move_to_view` /
+        // `apply_reorder_to_view`) folds the optimistic move immediately —
+        // `columns` is a pure `use_memo` over `raw_operations`, so the
+        // relocation must live in the op log, not a direct signal mutation.
+        body,
+        write_state: "submitted",
+    }) {
+        Ok(record) => record,
+        Err(err) => {
+            board_status.set(format!("cannot submit {kind}: {err}"));
+            return;
+        }
+    };
     state_store.write().enqueue_local_projection_command(
         move_id.clone(),
         Some(realm_id.clone()),
-        json!({
-            "kind": kind,
-            "move_id": move_id,
-            "cell": cell_id,
-            "board_space_id": board_space_id,
-            "strand_id": strand_id,
-            "expected_position": match &expected {
-                StrandPositionExpectation::Initial => serde_json::Value::Null,
-                StrandPositionExpectation::At {
-                    list_space_id,
-                    rank,
-                } => json!({"space_id": list_space_id, "rank": rank}),
-            },
-            "target_position": match &effect {
-                StrandPositionEffect::SetPosition {
-                    list_space_id,
-                    rank,
-                } => json!({"space_id": list_space_id, "rank": rank}),
-                StrandPositionEffect::Remove => serde_json::Value::Null,
-            },
-            // Canonical move/reorder payload so the event-sourced
-            // `project_board` reducer (`apply_move_to_view` /
-            // `apply_reorder_to_view`) folds the optimistic move immediately —
-            // `columns` is a pure `use_memo` over `raw_operations`, so the
-            // relocation must live in the op log, not a direct signal mutation.
-            "body": event.payload().clone(),
-            "write_state": "submitted",
-        }),
+        record,
     );
     board_status.set(format!(
         "submitting {kind} event {}",

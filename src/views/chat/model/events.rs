@@ -480,11 +480,13 @@ fn fold_revision_message_into(message: &mut ChatMessage, revision: ChatMessage) 
     if revision.redacted {
         message.redacted = true;
         message.body.clear();
+        message.content_format = None;
         message.reactions.clear();
         message.mentions.clear();
         message.crypto_state = MessageCryptoState::Plaintext;
     } else {
         let previous = std::mem::replace(&mut message.body, revision.body);
+        message.content_format = revision.content_format;
         append_revision_body(message, previous);
     }
     message.edited = true;
@@ -634,6 +636,7 @@ pub(crate) fn merge_duplicate_create_message(
         // carried body out of the edit history.
         if incoming.body.is_empty() && !existing.body.is_empty() {
             incoming.body = existing.body.clone();
+            incoming.content_format = existing.content_format;
         }
         // Carry forward locally-tracked edit metadata. The sync projection
         // rebuilds a message from its events but does not surface the
@@ -792,6 +795,47 @@ fn long_text_marker_from_value(value: &Value) -> Option<String> {
 fn display_body_from_value(value: &Value) -> Option<String> {
     long_text_marker_from_value(value)
         .or_else(|| text_body_from_value(value).map(ToOwned::to_owned))
+}
+
+pub(crate) fn content_format_from_value(value: &Value) -> Option<arkret_sdk::TextFormat> {
+    match value.get("kind").and_then(Value::as_str) {
+        Some(arkret_sdk::CONTENT_KIND_TEXT) => value
+            .get("format")
+            .and_then(Value::as_str)
+            .and_then(arkret_sdk::TextFormat::parse),
+        Some(arkret_sdk::CONTENT_KIND_LONG_TEXT) => match value
+            .get("format")
+            .and_then(Value::as_str)
+            .and_then(arkret_sdk::LongTextFormat::parse)
+        {
+            Some(arkret_sdk::LongTextFormat::Plain) => Some(arkret_sdk::TextFormat::Plain),
+            Some(arkret_sdk::LongTextFormat::Markdown) => Some(arkret_sdk::TextFormat::Markdown),
+            None => None,
+        },
+        _ => value
+            .get("parts")
+            .and_then(Value::as_array)
+            .and_then(|parts| parts.iter().find_map(content_format_from_value))
+            .or_else(|| value.get("content").and_then(content_format_from_value)),
+    }
+}
+
+pub(super) fn content_from_private_sidecar(
+    value: String,
+) -> (String, Option<arkret_sdk::TextFormat>) {
+    serde_json::from_str::<Value>(&value)
+        .ok()
+        .filter(|content| {
+            content
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.starts_with("ak.content."))
+        })
+        .and_then(|content| {
+            display_body_from_value(&content)
+                .map(|body| (body, content_format_from_value(&content)))
+        })
+        .unwrap_or((value, None))
 }
 
 pub(crate) fn text_body_from_message(candidates: &[&Value]) -> Option<String> {
@@ -1516,7 +1560,8 @@ pub(crate) fn chat_message_from_event_with_sidecar(
                 })
         })
     };
-    let body_from_sidecar = sidecar_body.is_some();
+    let sidecar_content = sidecar_body.map(content_from_private_sidecar);
+    let body_from_sidecar = sidecar_content.is_some();
     // P0 decrypt-on-read: a remote member's message carries ciphertext but no
     // author sidecar. Parse the canonical envelope, decrypt with this device's
     // MLS snapshot secret, and extract the Content Block text. Soft-fails to
@@ -1539,7 +1584,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         None
     };
     let decrypt_was_attempted = decrypt_context.is_some();
-    let decrypted_body = decrypt_context.and_then(|(store, actor_id, device_id, encrypted)| {
+    let decrypted_content = decrypt_context.and_then(|(store, actor_id, device_id, encrypted)| {
         decrypt_chat_encrypted_content_value(
             store,
             message_realm,
@@ -1549,16 +1594,24 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             encrypted,
             verified_sender_domain.as_deref(),
         )
-        .and_then(|content_value| display_body_from_value(&content_value))
+        .and_then(|content_value| {
+            display_body_from_value(&content_value)
+                .map(|body| (body, content_format_from_value(&content_value)))
+        })
     });
-    let body_was_decrypted = decrypted_body.is_some();
-    let body = if is_redaction_tombstone || late_recovery_rejection.is_some() {
-        String::new()
+    let body_was_decrypted = decrypted_content.is_some();
+    let (body, content_format) = if is_redaction_tombstone || late_recovery_rejection.is_some() {
+        (String::new(), None)
     } else {
-        match sidecar_body.or(decrypted_body) {
-            Some(plaintext) => plaintext,
-            None if has_encrypted_payload => String::new(),
-            None => text_body_from_message(&candidates)?,
+        match sidecar_content.or(decrypted_content) {
+            Some(content) => content,
+            None if has_encrypted_payload => (String::new(), None),
+            None => (
+                text_body_from_message(&candidates)?,
+                candidates
+                    .iter()
+                    .find_map(|candidate| content_format_from_value(candidate)),
+            ),
         }
     };
     let explicit_message_kind = candidates
@@ -1632,6 +1685,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
         body,
+        content_format,
         timestamp: short_message_time(first_string_in_candidates(&candidates, &["created_at"])),
         created_at: message_created_at_from_candidates(&candidates),
         strand_id,

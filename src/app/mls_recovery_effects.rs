@@ -343,7 +343,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                     }
                     Err(error) => {
                         tracing::warn!(
-                            error = %error.display(),
+                            error = %error.display_diagnostic(),
                             "MLS account-secret login unlock detection failed"
                         );
                     }

@@ -24,7 +24,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set(
         "error.agent.accountability_grant_missing",
-        "控制方问责授权缺失或已失效；请重新挂载授权后再试。",
+        "代理的所有者授权缺失或已过期。请重新连接该授权,然后重试。",
     );
     dict.set(
         "error.agent.approval_already_consumed",
@@ -33,59 +33,59 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
 
     dict.set(
         "error.call.focus_unavailable_for_client",
-        "所选媒体 focus 对此客户端不可用。请重试或离开通话。",
+        "此通话的媒体连接在当前应用中不可用。请重试,或退出通话后重新加入。",
     );
     dict.set(
         "error.call.focus_mismatch",
-        "媒体 focus 与通话状态不一致。请重新加入通话。",
+        "通话连接信息与通话状态不同步。请退出并重新加入通话。",
     );
     dict.set(
         "error.call.unknown_focus_type",
-        "未知的媒体 focus 类型,请将应用升级到兼容版本。",
+        "此通话使用了当前应用不支持的连接方式。请将应用更新到最新版本。",
     );
     dict.set(
         "error.call.token_issuer_unauthorised",
-        "媒体 token 签发者不是 realm 当前的媒体服务。拒绝连接。",
+        "通话的访问令牌并非来自此工作区当前的媒体服务,连接已被拒绝。",
     );
     dict.set(
         "error.call.participant_binding_invalid",
-        "Participant binding 校验失败(签名/TTL/字段不一致)。",
+        "某位参与者的通话凭证未通过校验,无法加入。",
     );
     dict.set(
         "error.call.participant_identity_unrecognised",
-        "后端报告的 participant identity 不在通话状态列表中。Fail closed。",
+        "服务器上报了一位不在此通话中的参与者。出于安全考虑,已拒绝连接。",
     );
     dict.set(
         "error.call.session_focus_already_committed",
-        "本通话的 session focus 已提交,请重新加入。",
+        "此通话的连接已经确定。请重新加入通话。",
     );
     dict.set(
         "error.call.e2ee_key_source_unauthorised",
-        "拒绝接受来自非授权来源的媒体密钥 — 仅 MLS Exporter 派生密钥被接受。",
+        "通话加密密钥来自不受信任的来源,已被拒绝。密钥只能来自群组自身的加密通道。",
     );
     dict.set(
         "error.call.recording_artifact_pipeline_bypassed",
-        "录制目标不是 Arkret 认证 blob — 拒绝录制。",
+        "录制目标不是经过验证的 Arkret 存储位置,已拒绝录制。",
     );
     dict.set(
         "error.call.transcription_artifact_pipeline_bypassed",
-        "转写目标不是 Arkret 认证 blob — 拒绝转写。",
+        "转写目标不是经过验证的 Arkret 存储位置,已拒绝转写。",
     );
     dict.set(
         "error.call.media_service_binding_uncovered",
-        "媒体服务声明未被当前 MLS governance binding 覆盖，已拒绝加入媒体。",
+        "此工作区尚未批准该通话使用的媒体服务,已拒绝加入。请联系管理员检查通话设置。",
     );
     dict.set(
         "error.call.media_plaintext_service_not_authorised",
-        "该媒体服务未被授权解密明文媒体，已拒绝媒体协商。",
+        "此媒体服务无权处理未加密的媒体内容,连接已被拒绝。",
     );
     dict.set(
         "error.call.mls_governance_binding_stale",
-        "MLS governance binding 未覆盖当前媒体策略，已拒绝媒体协商。",
+        "该通话的授权记录已过期,与当前媒体策略不符,连接已被拒绝。请重新加入通话。",
     );
     dict.set(
         "error.call.desktop_media_unavailable",
-        "桌面端通话尚未就绪(此版本无媒体传输)。请改用 Web 客户端发起本次通话。",
+        "此版本的桌面端通话功能尚未就绪。请改用网页版发起本次通话。",
     );
 
     dict.set(
@@ -103,7 +103,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
 
     dict.set(
         "error.recovery.witness_revoke_lagging",
-        "Recovery witness 撤销链落后 — 请等待 witness 链跟上。",
+        "恢复协助者的移除尚未同步完成。请稍等片刻,然后重试。",
     );
     dict.set(
         "error.recovery.policy_mismatch",
@@ -116,7 +116,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
 
     // R3.3 (AKP-0011) — shareable object links.
     dict.set("object_link.share", "分享链接");
-    dict.set("object_link.share_realm", "分享此 Realm");
+    dict.set("object_link.share_realm", "分享此工作区");
     dict.set("object_link.share_strand", "分享此 Strand");
     dict.set("object_link.share_message", "分享此消息");
     dict.set("object_link.copy_https", "复制链接");
@@ -130,6 +130,29 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     dict.set("object_link.opening", "正在打开链接…");
     dict.set("object_link.error.unavailable", "此链接不可用或已过期。");
     dict.set("object_link.error.invalid", "无法识别此链接格式。");
+}
+
+/// Generic API-error copy — zh counterparts of en.rs `add_generic_error_keys`.
+fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
+    dict.set("error.generic", "与服务器通信时出现问题。请重试。");
+    dict.set(
+        "error.network_unavailable",
+        "无法连接服务器。请检查网络连接,然后重试。",
+    );
+    dict.set(
+        "error.server_unavailable",
+        "服务器当前不可用。请检查服务器地址,或稍等片刻后重试。",
+    );
+    dict.set("error.session_expired", "登录已过期。请重新登录以继续。");
+    dict.set(
+        "error.device_not_authorized",
+        "此设备未获得该操作的授权。请在已登录的设备上授权此设备,然后重试。",
+    );
+    dict.set("error.rate_limited", "请求过于频繁。请稍等片刻,然后重试。");
+    dict.set(
+        "error.not_found",
+        "服务器找不到你要查看的内容。它可能已被移动或删除。请刷新后重试。",
+    );
 }
 
 /// Build Chinese translation dictionary.
@@ -150,7 +173,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("nav.collaboration", "协作");
     dict.set("nav.contacts", "联系人");
     dict.set("nav.direct_messages", "私聊");
-    dict.set("nav.new_realm_short", "领域");
+    dict.set("nav.new_realm_short", "工作区");
     dict.set("nav.add_contact_short", "联系人");
     dict.set("direct.empty", "暂无私聊");
     dict.set("direct.sign_in", "登录后加载私聊");
@@ -158,20 +181,20 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("direct.unavailable", "暂不可发送");
     dict.set("contacts.empty", "暂无联系人");
     dict.set("contacts.sign_in", "登录后加载联系人");
-    dict.set("sidebar.search_realms", "搜索领域");
+    dict.set("sidebar.search_realms", "搜索工作区");
     dict.set("sidebar.search_contacts", "搜索联系人");
     dict.set("sidebar.search", "搜索");
-    dict.set("sidebar.realms_empty", "尚未加载领域列表");
-    dict.set("sidebar.realms_sign_in", "登录后加载领域");
-    dict.set("sidebar.realms_no_results", "没有匹配的领域");
+    dict.set("sidebar.realms_empty", "尚未加载工作区");
+    dict.set("sidebar.realms_sign_in", "登录后加载工作区");
+    dict.set("sidebar.realms_no_results", "没有匹配的工作区");
 
     dict.set("directory.title", "目录");
     dict.set("directory.search", "搜索");
     dict.set("directory.search_placeholder", "搜索目录…");
     dict.set("directory.load_more", "加载更多");
-    dict.set("directory.tab.realms", "领域");
+    dict.set("directory.tab.realms", "工作区");
     dict.set("directory.tab.organizations", "组织");
-    dict.set("directory.tab.actors", "用户");
+    dict.set("directory.tab.actors", "成员");
     dict.set("directory.tab.objects", "对象");
     dict.set("directory.tab.applets", "应用");
     dict.set("directory.applet.ping", "连通性");
@@ -251,7 +274,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("blob.error.redacted", "此文件已被移除");
     dict.set("oob.code.invalid_or_expired", "验证码无效或已过期");
-    dict.set("realm.destroyed.banner", "此 Realm 已销毁");
+    dict.set("realm.destroyed.banner", "此工作区已销毁");
 
     dict.set("common.loading", "加载中...");
     dict.set("common.error", "错误");
@@ -281,7 +304,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("message.actions", "消息操作");
 
     // R-i18n-002 mirrored keys.
-    dict.set("topbar.search_placeholder", "跳转到 Realm、视图或操作...");
+    dict.set("topbar.search_placeholder", "跳转到工作区、视图或操作...");
     dict.set("topbar.notifications", "通知");
     dict.set("topbar.new_space", "新建空间");
     dict.set("topbar.account_menu", "账号菜单");
@@ -291,8 +314,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("login.signed_in_as", "已登录为");
     dict.set("login.title", "登录");
     dict.set("login.completing", "正在完成登录");
-    dict.set("login.principal_server", "主体服务器");
-    dict.set("login.principal_server_url", "主体服务器地址");
+    dict.set("login.principal_server", "登录服务器");
+    dict.set("login.principal_server_url", "登录服务器地址");
     dict.set("login.show_preset_servers", "显示预设服务器");
     dict.set("login.preset_servers", "预设服务器");
     dict.set("login.status.signed_out", "未登录");
@@ -318,21 +341,21 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("dashboard.notifications_label", "通知");
     dict.set("dashboard.notifications_delta_unread", "未读与待审批");
     dict.set("dashboard.notifications_delta_signin", "需要登录");
-    dict.set("dashboard.realms_label", "Realm");
-    dict.set("dashboard.realms_delta_search", "搜索或加入 Realm");
-    dict.set("dashboard.realms_delta_signin", "登录后加载 Realm");
-    dict.set("dashboard.workspace_setup", "Realm 设置");
+    dict.set("dashboard.realms_label", "工作区");
+    dict.set("dashboard.realms_delta_search", "搜索或加入工作区");
+    dict.set("dashboard.realms_delta_signin", "登录后加载工作区");
+    dict.set("dashboard.workspace_setup", "工作区设置");
     dict.set(
         "dashboard.workspace_setup_delta",
-        "创建第一个 Realm 与初始策略",
+        "创建第一个工作区与初始策略",
     );
     dict.set("dashboard.onboarding", "引导");
     dict.set("dashboard.onboarding_steps", "4 步");
     dict.set("dashboard.onboarding_delta", "身份、设备与恢复方案");
-    dict.set("dashboard.recent_realms", "最近 Realm");
-    dict.set("dashboard.no_realms", "暂无 Realm");
-    dict.set("dashboard.no_realms_help", "服务器尚未返回 Realm 列表。");
-    dict.set("dashboard.no_session_help", "客户端不会展示占位 Realm。");
+    dict.set("dashboard.recent_realms", "最近工作区");
+    dict.set("dashboard.no_realms", "暂无工作区");
+    dict.set("dashboard.no_realms_help", "服务器尚未返回工作区列表。");
+    dict.set("dashboard.no_session_help", "客户端不会展示占位工作区。");
     // F-I18N-CLEAN-1: new keys synced with the en dict.
     dict.set("dashboard.no_notifications", "暂无通知");
     dict.set("dashboard.notifications_signin", "登录后加载通知");
@@ -349,11 +372,11 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.settings.shared_history", "共享历史");
     dict.set(
         "chat.settings.shared_history_hint",
-        "Space 级别策略——在 Space 管理处设置。",
+        "工作区级策略——在工作区设置中管理。",
     );
     dict.set(
         "settings.muted_realms_empty",
-        "未静音任何 Realm。在通知视图中静音吵闹 Realm。",
+        "未静音任何工作区。可在通知视图中静音吵闹的工作区。",
     );
     dict.set("realm_admin.no_members_loaded", "还没有成员。");
     dict.set(
@@ -363,7 +386,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.members_no_match", "没有匹配的成员。");
     dict.set(
         "realm_admin.invite_hint",
-        "优先使用对方生成的邀请 locator 链接；如果对方允许被发现，也可以输入 handle 或 DID + server DID。",
+        "最稳妥的方式是使用对方分享给你的邀请链接。如果对方允许被发现,也可以输入其用户名或身份地址,以及对方所在的服务器。",
     );
 
     dict.set("notifications.archived", "显示已归档");
@@ -373,9 +396,9 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.showing", "已显示");
     dict.set("notifications.load_more", "加载更多");
     dict.set("directory.loading_more", "加载中…");
-    dict.set("directory.load_more_realms", "加载更多 Realm");
+    dict.set("directory.load_more_realms", "加载更多工作区");
     dict.set("directory.load_more_organizations", "加载更多组织");
-    dict.set("directory.load_more_actors", "加载更多用户");
+    dict.set("directory.load_more_actors", "加载更多成员");
 
     dict.set("composer.send", "发送");
     dict.set("composer.encrypted_toggle", "本地加密");
@@ -384,16 +407,16 @@ pub fn chinese_translations() -> TranslationDict {
         "明文消息对所配置的服务器可见。",
     );
 
-    dict.set("command_palette.realms", "Realm");
+    dict.set("command_palette.realms", "工作区");
     dict.set("command_palette.jump_to", "跳转到");
     dict.set(
         "command_palette.empty",
-        "未找到匹配的 Realm 或视图。按 Esc 关闭。",
+        "未找到匹配的工作区或视图。按 Esc 关闭。",
     );
     dict.set("command_palette.close", "关闭 (Esc)");
 
-    dict.set("mobile.filter_realms", "筛选 Realm...");
-    dict.set("mobile.no_match", "未找到匹配 Realm。");
+    dict.set("mobile.filter_realms", "筛选工作区...");
+    dict.set("mobile.no_match", "未找到匹配的工作区。");
 
     // Kanban / Board view
     dict.set("kanban.board_header", "看板");
@@ -417,8 +440,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.scheduled_send.cancel_plan", "删除");
     dict.set("chat.plaintext_blocked", "先输入消息内容再加密发送");
     dict.set("realm_admin.save_profile", "保存资料");
-    dict.set("realm_admin.destroy_realm", "销毁 Realm");
-    dict.set("realm_admin.archive_realm", "归档 Realm");
+    dict.set("realm_admin.destroy_realm", "销毁工作区");
+    dict.set("realm_admin.archive_realm", "归档工作区");
     dict.set("verify_device.refresh_trust", "刷新");
     dict.set("verify_device.verify_action", "验证");
     dict.set("verify_device.revoke_action", "撤销");
@@ -435,15 +458,15 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.rename_list_hint", "双击重命名");
     dict.set(
         "kanban.security_not_ready",
-        "安全状态未就绪,请稍候重试后再写入该 Realm。",
+        "安全状态未就绪,请稍候重试后再写入该工作区。",
     );
     dict.set("realm_admin.apply_policy", "应用策略");
     dict.set("realm_admin.grant_capability_move", "授予权限（Move）");
     dict.set("realm_admin.revoke_capability_move", "撤销权限（Move）");
-    dict.set("realm_admin.admin_grant_title", "Realm 管理员");
+    dict.set("realm_admin.admin_grant_title", "工作区管理员");
     dict.set(
         "realm_admin.admin_grant_hint",
-        "授予或撤销 ak.realm.admin 权限。以签名 capability 事件提交;待 soland reducer 投影后生效。",
+        "授予或撤销此工作区的管理员权限。更改经签名后提交,服务器处理完成后生效。",
     );
     dict.set("realm_admin.admin_subject_label", "管理员主体(DID)");
     dict.set("realm_admin.admin_grant_id_label", "Grant ID");
@@ -464,17 +487,17 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.ban_member_move", "封禁（Move）");
     dict.set("realm_admin.rotate_epoch", "轮换 Epoch");
     dict.set("realm_admin.leave_realm", "退出");
-    dict.set("realm_admin.leave_confirm_title", "退出此 Realm？");
+    dict.set("realm_admin.leave_confirm_title", "退出此工作区？");
     dict.set(
         "realm_admin.leave_confirm_body",
-        "离开后需要重新受邀才能回到此 Realm，本设备上的本地缓存也会被清除。",
+        "离开后需要重新受邀才能回到此工作区，本设备上的本地缓存也会被清除。",
     );
-    dict.set("realm_admin.leave_confirm_target", "将退出的 Realm");
-    dict.set("realm_admin.leave_confirm_button", "退出 Realm");
+    dict.set("realm_admin.leave_confirm_target", "将退出的工作区");
+    dict.set("realm_admin.leave_confirm_button", "退出工作区");
     dict.set("realm_admin.leave_confirm_cancel", "取消");
     dict.set(
         "realm_admin.durability_title",
-        "Realm 恢复密钥（durability）",
+        "工作区恢复密钥（durability）",
     );
     dict.set(
         "realm_admin.durability_scheme_not_eligible",
@@ -482,11 +505,11 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_intro",
-        "声明在全体成员设备失效或全员离职后谁能解开本 Realm 历史。改策略是控制面 Move：后续 ak.mls.commit 覆盖成员前沿后才对新 epoch 生效，并触发对成员的重新披露。",
+        "设定当所有成员设备都丢失或全部成员退出后,谁可以解开本工作区的历史记录。更改只对之后的新内容生效,并在下次成员变更后重新向成员共享密钥。",
     );
     dict.set(
         "realm_admin.durability_scheme_warning",
-        "本 Realm 未使用 mls_exporter_aead_v1，无可交付的 history_secret；声明 mode != none 将被拒绝（durability_scheme_incompatible）。",
+        "此工作区的加密格式不支持历史恢复,因此选择「无」以外的任何模式都会被拒绝。",
     );
     dict.set("realm_admin.durability_mode_label", "模式");
     dict.set(
@@ -504,7 +527,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.durability_recipients_label", "恢复接收方");
     dict.set(
         "realm_admin.durability_recipients_hint",
-        "每行一个：recipient_id | principal_did | verification_method [ | controller_org_did]",
+        "每行一个接收方,字段用 | 分隔:接收方名称 | 身份地址(did:…)| 验证密钥 [ | 所属组织]",
     );
     dict.set(
         "realm_admin.durability_threshold_label",
@@ -518,7 +541,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.durability_submitting", "提交中…");
     dict.set(
         "realm_admin.durability_submitted",
-        "已提交 ak.realm.policy_bundle；推进一次 ak.mls.commit 以激活封存并重新披露。",
+        "策略已保存。下次成员变更后生效,届时会重新向成员共享密钥。",
     );
     dict.set("realm_admin.durability_submit_failed", "提交失败：{error}");
     dict.set(
@@ -552,7 +575,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "realm_admin.durability_err_threshold_k",
-        "门限 k 须满足 1 <= k <= n（{n}），当前为 {k}",
+        "门限必须介于 1 和接收方数量({n})之间,当前输入为 {k}。",
     );
     dict.set("directory.list_contacts", "列出");
     dict.set("directory.search_button", "搜索");
@@ -666,7 +689,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("kanban.archive_list_confirm_confirm", "归档列表");
     dict.set("kanban.archive_list_confirm_cancel", "取消");
     dict.set("kanban.restore_action", "恢复");
-    dict.set("error.circle.realm_mismatch", "Circle 不属于该 Realm。");
+    dict.set("error.circle.realm_mismatch", "Circle 不属于该工作区。");
     dict.set(
         "error.circle.not_active",
         "Circle 已归档或已终止，不能继续写入。",
@@ -677,7 +700,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "error.circle.member_not_in_realm",
-        "该用户不是父 Realm 的成员，不能加入 Circle。",
+        "该用户不是父工作区的成员，不能加入 Circle。",
     );
     dict.set(
         "error.circle.scope_rebind_forbidden",
@@ -685,11 +708,11 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "error.circle.metadata_floor",
-        "这次写入会低于 Realm 或 Circle 的元数据加密下限。",
+        "这次写入会低于工作区或 Circle 的元数据加密下限。",
     );
     dict.set(
         "error.circle.encryption_below_realm_floor",
-        "该 Realm 要求 E2EE，Circle 必须保持 MLS 加密。",
+        "该工作区要求 E2EE，Circle 必须保持 MLS 加密。",
     );
     dict.set(
         "error.circle.encryption_profile_locked",
@@ -707,6 +730,13 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("circle.status.active", "活跃");
     dict.set("circle.status.archived", "已归档");
     dict.set("circle.status.tombstoned", "已终止");
+
+    // CircleScopePicker 的默认 scope 选项与帮助文案。
+    dict.set("circle.scope.realm_everyone", "工作区（所有人）");
+    dict.set(
+        "circle.scope.help",
+        "选择 Circle 可将可见范围限制为工作区成员的严格子集。",
+    );
     dict.set("kanban.archived_lists_header", "已归档列表");
     dict.set("kanban.archived_lists_empty", "暂无已归档列表。");
     dict.set("kanban.archived_cards_header", "已归档卡片");
@@ -718,7 +748,239 @@ pub fn chinese_translations() -> TranslationDict {
     // Recovery view
     dict.set("recovery.title", "恢复");
     dict.set("recovery.recovery_key_section", "恢复密钥（24 词）");
-    dict.set("recovery.social_section", "社交恢复");
+
+    // 确认离线保存后的恢复密钥上传状态（`views/recovery/upload.rs`）。
+    dict.set(
+        "recovery.upload.publishing",
+        "恢复密钥已确认——正在发布恢复策略和加密备份…",
+    );
+    dict.set(
+        "recovery.upload.backed_up",
+        "恢复密钥已创建，恢复策略和加密的账户备份已保存。请把 24 个词写下来——这是在新设备上恢复的唯一方式。",
+    );
+    dict.set(
+        "recovery.upload.policy_active",
+        "恢复密钥已创建，恢复策略已生效。加密内容将在你首次使用加密时自动备份。",
+    );
+    dict.set(
+        "recovery.upload.device_unauthorized",
+        "此设备无权设置账户恢复密钥。请从你已在使用的设备上授权，或使用现有的 24 词恢复密钥进行恢复。",
+    );
+    dict.set(
+        "recovery.upload.unreachable",
+        "无法连接服务器以设置恢复(未做任何更改):{error}。请重试。",
+    );
+
+    // Recovery panel (`views/recovery/panel.rs`) — headers, buttons,
+    // status lines, and backup-history copy.
+    dict.set("recovery.panel.aria_label", "恢复与密钥备份");
+    dict.set("recovery.panel.options", "恢复选项");
+    dict.set(
+        "recovery.panel.overview_help",
+        "恢复密钥（24 个词）是唯一的恢复凭证。Arkret 不会在服务器上保存它；备份在上传前就在本设备完成加密。新设备只有在你的恢复策略接受其证明后才会获得授权。",
+    );
+    dict.set(
+        "recovery.panel.status.publishing",
+        "正在发布已确认的恢复密钥…",
+    );
+    dict.set("recovery.panel.status.write_down", "现在就写下这些词");
+    dict.set("recovery.panel.status.accepted", "恢复密钥已确认 ✓");
+    dict.set(
+        "recovery.panel.status.unconfirmed",
+        "服务器上已有备份——本设备尚未确认",
+    );
+    dict.set("recovery.panel.status.not_set", "未设置 ⚠");
+    dict.set(
+        "recovery.panel.detail.publishing",
+        "离线副本已确认，正在保存恢复策略和第一份加密备份。",
+    );
+    dict.set(
+        "recovery.panel.detail.custody",
+        "先写下这些词，然后重新输入，之后才会发布任何内容。",
+    );
+    dict.set(
+        "recovery.panel.detail.confirmed",
+        "恢复密钥已在此设备上确认",
+    );
+    dict.set("recovery.panel.detail.accepted_at", "确认于 {when}");
+    dict.set(
+        "recovery.panel.detail.material_elsewhere",
+        "已存在确认的恢复密钥，但本设备不保存这些词。",
+    );
+    dict.set(
+        "recovery.panel.detail.generate_cta",
+        "生成一个以启用跨设备恢复",
+    );
+    dict.set("recovery.panel.protects_title", "保护内容");
+    dict.set("recovery.panel.protects_value", "加密历史");
+    dict.set(
+        "recovery.panel.protects_hint",
+        "你的加密密钥和自己的内容，自动备份",
+    );
+    dict.set("recovery.panel.keep_offline", "离线保存");
+    dict.set("recovery.panel.badge_not_backed_up", "尚未备份");
+    dict.set("recovery.panel.badge_backed_up", "已备份");
+    dict.set(
+        "recovery.panel.key_help",
+        "这是账号唯一的恢复凭证。生成后，这 24 个词会保护你的加密密钥并上传一份加密备份；此后你自己的内容会自动备份。这些词永远不会离开本设备（本地只保存指纹）,Arkret 无法替你找回，请务必写下来。丢失它们意味着加密历史无法恢复。",
+    );
+    dict.set(
+        "recovery.panel.publishing_title",
+        "正在发布恢复策略和加密备份…",
+    );
+    dict.set(
+        "recovery.panel.publishing_hint",
+        "在写入成功或你重试之前，确认的词只保留在内存中。",
+    );
+    dict.set("recovery.panel.not_generated", "尚未生成");
+    dict.set(
+        "recovery.panel.not_generated_hint",
+        "生成一个，新设备才能解开你的加密备份。",
+    );
+    dict.set(
+        "recovery.panel.write_down_title",
+        "现在就把这 24 个词写下来。",
+    );
+    dict.set(
+        "recovery.panel.write_down_body",
+        "从屏幕上清除之前，请在下方重新输入保存的词。",
+    );
+    dict.set("recovery.panel.confirm_label", "重新输入保存的恢复密钥");
+    dict.set(
+        "recovery.panel.confirm_placeholder",
+        "输入或粘贴你保存的 24 个词",
+    );
+    dict.set(
+        "recovery.panel.confirm_hint",
+        "明文被清除前，词必须完全匹配。如果某个词错了，检查会告诉你要修正的位置——无需重新生成。",
+    );
+    dict.set(
+        "recovery.panel.plaintext_cleared",
+        "这些词已不在内存中。更换恢复密钥需要走分阶段交接流程。",
+    );
+    dict.set("recovery.panel.rotation_guard_title", "已禁用直接更换。");
+    dict.set(
+        "recovery.panel.rotation_guard_body",
+        "新的恢复密钥必须通过两步交接流程激活，所有受保护的备份都要重新加密后，旧密钥才会被吊销。",
+    );
+    dict.set("recovery.panel.last_accepted", "最近确认");
+    dict.set("recovery.panel.rotate_hint", "只能通过分阶段交接流程更换");
+    dict.set("recovery.panel.fingerprint", "指纹");
+    dict.set("recovery.panel.fingerprint_hint", "仅保存在本地，从不上传");
+    dict.set(
+        "recovery.panel.goto_devices_title",
+        "先在你已使用的设备上授权此设备，然后回来生成密钥。",
+    );
+    dict.set("recovery.panel.goto_devices", "打开设备设置");
+    dict.set(
+        "recovery.panel.regenerate_title_fresh",
+        "丢弃当前显示的词并准备新的恢复密钥。",
+    );
+    dict.set(
+        "recovery.panel.regenerate_title_guard",
+        "直接更换不安全，请使用分阶段交接。",
+    );
+    dict.set(
+        "recovery.panel.regenerate_title_default",
+        "在本地生成这些词；重新输入之前不会发布任何内容。",
+    );
+    dict.set("recovery.panel.generate_failed", "生成失败:{error}");
+    dict.set(
+        "recovery.panel.generated_status",
+        "把词离线写下来并重新输入。尚未发布任何恢复密钥。",
+    );
+    dict.set("recovery.panel.publishing_button", "发布中…");
+    dict.set("recovery.panel.start_over", "改用新密钥重新开始");
+    dict.set("recovery.panel.generate", "生成");
+    dict.set("recovery.panel.handoff_required", "需要分阶段交接");
+    dict.set(
+        "recovery.panel.copy_title",
+        "把 24 词恢复密钥复制到剪贴板。",
+    );
+    dict.set("recovery.panel.copied", "✓ 已复制！");
+    dict.set("recovery.panel.copy", "复制");
+    dict.set("recovery.panel.retry_title", "清空输入并重新输入保存的词。");
+    dict.set("recovery.panel.retry", "清除并重试");
+    dict.set(
+        "recovery.panel.clear_live_title",
+        "发布恢复密钥前，请先确认离线副本。",
+    );
+    dict.set(
+        "recovery.panel.custody_confirmed",
+        "离线副本已确认。正在发布恢复策略和第一份加密备份…",
+    );
+    dict.set(
+        "recovery.panel.metadata_save_failed",
+        "恢复密钥已被接受，但保存本地元数据失败。",
+    );
+    dict.set(
+        "recovery.panel.accepted_done",
+        "恢复密钥已确认；这些词已从内存清除。请妥善保管离线副本。",
+    );
+    dict.set(
+        "recovery.panel.retry_extra",
+        " 如果保存的副本一直校验失败，请改用新密钥重新开始。",
+    );
+    dict.set(
+        "recovery.panel.word_count",
+        "你输入了 24 个词中的 {entered} 个。请补全后再次确认。{extra}",
+    );
+    dict.set(
+        "recovery.panel.word_mismatch",
+        "第 {index} 个词与显示的密钥不一致。修正后再次确认。{extra}",
+    );
+    dict.set("recovery.panel.confirm_publish", "确认保管并发布");
+    dict.set("recovery.panel.history_title", "高级 · 备份历史");
+    dict.set("recovery.panel.history_subtitle", "仅服务器端加密副本");
+    dict.set(
+        "recovery.panel.history_help",
+        "显示服务器上加密备份的创建时间。备份内容保持加密，不会在此显示。",
+    );
+    dict.set("recovery.panel.fetching", "正在获取备份时间…");
+    dict.set("recovery.panel.fetch_failed", "备份时间:{error}");
+    dict.set("recovery.panel.loading", "加载中…");
+    dict.set("recovery.panel.refresh", "刷新备份时间");
+    dict.set(
+        "recovery.panel.clear_title",
+        "只清除本地面板，不会删除服务器备份。",
+    );
+    dict.set(
+        "recovery.panel.cleared",
+        "已清除本地备份历史。服务器备份未被删除。",
+    );
+    dict.set("recovery.panel.clear", "清除面板");
+    dict.set(
+        "recovery.panel.no_backups",
+        "未找到服务器上的加密备份。恢复策略状态会单独检查。",
+    );
+    dict.set("recovery.panel.not_loaded", "尚未加载备份时间。");
+    dict.set(
+        "recovery.panel.inventory_empty",
+        "已从服务器加载 0 条备份时间。恢复策略状态与加密备份清单分开检查。",
+    );
+    dict.set(
+        "recovery.panel.inventory_loaded",
+        "已加载 {count} 条备份时间。最近备份:{latest}",
+    );
+    dict.set("recovery.panel.last_backup", "最近备份");
+    dict.set("recovery.panel.backups_found", "发现的备份");
+    dict.set("recovery.panel.snapshots", "加密快照");
+    dict.set("recovery.panel.backup_times", "备份时间");
+    dict.set("recovery.panel.total", "共 {total} 条");
+    dict.set("recovery.panel.latest", "最新");
+    dict.set(
+        "recovery.panel.older_hidden",
+        "另有 {count} 条较早的备份时间被隐藏",
+    );
+    dict.set(
+        "recovery.panel.writeback_title",
+        "高级 · 恢复成功后会发生什么",
+    );
+    dict.set("recovery.panel.writeback_subtitle", "按恢复方式留证");
+    dict.set(
+        "recovery.panel.writeback_body",
+        "完整的恢复会让新设备生成自己的密钥、向当前恢复策略出示证明、记录恢复回执、完成自身授权，然后解开你的加密历史备份。备份历史仍显示在上方；策略证明和设备授权是后续的独立步骤。",
+    );
     dict.set("device_authorization.aria_label", "授权此设备");
     dict.set("device_authorization.title", "授权此设备");
     dict.set(
@@ -727,7 +989,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "device_authorization.description",
-        "此浏览器已经登录，但尚未获得加密数据的信任。请先在这里发起审批；在线的已授权设备通常会自动弹出确认提示。",
+        "此浏览器已登录,但尚未被信任来处理加密数据。请在此发起授权请求——你已信任的设备通常会自动弹出确认提示。",
     );
     dict.set(
         "device_authorization.approve_step_existing_title",
@@ -757,7 +1019,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.subtitle", "使用另一台设备或恢复密钥");
     dict.set(
         "mls_unlock.description",
-        "此设备已经获得授权，但尚未取得打开加密历史所需的密钥。请从另一台已授权设备恢复，或使用恢复密钥。",
+        "这台设备已授权,但还没有打开加密历史所需的密钥。请从你自己的另一台设备恢复,或使用恢复密钥。",
     );
     dict.set(
         "mls_unlock.approve_step_existing_title",
@@ -774,7 +1036,7 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "mls_unlock.loading_hint",
-        "批量恢复加密空间可能需要几秒钟，请保持此标签页打开。",
+        "批量恢复加密工作区可能需要几秒钟，请保持此标签页打开。",
     );
     dict.set(
         "mls_unlock.limitation",
@@ -785,7 +1047,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.hide_recovery_key", "隐藏恢复密钥");
     dict.set(
         "mls_unlock.recovery_fallback_hint",
-        "仅在无法使用任何已授权设备时使用。24 词恢复密钥会进入恢复路径，并在策略校验后解锁加密历史备份。",
+        "仅在无法使用你的其他设备时使用。输入 24 词恢复密钥,服务器校验通过后即可解锁你的加密历史备份。",
     );
     dict.set("mls_unlock.placeholder", "24 词恢复密钥");
     dict.set("mls_unlock.button_idle", "用密钥解锁");
@@ -810,14 +1072,11 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("mls_unlock.status.restored_suffix", "个加密空间。");
     dict.set("mls_unlock.status.failed_suffix", "个失败");
     dict.set("mls_recovery_missing.aria_label", "此设备尚未拿到加密密钥");
-    dict.set(
-        "mls_recovery_missing.title",
-        "此设备还没有这个 Realm 的密钥",
-    );
+    dict.set("mls_recovery_missing.title", "此设备还没有这个工作区的密钥");
     dict.set("mls_recovery_missing.subtitle", "当前无法在此打开加密内容");
     dict.set(
         "mls_recovery_missing.description",
-        "这个 Realm 是端到端加密的。如果你刚接受邀请,密钥会在你加入时自动送达——无需输入任何凭证,刷新或等同步完成,新消息即可打开。你加入之前发的消息在任何设备上都无法打开——这是设计使然,任何恢复备份都解不开它们。恢复备份只用于找回你自己其他设备上的内容:请到 设置 → Recovery,生成 24 词恢复密钥——你的加密历史会自动备份到它名下。",
+        "此工作区采用端到端加密,这台设备还没有打开它的密钥。如果你刚加入,密钥会自动送达——刷新页面或等待同步完成;你加入之前的消息在任何设备上都无法打开。要恢复自己旧设备上的内容,请到 设置 → 恢复 设置恢复密钥。",
     );
     dict.set("mls_recovery_missing.button_dismiss", "关闭");
 
@@ -894,7 +1153,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.mls_recovery.submit", "创建 / 替换恢复词");
 
     // Space-admin view
-    dict.set("realm_admin.title", "Realm 设置");
+    dict.set("realm_admin.title", "工作区设置");
     dict.set("realm_admin.devices", "设备");
     dict.set("realm_admin.members", "成员");
     dict.set("realm_admin.access", "访问控制");
@@ -929,7 +1188,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.handle_reassigned.badge", "handle 已被重新分配");
     dict.set(
         "chat.handle_reassigned.tooltip",
-        "撰写时记录的 handle 当前指向不同的 DID。请比对捕获的标签与当前发送者。",
+        "此用户名在消息撰写时指向的账户与现在不同。请在信任之前仔细核对发送者。",
     );
     dict.set("chat.binding_context.separator", " @ ");
     dict.set("chat.binding_context.details", "显示服务绑定");
@@ -953,9 +1212,9 @@ pub fn chinese_translations() -> TranslationDict {
         "chat.crypto.undecryptable_generic",
         "此设备无法解密这条消息。",
     );
-    dict.set("chat.mls.epoch", "MLS epoch");
-    dict.set("chat.mls.key_package", "Key package");
-    dict.set("chat.mls.welcome", "Welcome");
+    dict.set("chat.mls.epoch", "加密版本");
+    dict.set("chat.mls.key_package", "设备加密密钥");
+    dict.set("chat.mls.welcome", "加入邀请");
     // T7.5 layout adjustments
     dict.set("chat.tabs.settings", "设置");
     dict.set("chat.tabs.members", "成员");
@@ -966,7 +1225,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("moderation.report.title", "举报消息");
     dict.set(
         "moderation.report.help",
-        "请选择最符合问题的原因。签名后的举报将提交到该领域的治理流程。",
+        "请选择最符合问题的原因。签名后的举报将提交到该工作区的治理流程。",
     );
     dict.set("moderation.report.reason", "原因");
     dict.set("moderation.report.reason.spam", "垃圾信息");
@@ -1033,13 +1292,13 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("pinned_bar.title", "共享钉选消息");
     dict.set("pinned_bar.scroll_to", "跳转到消息");
     // Actor-private Realm list pinning.
-    dict.set("realm.pin", "置顶 Realm");
-    dict.set("realm.unpin", "取消置顶 Realm");
-    dict.set("realm.pinned", "已置顶 Realm");
-    dict.set("realm.unpinned", "已取消置顶 Realm");
+    dict.set("realm.pin", "置顶工作区");
+    dict.set("realm.unpin", "取消置顶工作区");
+    dict.set("realm.pinned", "已置顶工作区");
+    dict.set("realm.unpinned", "已取消置顶工作区");
     dict.set("realm.add_member", "添加成员");
     dict.set("realm.settings", "设置");
-    dict.set("realm.pin_failed", "Realm 置顶 account-data 写入失败");
+    dict.set("realm.pin_failed", "工作区置顶 account-data 写入失败");
     // Actor-private contact list pinning.
     dict.set("contact.pin", "置顶联系人");
     dict.set("contact.unpin", "取消置顶联系人");
@@ -1055,7 +1314,7 @@ pub fn chinese_translations() -> TranslationDict {
     // Notifications panel
     dict.set("notifications.feed_title", "通知流");
     dict.set("notifications.view.latest", "最新");
-    dict.set("notifications.view.realm", "Realm");
+    dict.set("notifications.view.realm", "工作区");
     dict.set("notifications.view.type", "类型");
     dict.set("notifications.tooltip.settings", "通知设置");
     dict.set("notifications.tooltip.mark_all_read", "全部标为已读");
@@ -1064,10 +1323,10 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("notifications.tooltip.refresh", "刷新通知");
     dict.set(
         "notifications.filtered_body",
-        "已加载的通知全部被归档、类型或空间静音规则过滤掉了。",
+        "已加载的通知全部被归档、类型或工作区静音规则过滤掉了。",
     );
     // Default titles / actions per notification kind (keys resolved via tr()).
-    dict.set("notifications.default_title.invite", "Realm 邀请");
+    dict.set("notifications.default_title.invite", "工作区邀请");
     dict.set("notifications.default_title.reaction", "新表情回应");
     dict.set("notifications.default_title.mention", "有人提到了你");
     dict.set("notifications.default_title.assignment", "分配给你的任务");
@@ -1089,38 +1348,38 @@ pub fn chinese_translations() -> TranslationDict {
         "这个讨论的通知受关注级别限制",
     );
     // Dashboard projection collection labels (keys resolved via tr()).
-    dict.set("dashboard.node_kind.realm", "Realm");
+    dict.set("dashboard.node_kind.realm", "工作区");
     dict.set("dashboard.node_kind.space", "Space");
-    dict.set("dashboard.collection.realms_and_spaces", "Realm 与 Space");
+    dict.set("dashboard.collection.realms_and_spaces", "工作区与 Space");
     dict.set("dashboard.collection.spaces", "Space");
-    dict.set("dashboard.collection.realms", "Realm");
+    dict.set("dashboard.collection.realms", "工作区");
     dict.set(
         "dashboard.collection.recent_realms_and_spaces",
-        "最近的 Realm 与 Space",
+        "最近的工作区与 Space",
     );
     dict.set("dashboard.collection.recent_spaces", "最近的 Space");
-    dict.set("dashboard.collection.recent_realms", "最近的 Realm");
+    dict.set("dashboard.collection.recent_realms", "最近的工作区");
     dict.set(
         "dashboard.collection.browse_realm_or_space",
-        "搜索或加入 Realm 或 Space",
+        "搜索或加入工作区或 Space",
     );
     dict.set("dashboard.collection.browse_space", "搜索或加入 Space");
-    dict.set("dashboard.collection.browse_realm", "搜索或加入 Realm");
+    dict.set("dashboard.collection.browse_realm", "搜索或加入工作区");
     dict.set(
         "dashboard.collection.signin_realms_and_spaces",
-        "登录后加载 Realm 与 Space",
+        "登录后加载工作区与 Space",
     );
     dict.set("dashboard.collection.signin_spaces", "登录后加载 Space");
-    dict.set("dashboard.collection.signin_realms", "登录后加载 Realm");
+    dict.set("dashboard.collection.signin_realms", "登录后加载工作区");
     dict.set(
         "dashboard.collection.empty_realms_and_spaces",
-        "没有已加载的 Realm 或 Space",
+        "没有已加载的工作区或 Space",
     );
     dict.set("dashboard.collection.empty_spaces", "没有已加载的 Space");
-    dict.set("dashboard.collection.empty_realms", "没有已加载的 Realm");
+    dict.set("dashboard.collection.empty_realms", "没有已加载的工作区");
     dict.set(
         "dashboard.collection.empty_help_realms_and_spaces",
-        "已连接的服务器尚未返回 Realm 或 Space。",
+        "已连接的服务器尚未返回工作区或 Space。",
     );
     dict.set(
         "dashboard.collection.empty_help_spaces",
@@ -1128,30 +1387,142 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "dashboard.collection.empty_help_realms",
-        "已连接的服务器尚未返回 Realm。",
+        "已连接的服务器尚未返回工作区。",
     );
 
     // Verify Device
     dict.set("verify_device.title", "设备验证");
     dict.set("verify_device.choose_method", "选择方式");
     dict.set("verify_device.qr_code", "二维码");
-    dict.set("verify_device.sas_emoji", "SAS（表情）");
+    dict.set("verify_device.sas_emoji", "表情符号比对");
     dict.set("verify_device.qr_section", "二维码验证");
     dict.set("verify_device.qr_section_hint", "扫描或显示");
-    dict.set("verify_device.sas_section", "SAS 验证");
+    dict.set("verify_device.sas_section", "表情符号验证");
     dict.set("verify_device.sas_section_hint", "表情对比");
     dict.set("verify_device.target_device_id", "目标设备 ID");
     dict.set("verify_device.target_device_placeholder", "要验证的设备 ID");
     dict.set("verify_device.generate_qr", "生成二维码");
-    dict.set("verify_device.start_sas", "开始 SAS 验证");
-    dict.set("verify_device.short_auth_string", "短认证串");
+    dict.set("verify_device.start_sas", "开始表情符号验证");
+    dict.set("verify_device.short_auth_string", "比对码");
     dict.set(
         "verify_device.sas_demo_warning",
         "尚未完成密钥交换，下方序列仅为演示占位，不能用于验证。",
     );
     dict.set(
         "verify_device.sas_match_disabled_hint",
-        "请先完成 X25519 密钥交换——演示占位序列不能被确认为匹配。",
+        "设备之间的安全连接尚未就绪,暂时无法确认两者是否匹配。请等待连接完成。",
+    );
+
+    // 表情符号比对照料——面向用户的文案不再出现 SAS / X25519 术语；
+    // 面板没有“技术详情”折叠区，术语直接去掉而不是藏起来。
+    dict.set("verify_device.key_exchange_title", "密钥交换");
+    dict.set("verify_device.keypair_ready", "密钥已生成");
+    dict.set("verify_device.keypair_missing", "未生成");
+    dict.set(
+        "verify_device.key_exchange_hint",
+        "生成一个新的一次性密钥，把公开部分发送到你的另一台设备，并把那台设备的公钥粘贴到下方。两边都就绪后，下方的表情符号和数字会自动更新。",
+    );
+    dict.set("verify_device.generate_keypair", "生成我的密钥");
+    dict.set(
+        "verify_device.keypair_generated",
+        "密钥已生成——点击发送，把公开部分分享给另一台设备。",
+    );
+    dict.set(
+        "verify_device.keypair_generate_failed",
+        "无法生成密钥:{error}",
+    );
+    dict.set("verify_device.send_public_key", "发送我的公钥");
+    dict.set("verify_device.generate_first", "请先生成密钥。");
+    dict.set("verify_device.target_required", "请先输入要验证的设备 ID。");
+    dict.set(
+        "verify_device.send_failed_signing",
+        "发送失败——本设备的签名密钥不可用:{error}",
+    );
+    dict.set(
+        "verify_device.send_failed_sign",
+        "发送失败——无法为密钥消息签名:{error}",
+    );
+    dict.set("verify_device.send_failed", "发送失败:{error}");
+    dict.set(
+        "verify_device.public_key_sent",
+        "公钥已发送，等待另一台设备的密钥。",
+    );
+    dict.set("verify_device.my_public_key", "我的公钥:{key}");
+    dict.set("verify_device.peer_key_placeholder", "粘贴另一台设备的公钥");
+    dict.set(
+        "verify_device.peer_key_autofilled",
+        "已自动收到另一台设备的公钥。",
+    );
+    dict.set(
+        "verify_device.session_started",
+        "验证会话已开始。在两边设备上生成并交换密钥后，即可看到真实的表情符号和数字。",
+    );
+    dict.set(
+        "verify_device.compare_hint",
+        "在两台设备上对比这些表情符号和数字——必须完全一致。",
+    );
+    dict.set(
+        "verify_device.source_secure",
+        "由两台设备间的安全密钥交换得出。",
+    );
+    dict.set(
+        "verify_device.source_demo_invalid",
+        "占位结果——另一台设备的密钥无效。",
+    );
+    dict.set(
+        "verify_device.source_demo_waiting",
+        "占位结果——等待另一台设备的密钥。",
+    );
+    dict.set(
+        "verify_device.match_requires_keys",
+        "需要两台设备的密钥——请先生成并发送你的密钥，然后等待另一台设备的密钥。",
+    );
+    dict.set(
+        "verify_device.match_failed_signing",
+        "确认失败——本设备的签名密钥不可用:{error}",
+    );
+    dict.set(
+        "verify_device.match_failed_sign",
+        "确认失败——无法为证明签名:{error}",
+    );
+    dict.set(
+        "verify_device.matched",
+        "{target} 的比对结果一致。确认信息已在本设备签名，授权将通过配对流程继续。",
+    );
+    dict.set(
+        "verify_device.mismatch_aborted",
+        "不一致——已中止。新设备不会被授权，也不会收到加密历史。",
+    );
+    dict.set("verify_device.they_match", "一致");
+    dict.set("verify_device.they_dont_match", "不一致");
+    dict.set("verify_device.after_confirm_title", "确认后会发生什么");
+    dict.set(
+        "verify_device.after_confirm_body",
+        "比对只是确认你信任新设备的密钥。下面四个步骤会把这份信任记录到你的账户中，让设备成为长期成员并能读取加密历史。",
+    );
+    dict.set("verify_device.step_authorize", "授权设备");
+    dict.set(
+        "verify_device.step_authorize_hint",
+        "把新设备的公钥加入已授权列表",
+    );
+    dict.set("verify_device.step_record", "记录接受");
+    dict.set(
+        "verify_device.step_record_hint",
+        "账户的设备目录会记录这次授权",
+    );
+    dict.set("verify_device.step_rejoin", "重新加入加密群组");
+    dict.set(
+        "verify_device.step_rejoin_hint",
+        "每个空间会更新加密设置以纳入新设备",
+    );
+    dict.set("verify_device.step_sync", "同步密钥存储");
+    dict.set(
+        "verify_device.step_sync_hint",
+        "拉取加密的密钥备份，使历史消息可解密",
+    );
+    dict.set(
+        "verify_device.after_confirm_note",
+        "登录、设备授权和设备验证是三个独立步骤。跳过验证只会得到短期会话，无法解密历史消息。",
     );
 
     // A6.4 - keyboard shortcut help overlay.
@@ -1189,7 +1560,7 @@ pub fn chinese_translations() -> TranslationDict {
     // F-BLOCKLIST-VALID-1: live format validation hints synced with the en dict.
     dict.set(
         "settings.privacy.blocked_users.did_invalid",
-        "DID 必须以 did: 开头（如 did:webvh:alice.example）。",
+        "请输入以 did: 开头的身份地址。",
     );
     dict.set("settings.privacy.unblock", "取消屏蔽");
     // A4b - avatar upload.
@@ -1208,8 +1579,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.avatar.error", "头像上传失败");
     // A6.1 - global cross-space message search.
     dict.set("search.title", "搜索消息");
-    dict.set("search.placeholder", "在所有空间中搜索消息…");
-    dict.set("search.results.empty", "输入查询以在所有空间中搜索。");
+    dict.set("search.placeholder", "在所有工作区中搜索消息…");
+    dict.set("search.results.empty", "输入查询以在所有工作区中搜索。");
     dict.set("search.results.loading", "搜索中…");
     dict.set("search.results.error", "搜索失败");
     dict.set("search.no_results", "未找到匹配项。");
@@ -1265,35 +1636,32 @@ pub fn chinese_translations() -> TranslationDict {
 
     // Realm is the security boundary (members / policy / federation / E2EE);
     // Space is the container (navigation / boards / lists).
-    dict.set("friendly.realm", "Realm");
-    dict.set("friendly.realm.short", "Realm");
+    dict.set("friendly.realm", "工作区");
+    dict.set("friendly.realm.short", "工作区");
     dict.set(
         "friendly.realm.description",
-        "安全边界 — 成员、策略、联邦与加密都在这一层治理。",
+        "工作区统一管理其内部内容的成员、规则、跨服务器共享与加密。",
     );
     dict.set("friendly.realm.security_class", "安全边界");
     dict.set("friendly.realm.security_class.standard", "标准安全");
     dict.set("friendly.realm.security_class.high_assurance", "高保障");
-    dict.set("friendly.realm.settings", "Realm 设置");
-    dict.set(
-        "friendly.realm.settings.subtitle",
-        "策略、成员、联邦与端到端加密",
-    );
-    dict.set("friendly.realm.switcher", "切换 Realm");
-    dict.set("friendly.realm.ref_label", "Realm");
+    dict.set("friendly.realm.settings", "工作区设置");
+    dict.set("friendly.realm.settings.subtitle", "成员、规则、共享与加密");
+    dict.set("friendly.realm.switcher", "切换工作区");
+    dict.set("friendly.realm.ref_label", "工作区");
     dict.set("friendly.space", "空间");
     dict.set("friendly.space.short", "空间");
     dict.set(
         "friendly.space.description",
-        "导航容器 — 看板、列表与分区都在 Realm 之内。",
+        "空间用于在工作区内组织看板、列表与分区。",
     );
     dict.set("friendly.space.container_class", "导航容器");
     dict.set("friendly.space.settings", "空间设置");
     dict.set("friendly.space.settings.subtitle", "导航、排序与展示");
-    dict.set("friendly.discussion.realm_ref", "Realm");
+    dict.set("friendly.discussion.realm_ref", "工作区");
     dict.set(
         "friendly.discussion.realm_ref.hint",
-        "该讨论所属的 Realm（安全边界）。",
+        "该讨论所属的工作区（安全边界）。",
     );
 
     dict.set("profile_gate.title", "此服务器暂不支持该功能");
@@ -1331,6 +1699,7 @@ pub fn chinese_translations() -> TranslationDict {
 
     // R3 spec sync (b47ff6ec) — Chinese error toast translations.
     add_r3_error_keys_zh(&mut dict);
+    add_generic_error_keys_zh(&mut dict);
 
     // Contacts / invite-receive policy / realm invite-from-contacts.
     add_contacts_keys_zh(&mut dict);
@@ -1342,6 +1711,7 @@ pub fn chinese_translations() -> TranslationDict {
     // 对应 [`super::en`] 的 `setup_strings` / `route_label_strings`。
     setup_strings(&mut dict);
     route_label_strings(&mut dict);
+    prompt_copy_strings(&mut dict);
 
     dict
 }
@@ -1349,10 +1719,7 @@ pub fn chinese_translations() -> TranslationDict {
 /// Chinese strings for the unified feedback surface — mirrors
 /// [`super::en`]'s `add_feedback_keys`.
 fn add_feedback_keys_zh(dict: &mut TranslationDict) {
-    dict.set(
-        "feedback.policy_denied",
-        "操作被服务器策略拒绝:{code} — {message}",
-    );
+    dict.set("feedback.policy_denied", "服务器的策略不允许此操作。");
     dict.set(
         "feedback.banner_offline",
         "当前处于离线状态,网络恢复后改动将自动同步。",
@@ -1364,21 +1731,21 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     // Wave 1 — operation-feedback toasts (former global status writes).
     dict.set("feedback.account_not_connected", "账号未连接,请先登录");
     dict.set("feedback.contacts_load_failed", "联系人加载失败");
-    dict.set("feedback.realm_leaving", "正在退出 Realm:{realm}");
-    dict.set("feedback.realm_left", "已退出 Realm:{realm}");
-    dict.set("feedback.realm_leave_failed", "退出 Realm 失败:{realm}");
+    dict.set("feedback.realm_leaving", "正在退出工作区:{realm}");
+    dict.set("feedback.realm_left", "已退出工作区:{realm}");
+    dict.set("feedback.realm_leave_failed", "退出工作区失败:{realm}");
     dict.set("feedback.contact_deleting", "正在删除联系人:{name}");
     dict.set("feedback.contact_deleted", "已删除联系人:{name}");
     dict.set("feedback.contact_delete_failed", "删除联系人失败:{name}");
     dict.set("feedback.direct_open_failed", "无法打开私聊会话");
-    dict.set("feedback.bulk_realms_leaving", "正在退出 {total} 个 Realm…");
+    dict.set("feedback.bulk_realms_leaving", "正在退出 {total} 个工作区…");
     dict.set(
         "feedback.bulk_realms_left",
-        "已退出 {done}/{total} 个 Realm",
+        "已退出 {done}/{total} 个工作区",
     );
     dict.set(
         "feedback.bulk_realms_leave_failed",
-        "已退出 {done}/{total} 个 Realm,部分失败",
+        "已退出 {done}/{total} 个工作区,部分失败",
     );
     dict.set(
         "feedback.bulk_contacts_deleting",
@@ -1397,9 +1764,9 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     dict.set("feedback.directory_load_more_failed", "加载更多结果失败");
     dict.set(
         "feedback.realm_resolved",
-        "Realm 已解析(加入规则:{join_rule})",
+        "工作区已解析(加入规则:{join_rule})",
     );
-    dict.set("feedback.realm_create_failed", "Realm 创建失败");
+    dict.set("feedback.realm_create_failed", "工作区创建失败");
     dict.set("feedback.copied_did", "已复制 DID");
     dict.set("feedback.copied_handles", "已复制 Handle");
     dict.set("feedback.copied_device_id", "已复制设备 ID");
@@ -1409,13 +1776,13 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     dict.set("feedback.notification_kind_muted", "已静音:{label}");
     dict.set(
         "feedback.override_pick_realm",
-        "请先选择一个 Realm 再添加覆盖项",
+        "请先选择一个工作区再添加覆盖项",
     );
     dict.set("feedback.watch_level_set", "已将 {realm} 设为 {level}");
     dict.set("feedback.override_removed", "已移除 {realm} 的通知覆盖项");
     dict.set(
         "feedback.overrides_cleared",
-        "已清除所有按 Realm 通知覆盖项",
+        "已清除所有按工作区的通知覆盖项",
     );
     dict.set("feedback.push_registered", "推送已注册:{label}");
     dict.set("feedback.push_register_failed", "推送注册失败");
@@ -1450,22 +1817,22 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
         "feedback.read_receipt_override_inherit",
         "{realm} 的已读回执:跟随默认",
     );
-    dict.set("feedback.enter_realm_id", "请先输入 Realm ID");
+    dict.set("feedback.enter_realm_id", "请先输入工作区 ID");
     dict.set(
         "feedback.realm_remark_saved",
-        "Realm 备注已保存:{realm} \u{2192} {name}",
+        "工作区备注已保存:{realm} \u{2192} {name}",
     );
     dict.set(
         "feedback.realm_remark_cleared",
-        "已清除 {realm} 的 Realm 备注",
+        "已清除 {realm} 的工作区备注",
     );
     dict.set(
         "feedback.enter_realm_and_name",
-        "请同时输入 Realm ID 和本地名称",
+        "请同时输入工作区 ID 和本地名称",
     );
     dict.set(
         "feedback.invalid_realm_id",
-        "Realm ID 必须以 ak:realm: 开头",
+        "工作区 ID 必须以 ak:realm: 开头",
     );
 }
 
@@ -1654,11 +2021,11 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
 /// key 仍与其他章节共用扁平的 `setup.*` 命名空间。
 fn setup_strings(dict: &mut TranslationDict) {
     // 领域向导外壳。
-    dict.set("setup.new_realm", "新建领域");
-    dict.set("setup.realm_title_heading", "创建领域");
+    dict.set("setup.new_realm", "新建工作区");
+    dict.set("setup.realm_title_heading", "创建工作区");
     dict.set(
         "setup.realm_intro",
-        "领域是安全 / 同步 / 端到端加密的边界。推荐使用 MLS，并设置 metadata_encryption_floor=e2ee_required 与 content_encryption_floor=e2ee_required。",
+        "工作区是内部所有内容的安全、同步与加密边界。推荐设置为内容与元数据都端到端加密。",
     );
     dict.set("setup.create_steps", "创建步骤");
     dict.set("setup.step_progress", "{current} / {total}");
@@ -1673,11 +2040,11 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.step.seed.label", "初始成员");
     dict.set("setup.step.seed.subtitle", "填写初始成员并创建");
     dict.set("setup.step.done.label", "完成");
-    dict.set("setup.step.done.subtitle", "打开已创建的领域");
+    dict.set("setup.step.done.subtitle", "打开已创建的工作区");
 
     // 基本信息。
     dict.set("setup.basics.hint", "标题必填");
-    dict.set("setup.field.realm_title", "领域标题");
+    dict.set("setup.field.realm_title", "工作区名称");
     dict.set(
         "setup.field.realm_title_placeholder",
         "工程、研究、设计系统…",
@@ -1685,9 +2052,9 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.field.summary", "简介");
     dict.set(
         "setup.field.realm_summary_placeholder",
-        "这个领域用来做什么。",
+        "这个工作区用来做什么。",
     );
-    dict.set("setup.field.realm_alias", "领域别名");
+    dict.set("setup.field.realm_alias", "工作区别名");
     dict.set("setup.field.realm_alias_placeholder", "engineering");
 
     // 边界。
@@ -1695,7 +2062,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.discoverability", "可发现性");
     dict.set(
         "setup.axis.discoverability.question",
-        "谁可以发现这个领域的存在？",
+        "谁可以发现这个工作区的存在？",
     );
     dict.set("setup.axis.discoverability.unset", "尚未设置发现策略。");
     dict.set("setup.axis.join_rule", "加入规则");
@@ -1714,7 +2081,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.content_scheme", "内容方案");
     dict.set(
         "setup.axis.content_scheme.question",
-        "这个领域使用哪种 MLS 内容方案？",
+        "这个工作区使用哪种 MLS 内容方案？",
     );
     dict.set("setup.axis.content_scheme.unset", "尚未设置内容方案。");
     dict.set(
@@ -1734,7 +2101,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.federation_policy", "联邦策略");
     dict.set(
         "setup.axis.federation_policy.question",
-        "这个领域如何与其他部署互通？",
+        "这个工作区如何与其他部署互通？",
     );
     dict.set("setup.axis.federation_policy.unset", "尚未设置联邦策略。");
     dict.set(
@@ -1770,53 +2137,56 @@ fn setup_strings(dict: &mut TranslationDict) {
     // 创建阻塞与进度。
     dict.set(
         "setup.blocker.already_created",
-        "领域已创建，请从“完成”步骤继续。",
+        "工作区已创建，请从“完成”步骤继续。",
     );
-    dict.set("setup.blocker.sign_in", "创建领域前请先登录。");
+    dict.set("setup.blocker.sign_in", "创建工作区前请先登录。");
     dict.set(
         "setup.blocker.session_unavailable",
-        "认证会话不可用，请重新登录后再创建领域。",
+        "认证会话不可用，请重新登录后再创建工作区。",
     );
     dict.set(
         "setup.blocker.secure_store",
         "设备签名存储仍在启动，请稍后重试。",
     );
-    dict.set("setup.blocker.creating", "正在创建领域…");
+    dict.set("setup.blocker.creating", "正在创建工作区…");
     dict.set(
         "setup.error.session_expired",
-        "会话已过期。请刷新或重新登录后再创建领域。",
+        "会话已过期。请刷新或重新登录后再创建工作区。",
     );
 
     // 引导进度面包屑，创建成功后以 " · " 连接显示在“引导状态”一行。
     dict.set(
         "setup.progress.accepted",
-        "领域 {id} 已受理；正在完成加密领域设置",
+        "工作区 {id} 已受理;正在完成加密设置",
     );
     dict.set("setup.progress.created", "已创建 {id}");
-    dict.set("setup.progress.seeded_owner_only", "仅初始化所有者");
-    dict.set("setup.progress.seeded_members", "已初始化 {count} 位成员");
+    dict.set("setup.progress.seeded_owner_only", "仅添加了你本人");
+    dict.set("setup.progress.seeded_members", "已添加 {count} 位成员");
     dict.set(
         "setup.progress.canonical_policy",
         "规范策略 {discoverability} / {join_rule} / {history_access}",
     );
-    dict.set("setup.progress.plaintext_services", "明文服务 {count} 个");
-    dict.set("setup.progress.mls_ready_backup", "MLS 就绪；历史备份 {id}");
-    dict.set("setup.progress.mls_ready_local", "MLS 已在本地就绪");
+    dict.set("setup.progress.plaintext_services", "未加密服务:{count} 个");
+    dict.set(
+        "setup.progress.mls_ready_backup",
+        "加密已就绪;历史备份 {id}",
+    );
+    dict.set("setup.progress.mls_ready_local", "本设备加密已就绪");
     dict.set(
         "setup.progress.mls_admission_failed",
-        "MLS 准入失败:{error}",
+        "无法启用加密:{error}",
     );
     dict.set(
         "setup.progress.mls_welcome_queued",
-        "已为 {count} 位排队 MLS Welcome",
+        "已为 {count} 位成员排队邀请",
     );
     dict.set(
         "setup.progress.floor_required",
-        "元数据/内容底线为 e2ee_required",
+        "元数据与内容均为端到端加密",
     );
     dict.set(
         "setup.error.signer_not_ready",
-        "事件签名器尚未就绪，无法签署 ak.realm.create:{error}",
+        "签名密钥尚未就绪,无法创建工作区。请稍后重试。详情:{error}",
     );
     dict.set("setup.error.create_failed", "创建失败:{error}");
     dict.set("setup.error.created_then_failed", "已创建 {id};{error}");
@@ -1824,25 +2194,25 @@ fn setup_strings(dict: &mut TranslationDict) {
 
     // 完成。
     dict.set("setup.done.hint", "下一个上下文");
-    dict.set("setup.done.created_realm", "已创建的领域");
-    dict.set("setup.done.empty", "请先创建领域，再打开下一个上下文。");
+    dict.set("setup.done.created_realm", "已创建的工作区");
+    dict.set("setup.done.empty", "请先创建工作区，再打开下一个上下文。");
 
     // 加密领域的恢复门禁。
-    dict.set("setup.recovery_gate.aria", "创建加密领域前先设置恢复方式");
+    dict.set("setup.recovery_gate.aria", "创建加密工作区前先设置恢复方式");
     dict.set("setup.recovery_gate.title", "请先设置恢复方式");
-    dict.set("setup.recovery_gate.badge", "加密领域");
+    dict.set("setup.recovery_gate.badge", "加密工作区");
     dict.set(
         "setup.recovery_gate.body",
-        "这个领域是端到端加密的。如果你丢失本设备且没有配置恢复密钥或备份，其中的内容将永久无法恢复。请先设置 24 词恢复密钥并备份密钥，再创建它。",
+        "这个工作区是端到端加密的。如果你丢失本设备且没有配置恢复密钥或备份，其中的内容将永久无法恢复。请先设置 24 词恢复密钥并备份密钥，再创建它。",
     );
 
     // 操作。
     dict.set("setup.action.back", "上一步");
     dict.set("setup.action.next_boundary", "下一步：边界");
     dict.set("setup.action.next_seed", "下一步：初始成员");
-    dict.set("setup.action.create_realm", "创建领域");
+    dict.set("setup.action.create_realm", "创建工作区");
     dict.set("setup.action.finishing", "正在完成设置…");
-    dict.set("setup.action.open_realm", "打开领域");
+    dict.set("setup.action.open_realm", "打开工作区");
     dict.set("setup.action.setup_recovery_key", "设置恢复密钥");
 
     setup_option_strings(dict);
@@ -1882,13 +2252,13 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.discoverability.secret", "保密");
     dict.set(
         "setup.opt.discoverability.secret.hint",
-        "不应向未授权的查看者披露该领域的存在。",
+        "不应向未授权的查看者披露该工作区的存在。",
     );
 
     dict.set("setup.opt.join_rule.public", "公开");
     dict.set(
         "setup.opt.join_rule.public.hint",
-        "任何能看到该领域的人都可以直接加入，无需单独审批。",
+        "任何能看到该工作区的人都可以直接加入，无需单独审批。",
     );
     dict.set("setup.opt.join_rule.invite", "邀请");
     dict.set(
@@ -1903,7 +2273,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.join_rule.restricted", "受限");
     dict.set(
         "setup.opt.join_rule.restricted.hint",
-        "即使领域可被发现，加入仍取决于策略或声明。",
+        "即使工作区可被发现，加入仍取决于策略或声明。",
     );
 
     dict.set("setup.opt.history_access.since_join", "加入后历史");
@@ -1928,7 +2298,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.encryption_profile.none", "不加密");
     dict.set(
         "setup.opt.encryption_profile.none.hint",
-        "明文对服务器可见。仅用于公开领域。",
+        "明文对服务器可见。仅用于公开工作区。",
     );
 
     dict.set(
@@ -1948,7 +2318,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.security_class.standard", "标准");
     dict.set(
         "setup.opt.security_class.standard.hint",
-        "默认姿态。联邦策略可按领域设置为开放或受限。",
+        "默认姿态。联邦策略可按工作区设置为开放或受限。",
     );
     dict.set("setup.opt.security_class.high_assurance", "高保障");
     dict.set(
@@ -1969,7 +2339,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.federation_policy.closed", "关闭");
     dict.set(
         "setup.opt.federation_policy.closed.hint",
-        "完全不联邦。用于纯内部领域。",
+        "完全不联邦。用于纯内部工作区。",
     );
     dict.set("setup.opt.federation_policy.quarantine", "隔离");
     dict.set(
@@ -2049,10 +2419,10 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
 fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.new_space", "新建空间");
     dict.set("setup.space.hero.hint", "导航容器");
-    dict.set("setup.space.heading", "在领域内创建空间");
+    dict.set("setup.space.heading", "在工作区内创建空间");
     dict.set(
         "setup.space.intro",
-        "空间是产品结构上的容器（项目 / 文件夹 / 看板 / 列表）。它位于某个领域之内，并完全继承该领域的安全设置——不需要单独的成员资格、加密或联邦决策。",
+        "空间是产品结构上的容器（项目 / 文件夹 / 看板 / 列表）。它位于某个工作区之内，并完全继承该工作区的安全设置——不需要单独的成员资格、加密或联邦决策。",
     );
     dict.set("setup.space.basics", "基本信息");
     dict.set("setup.space.basics.hint", "标题 + 类型");
@@ -2060,7 +2430,7 @@ fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.default_realm.label", "default_realm_id");
     dict.set(
         "setup.space.default_realm.inherit",
-        "（继承——使用所属领域）",
+        "（继承——使用所属工作区）",
     );
     dict.set("setup.space.not_created", "尚未创建");
     dict.set(
@@ -2089,23 +2459,23 @@ fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.field.parent", "父空间（可选）");
     dict.set(
         "setup.space.parent.no_realm",
-        "请从侧栏的领域或空间行选择“新建空间”，以确定所属领域。",
+        "请从侧栏的工作区或空间行选择“新建空间”，以确定所属工作区。",
     );
     dict.set(
         "setup.space.parent.no_siblings",
-        "该领域下还没有同级空间——保留在根层级。",
+        "该工作区下还没有同级空间——保留在根层级。",
     );
     dict.set(
         "setup.space.advanced_summary",
-        "高级（新资源的跨领域默认值）",
+        "高级（新资源的跨工作区默认值）",
     );
     dict.set(
         "setup.space.default_realm.empty",
-        "至少需要一个可指向的领域。",
+        "至少需要一个可指向的工作区。",
     );
     dict.set(
         "setup.space.default_realm.hint",
-        "从这个空间创建的流程 / 变换 / 视图默认落在该领域。这不授予访问权限——用户仍需要成员资格。",
+        "从这个空间创建的流程 / 变换 / 视图默认落在该工作区。这不授予访问权限——用户仍需要成员资格。",
     );
     dict.set("setup.space.action.create", "创建空间");
     dict.set("setup.space.outcome", "结果");
@@ -2167,28 +2537,28 @@ fn setup_overview_strings(dict: &mut TranslationDict) {
     dict.set("setup.overview.surfaces", "设置入口");
     dict.set("setup.overview.surfaces.hint", "单一职责的入口");
     dict.set("setup.overview.realm.hint", "安全边界引导");
-    dict.set("setup.overview.realm.open", "打开新建领域");
-    dict.set("setup.overview.space.hint", "领域内的导航容器");
+    dict.set("setup.overview.realm.open", "打开新建工作区");
+    dict.set("setup.overview.space.hint", "工作区内的导航容器");
     dict.set(
         "setup.overview.space.body",
-        "把鼠标悬停在左侧栏的领域或空间上，点击行内的 + ——这是标准入口，因为它会替你预填父级上下文。下面的链接会打开一个空白表单（你需要自己选择领域）。",
+        "把鼠标悬停在左侧栏的工作区或空间上，点击行内的 + ——这是标准入口，因为它会替你预填父级上下文。下面的链接会打开一个空白表单（你需要自己选择工作区）。",
     );
     dict.set("setup.overview.space.open", "打开空白表单");
     dict.set("setup.overview.onboarding", "新人引导");
     dict.set("setup.overview.onboarding.hint", "身份引导");
     dict.set("setup.overview.onboarding.open", "打开新人引导");
     dict.set("setup.overview.search", "搜索");
-    dict.set("setup.overview.search.hint", "参与者 / handle / 领域");
+    dict.set("setup.overview.search.hint", "参与者 / handle / 工作区");
     dict.set("setup.overview.search.open", "打开搜索");
     dict.set("setup.overview.board", "看板");
     dict.set("setup.overview.board.hint", "引导完成之后");
-    dict.set("setup.overview.board.open_current", "打开当前领域");
+    dict.set("setup.overview.board.open_current", "打开当前工作区");
     dict.set("setup.overview.board.open", "打开看板");
     dict.set("setup.overview.moved", "变更说明");
     dict.set("setup.overview.moved.hint", "信息架构梳理");
     dict.set("setup.overview.badge.onboarding", "新人引导 = 身份引导");
     dict.set("setup.overview.badge.search", "搜索 = 发现与人");
-    dict.set("setup.overview.badge.realm", "新建领域 = 安全边界引导");
+    dict.set("setup.overview.badge.realm", "新建工作区 = 安全边界引导");
     dict.set("setup.overview.badge.settings", "设置 = 恢复与运维");
 }
 
@@ -2197,8 +2567,8 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.dashboard", "主页");
     dict.set("route.login", "登录");
     dict.set("route.register", "创建身份");
-    dict.set("route.realms_manage", "管理领域");
-    dict.set("route.realm", "领域");
+    dict.set("route.realms_manage", "管理工作区");
+    dict.set("route.realm", "工作区");
     dict.set("route.chat", "讨论");
     dict.set("route.direct", "私聊");
     dict.set("route.contacts_manage", "管理联系人");
@@ -2206,14 +2576,14 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.files", "文件");
     dict.set("route.directory", "搜索");
     dict.set("route.setup", "设置向导");
-    dict.set("route.setup_realms", "新建领域");
+    dict.set("route.setup_realms", "新建工作区");
     dict.set("route.setup_new_space", "新建空间");
     dict.set("route.settings", "设置");
     dict.set("route.notifications", "通知");
     dict.set("route.verify_device", "验证设备");
     dict.set("route.realm_members", "成员");
     dict.set("route.circles", "圈子");
-    dict.set("route.realm_admin", "领域设置");
+    dict.set("route.realm_admin", "工作区设置");
     dict.set("route.realm_admin.profile", "资料");
     dict.set("route.realm_admin.access", "访问策略");
     dict.set("route.realm_admin.security", "安全与 MLS");
@@ -2240,4 +2610,227 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.settings.capabilities", "能力");
     dict.set("route.settings.theme", "外观与语言");
     dict.set("route.settings.release", "诊断");
+}
+
+/// Plain-language copy for the inline prompts, banners, and manage
+/// pages migrated off hardcoded literals. Keep both locales in this
+/// same list shape: every key gets an en value here and a zh value in
+/// `zh.rs`'s `prompt_copy_strings`, and the parity test enforces it.
+fn prompt_copy_strings(dict: &mut TranslationDict) {
+    dict.set("did_health.label.degraded", "受限");
+    dict.set("did_health.label.stale_cache", "缓存过旧");
+    dict.set("did_health.label.metadata", "元数据");
+    dict.set("did_health.label.outage", "离线");
+    dict.set("did_health.label.server_metadata", "服务器元数据");
+    dict.set("did_health.title.degraded", "身份核验受限");
+    dict.set("did_health.title.metadata_mismatch", "身份信息格式不匹配");
+    dict.set("did_health.title.unavailable", "身份核验离线");
+    dict.set("did_health.title.service_unavailable", "身份服务不可用");
+    dict.set(
+        "did_health.detail.fresh_cache",
+        "身份核验当前离线;仅显示最近确认过的信息,仅供参考。",
+    );
+    dict.set(
+        "did_health.detail.stale_cache",
+        "身份核验当前离线,已保存的信息可能已过期。涉及信任的操作已暂停。",
+    );
+    dict.set(
+        "did_health.detail.metadata_mismatch",
+        "身份服务未提供预期的信息格式。涉及信任的操作仍处于暂停状态。",
+    );
+    dict.set(
+        "did_health.detail.partial",
+        "部分身份核验当前不可用。涉及信任的操作仍处于暂停状态。",
+    );
+    dict.set(
+        "did_health.detail.no_cache",
+        "身份核验离线,且没有已保存的信息。涉及信任的操作已暂停。",
+    );
+    dict.set(
+        "did_health.detail.server_metadata",
+        "此服务器未提供预期的身份元数据,身份核验已被阻止。",
+    );
+    dict.set(
+        "did_health.detail.blocked",
+        "在服务恢复之前,身份核验无法进行。",
+    );
+    dict.set(
+        "recovery_setup.err_requires_account",
+        "请先登录,再设置恢复密钥。",
+    );
+    dict.set(
+        "recovery_setup.err_generation_failed",
+        "无法生成恢复密钥({error})。请重试。",
+    );
+    dict.set(
+        "recovery_setup.status_after_generate",
+        "请把这 24 个词抄写下来离线保存,然后重新输入。目前还没有发布任何内容。",
+    );
+    dict.set("recovery_setup.generating", "正在生成恢复密钥…");
+    dict.set(
+        "recovery_setup.generating_replacement",
+        "正在生成新的恢复密钥…",
+    );
+    dict.set(
+        "recovery_setup.save_first_guard",
+        "请先保存这 24 个词,然后在下方确认。",
+    );
+    dict.set("recovery_setup.aria_label", "设置恢复密钥");
+    dict.set("recovery_setup.title", "设置恢复密钥(24 词)");
+    dict.set("recovery_setup.subtitle", "启用加密前必需");
+    dict.set("recovery_setup.device_unauthorized", "此设备尚未获得保存恢复数据的授权。这些词只显示在当前屏幕上。请先授权此设备并用相同的词重试,或使用已有的恢复密钥恢复。");
+    dict.set("recovery_setup.intro", "在此生成 24 个词,并把它们抄写下来妥善离线保存,然后即可使用加密工作区。Arkret 无法帮你找回这些词。");
+    dict.set("recovery_setup.generated_key_label", "恢复密钥(24 词)");
+    dict.set("recovery_setup.copied", "已复制");
+    dict.set("recovery_setup.copy_words", "复制词句");
+    dict.set("recovery_setup.download", "下载 .txt");
+    dict.set(
+        "recovery_setup.save_warning",
+        "请立即保存这些词。它们不会被上传,关闭此窗口后将无法再次查看。",
+    );
+    dict.set("recovery_setup.confirm_label", "重新输入已保存的恢复密钥");
+    dict.set(
+        "recovery_setup.confirm_placeholder",
+        "输入或粘贴你保存的 24 个词",
+    );
+    dict.set(
+        "recovery_setup.confirm_hint",
+        "只有完全匹配才能继续。如果抄错了,请生成新密钥并保存新的那份。",
+    );
+    dict.set("recovery_setup.restore_button", "使用已有的恢复密钥恢复");
+    dict.set("recovery_setup.close", "关闭");
+    dict.set("recovery_setup.try_again", "重试");
+    dict.set("recovery_setup.generating_button", "正在生成…");
+    dict.set("recovery_setup.not_now", "暂不设置");
+    dict.set("recovery_setup.regenerate", "生成新密钥");
+    dict.set(
+        "recovery_setup.err_word_count",
+        "你输入了 24 个词中的 {entered} 个。请补全后再确认。",
+    );
+    dict.set(
+        "recovery_setup.err_word_mismatch",
+        "第 {index} 个词与此恢复密钥不匹配。请修正后再次确认。",
+    );
+    dict.set(
+        "recovery_setup.publishing",
+        "已确认保存无误。正在发布恢复设置和首个加密备份…",
+    );
+    dict.set(
+        "recovery_setup.metadata_save_failed",
+        "恢复已设置完成,但本地信息未能保存到此设备。",
+    );
+    dict.set("recovery_setup.confirm_button", "确认已保存的密钥");
+    dict.set("device_pair.aria_label", "有新设备正在请求访问你的账户");
+    dict.set("device_pair.title", "新设备请求加入你的账户");
+    dict.set("device_pair.subtitle", "设备配对");
+    dict.set(
+        "device_pair.body",
+        "有设备请求加入你的账户。仅当此操作由你发起时才批准——先比对两台设备上显示的下方代码。",
+    );
+    dict.set("device_pair.platform", "平台:{platform}");
+    dict.set("device_pair.expires", "请求过期时间 {time}");
+    dict.set("device_pair.compare_code", "请在两台设备上比对此代码");
+    dict.set("device_pair.approving", "正在批准…");
+    dict.set("device_pair.err_approval_failed", "无法批准该设备:{error}");
+    dict.set("device_pair.reject", "拒绝");
+    dict.set("device_pair.approve", "批准");
+    dict.set(
+        "agent_runtime.aria_label",
+        "有代理运行时正在请求访问你的账户",
+    );
+    dict.set("agent_runtime.title", "代理运行时请求批准");
+    dict.set("agent_runtime.subtitle", "代理配对");
+    dict.set(
+        "agent_runtime.body",
+        "一个代理运行时请求完成配对。仅当此请求由你发起且代码与运行时屏幕上显示的一致时才批准。",
+    );
+    dict.set(
+        "agent_runtime.replacement_warning",
+        "这将替换一个处于活跃或暂停状态的代理的运行时密钥。",
+    );
+    dict.set("agent_runtime.slug", "标识:{slug}");
+    dict.set("agent_runtime.requested", "请求时间 {time}");
+    dict.set("agent_runtime.compare_code", "批准前请比对此代码");
+    dict.set("agent_runtime.runtime_key", "运行时密钥");
+    dict.set("agent_runtime.proof_expires", "凭证过期时间 {time}");
+    dict.set("agent_runtime.rejecting", "正在拒绝请求并更换配对代码…");
+    dict.set("agent_runtime.rejected", "已拒绝请求并更换配对代码。");
+    dict.set(
+        "agent_runtime.err_rotate_failed",
+        "无法更换配对代码。{error}",
+    );
+    dict.set("agent_runtime.reject_rotate", "拒绝并更换代码");
+    dict.set("agent_runtime.dismiss", "忽略");
+    dict.set("agent_runtime.err_no_account", "请先登录,再批准。");
+    dict.set(
+        "agent_runtime.err_invalid_request",
+        "运行时密钥请求无效。{error}",
+    );
+    dict.set("agent_runtime.approving", "正在批准代理运行时…");
+    dict.set(
+        "agent_runtime.approved_refresh_failed",
+        "运行时密钥已批准({id})。代理的恢复备份刷新失败:{error}",
+    );
+    dict.set(
+        "agent_runtime.approved_current",
+        "运行时密钥已批准({id})。代理的恢复备份已是最新。",
+    );
+    dict.set(
+        "agent_runtime.err_approval_failed",
+        "无法批准运行时密钥。{error}",
+    );
+    dict.set("agent_runtime.approving_button", "正在批准…");
+    dict.set("agent_runtime.approve", "批准");
+    dict.set("manage.realms_title", "管理工作区");
+    dict.set(
+        "manage.realms_subtitle",
+        "批量退出多个工作区。服务器确认后,将移除其本地数据。",
+    );
+    dict.set("manage.stats_shown", "显示 {count} 个");
+    dict.set("manage.stats_total", "共 {count} 个");
+    dict.set("manage.stats_selected", "已选 {count} 个");
+    dict.set("manage.select_shown", "选择当前显示");
+    dict.set("manage.clear", "清空");
+    dict.set("manage.leaving", "正在退出…");
+    dict.set("manage.leave_selected", "退出所选");
+    dict.set("manage.realms_list_title", "工作区");
+    dict.set("manage.rows", "{count} 行");
+    dict.set(
+        "manage.realms_empty_hint",
+        "同步完成后,工作区将显示在这里。",
+    );
+    dict.set("manage.no_results_hint", "换个搜索词试试,以显示更多结果。");
+    dict.set("manage.row_encrypted", "已加密");
+    dict.set("manage.row_unencrypted", "未加密");
+    dict.set("manage.row_spaces", "{count} 个空间");
+    dict.set("manage.contacts_title", "管理联系人");
+    dict.set(
+        "manage.contacts_subtitle",
+        "批量删除联系人,删除成功的联系人将从列表中移除。",
+    );
+    dict.set("manage.search_contacts", "搜索联系人");
+    dict.set("manage.deleting", "正在删除…");
+    dict.set("manage.delete_selected", "删除所选");
+    dict.set("manage.delete_unavailable", "暂不可用");
+    dict.set("manage.contacts_list_title", "联系人");
+    dict.set(
+        "manage.contacts_empty_hint",
+        "加载完成后,你的联系人将显示在这里。",
+    );
+    dict.set("manage.contacts_no_results", "没有匹配的联系人");
+    dict.set("manage.contact_no_scopes", "无共享范围");
+    dict.set("manage.contact_dm", "私聊 {state}");
+    dict.set("manage.contact_no_dm", "无私聊");
+    dict.set("durability_banner.title", "本工作区历史已持续封存给恢复方");
+    dict.set("durability_banner.mode_single", "单一恢复密钥");
+    dict.set("durability_banner.mode_threshold", "门限恢复");
+    dict.set("durability_banner.body", "该恢复方持有者可解密本工作区的全部历史。恢复方处于离线状态、不是群组成员、不接收实时消息,仅在需要恢复时才会取出密钥。");
+    dict.set("durability_banner.verifying", "正在验证恢复方身份…");
+    dict.set("durability_banner.verified", "已验证");
+    dict.set("durability_banner.controlled_by", "受控于 {org}");
+    dict.set("durability_banner.unverifiable", "无法验证");
+    dict.set(
+        "durability_banner.unverifiable_detail",
+        "恢复方 {did}(无法确认其恢复密钥服务处于活跃状态)",
+    );
 }

@@ -128,6 +128,9 @@ pub(crate) struct ChatMessage {
     /// reply-as-agent messages.
     pub(crate) executed_by: Option<String>,
     pub(crate) body: String,
+    /// Protocol-declared text format. `None` is a safe literal-text fallback
+    /// for remote Content Blocks that omit the SHOULD-level discriminator.
+    pub(crate) content_format: Option<arkret_sdk::TextFormat>,
     pub(crate) timestamp: String,
     pub(crate) created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub(crate) strand_id: String,

@@ -1,7 +1,35 @@
+/* ===================================================================
+ * THEME TOKEN SOURCE OF TRUTH
+ * -------------------------------------------------------------------
+ * This file is the SINGLE source of truth for all theme tokens
+ * (surfaces, lines, text, brand, semantic colors, radius, shadows,
+ * fonts, layout widths, layers). It is loaded last of all stylesheets
+ * (see src/app/mod.rs), so its declarations always win.
+ * `design/tokens-reset-i18n.css` keeps ONLY the reset/base rules and
+ * the i18n [data-lang] visibility rules — do not add tokens there.
+ * ================================================================ */
 
 :root {
+  /* Layout */
   --sidebar-w: 320px;
   --sidebar-collapsed-w: 72px;
+  --right-pane-w: 340px;
+  --topbar-h: 52px;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius:    10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  /* Fonts */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
+               Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei",
+               sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+
+  /* Layering */
   --layer-sticky: 10;
   --layer-local-scrim: 30;
   --layer-local-popover: 40;
@@ -11,6 +39,15 @@
   --layer-modal: 300;
   --layer-toast: 400;
   --layer-drag-shield: 900;
+
+  /* Full-screen scrim behind modals/overlays (theme-static by design) */
+  --scrim: rgba(8, 13, 20, 0.64);
+
+  /* Amber CTA (deliberately theme-static: dark ink on amber reads in
+     both light and dark themes) */
+  --cta-amber-a: #ffb547;
+  --cta-amber-b: #ff8a3d;
+  --cta-amber-ink: #1a1a1a;
 }
 
 :root,
@@ -547,7 +584,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(8, 13, 20, 0.64);
+  background: var(--scrim);
 }
 
 .discussion-modal {
@@ -614,5 +651,5 @@
   background: transparent;
   box-shadow: none;
   appearance: auto;
-  accent-color: var(--accent, #1f6b4f);
+  accent-color: var(--accent);
 }
