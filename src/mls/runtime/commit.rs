@@ -84,6 +84,9 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
         group.group_id(),
         group.epoch(),
         group.epoch().saturating_add(1),
+        group
+            .security_frontier_leaves()
+            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?,
     )
     .map_err(MlsRuntimeError::Commit)?;
     let governance_binding =
@@ -263,17 +266,14 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
+    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
-        effective_scope,
-        group.group_id(),
+        &effective_scope,
+        group.group_id().as_str(),
         group.epoch(),
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    let governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
-            .map_err(MlsRuntimeError::Commit)?;
     if let Some(binding) = sidecar_binding.as_ref()
         && governance_binding.sidecar_binding() != Some(binding)
     {
@@ -402,17 +402,14 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
+    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
-        effective_scope,
-        group.group_id(),
+        &effective_scope,
+        group.group_id().as_str(),
         group.epoch(),
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    let governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
-            .map_err(MlsRuntimeError::Commit)?;
     if let Some(binding) = sidecar_binding.as_ref()
         && governance_binding.sidecar_binding() != Some(binding)
     {
@@ -523,17 +520,14 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
+    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
-        effective_scope,
-        group.group_id(),
+        &effective_scope,
+        group.group_id().as_str(),
         group.epoch(),
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    let governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
-            .map_err(MlsRuntimeError::Commit)?;
     let governance_binding = match sidecar_binding {
         Some(binding) => {
             crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())

@@ -258,15 +258,13 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
         return Ok(None);
     }
 
-    let request = crate::mls::governance_proof::proof_request_for_scope(
+    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
-        effective_scope.clone(),
-        summary.group_id.clone(),
+        &effective_scope,
+        &summary.group_id,
         0,
         0,
     )?;
-    let governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
     if let Some(binding) = sidecar_binding.as_ref()
         && governance_binding.sidecar_binding() != Some(binding)
     {
@@ -461,15 +459,13 @@ pub(crate) fn mls_commit_basis_from_store(
             prev_epoch,
         )?
         .to_string();
-    let request = crate::mls::governance_proof::proof_request_for_scope(
+    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
-        effective_scope.clone(),
-        commit_envelope.group_id.clone(),
+        &effective_scope,
+        &commit_envelope.group_id,
         prev_epoch,
         commit_envelope.epoch,
     )?;
-    let governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
     let governance_binding = match sidecar_binding {
         Some(binding) => {
             crate::mls::governance_proof::bind_sidecar_scope(&governance_binding, binding.clone())

@@ -432,23 +432,7 @@ mod tests {
     #[test]
     fn verified_bundle_recognizes_an_observed_predecessor_head() {
         let bundle = arkret_sdk::MlsGovernanceProofBundle {
-            query: serde_json::from_value(serde_json::json!({
-                "profile": "group_security_frontier",
-                "effective_scope": {
-                    "kind": "realm",
-                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-                },
-                "mls_group_id": "QXJrcmV0Rml4dHVyZUdyb3Vw",
-                "proof_base_basis": {"leaves": ["ak:seal:sha256:base"]},
-                "proof_target_basis": {"leaves": ["ak:seal:sha256:previous"]},
-                "byte_limit": 1048576,
-                "frontier_purpose": "group_binding",
-                "base_group_state_ref": "ak:event:AZ6GqZWWvnQ2KFwbBD-MenomzWNz-31MUAuKzBXIP0zv",
-                "previous_epoch": 1,
-                "next_epoch": 2,
-                "binding_profile": "ak.security_frontier.v1"
-            }))
-            .unwrap(),
+            query_digest: arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap(),
             frontier_projection: arkret_sdk::MlsGovernanceFrontierProjection {
                 frontier_registry_digest: arkret_sdk::Hash::new(format!(
                     "sha256:{}",

@@ -1055,28 +1055,6 @@ async fn run_circle_scope_rotate_pass(
                 );
                 continue;
             };
-            let proof_request = ctx.state_store.read(|store| {
-                crate::mls::governance_proof::proof_request(
-                    store,
-                    &realm_id,
-                    None,
-                    snapshot.group_id.clone(),
-                    snapshot.epoch,
-                    snapshot.epoch.saturating_add(1),
-                )
-            });
-            let proof_request = match proof_request {
-                Ok(request) => request,
-                Err(error) => {
-                    tracing::debug!(
-                        %realm_id,
-                        ?target_principal_ids,
-                        %error,
-                        "sync_engine: Realm MLS remove proof request deferred",
-                    );
-                    continue;
-                }
-            };
             let proof_leaves = ctx.state_store.read(|store| {
                 crate::mls::governance_proof::current_security_frontier_leaves(
                     store, &realm_id, None, &actor_id, &device_id,
@@ -1093,6 +1071,29 @@ async fn run_circle_scope_rotate_pass(
                         ?target_principal_ids,
                         %error,
                         "sync_engine: Realm MLS remove security frontier deferred",
+                    );
+                    continue;
+                }
+            };
+            let proof_request = ctx.state_store.read(|store| {
+                crate::mls::governance_proof::proof_request(
+                    store,
+                    &realm_id,
+                    None,
+                    snapshot.group_id.clone(),
+                    snapshot.epoch,
+                    snapshot.epoch.saturating_add(1),
+                    proof_leaves.clone(),
+                )
+            });
+            let proof_request = match proof_request {
+                Ok(request) => request,
+                Err(error) => {
+                    tracing::debug!(
+                        %realm_id,
+                        ?target_principal_ids,
+                        %error,
+                        "sync_engine: Realm MLS remove proof request deferred",
                     );
                     continue;
                 }

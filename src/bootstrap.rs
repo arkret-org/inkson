@@ -792,6 +792,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             preview.binding.mls_group_id(),
             preview.binding.previous_epoch(),
             preview.binding.next_epoch(),
+            preview.leaves.clone(),
         )?;
         crate::mls::governance_proof::fetch_verify_and_cache_expected_proof(
             &api,

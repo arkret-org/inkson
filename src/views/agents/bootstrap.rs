@@ -1112,6 +1112,9 @@ pub(crate) async fn bootstrap_provisioned_agent(
     );
 
     let group_id = arkret_sdk::base64url_encode(realm_id.as_bytes());
+    let leaves =
+        crate::mls::governance_proof::singleton_security_frontier_leaf(agent_id, &device_id)
+            .map_err(anyhow::Error::msg)?;
     let proof_request = crate::mls::governance_proof::proof_request(
         &state_store.read(),
         realm_id,
@@ -1119,11 +1122,9 @@ pub(crate) async fn bootstrap_provisioned_agent(
         group_id,
         0,
         0,
+        leaves.clone(),
     )
     .map_err(anyhow::Error::msg)?;
-    let leaves =
-        crate::mls::governance_proof::singleton_security_frontier_leaf(agent_id, &device_id)
-            .map_err(anyhow::Error::msg)?;
     crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
         api,
         state_store,

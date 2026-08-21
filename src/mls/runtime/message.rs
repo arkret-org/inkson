@@ -1503,14 +1503,13 @@ fn verify_welcome_governance_binding(
                 .to_owned(),
         );
     }
-    let request = crate::mls::governance_proof::proof_request_for_scope(
+    let verified = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
-        binding.effective_scope().clone(),
+        binding.effective_scope(),
         binding.mls_group_id(),
         binding.previous_epoch(),
         binding.next_epoch(),
     )?;
-    let verified = crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
     if verified != binding {
         return Err(
             "durable Welcome governance binding differs from the locally verified Seal proof"

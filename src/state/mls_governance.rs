@@ -185,4 +185,40 @@ impl LocalStateStore {
         }
         Ok(Some(entry.clone()))
     }
+
+    pub fn cached_mls_governance_binding_for_transition(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        mls_group_id: &str,
+        previous_epoch: u64,
+        next_epoch: u64,
+        now: DateTime<Utc>,
+    ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
+        let realm_id = effective_scope
+            .realm_id_opt()
+            .ok_or_else(|| "MLS governance transition has no Realm scope".to_owned())?;
+        let state = self.load();
+        let checkpoint = state
+            .mls_governance_checkpoints
+            .get(realm_id.as_str())
+            .ok_or_else(|| "MLS governance checkpoint is not pinned".to_owned())?;
+        let mut matches = state.mls_governance_proofs.values().filter(|entry| {
+            entry.verified_at + chrono::Duration::minutes(MLS_GOVERNANCE_PROOF_CACHE_TTL_MINUTES)
+                > now
+                && &entry.request.effective_scope == effective_scope
+                && entry.request.mls_group_id.as_str() == mls_group_id
+                && entry.request.previous_epoch == previous_epoch
+                && entry.request.next_epoch == next_epoch
+                && entry.proof_target_basis == checkpoint.basis
+        });
+        let Some(entry) = matches.next() else {
+            return Err("MLS governance proof is not cached for this exact transition".to_owned());
+        };
+        if matches.next().is_some() {
+            return Err(
+                "multiple MLS governance leaf sets are cached for this transition".to_owned(),
+            );
+        }
+        Ok(entry.governance_binding.clone())
+    }
 }

@@ -121,6 +121,8 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         .await
         .map_err(|error| format!("establishing the MLS governance checkpoint failed: {error}"))?;
 
+    let leaves =
+        crate::mls::governance_proof::singleton_security_frontier_leaf(actor_id, device_id)?;
     let request = crate::mls::governance_proof::proof_request(
         &state_store.read(),
         realm_id,
@@ -128,10 +130,9 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         crate::mls::runtime::mls_group_id_for_realm(realm_id)?,
         0,
         0,
+        leaves.clone(),
     )
     .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
-    let leaves =
-        crate::mls::governance_proof::singleton_security_frontier_leaf(actor_id, device_id)?;
     crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
         .await
         .map_err(|error| {

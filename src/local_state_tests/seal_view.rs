@@ -464,9 +464,16 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
         0,
         1,
     );
-    let request =
-        crate::mls::governance_proof::proof_request(&merged, realm, None, "dGVzdC1tbHM", 0, 1)
-            .expect("proof request");
+    let request = crate::mls::governance_proof::proof_request(
+        &merged,
+        realm,
+        None,
+        "dGVzdC1tbHM",
+        0,
+        1,
+        crate::mls::governance_proof::seed_test_security_frontier_leaves(),
+    )
+    .expect("proof request");
     merged.set_realm_seal_view(
         realm,
         LocalSealView {

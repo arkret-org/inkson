@@ -155,15 +155,6 @@ pub(crate) async fn ensure_mls_governance_coverage(
         .read()
         .mls_snapshot_for_effective_scope(realm_id, circle_id)
         .ok_or_else(|| "MLS coverage repair requires a local group snapshot".to_owned())?;
-    let request = crate::mls::governance_proof::proof_request(
-        &state_store.read(),
-        realm_id,
-        circle_id,
-        snapshot.group_id.clone(),
-        snapshot.epoch,
-        snapshot.epoch.saturating_add(1),
-    )
-    .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
     let leaves = crate::mls::governance_proof::current_security_frontier_leaves(
         &state_store.read(),
         realm_id,
@@ -171,6 +162,16 @@ pub(crate) async fn ensure_mls_governance_coverage(
         actor_id,
         device_id,
     )?;
+    let request = crate::mls::governance_proof::proof_request(
+        &state_store.read(),
+        realm_id,
+        circle_id,
+        snapshot.group_id.clone(),
+        snapshot.epoch,
+        snapshot.epoch.saturating_add(1),
+        leaves.clone(),
+    )
+    .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
     crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
         .await
         .map_err(|error| {

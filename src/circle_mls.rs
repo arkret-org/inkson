@@ -128,17 +128,16 @@ fn build_remove_scope_rotate_draft(
             "OpenMLS remove proposal artifacts do not align with removed principals".to_owned(),
         );
     }
-    let request = crate::mls::governance_proof::proof_request_for_scope(
-        state_store,
-        effective_scope.clone(),
-        remove.commit.group_id.clone(),
-        remove.commit.epoch.saturating_sub(1),
-        remove.commit.epoch,
-    )?;
     // Remove proposals and their commit are governed as one epoch transition,
     // so every durable proposal must carry the same verified binding.
     let proposal_governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &request)?;
+        crate::mls::governance_proof::cached_verified_binding_for_transition(
+            state_store,
+            &effective_scope,
+            &remove.commit.group_id,
+            remove.commit.epoch.saturating_sub(1),
+            remove.commit.epoch,
+        )?;
     if let Some(sidecar_binding) = sidecar_binding.as_ref()
         && proposal_governance_binding.sidecar_binding() != Some(sidecar_binding)
     {

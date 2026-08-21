@@ -2254,6 +2254,9 @@ async fn ensure_mls_genesis_frontier_for_invite(
             "local epoch-0 MLS snapshot is not available; create or restore this device's MLS state before inviting into an encrypted Realm"
         )
     })?;
+    let leaves =
+        crate::mls::governance_proof::singleton_security_frontier_leaf(actor_id, device_id)
+            .map_err(anyhow::Error::msg)?;
     let genesis_request = crate::mls::governance_proof::proof_request(
         &state_store.read(),
         realm_id,
@@ -2261,11 +2264,9 @@ async fn ensure_mls_genesis_frontier_for_invite(
         summary.group_id.clone(),
         0,
         0,
+        leaves.clone(),
     )
     .map_err(anyhow::Error::msg)?;
-    let leaves =
-        crate::mls::governance_proof::singleton_security_frontier_leaf(actor_id, device_id)
-            .map_err(anyhow::Error::msg)?;
     crate::mls::governance_proof::fetch_verify_and_cache_proof(
         api,
         state_store,
@@ -2341,6 +2342,19 @@ async fn ensure_mls_governance_proof_for_next_commit(
     device_id: &str,
     added_claims: &[&arkret_sdk::KeyPackageClaimRecord],
 ) -> anyhow::Result<()> {
+    let current_leaves = crate::mls::governance_proof::current_security_frontier_leaves(
+        &state_store.read(),
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let leaves = crate::mls::governance_proof::security_frontier_with_added_claims(
+        current_leaves,
+        added_claims,
+    )
+    .map_err(anyhow::Error::msg)?;
     let request = {
         let store = state_store.read();
         let snapshot = store.mls_snapshot_for(realm_id).ok_or_else(|| {
@@ -2353,20 +2367,10 @@ async fn ensure_mls_governance_proof_for_next_commit(
             snapshot.group_id,
             snapshot.epoch,
             snapshot.epoch.saturating_add(1),
+            leaves.clone(),
         )
         .map_err(anyhow::Error::msg)?
     };
-    let leaves = crate::mls::governance_proof::current_security_frontier_leaves(
-        &state_store.read(),
-        realm_id,
-        None,
-        actor_id,
-        device_id,
-    )
-    .map_err(anyhow::Error::msg)?;
-    let leaves =
-        crate::mls::governance_proof::security_frontier_with_added_claims(leaves, added_claims)
-            .map_err(anyhow::Error::msg)?;
     crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
         .await
         .map(|_| ())

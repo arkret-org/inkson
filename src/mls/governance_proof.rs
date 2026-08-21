@@ -81,6 +81,7 @@ pub(crate) fn proof_request(
     mls_group_id: impl Into<String>,
     previous_epoch: u64,
     next_epoch: u64,
+    local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
 ) -> Result<arkret_sdk::MlsGovernanceProofRequestBody, String> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS governance proof Realm id: {error}"))?;
@@ -103,6 +104,7 @@ pub(crate) fn proof_request(
         mls_group_id,
         previous_epoch,
         next_epoch,
+        local_mls_leaves,
     )
 }
 
@@ -112,6 +114,7 @@ pub(crate) fn proof_request_for_scope(
     mls_group_id: impl Into<String>,
     previous_epoch: u64,
     next_epoch: u64,
+    local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
 ) -> Result<arkret_sdk::MlsGovernanceProofRequestBody, String> {
     let realm_id = effective_scope
         .realm_id_opt()
@@ -165,6 +168,7 @@ pub(crate) fn proof_request_for_scope(
         profile: arkret_sdk::MlsGovernanceProofProfile::GroupSecurityFrontier,
         effective_scope,
         mls_group_id,
+        local_mls_leaves,
         proof_base_basis,
         proof_target_basis,
         byte_limit: arkret_sdk::MLS_GOVERNANCE_PROOF_MAX_BYTES,
@@ -291,6 +295,12 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
     ),
     String,
 > {
+    if request.local_mls_leaves != leaves {
+        return Err(
+            "MLS governance proof request leaves differ from the locally verified group state"
+                .to_owned(),
+        );
+    }
     let realm_id = request
         .effective_scope
         .realm_id_opt()
@@ -557,6 +567,22 @@ pub(crate) fn cached_verified_binding(
     Ok(entry.governance_binding)
 }
 
+pub(crate) fn cached_verified_binding_for_transition(
+    state_store: &crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    mls_group_id: &str,
+    previous_epoch: u64,
+    next_epoch: u64,
+) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
+    state_store.cached_mls_governance_binding_for_transition(
+        effective_scope,
+        mls_group_id,
+        previous_epoch,
+        next_epoch,
+        chrono::Utc::now(),
+    )
+}
+
 /// Seeds a post-verification state for tests that exercise later MLS runtime
 /// behavior. Verifier and acquisition tests must use real signed fixtures.
 #[cfg(test)]
@@ -621,6 +647,7 @@ pub(crate) fn seed_test_governance_proof(
         profile: arkret_sdk::MlsGovernanceProofProfile::GroupSecurityFrontier,
         effective_scope,
         mls_group_id,
+        local_mls_leaves: seed_test_security_frontier_leaves(),
         proof_base_basis: basis.clone(),
         proof_target_basis: basis.clone(),
         byte_limit: arkret_sdk::MLS_GOVERNANCE_PROOF_MAX_BYTES,
@@ -642,7 +669,7 @@ pub(crate) fn seed_test_governance_proof(
     let binding =
         binding_from_verified_frontier(&request, root.clone(), &genesis_binding, None).unwrap();
     let mut bundle = arkret_sdk::MlsGovernanceProofBundle {
-        query: request.clone(),
+        query_digest: request.query_digest().unwrap(),
         frontier_projection: arkret_sdk::MlsGovernanceFrontierProjection {
             frontier_registry_digest: arkret_sdk::Hash::new(
                 arkret_sdk::MLS_SECURITY_FRONTIER_REGISTRY_DIGEST,
@@ -670,6 +697,21 @@ pub(crate) fn seed_test_governance_proof(
         .seed_test_verified_mls_governance_cache(request, binding.clone(), bundle, checkpoint)
         .unwrap();
     binding
+}
+
+#[cfg(test)]
+pub(crate) fn seed_test_security_frontier_leaves() -> Vec<arkret_sdk::MlsSecurityFrontierLeaf> {
+    vec![arkret_sdk::MlsSecurityFrontierLeaf {
+        leaf_index: 0,
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:webvh:z6mkfixturealice:alice.example",
+        )
+        .unwrap(),
+        credential_ref: arkret_sdk::NonEmptyString::new(
+            "did:webvh:z6mkfixturealice:alice.example#device-1",
+        )
+        .unwrap(),
+    }]
 }
 
 fn binding_from_verified_frontier(

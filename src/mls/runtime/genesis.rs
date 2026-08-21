@@ -114,17 +114,14 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal_did, device_id_typed)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
+    let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
-        effective_scope.clone(),
-        group_id,
+        &effective_scope,
+        &group_id,
         0,
         0,
     )
     .map_err(MlsRuntimeError::Genesis)?;
-    let governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
-            .map_err(MlsRuntimeError::Genesis)?;
     if let Some(binding) = sidecar_binding.as_ref()
         && governance_binding.sidecar_binding() != Some(binding)
     {
@@ -261,17 +258,14 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|err| MlsRuntimeError::Genesis(format!("restore epoch-0 snapshot: {err}")))?;
     let group_id = group.group_id();
-    let proof_request = crate::mls::governance_proof::proof_request_for_scope(
+    let expected_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
-        effective_scope,
-        group_id.clone(),
+        &effective_scope,
+        &group_id,
         0,
         0,
     )
     .map_err(MlsRuntimeError::Genesis)?;
-    let expected_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
-            .map_err(MlsRuntimeError::Genesis)?;
     if let Some(binding) = sidecar_binding.as_ref()
         && expected_binding.sidecar_binding() != Some(binding)
     {

@@ -167,15 +167,13 @@ pub(crate) async fn converge_accepted_mls_commits(
                 base_ref
             ));
         }
-        let request = crate::mls::governance_proof::proof_request_for_scope(
+        let verified = crate::mls::governance_proof::cached_verified_binding_for_transition(
             &state_store.read(),
-            scope.clone(),
+            &scope,
             accepted.payload.mls_group_id(),
             accepted.payload.base_epoch(),
             accepted.payload.next_epoch(),
         )?;
-        let verified =
-            crate::mls::governance_proof::cached_verified_binding(&state_store.read(), &request)?;
         if verified != binding {
             return Err("accepted Commit governance binding is not locally verified".to_owned());
         }

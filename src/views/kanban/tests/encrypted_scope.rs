@@ -629,8 +629,16 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         0,
         0,
     );
-    let proof_request =
-        crate::mls::governance_proof::proof_request(&state, realm, None, group_id, 0, 0).unwrap();
+    let proof_request = crate::mls::governance_proof::proof_request(
+        &state,
+        realm,
+        None,
+        group_id,
+        0,
+        0,
+        crate::mls::governance_proof::seed_test_security_frontier_leaves(),
+    )
+    .unwrap();
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(&state, &proof_request).unwrap();
     let group = identity
