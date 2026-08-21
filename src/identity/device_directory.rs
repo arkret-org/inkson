@@ -38,6 +38,7 @@ const MAX_CACHE_ENTRIES: usize = 4096;
 struct CacheEntry {
     key: Option<PublicKeyMaterial>,
     authorize_event_id: Option<arkret_sdk::EventId>,
+    authority: Option<arkret_sdk::PrincipalAuthorityKey>,
     expires_at_ms: u64,
     last_accessed_ms: u64,
 }
@@ -86,11 +87,39 @@ pub fn cached_device_authorize_event_id(actor: &str, device: &str) -> Option<ark
         .and_then(|entry| entry.authorize_event_id.clone())
 }
 
+/// Return the exact public authority tuple required to admit a Signal sender.
+///
+/// A plain cached key is insufficient: the Signal proof also has to be bound
+/// to the origin Principal Server whose signed device projection established
+/// that key. Entries created without a verified projection attestation are
+/// therefore deliberately invisible through this accessor.
+pub fn cached_signal_sender_evidence(
+    actor: &str,
+    device: &str,
+) -> Option<(PublicKeyMaterial, arkret_sdk::PrincipalAuthorityKey)> {
+    let now = crate::clock::now_unix_ms();
+    let mut guard = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
+    let cache_key = cache_key(actor, device);
+    match guard.get_mut(&cache_key) {
+        Some(entry) if entry.expires_at_ms > now => {
+            entry.last_accessed_ms = now;
+            Some((entry.key.clone()?, entry.authority.clone()?))
+        }
+        Some(_) => {
+            guard.remove(&cache_key);
+            None
+        }
+        None => None,
+    }
+}
+
 fn store_entry(
     actor: &str,
     device: &str,
     key: Option<PublicKeyMaterial>,
     authorize_event_id: Option<arkret_sdk::EventId>,
+    authority: Option<arkret_sdk::PrincipalAuthorityKey>,
+    attestation_expires_at_ms: Option<u64>,
 ) {
     let now = crate::clock::now_unix_ms();
     let ttl = if key.is_some() {
@@ -98,6 +127,9 @@ fn store_entry(
     } else {
         NEGATIVE_TTL_MS
     };
+    let expires_at_ms = now
+        .saturating_add(ttl)
+        .min(attestation_expires_at_ms.unwrap_or(u64::MAX));
     let mut guard = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
     guard.retain(|_, entry| entry.expires_at_ms > now);
     let inserted = cache_key(actor, device);
@@ -106,7 +138,8 @@ fn store_entry(
         CacheEntry {
             key,
             authorize_event_id,
-            expires_at_ms: now.saturating_add(ttl),
+            authority,
+            expires_at_ms,
             last_accessed_ms: now,
         },
     );
@@ -137,11 +170,17 @@ pub fn public_key_from_directory_value(value: &str) -> Option<PublicKeyMaterial>
     Some(material)
 }
 
-fn accepted_device_key(
+async fn accepted_device_evidence(
     outcome: &arkret_models_crypto::KeysQueryOutcome,
+    anchor: &dyn DidAnchor,
     actor: &str,
     device: &str,
-) -> Option<(PublicKeyMaterial, arkret_sdk::EventId)> {
+) -> Option<(
+    PublicKeyMaterial,
+    arkret_sdk::EventId,
+    arkret_sdk::PrincipalAuthorityKey,
+    u64,
+)> {
     let actor = crate::mls_api_helpers::principal_core_id(actor).ok()?;
     let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
     let record = outcome.device_keys.get(&actor)?.get(&device)?;
@@ -149,8 +188,46 @@ fn accepted_device_key(
     if !record.is_usable_in_generation(Some(generation)) {
         return None;
     }
+    record.validate_attestation_binding(&actor, &device).ok()?;
+    let attestation = &record.device_projection_attestation;
+    let method_did =
+        arkret_sdk::verification_method_did(attestation.proof.verification_method.as_str()).ok()?;
+    let document = match anchor.resolve_did_document(&method_did) {
+        Some(document) => document,
+        None => {
+            let http = reqwest::Client::new();
+            if !anchor.ensure_actor_document(&http, &method_did).await {
+                return None;
+            }
+            anchor.resolve_did_document(&method_did)?
+        }
+    };
+    let method = arkret_sdk::resolve_verification_method_key_from_document(
+        &document,
+        attestation.proof.verification_method.as_str(),
+    )
+    .ok()?;
+    let verifying_key =
+        ed25519_dalek::VerifyingKey::from_bytes(&method.public_key.ed25519_bytes().ok()?).ok()?;
+    arkret_sdk::signatures::device_projection::verify_device_projection_attestation(
+        attestation,
+        &verifying_key,
+        chrono::Utc::now(),
+    )
+    .ok()?;
     let key = public_key_from_directory_value(record.device_signing_key.as_str())?;
-    Some((key, record.device_authorize_event_id.clone()))
+    let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        actor,
+        attestation.attestation.principal_server_id.clone(),
+    );
+    authority.validate().ok()?;
+    let expires_at_ms = u64::try_from(attestation.attestation.expires_at.timestamp_millis()).ok()?;
+    Some((
+        key,
+        record.device_authorize_event_id.clone(),
+        authority,
+        expires_at_ms,
+    ))
 }
 
 pub async fn resolve_device_signing_key(
@@ -164,15 +241,28 @@ pub async fn resolve_device_signing_key(
 
 pub async fn resolve_device_signing_key_with_http(
     sdk_http: &arkret_sdk::http_client::Client,
-    _anchor: &dyn DidAnchor,
+    anchor: &dyn DidAnchor,
     actor: &str,
     device: &str,
 ) -> anyhow::Result<Option<PublicKeyMaterial>> {
     let outcome = crate::transport::keys::query_keys(sdk_http, actor, device).await?;
-    let resolved = accepted_device_key(&outcome, actor, device);
-    let key = resolved.as_ref().map(|(key, _)| key.clone());
-    let authorize_event_id = resolved.map(|(_, event_id)| event_id);
-    store_entry(actor, device, key.clone(), authorize_event_id);
+    let resolved = accepted_device_evidence(&outcome, anchor, actor, device).await;
+    let key = resolved.as_ref().map(|(key, ..)| key.clone());
+    let authorize_event_id = resolved
+        .as_ref()
+        .map(|(_, event_id, _, _)| event_id.clone());
+    let authority = resolved
+        .as_ref()
+        .map(|(_, _, authority, _)| authority.clone());
+    let attestation_expires_at_ms = resolved.map(|(_, _, _, expires_at_ms)| expires_at_ms);
+    store_entry(
+        actor,
+        device,
+        key.clone(),
+        authorize_event_id,
+        authority,
+        attestation_expires_at_ms,
+    );
     Ok(key)
 }
 
@@ -368,12 +458,22 @@ pub fn invalidate_actor(actor: &str) -> usize {
 
 #[cfg(test)]
 pub(crate) fn seed_positive_for_test(actor: &str, device: &str, key: PublicKeyMaterial) {
-    store_entry(actor, device, Some(key), None);
+    store_entry(actor, device, Some(key), None, None, None);
+}
+
+#[cfg(test)]
+pub(crate) fn seed_signal_sender_for_test(
+    actor: &str,
+    device: &str,
+    key: PublicKeyMaterial,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+) {
+    store_entry(actor, device, Some(key), None, Some(authority), None);
 }
 
 #[cfg(test)]
 pub(crate) fn seed_negative_for_test(actor: &str, device: &str) {
-    store_entry(actor, device, None, None);
+    store_entry(actor, device, None, None, None, None);
 }
 
 #[cfg(test)]

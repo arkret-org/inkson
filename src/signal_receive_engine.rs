@@ -93,8 +93,19 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
         &self,
         envelope: &arkret_wire::SignalEnvelope,
     ) -> Option<garth::VerifiedSignalSenderKey> {
-        let _ = envelope;
-        None
+        let (public_key, authority) =
+            crate::identity::device_directory::cached_signal_sender_evidence(
+                envelope.sender_actor_id.as_str(),
+                envelope.sender_device_id.as_str(),
+            )?;
+        garth::VerifiedSignalSenderKey::from_directory_evidence(
+            public_key,
+            envelope.sender_actor_id.clone(),
+            envelope.sender_device_id.clone(),
+            envelope.proof.verification_method.clone(),
+            authority,
+        )
+        .ok()
     }
 }
 
@@ -632,6 +643,100 @@ mod tests {
             )
             .unwrap(),
         }
+    }
+
+    fn sender_resolution_envelope() -> arkret_wire::SignalEnvelope {
+        let actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+        let sender_device_id =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
+        arkret_wire::SignalEnvelope {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            )
+            .unwrap(),
+            scope_ref: arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                )
+                .unwrap(),
+            },
+            sender_actor_id: actor_id,
+            sender_device_id: sender_device_id.clone(),
+            seal_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64)))
+                .unwrap(),
+            signal_class: arkret_wire::SignalClass::Session,
+            sent_at: at(0),
+            expires_at: at(30),
+            encrypted_payload: arkret_wire::SignalEncryptedPayload {
+                scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME.to_owned(),
+                key_ref: arkret_wire::SignalKeyRef {
+                    algorithm: "MLS-EXPORTER-AEAD".to_owned(),
+                    group_state_ref: "ak:event:AZVgkcivLIz2PjwUcjuT5bTb6295nnowDbSQak0QfNCa"
+                        .to_owned(),
+                },
+                purpose: arkret_wire::signal::SIGNAL_AEAD_PURPOSE.to_owned(),
+                aead_profile: "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned(),
+                epoch: 4,
+                nonce: "AAAAAAAAAAAAAAAA".to_owned(),
+                ciphertext: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+                aad_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
+            },
+            proof: arkret_wire::SignalProof {
+                kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+                verification_method: arkret_sdk::DidUrl::new(format!(
+                    "did:web:alice.example#{sender_device_id}"
+                ))
+                .unwrap(),
+                envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
+                    .unwrap(),
+                created_at: at(0),
+                domain: None,
+                audience: None,
+                jws: String::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn signal_sender_resolution_requires_the_verified_authority_tuple() {
+        use garth::SignalSenderKeyResolver as _;
+
+        let envelope = sender_resolution_envelope();
+        let actor = envelope.sender_actor_id.as_str();
+        let device = envelope.sender_device_id.as_str();
+        let public_key = crate::identity::device_directory::public_key_from_directory_value(
+            "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
+        )
+        .unwrap();
+        crate::identity::device_directory::invalidate_actor(actor);
+        crate::identity::device_directory::seed_positive_for_test(
+            actor,
+            device,
+            public_key.clone(),
+        );
+        assert!(
+            DirectorySenderKeyResolver
+                .resolve_sender_key(&envelope)
+                .is_none(),
+            "a bare cached key must not replace its Principal Server authority evidence"
+        );
+
+        crate::identity::device_directory::seed_signal_sender_for_test(
+            actor,
+            device,
+            public_key,
+            arkret_sdk::PrincipalAuthorityKey::new(
+                envelope.sender_actor_id.clone(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
+        );
+        assert!(
+            DirectorySenderKeyResolver
+                .resolve_sender_key(&envelope)
+                .is_some(),
+            "the exact verified device and authority tuple must enable Signal admission"
+        );
+        crate::identity::device_directory::invalidate_actor(actor);
     }
 
     /// `CallSignalPlaintext` is `deny_unknown_fields`, so the call route MUST
