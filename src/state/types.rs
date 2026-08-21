@@ -856,7 +856,7 @@ pub(crate) struct StoredClientDelivery {
 
 /// Private, MLS-authenticated IdentityLink material retained byte-exactly for
 /// later history-response verification. The inner Principal proof is verified
-/// from retained signer evidence when the mailbox record is admitted.
+/// from retained signer evidence when the response record is admitted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LocallyAuthenticatedIdentityLink {
@@ -1211,7 +1211,7 @@ pub struct ClientLocalState {
     /// the hardened secure store and never enter this metadata snapshot.
     #[serde(default)]
     pub(crate) history_candidate_state: garth::HistoryCandidateStoreSnapshot,
-    /// Crash-safe history request/mailbox/retry state owned by Garth. The
+    /// Crash-safe history request/response-stream/retry state owned by Garth. The
     /// revision participates in compare-and-swap updates across concurrent UI
     /// tasks so ACK high-water and exact retries cannot be rolled back.
     #[serde(default)]

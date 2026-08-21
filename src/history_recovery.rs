@@ -8,19 +8,19 @@ use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct HistoryMailboxPageInstallOutcome {
+pub struct HistoryResponsePageInstallOutcome {
     pub installed: usize,
     pub cryptographically_rejected: usize,
 }
 
-struct MailboxCapabilityOpener<'a> {
+struct ResponseCapabilityOpener<'a> {
     secure_store: &'a dyn SecureKeyStore,
     actor_id: &'a str,
     device_id: &'a str,
 }
 
-impl garth::HistoryMailboxCapabilityOpener for MailboxCapabilityOpener<'_> {
-    fn open_mailbox_capability<'a>(
+impl garth::HistoryResponseCapabilityOpener for ResponseCapabilityOpener<'_> {
+    fn open_response_capability<'a>(
         &'a self,
         outcome: &'a arkret_sdk::HistoryKeyRequestCreateOutcome,
     ) -> impl Future<Output = garth::Result<String>> + garth::MaybeSend + 'a {
@@ -37,11 +37,10 @@ impl garth::HistoryMailboxCapabilityOpener for MailboxCapabilityOpener<'_> {
                 )
             })?;
             let receipt = &outcome.request_receipt;
-            let context = arkret_sdk::HistoryMailboxCapabilitySealContext {
-                purpose: arkret_sdk::HistoryMailboxCapabilitySealPurpose::Value,
+            let context = arkret_sdk::HistoryResponseCapabilitySealContext {
+                purpose: arkret_sdk::HistoryResponseCapabilitySealPurpose::Value,
                 request_digest: receipt.request_digest.clone(),
-                reply_mailbox_id: receipt.reply_mailbox_id.clone(),
-                mailbox_capability_commitment: receipt.mailbox_capability_commitment.clone(),
+                response_capability_commitment: receipt.response_capability_commitment.clone(),
                 effective_scope: receipt.effective_scope.clone(),
                 release_service_id: receipt.release_service_id.clone(),
                 release_service_binding_ref: receipt.release_service_binding_ref.clone(),
@@ -53,12 +52,12 @@ impl garth::HistoryMailboxCapabilityOpener for MailboxCapabilityOpener<'_> {
                 release_service_route_digest: receipt.release_service_route_digest.clone(),
                 expires_at: receipt.expires_at,
             };
-            arkret_crypto::secret_share::open_history_mailbox_capability(
+            arkret_crypto::secret_share::open_history_response_capability(
                 &URL_SAFE_NO_PAD.encode(private_key),
                 &context,
-                &outcome.sealed_mailbox_capability,
+                &outcome.sealed_history_response_capability,
             )
-            .map(|plaintext| plaintext.mailbox_capability_b64u)
+            .map(|plaintext| plaintext.response_capability_b64u)
             .map_err(|error| garth::Error::Protocol(error.to_string()))
         }
     }
@@ -178,7 +177,7 @@ pub async fn create_or_resume_request(
     runtime(state_store)
         .create_or_resume_request(
             &http,
-            &MailboxCapabilityOpener {
+            &ResponseCapabilityOpener {
                 secure_store,
                 actor_id,
                 device_id,
@@ -202,7 +201,7 @@ pub async fn list_requests(
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-pub async fn acquire_mailbox_page(
+pub async fn acquire_response_page(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
@@ -211,18 +210,18 @@ pub async fn acquire_mailbox_page(
 ) -> anyhow::Result<arkret_sdk::HistoryKeyResponseListOutcome> {
     let http = http_client(api)?;
     runtime(state_store)
-        .acquire_mailbox_page(&http, secure_store, request_id, limit)
+        .acquire_response_page(&http, secure_store, request_id, limit)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-/// Verify and install one durable mailbox page into the external candidate
+/// Verify and install one durable response_stream page into the external candidate
 /// ledger. Public DID/service keys are verified entirely by the SDK from the
 /// retained dependency closure. The external callback is restricted to the
 /// Native Agent and minimal-metadata MLS branches with explicit typed state
 /// anchors.
 #[allow(clippy::too_many_arguments)]
-pub async fn verify_and_install_mailbox_page<VerifyExternalSourceKey>(
+pub async fn verify_and_install_response_page<VerifyExternalSourceKey>(
     mut state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
@@ -232,7 +231,7 @@ pub async fn verify_and_install_mailbox_page<VerifyExternalSourceKey>(
     limit: Option<u8>,
     now: chrono::DateTime<chrono::Utc>,
     verify_external_source_key: VerifyExternalSourceKey,
-) -> anyhow::Result<HistoryMailboxPageInstallOutcome>
+) -> anyhow::Result<HistoryResponsePageInstallOutcome>
 where
     VerifyExternalSourceKey: Fn(
         arkret_sdk::HistorySourceProofExternalVerificationRequest<'_>,
@@ -242,13 +241,15 @@ where
     >,
 {
     let traversal = acquire_and_verify_traversal(state_store, api, request_id).await?;
-    let page = acquire_mailbox_page(state_store, api, secure_store, request_id, limit).await?;
+    let page = acquire_response_page(state_store, api, secure_store, request_id, limit).await?;
     let runtime = runtime(state_store);
     let durable = runtime
         .durable_request(request_id)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let accepted = durable.accepted.ok_or_else(|| {
-        anyhow::anyhow!("history request is not durably accepted before mailbox installation")
+        anyhow::anyhow!(
+            "history request is not durably accepted before response stream installation"
+        )
     })?;
     let private_key =
         crate::mls::runtime::load_device_hpke_private_key(secure_store, actor_id, device_id)?
@@ -260,51 +261,51 @@ where
         | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => realm_id.clone(),
     };
     let signer_dependencies =
-        crate::mls::governance_acquisition::resolve_history_mailbox_signer_dependencies(
+        crate::mls::governance_acquisition::resolve_history_response_signer_dependencies(
             api,
             &realm_id,
             &request_receipt_digest,
             page.ack_entries.iter().filter_map(|entry| match entry {
-                arkret_sdk::HistoryMailboxPageEntry::Record { record } => {
+                arkret_sdk::HistoryResponsePageEntry::Record { record } => {
                     Some(record.source_record.source_signer_evidence_digest.clone())
                 }
-                arkret_sdk::HistoryMailboxPageEntry::Lost { .. } => None,
+                arkret_sdk::HistoryResponsePageEntry::Lost { .. } => None,
             }),
             page.ack_entries.iter().map(|entry| match entry {
-                arkret_sdk::HistoryMailboxPageEntry::Record { record } => {
+                arkret_sdk::HistoryResponsePageEntry::Record { record } => {
                     record.release_service_signer_evidence_digest.clone()
                 }
-                arkret_sdk::HistoryMailboxPageEntry::Lost { lost_record } => {
+                arkret_sdk::HistoryResponsePageEntry::Lost { lost_record } => {
                     lost_record.release_service_signer_evidence_digest.clone()
                 }
             }),
         )
         .await
         .map_err(anyhow::Error::msg)?;
-    let mut outcome = HistoryMailboxPageInstallOutcome::default();
+    let mut outcome = HistoryResponsePageInstallOutcome::default();
 
     for entry in &page.ack_entries {
-        let arkret_sdk::HistoryMailboxPageEntry::Record { record } = entry else {
-            let arkret_sdk::HistoryMailboxPageEntry::Lost { lost_record } = entry else {
-                unreachable!("history mailbox page entry is a closed union")
+        let arkret_sdk::HistoryResponsePageEntry::Record { record } = entry else {
+            let arkret_sdk::HistoryResponsePageEntry::Lost { lost_record } = entry else {
+                unreachable!("history response stream page entry is a closed union")
             };
-            let lost_dependencies = arkret_sdk::history_mailbox_lost_signer_dependency_closure(
+            let lost_dependencies = arkret_sdk::history_response_lost_signer_dependency_closure(
                 lost_record,
                 &signer_dependencies,
             )?;
-            arkret_sdk::verify_history_mailbox_lost_record(
+            arkret_sdk::verify_history_response_lost_record(
                 &accepted,
                 lost_record,
                 &lost_dependencies,
             )?;
             runtime
-                .record_mailbox_disposition(
+                .record_response_disposition(
                     request_id,
-                    arkret_sdk::HistoryMailboxAckEntry::Lost {
+                    arkret_sdk::HistoryResponseAckEntry::Lost {
                         sequence: lost_record.sequence,
                         response_id: lost_record.response_id.clone(),
                         lost_record_digest: lost_record.record_digest.clone(),
-                        status: arkret_sdk::HistoryMailboxLostStatus::Value,
+                        status: arkret_sdk::HistoryResponseLostStatus::Value,
                     },
                 )
                 .await
@@ -312,7 +313,7 @@ where
             continue;
         };
         let record_dependencies = (|| -> anyhow::Result<Vec<_>> {
-            let partition = arkret_sdk::history_mailbox_record_signer_dependency_closure(
+            let partition = arkret_sdk::history_response_record_signer_dependency_closure(
                 record,
                 &signer_dependencies,
             )?;
@@ -327,7 +328,7 @@ where
                     && previous != dependency
                 {
                     return Err(anyhow::anyhow!(
-                        "mailbox signer dependency selector resolved to conflicting values"
+                        "response stream signer dependency selector resolved to conflicting values"
                     ));
                 }
             }
@@ -339,17 +340,17 @@ where
                 tracing::warn!(
                     sequence = record.sequence,
                     %error,
-                    "history mailbox signer dependency closure was cryptographically rejected"
+                    "history response stream signer dependency closure was cryptographically rejected"
                 );
                 runtime
-                    .record_mailbox_disposition(
+                    .record_response_disposition(
                         request_id,
-                        arkret_sdk::HistoryMailboxAckEntry::Record {
+                        arkret_sdk::HistoryResponseAckEntry::Record {
                             sequence: record.sequence,
                             response_id: record.source_record.response_id.clone(),
                             record_digest: record.record_digest.clone(),
                             status:
-                                arkret_sdk::HistoryMailboxRecordStatus::CryptographicallyRejected,
+                                arkret_sdk::HistoryResponseRecordStatus::CryptographicallyRejected,
                         },
                     )
                     .await
@@ -372,7 +373,7 @@ where
                 }),
             arkret_sdk::HistoryKeyResponseContent::Manifest(_) => None,
         };
-        let verified = match arkret_sdk::verify_history_mailbox_record(
+        let verified = match arkret_sdk::verify_history_response_record(
             &accepted,
             record,
             &traversal.checkpoint,
@@ -386,17 +387,17 @@ where
                 tracing::warn!(
                     sequence = record.sequence,
                     %error,
-                    "history mailbox record was cryptographically rejected"
+                    "history response stream record was cryptographically rejected"
                 );
                 runtime
-                    .record_mailbox_disposition(
+                    .record_response_disposition(
                         request_id,
-                        arkret_sdk::HistoryMailboxAckEntry::Record {
+                        arkret_sdk::HistoryResponseAckEntry::Record {
                             sequence: record.sequence,
                             response_id: record.source_record.response_id.clone(),
                             record_digest: record.record_digest.clone(),
                             status:
-                                arkret_sdk::HistoryMailboxRecordStatus::CryptographicallyRejected,
+                                arkret_sdk::HistoryResponseRecordStatus::CryptographicallyRejected,
                         },
                     )
                     .await
@@ -406,7 +407,7 @@ where
             }
         };
         match verified {
-            arkret_sdk::VerifiedHistoryMailboxRecord::Manifest { manifest, .. } => {
+            arkret_sdk::VerifiedHistoryResponseRecord::Manifest { manifest, .. } => {
                 runtime
                     .install_verified_manifest(
                         request_id,
@@ -422,7 +423,7 @@ where
                     .await
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             }
-            arkret_sdk::VerifiedHistoryMailboxRecord::Chunk { chunk, .. } => {
+            arkret_sdk::VerifiedHistoryResponseRecord::Chunk { chunk, .. } => {
                 let prepared = (|| -> anyhow::Result<Vec<_>> {
                     let plaintext = arkret_crypto::secret_share::open_history_secret_chunk(
                         &private_key_b64u,
@@ -497,16 +498,16 @@ where
                         tracing::warn!(
                             sequence = record.sequence,
                             %error,
-                            "history mailbox chunk payload was cryptographically rejected"
+                            "history response stream chunk payload was cryptographically rejected"
                         );
                         runtime
-                            .record_mailbox_disposition(
+                            .record_response_disposition(
                                 request_id,
-                                arkret_sdk::HistoryMailboxAckEntry::Record {
+                                arkret_sdk::HistoryResponseAckEntry::Record {
                                     sequence: record.sequence,
                                     response_id: record.source_record.response_id.clone(),
                                     record_digest: record.record_digest.clone(),
-                                    status: arkret_sdk::HistoryMailboxRecordStatus::CryptographicallyRejected,
+                                    status: arkret_sdk::HistoryResponseRecordStatus::CryptographicallyRejected,
                                 },
                             )
                             .await
@@ -552,13 +553,13 @@ where
             }
         }
         runtime
-            .record_mailbox_disposition(
+            .record_response_disposition(
                 request_id,
-                arkret_sdk::HistoryMailboxAckEntry::Record {
+                arkret_sdk::HistoryResponseAckEntry::Record {
                     sequence: record.sequence,
                     response_id: record.source_record.response_id.clone(),
                     record_digest: record.record_digest.clone(),
-                    status: arkret_sdk::HistoryMailboxRecordStatus::Installed,
+                    status: arkret_sdk::HistoryResponseRecordStatus::Installed,
                 },
             )
             .await
@@ -678,10 +679,10 @@ fn verify_history_external_source_key(
     }
 }
 
-/// Production mailbox installer with the only supported external trust
+/// Production response stream installer with the only supported external trust
 /// boundary wired to Inkson's durable Native Agent and MLS state.
 #[allow(clippy::too_many_arguments)]
-pub async fn verify_and_install_mailbox_page_from_local_state(
+pub async fn verify_and_install_response_page_from_local_state(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
@@ -690,8 +691,8 @@ pub async fn verify_and_install_mailbox_page_from_local_state(
     request_id: &arkret_sdk::HistoryRequestId,
     limit: Option<u8>,
     now: chrono::DateTime<chrono::Utc>,
-) -> anyhow::Result<HistoryMailboxPageInstallOutcome> {
-    verify_and_install_mailbox_page(
+) -> anyhow::Result<HistoryResponsePageInstallOutcome> {
+    verify_and_install_response_page(
         state_store,
         api,
         secure_store,
@@ -713,13 +714,13 @@ pub async fn verify_and_install_mailbox_page_from_local_state(
     .await
 }
 
-pub async fn record_mailbox_disposition(
+pub async fn record_response_disposition(
     state_store: SyncSignal<LocalStateStore>,
     request_id: &arkret_sdk::HistoryRequestId,
-    disposition: arkret_sdk::HistoryMailboxAckEntry,
+    disposition: arkret_sdk::HistoryResponseAckEntry,
 ) -> anyhow::Result<()> {
     runtime(state_store)
-        .record_mailbox_disposition(request_id, disposition)
+        .record_response_disposition(request_id, disposition)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }

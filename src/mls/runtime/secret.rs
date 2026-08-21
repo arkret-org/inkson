@@ -33,7 +33,7 @@ const MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX: &str = "inkson.mls_key_package.publish
 /// source can seal proactively at admission time from the claim alone.
 /// OpenMLS does not surface that raw private scalar through the current SDK,
 /// so we mint a dedicated, persisted device HPKE keypair instead. A history-key
-/// request binds the corresponding public key through its mailbox capability.
+/// request binds the corresponding public key through its sealed response capability.
 const DEVICE_HPKE_PRIVATE_KEY_PREFIX: &str = "inkson.device_hpke_x25519.private.v1";
 
 /// Stored account-scoped MLS snapshot secret plus the local key version that

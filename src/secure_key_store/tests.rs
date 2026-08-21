@@ -210,6 +210,11 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     assert!(is_wasm_indexeddb_required_secret_key(
         "inkson.local_state.v2.account.anonymous"
     ));
+    // Garth persists response-stream bearer capabilities under this exact
+    // prefix; they must never fall back to the localStorage-backed tier.
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "arkret/history-response-capability/v1/ak:history_request:test"
+    ));
 
     assert!(!is_wasm_indexeddb_required_secret_key(
         "push.fcm.registration_token.device-a"

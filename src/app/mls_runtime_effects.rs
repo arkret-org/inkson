@@ -69,8 +69,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let mls_coverage_repair_in_flight = use_signal(std::collections::BTreeSet::<String>::new);
     let accepted_commit_basis_seen = use_signal(|| Option::<String>::None);
     let accepted_commit_convergence_in_flight = use_signal(|| false);
-    let history_mailbox_poll_tick = use_signal(|| 0_u64);
-    let history_mailbox_poll_in_flight = use_signal(|| false);
+    let history_response_poll_tick = use_signal(|| 0_u64);
+    let history_response_poll_in_flight = use_signal(|| false);
 
     {
         let ready = secure_store_bootstrap_ready;
@@ -150,10 +150,10 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     {
         let ready = secure_store_bootstrap_ready;
         let sync_ready = sync_bootstrap_complete;
-        let mut poll_tick = history_mailbox_poll_tick;
-        let mut in_flight = history_mailbox_poll_in_flight;
-        let mut mailbox_error = last_error;
-        let mailbox_store = state_store;
+        let mut poll_tick = history_response_poll_tick;
+        let mut in_flight = history_response_poll_in_flight;
+        let mut response_stream_error = last_error;
+        let response_stream_store = state_store;
         use_effect(move || {
             let _ = poll_tick();
             let base = base_url();
@@ -173,7 +173,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             in_flight.set(true);
             spawn(async move {
                 let request_ids =
-                    crate::history_recovery::accepted_history_request_ids(mailbox_store);
+                    crate::history_recovery::accepted_history_request_ids(response_stream_store);
                 let result = match request_ids {
                     Ok(request_ids) if request_ids.is_empty() => Ok(()),
                     Ok(request_ids) => {
@@ -186,8 +186,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                                 );
                                 let mut first_error = None;
                                 for request_id in request_ids {
-                                    if let Err(error) = crate::history_recovery::verify_and_install_mailbox_page_from_local_state(
-                                        mailbox_store,
+                                    if let Err(error) = crate::history_recovery::verify_and_install_response_page_from_local_state(
+                                        response_stream_store,
                                         &api,
                                         secure_store.as_ref(),
                                         &actor,
@@ -201,7 +201,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                                         tracing::warn!(
                                             request_id = %request_id,
                                             %error,
-                                            "history mailbox request remains pending"
+                                            "history response stream request remains pending"
                                         );
                                         if first_error.is_none() {
                                             first_error = Some(error);
@@ -217,7 +217,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     Err(error) => Err(error),
                 };
                 if let Err(error) = result {
-                    mailbox_error.set(Some(format!("History mailbox sync pending: {error}")));
+                    response_stream_error.set(Some(format!(
+                        "History response stream sync pending: {error}"
+                    )));
                 }
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(10)).await;
                 in_flight.set(false);

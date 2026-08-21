@@ -213,7 +213,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("inkson.device_hpke_x25519.private.")
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
         || key.starts_with("arkret/history-candidate/v1/")
-        || key.starts_with("arkret/history-mailbox-capability/v1/")
+        || key.starts_with("arkret/history-response-capability/v1/")
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
 }

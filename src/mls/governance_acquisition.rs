@@ -278,7 +278,7 @@ pub(crate) async fn resolve_history_governance_cut(
     })
 }
 
-pub(crate) async fn resolve_history_mailbox_signer_dependencies(
+pub(crate) async fn resolve_history_response_signer_dependencies(
     api: &crate::transport::TransportClient,
     realm_id: &arkret_sdk::RealmId,
     request_receipt_digest: &arkret_sdk::Hash,
