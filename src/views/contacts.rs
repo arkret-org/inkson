@@ -433,9 +433,11 @@ fn ContactRow(
                         onclick: {
                             let base = base_url.clone();
                             let peer = peer.clone();
+                            let peer_service = peer_service_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let peer = peer.clone();
+                                let peer_service = peer_service.clone();
                                 let api_token = token();
                                 busy.set(true);
                                 row_status.set(tr("contacts.dm.opening"));
@@ -478,26 +480,29 @@ fn ContactRow(
                                                 }
                                                 DirectConversationEntry::Suspended => {
                                                     if local_blockers.is_empty() {
-                                                        if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&outcome) {
-                                                            let realm_id = coordinates.realm_id.clone();
+                                                        if crate::transport::account::direct_conversation_coordinates(&outcome).is_some() {
                                                             let actor = crate::secure_key_store::active_device_seed_scope()
                                                                 .filter(|value| !value.trim().is_empty())
                                                                 .and_then(|value| arkret_sdk::DidFullId::new(value).ok());
                                                             match actor {
-                                                                Some(actor) => match with_authed_api(
-                                                                    &base,
-                                                                    api_token.clone(),
-                                                                    |api| async move {
-                                                                        crate::transport::realm_write::repair_direct_conversation_self_rejoin(
-                                                                            &api.event_submitter()?,
-                                                                            &realm_id,
-                                                                            &actor,
-                                                                        ).await
-                                                                    },
-                                                                ).await {
-                                                                    Ok(_) => row_status.set("Direct Conversation self-rejoin accepted. Replacement repair is paused because the resolver does not expose the active-generation cell digest required by ak.member.repair.request.".to_owned()),
-                                                                    Err(error) => row_status.set(format!("Direct Conversation repair unavailable: {}", error.display())),
-                                                                },
+                                                                Some(actor) => {
+                                                                    // Stage-driven repair: dispatch a new
+                                                                    // ak.member.repair.request, re-send frozen
+                                                                    // bytes, report the durable enqueue, or
+                                                                    // author replacement activation after the
+                                                                    // exact Welcome is durably consumed.
+                                                                    match run_direct_conversation_repair(
+                                                                        base.clone(),
+                                                                        api_token.clone(),
+                                                                        state_store,
+                                                                        outcome.clone(),
+                                                                        actor,
+                                                                        peer_service.clone(),
+                                                                    ).await {
+                                                                        Ok(status) => row_status.set(status),
+                                                                        Err(error) => row_status.set(format!("Direct Conversation repair unavailable: {error}")),
+                                                                    }
+                                                                }
                                                                 None => row_status.set(tr("contacts.dm.not_ready")),
                                                             }
                                                         } else {
@@ -762,6 +767,156 @@ fn run_contact_action(
         }
         busy.set(false);
     });
+}
+
+/// Drive the requester side of Direct Conversation replacement repair from a
+/// suspended contact row. Progression is stage-driven from durable local
+/// state: no persisted repair dispatches a new `ak.member.repair.request`, a
+/// frozen or retryable dispatch re-sends the exact retained bytes, an
+/// enqueued one reports the durable receipt (completion is only ever the
+/// peer's durable Commit/Welcome Events), and a durably consumed exact
+/// Welcome authors the replacement-generation activation.
+async fn run_direct_conversation_repair(
+    base_url: String,
+    api_token: String,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
+    resolve: arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    actor: arkret_sdk::DidFullId,
+    peer_service_id: Option<String>,
+) -> Result<String, String> {
+    with_authed_api(&base_url, api_token, |api| {
+        let base_url = base_url.clone();
+        async move {
+            drive_direct_conversation_repair(
+                &api,
+                &base_url,
+                state_store,
+                &resolve,
+                &actor,
+                peer_service_id,
+            )
+            .await
+        }
+    })
+    .await
+    .map_err(|error| error.display())
+}
+
+async fn drive_direct_conversation_repair(
+    api: &crate::transport::TransportClient,
+    base_url: &str,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
+    resolve: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+    actor: &arkret_sdk::DidFullId,
+    peer_service_id: Option<String>,
+) -> anyhow::Result<String> {
+    use garth::DirectConversationRepairStage as Stage;
+
+    let coordinates = crate::transport::account::direct_conversation_coordinates(resolve)
+        .ok_or_else(|| anyhow::anyhow!("Direct Conversation repair requires resolved coordinates"))?
+        .clone();
+    let realm_id = coordinates.realm_id.to_string();
+    let requester_principal_id = arkret_sdk::project_full_id_to_core_id(actor)?;
+    let in_flight = state_store
+        .read()
+        .direct_conversation_repair_requests_for_realm(&realm_id)?
+        .into_iter()
+        .find(|(_, stage)| *stage != Stage::Activated);
+    match in_flight {
+        Some((request_id, Stage::DispatchFrozen | Stage::DispatchRetryable)) => {
+            crate::transport::realm_write::retry_direct_conversation_repair_dispatch(
+                api.http(),
+                state_store,
+                &request_id,
+            )
+            .await?;
+            Ok(
+                "Direct Conversation repair re-dispatched with the exact frozen request; \
+                 completion appears as the peer's durable Commit/Welcome Events."
+                    .to_owned(),
+            )
+        }
+        Some((_, Stage::Enqueued | Stage::EnqueueOutcomePendingDurability)) => Ok(
+            "Direct Conversation repair request is durably enqueued at the peer Principal \
+             Server; completion appears as the peer's durable Commit/Welcome Events followed \
+             by replacement activation."
+                .to_owned(),
+        ),
+        Some((request_id, Stage::WelcomeDurable)) => {
+            let submitter = api.event_submitter()?;
+            let payload =
+                crate::transport::realm_write::prepare_direct_conversation_repair_activation(
+                    &submitter,
+                    state_store,
+                    &request_id,
+                    resolve,
+                )
+                .await?;
+            crate::transport::realm_write::activate_direct_conversation_repair(
+                &submitter,
+                state_store,
+                &request_id,
+                &requester_principal_id,
+                payload,
+            )
+            .await?;
+            Ok("Direct Conversation replacement-generation activation submitted.".to_owned())
+        }
+        Some((request_id, stage)) => anyhow::bail!(
+            "Direct Conversation repair {request_id} is persisted in unexpected stage {stage:?}"
+        ),
+        None => {
+            let signer = crate::event_signer::active_signer().ok_or_else(|| {
+                anyhow::anyhow!("Direct Conversation repair requires an active signer")
+            })?;
+            let device_id = signer
+                .device_id()
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow::anyhow!("active signer is not bound to a device"))?;
+            let requester_device_id = arkret_sdk::DeviceId::new(device_id.clone())?;
+            // The exact published KeyPackage ref this device advertised; the
+            // peer must claim exactly it. Missing means fail closed, never
+            // substitute another package.
+            let target_keypackage_ref = crate::app::local_mls_key_package_published_ref(
+                base_url,
+                actor.as_str(),
+                &device_id,
+            )
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this device's published KeyPackage ref is not durably recorded; \
+                     repair dispatch fails closed instead of substituting a package"
+                )
+            })?;
+            let target_keypackage_ref = arkret_sdk::NonEmptyString::new(target_keypackage_ref)
+                .map_err(anyhow::Error::msg)?;
+            let peer_service_id = peer_service_id
+                .map(arkret_sdk::DidCoreId::new)
+                .transpose()
+                .map_err(|error| {
+                    anyhow::anyhow!("accepted Contact peer service id is invalid: {error:?}")
+                })?;
+            let source_service_id = api.describe_cached().await?.service_id.clone();
+            let request_id = crate::transport::realm_write::dispatch_direct_conversation_repair(
+                &api.event_submitter()?,
+                api.http(),
+                state_store,
+                resolve,
+                requester_principal_id,
+                actor,
+                requester_device_id,
+                source_service_id,
+                peer_service_id,
+                target_keypackage_ref,
+            )
+            .await?;
+            Ok(format!(
+                "Direct Conversation repair request {request_id} durably dispatched to the \
+                 peer Principal Server; the peer answers only with durable Commit/Welcome \
+                 Events."
+            ))
+        }
+    }
 }
 
 #[component]

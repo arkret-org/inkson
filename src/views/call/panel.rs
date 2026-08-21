@@ -271,6 +271,7 @@ pub fn CallPanel(
                     known_participant_devices,
                     governance_evidence,
                     realm_mls_snapshot,
+                    route_origins,
                 ) = {
                     let store = state_store.read();
                     let snapshot = store.load();
@@ -287,6 +288,9 @@ pub fn CallPanel(
                             media_plaintext_confirmed(),
                         ),
                         store.mls_snapshot_for(&realm_id),
+                        crate::media::service_route::media_service_route_origins(
+                            &snapshot, &realm_id,
+                        ),
                     )
                 };
                 active_call_id.set(call.clone());
@@ -302,6 +306,26 @@ pub fn CallPanel(
                 stage.set(CallStage::OutgoingRinging);
                 status.set("placing call".to_owned());
                 last_error.set(String::new());
+
+                // Evaluator-produced route material (service-surface.md §2.6
+                // L183): fetch + verify the media service's signed resolution
+                // and run it through the durable-floor / fail-closed route
+                // evaluator. Any failure ends the call attempt visibly — the
+                // token exchange never runs with unverified or empty routes.
+                let verified_media_routes =
+                    match crate::media::service_route::evaluate_media_routes(
+                        &media_dids,
+                        &route_origins,
+                    )
+                    .await
+                    {
+                        Ok(routes) => routes,
+                        Err(error) => {
+                            last_error.set(format!("media route evaluation failed: {error:#}"));
+                            stage.set(CallStage::Ended);
+                            return;
+                        }
+                    };
 
                 // Join the media plane (token + ICE + SFrame key). P2P emits
                 // its invite only after the transport produces the real SDP
@@ -320,7 +344,7 @@ pub fn CallPanel(
                         DesiredMedia::audio_only()
                     },
                     media_service_ids: media_dids,
-                    verified_media_routes: Vec::new(),
+                    verified_media_routes,
                     governance_evidence,
                 };
                 match join_and_build_transport(
@@ -706,6 +730,7 @@ pub fn CallPanel(
                                             known_participant_devices,
                                             governance_evidence,
                                             realm_mls_snapshot,
+                                            route_origins,
                                         ) = {
                                             let store = state_store.read();
                                             let snapshot = store.load();
@@ -726,12 +751,33 @@ pub fn CallPanel(
                                                     media_plaintext_confirmed(),
                                                 ),
                                                 store.mls_snapshot_for(&realm_id),
+                                                crate::media::service_route::media_service_route_origins(
+                                                    &snapshot, &realm_id,
+                                                ),
                                             )
                                         };
                                         let want_video = want_video_signal();
                                         stage.set(CallStage::Connecting);
                                         status.set("answering".to_owned());
                                         spawn(async move {
+                                            // Evaluator-produced route material — same
+                                            // fail-closed gate as the outgoing path.
+                                            let verified_media_routes =
+                                                match crate::media::service_route::evaluate_media_routes(
+                                                    &media_dids,
+                                                    &route_origins,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(routes) => routes,
+                                                    Err(error) => {
+                                                        last_error.set(format!(
+                                                            "media route evaluation failed: {error:#}"
+                                                        ));
+                                                        stage.set(CallStage::Ended);
+                                                        return;
+                                                    }
+                                                };
                                             let join = MediaJoinRequest {
                                                 realm_id: realm_id.clone(),
                                                 call_id: call.clone(),
@@ -741,7 +787,7 @@ pub fn CallPanel(
                                                 epoch_id: 0,
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
                                                 media_service_ids: media_dids,
-                                                verified_media_routes: Vec::new(),
+                                                verified_media_routes,
                                                 governance_evidence,
                                             };
                                             match join_and_build_transport(

@@ -76,10 +76,6 @@ impl LocalStateStore {
     /// Restore a committed repair. Garth validates tamper evidence and turns
     /// a committed `enqueue_outcome_pending_durability` snapshot into the
     /// restart-safe `enqueued` stage.
-    // Consumed only by the not-yet-wired dispatch/retry/activate repair path
-    // (see the `dispatch_direct_conversation_repair` note in
-    // transport/realm_write.rs).
-    #[allow(dead_code)]
     pub(crate) fn direct_conversation_repair(
         &self,
         request_id: &str,
@@ -132,10 +128,27 @@ impl LocalStateStore {
         Ok(Some(request_id))
     }
 
-    // Consumed only by the not-yet-wired dispatch/retry/activate repair path
-    // (see the `dispatch_direct_conversation_repair` note in
-    // transport/realm_write.rs).
-    #[allow(dead_code)]
+    /// Every durably persisted repair for one Direct Conversation Realm, with
+    /// the restart-safe stage each snapshot restores to. `restore_durable` is
+    /// the stage authority (a committed pending-durability enqueue reads back
+    /// as `Enqueued`), and a tampered snapshot fails the whole query closed.
+    pub(crate) fn direct_conversation_repair_requests_for_realm(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<Vec<(String, garth::DirectConversationRepairStage)>> {
+        let state = self.load();
+        let mut requests = Vec::new();
+        for (request_id, snapshot) in &state.direct_conversation_repairs {
+            if snapshot.route.coordinates.realm_id.as_str() != realm_id {
+                continue;
+            }
+            let planner =
+                garth::DirectConversationRepairPlanner::restore_durable(snapshot.clone())?;
+            requests.push((request_id.clone(), planner.stage()));
+        }
+        Ok(requests)
+    }
+
     pub(crate) fn record_direct_conversation_repair_activation(
         &mut self,
         request_id: &str,
@@ -270,6 +283,31 @@ mod tests {
             },
             accepted_at: content().created_at + Duration::seconds(3),
         }
+    }
+
+    #[test]
+    fn realm_query_reports_restart_safe_stage_and_skips_other_realms() {
+        let path = temp_path("realm-query");
+        let mut planner = ready();
+        planner.record_enqueue_outcome(enqueue(&planner)).unwrap();
+        let mut store = LocalStateStore::with_path(&path);
+        let request_id = store.save_direct_conversation_repair(&planner).unwrap();
+
+        let restarted = LocalStateStore::with_path(path);
+        assert_eq!(
+            restarted
+                .direct_conversation_repair_requests_for_realm(REALM)
+                .unwrap(),
+            vec![(request_id, garth::DirectConversationRepairStage::Enqueued)]
+        );
+        assert!(
+            restarted
+                .direct_conversation_repair_requests_for_realm(
+                    "ak:realm:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                )
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -153,27 +153,150 @@ pub fn security_projection_for_scope_id<'a>(
 /// Current controller of the Realm authority-root cell, read from the locally
 /// projected event log.
 ///
-/// `ak.realm.create` is the only registered writer of
-/// `ak.component.realm.authority_root.v1` in v1 (contract-registry.json), and
-/// its registered `value_projection` sets `controller_id` from the Event
-/// envelope's `actor_id`. This reads that one cell input; it is not the
-/// forbidden `realm_state.owner` / membership fallback — those are projection
-/// mirrors of a different fact, and post-P1 realm projections no longer carry
-/// them at all.
+/// `ak.realm.create` is the registered genesis writer of
+/// `ak.component.realm.authority_root.v1` (contract-registry.json), and its
+/// registered `value_projection` sets `controller_id` from the Event
+/// envelope's `actor_id`; every accepted `ak.realm.owner.transfer` afterwards
+/// moves the controller to `payload.patch.controller_id`. This replays those
+/// cell inputs in log order; it is not the forbidden `realm_state.owner` /
+/// membership fallback — those are projection mirrors of a different fact,
+/// and post-P1 realm projections no longer carry them at all.
 pub fn realm_authority_root_controller_from_events(events: &[Value]) -> Option<String> {
-    events.iter().rev().find_map(|event| {
-        let kind = event
+    let mut controller: Option<String> = None;
+    for event in events {
+        let Some(kind) = event
             .get("kind")
             .or_else(|| event.get("event_kind"))
-            .and_then(Value::as_str)?;
-        if kind != arkret_sdk::EventKind::RealmCreate.as_str() {
-            return None;
-        }
-        event
-            .get("actor_id")
             .and_then(Value::as_str)
-            .map(|actor_id| actor_id.trim().to_owned())
-    })
+        else {
+            continue;
+        };
+        if kind == arkret_sdk::EventKind::RealmCreate.as_str() {
+            controller = event
+                .get("actor_id")
+                .and_then(Value::as_str)
+                .map(|actor_id| actor_id.trim().to_owned())
+                .filter(|actor_id| !actor_id.is_empty());
+        } else if kind == arkret_wire::event_kind_str::REALM_OWNER_TRANSFER && controller.is_some()
+        {
+            // Only the envelope-authorized patch moves the controller; a
+            // transfer projected before any create is unanchored and ignored.
+            if let Some(next) = event
+                .pointer("/payload/patch/controller_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|next| !next.is_empty())
+            {
+                controller = Some(next.to_owned());
+            }
+        }
+    }
+    controller
+}
+
+/// Fully replayed current value of the Realm authority-root cell.
+///
+/// Genesis comes from the accepted `ak.realm.create` (envelope `actor_id` +
+/// the create-locked `capability_action_registry_digest`); the three
+/// registered CAS transitions (`ak.realm.owner.transfer`,
+/// `ak.realm.authority.reset`, `ak.realm.authority.basis_update`) are then
+/// applied in log order, mirroring the soland reducer's
+/// `apply_realm_authority_transition` effects. `None` when no create is
+/// projected or the create predates the authority-root contract (no registry
+/// digest) — those Realms have no root cell, matching the reducer's
+/// `realm_authority_root_missing` fail-closed path.
+///
+/// The `canonical_sha256` of the returned value is exactly the
+/// `expected_state_digest` the security-barrier governance payloads must
+/// carry, so callers building `ak.realm.owner.transfer` /
+/// `ak.realm.authority.{reset,basis_update}` MUST source it from here rather
+/// than re-deriving fragments.
+pub fn realm_authority_root_value_from_events(
+    events: &[Value],
+) -> Option<arkret_policy::realm_bootstrap::RealmAuthorityRootValue> {
+    use arkret_policy::realm_bootstrap::RealmAuthorityRootValue;
+    let mut root: Option<RealmAuthorityRootValue> = None;
+    for event in events {
+        let Some(kind) = event
+            .get("kind")
+            .or_else(|| event.get("event_kind"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if kind == arkret_sdk::EventKind::RealmCreate.as_str() {
+            root = (|| {
+                let controller = event
+                    .get("actor_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|actor_id| !actor_id.is_empty())?;
+                let digest = event
+                    .pointer("/payload/object/capability_action_registry_digest")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|digest| !digest.is_empty())?;
+                let controller_id = arkret_sdk::DidCoreId::new(controller.to_owned()).ok()?;
+                let digest = arkret_sdk::Hash::new(digest.to_owned()).ok()?;
+                Some(RealmAuthorityRootValue::genesis(controller_id, digest))
+            })();
+            continue;
+        }
+        let Some(current) = root.as_mut() else {
+            // Transitions on a Realm with no root cell are rejected server-side
+            // (`realm_authority_root_missing`); ignore them here the same way.
+            continue;
+        };
+        match kind {
+            arkret_wire::event_kind_str::REALM_OWNER_TRANSFER => {
+                if let (Some(controller), Some(epoch)) = (
+                    event
+                        .pointer("/payload/patch/controller_id")
+                        .and_then(Value::as_str)
+                        .and_then(|next| arkret_sdk::DidCoreId::new(next.to_owned()).ok()),
+                    event
+                        .pointer("/payload/patch/controller_epoch")
+                        .and_then(Value::as_u64),
+                ) {
+                    current.controller_id = controller;
+                    current.controller_epoch = epoch;
+                }
+            }
+            arkret_wire::event_kind_str::REALM_AUTHORITY_RESET => {
+                if let Some(generation) = event
+                    .pointer("/payload/patch/authority_generation")
+                    .and_then(Value::as_u64)
+                {
+                    current.authority_generation = generation;
+                }
+            }
+            arkret_wire::event_kind_str::REALM_AUTHORITY_BASIS_UPDATE => {
+                if let Some(digest) = event
+                    .pointer("/payload/patch/capability_action_registry_digest")
+                    .and_then(Value::as_str)
+                    .and_then(|digest| arkret_sdk::Hash::new(digest.to_owned()).ok())
+                {
+                    current.capability_action_registry_digest = digest;
+                }
+            }
+            _ => {}
+        }
+    }
+    root
+}
+
+/// [`realm_authority_root_value_from_events`] over the Realm's full
+/// projection entry (`realm_tree_projections[realm_id]`).
+pub fn realm_authority_root_value_for_realm(
+    projections: &BTreeMap<String, Value>,
+    realm_id: &str,
+) -> Option<arkret_policy::realm_bootstrap::RealmAuthorityRootValue> {
+    let events = projections
+        .get(realm_id.trim())?
+        .get("state")?
+        .get("events")?
+        .as_array()?;
+    realm_authority_root_value_from_events(events)
 }
 
 /// [`realm_authority_root_controller_from_events`] over the Realm's full
@@ -293,6 +416,93 @@ mod tests {
         assert_eq!(
             realm_authority_root_controller_from_events(events.as_array().unwrap()).as_deref(),
             Some("ak:did_core:webvh:z6mkcreator")
+        );
+    }
+
+    #[test]
+    fn realm_authority_root_replay_follows_owner_transfer_and_reset() {
+        let registry_digest = format!("sha256:{}", "a".repeat(64));
+        let next_digest = format!("sha256:{}", "b".repeat(64));
+        let events = json!([
+            {
+                "kind": "ak.realm.create",
+                "actor_id": "ak:did_core:webvh:z6mkcreator",
+                "payload": {
+                    "object": {
+                        "schema": "ak.schema.realm_genesis.v1",
+                        "purpose": "collaboration",
+                        "capability_action_registry_digest": registry_digest
+                    }
+                }
+            },
+            {
+                "kind": "ak.realm.owner.transfer",
+                "actor_id": "ak:did_core:webvh:z6mkcreator",
+                "payload": {
+                    "patch": {
+                        "controller_id": "ak:did_core:web:successor.example",
+                        "controller_epoch": 1
+                    }
+                }
+            },
+            {
+                "kind": "ak.realm.authority.reset",
+                "actor_id": "ak:did_core:web:successor.example",
+                "payload": { "patch": { "authority_generation": 1 } }
+            },
+            {
+                "kind": "ak.realm.authority.basis_update",
+                "actor_id": "ak:did_core:web:successor.example",
+                "payload": {
+                    "patch": { "capability_action_registry_digest": next_digest }
+                }
+            }
+        ]);
+        let events = events.as_array().unwrap();
+        let root = realm_authority_root_value_from_events(events).unwrap();
+        assert_eq!(
+            root.controller_id.as_str(),
+            "ak:did_core:web:successor.example"
+        );
+        assert_eq!(root.controller_epoch, 1);
+        assert_eq!(root.authority_generation, 1);
+        assert_eq!(
+            root.capability_action_registry_digest.as_str(),
+            format!("sha256:{}", "b".repeat(64))
+        );
+        // The presentation-grade controller helper follows the same transfer.
+        assert_eq!(
+            realm_authority_root_controller_from_events(events).as_deref(),
+            Some("ak:did_core:web:successor.example")
+        );
+    }
+
+    #[test]
+    fn realm_authority_root_replay_requires_the_create_locked_registry_digest() {
+        let events = json!([
+            {
+                "kind": "ak.realm.create",
+                "actor_id": "ak:did_core:webvh:z6mkcreator",
+                "payload": { "object": { "schema": "ak.schema.realm_genesis.v1" } }
+            },
+            {
+                "kind": "ak.realm.owner.transfer",
+                "payload": {
+                    "patch": {
+                        "controller_id": "ak:did_core:web:successor.example",
+                        "controller_epoch": 1
+                    }
+                }
+            }
+        ]);
+        // Pre-contract Realm: no root cell, so no value and no transfer effect
+        // on the replayed root — but the create-actor controller survives for
+        // presentation.
+        let events = events.as_array().unwrap();
+        assert_eq!(realm_authority_root_value_from_events(events), None);
+        assert_eq!(
+            realm_authority_root_controller_from_events(events).as_deref(),
+            Some("ak:did_core:web:successor.example")
         );
     }
 

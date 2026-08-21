@@ -1037,6 +1037,53 @@ mod tests {
         }
     }
 
+    /// Positive wiring path (task 2026-08-19-1857): route material produced by
+    /// the real `garth::ServiceRouteEvaluator` over a signed fixture record
+    /// satisfies the token-exchange issuer anchoring, while the empty set
+    /// keeps failing closed. This is the proof that "wired" does not mean
+    /// "always rejects".
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn evaluator_route_material_satisfies_token_issuer_anchors() {
+        use chrono::TimeZone as _;
+        use garth::service_route_material::test_fixture::signed_web_route_fixture;
+
+        let now = chrono::Utc.with_ymd_and_hms(2026, 8, 20, 1, 0, 0).unwrap();
+        let fixture = signed_web_route_fixture("media.example", "media_service", now, 0, None, 31);
+        let resolution = garth::authenticate_fetched_record(
+            fixture.record.clone(),
+            fixture.document.clone(),
+            now,
+        )
+        .expect("fixture record must authenticate");
+        let mut evaluator = garth::ServiceRouteEvaluator::new(
+            garth::MemoryServiceRouteStateStore::default(),
+            chrono::Duration::minutes(1),
+        )
+        .unwrap();
+        let mut source =
+            garth::PrefetchedRouteSource::new(Some(garth::ServiceRouteCandidate { resolution }));
+        source.insert_describe(
+            garth::describe_route_binding(&fixture.record, &fixture.describe, now).unwrap(),
+        );
+        let route = evaluator
+            .resolve(&fixture.service_id, "media_service", now, &mut source)
+            .expect("evaluator must accept the verified current record");
+
+        let mut request = governed_join_request(Some(media_governance_evidence(false, false)));
+        request.verified_media_routes = vec![route];
+        request
+            .anchors()
+            .expect("evaluator-produced route material must satisfy issuer anchoring");
+
+        // The fail-closed half stays intact: same ids, no verified routes.
+        let empty = governed_join_request(Some(media_governance_evidence(false, false)));
+        assert_eq!(
+            empty.anchors().unwrap_err(),
+            RtcClientError::TokenIssuerUnauthorised
+        );
+    }
+
     #[test]
     fn classify_protocol_error_reads_wire_prefix() {
         let err = arkret_signatures::Error::Protocol(

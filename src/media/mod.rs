@@ -1,4 +1,5 @@
 pub mod rtc;
+pub mod service_route;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaPreviewPolicy {

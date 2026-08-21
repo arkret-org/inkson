@@ -667,13 +667,6 @@ pub async fn direct_conversation_found(
 /// the authenticated Principal Server. Remote service resolution, routing and
 /// target-device fan-out remain server responsibilities; Inkson retains only
 /// the exact request and the returned durable-enqueue receipt.
-// Spec-required Direct Conversation repair half whose caller has not landed
-// yet: wiring is blocked on resolving the peer's `target_service_id` from the
-// delivery binding (see arkret-work task
-// 2026-08-18-0515-dead-code-clusters-in-soland-and-inkson, adjudication (b)
-// keep). The receiving half (`record_consumed_direct_conversation_repair_welcome`)
-// is already live in bootstrap.
-#[allow(dead_code)]
 pub async fn direct_conversation_repair_dispatch(
     http: &arkret_sdk::http_client::Client,
     request: &arkret_sdk::DirectConversationRepairDispatchRequest,
@@ -687,9 +680,6 @@ pub async fn direct_conversation_repair_dispatch(
 /// Extract the resolver's digest of the complete current active-generation
 /// cell value. Event ids and locally reconstructed payload digests are not
 /// substitutes for this CAS predecessor.
-// Part of the same pending repair-dispatch wiring as
-// `direct_conversation_repair_dispatch` above.
-#[allow(dead_code)]
 pub(crate) fn direct_conversation_current_generation_value_digest(
     outcome: &arkret_sdk::DirectConversationResolveOutcome,
 ) -> anyhow::Result<arkret_sdk::Hash> {
@@ -709,6 +699,33 @@ pub(crate) fn direct_conversation_current_generation_value_digest(
         } => Ok(active_mls_generation_value_digest.clone()),
         _ => anyhow::bail!(
             "Direct Conversation resolver omitted the current whole-value digest required for repair"
+        ),
+    }
+}
+
+/// Extract the accepted Event ref of the current active-generation cell. The
+/// resolver returns it paired with the whole-value digest; replacement
+/// activation reads the current generation number from this exact Event and
+/// never reconstructs it from local MLS state or coordinates.
+pub(crate) fn direct_conversation_current_generation_ref(
+    outcome: &arkret_sdk::DirectConversationResolveOutcome,
+) -> anyhow::Result<arkret_sdk::EventId> {
+    outcome.validate_shape()?;
+    match outcome {
+        arkret_sdk::DirectConversationResolveOutcome::Found {
+            active_mls_generation_ref,
+            ..
+        }
+        | arkret_sdk::DirectConversationResolveOutcome::Provisional {
+            active_mls_generation_ref: Some(active_mls_generation_ref),
+            ..
+        }
+        | arkret_sdk::DirectConversationResolveOutcome::Suspended {
+            active_mls_generation_ref: Some(active_mls_generation_ref),
+            ..
+        } => Ok(active_mls_generation_ref.clone()),
+        _ => anyhow::bail!(
+            "Direct Conversation resolver omitted the active-generation Event ref required for repair"
         ),
     }
 }

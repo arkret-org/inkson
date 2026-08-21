@@ -22,6 +22,11 @@ const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.iden
 // device republishes an ordinary package after each successfully applied
 // Welcome.
 const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v1";
+// The canonical KeyPackage hash (`sha256:...`) of the marker's package.
+// `ak.member.repair.request` freezes it as `requester_keypackage_ref`, and the
+// destination peer must claim that exact ref, so the requester keeps the
+// server-visible ref durably alongside the id-form publish marker.
+const MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX: &str = "inkson.mls_key_package.publish_ref.v1";
 /// Per-(actor, device) X25519 keypair used to receive HPKE-sealed
 /// `history_secret`s in a `ak.realm_key.share`. This device advertises the
 /// public half as `recipient_hpke_public_key` in a `ak.realm_key.request` and
@@ -442,6 +447,59 @@ pub fn delete_mls_key_package_publish_marker(
     device_id: &str,
 ) -> Result<(), SecureKeyStoreError> {
     let key = mls_key_package_publish_marker_key(server_scope, actor_id, device_id)?;
+    store.delete_secret(&key)
+}
+
+pub fn mls_key_package_publish_ref_key(
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    let server = secure_key_component(server_scope, "server_scope")?;
+    let actor = secure_key_component(actor_id, "actor_id")?;
+    let device = secure_key_component(device_id, "device_id")?;
+    Ok(format!(
+        "{MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX}.{server}.{actor}.{device}"
+    ))
+}
+
+pub fn store_mls_key_package_publish_ref(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+    key_package_ref: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key_package_ref = key_package_ref.trim();
+    if key_package_ref.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "key_package_ref is required for MLS KeyPackage publish ref".to_owned(),
+        ));
+    }
+    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
+    store.store_secret(&key, key_package_ref)
+}
+
+pub fn load_mls_key_package_publish_ref(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<Option<String>, SecureKeyStoreError> {
+    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
+    Ok(store
+        .get_secret(&key)?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
+}
+
+pub fn delete_mls_key_package_publish_ref(
+    store: &dyn SecureKeyStore,
+    server_scope: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
     store.delete_secret(&key)
 }
 
