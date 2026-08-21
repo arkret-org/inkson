@@ -525,7 +525,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     );
     assert_eq!(patched["encrypted_content"]["value"]["version"], "1.0");
     assert_eq!(
-        patched["encrypted_content"]["value"]["key_ref"]["group_state_ref"],
+        patched["encrypted_content"]["value"]["encryption_context"]["group_state_ref"],
         accepted_genesis.as_str()
     );
     assert_eq!(genesis.kind().as_str(), "ak.mls.genesis");
@@ -599,7 +599,7 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
         .seal(None, Some(&accepted_genesis))
         .expect("the repaired epoch-0 write seals against its accepted genesis");
     assert_eq!(
-        patched["encrypted_content"]["value"]["key_ref"]["group_state_ref"],
+        patched["encrypted_content"]["value"]["encryption_context"]["group_state_ref"],
         accepted_genesis.as_str()
     );
 }
@@ -734,7 +734,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     // The envelope is bound to the commit that established this epoch, by that
     // commit's own final id.
     assert_eq!(
-        patched["encrypted_content"]["value"]["key_ref"]["group_state_ref"],
+        patched["encrypted_content"]["value"]["encryption_context"]["group_state_ref"],
         crate::operation::author_for_test(commit)
             .event_id()
             .as_str()
