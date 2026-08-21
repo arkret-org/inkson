@@ -177,8 +177,36 @@ pub fn RealmAdminPanel(
     let alert_count = usize::from(realm_paused)
         + usize::from(realm_pending_mls_binding)
         + usize::from(!bottom_cells.is_empty());
-    let projected_member_count =
-        projected_members_for_realm(&state_store.read(), &selected_realm_id).len();
+    let projected_members = projected_members_for_realm(&state_store.read(), &selected_realm_id);
+    let projected_member_count = projected_members.len();
+    // Resolve the authority root from the locally replayed projection. Every
+    // governance authoring path below binds these exact coordinates; no UI
+    // state or Realm identifier is treated as an authority assertion.
+    let actor_core_id = crate::mls_api_helpers::principal_core_id(&account_did)
+        .map(|id| id.as_str().to_owned())
+        .unwrap_or_default();
+    let (authority_root, is_root_controller) = {
+        let store = state_store.read();
+        let state = store.load();
+        let root = crate::security_state::realm_authority_root_value_for_realm(
+            &state.realm_tree_projections,
+            &selected_realm_id,
+        );
+        let controller = crate::security_state::realm_authority_root_controller_for_realm(
+            &state.realm_tree_projections,
+            &selected_realm_id,
+        );
+        let is_controller = controller
+            .is_some_and(|controller| !actor_core_id.is_empty() && controller == actor_core_id);
+        (root, is_controller)
+    };
+    let gov_transfer_candidates: Vec<String> = projected_members
+        .iter()
+        .filter(|member| member.as_str() != actor_core_id)
+        .cloned()
+        .collect();
+    let issuer_root_basis =
+        crate::operation::ak_ops::IssuerRootBasis::from_resolved_root(authority_root.as_ref());
     rsx! {
         div { class: "settings realm-settings", "data-testid": "realm-admin-panel",
             div { class: "settings-shell realm-settings-shell",

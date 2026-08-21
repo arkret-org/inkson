@@ -22,6 +22,9 @@ const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.iden
 // device republishes an ordinary package after each successfully applied
 // Welcome.
 const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v1";
+// Canonical server-visible KeyPackage reference paired with the local publish
+// marker. It is local durable routing state, not a governance authorization.
+const MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX: &str = "inkson.mls_key_package.publish_ref.v1";
 /// Per-(actor, device) X25519 keypair used to open HPKE-sealed history-key
 /// recovery records addressed to this device.
 ///
