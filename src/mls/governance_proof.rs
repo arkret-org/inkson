@@ -194,34 +194,17 @@ fn group_genesis_binding(
     let (scheme, durability) = match effective_scope {
         arkret_sdk::ScopeRef::Realm { .. } => (
             state_store.realm_content_scheme(realm_id.as_str()),
-            state_store
-                .realm_durability_policy(realm_id.as_str())
-                .map(|policy| match policy.mode {
-                    arkret_sdk::DurabilityMode::None => arkret_sdk::MlsDurabilityPolicy::None,
-                    arkret_sdk::DurabilityMode::OrgRecoveryKey
-                    | arkret_sdk::DurabilityMode::Threshold => {
-                        arkret_sdk::MlsDurabilityPolicy::OrganizationRecoveryKey
-                    }
-                }),
+            state_store.realm_durability_policy(realm_id.as_str()),
         ),
         arkret_sdk::ScopeRef::Circle { circle_id, .. } => (
             state_store.circle_content_scheme(realm_id.as_str(), circle_id.as_str()),
-            state_store
-                .circle_durability_policy(realm_id.as_str(), circle_id.as_str())
-                .map(|policy| match policy {
-                    arkret_sdk::CircleDurabilityPolicy::None => {
-                        arkret_sdk::MlsDurabilityPolicy::None
-                    }
-                    arkret_sdk::CircleDurabilityPolicy::OrganizationRecoveryKey => {
-                        arkret_sdk::MlsDurabilityPolicy::OrganizationRecoveryKey
-                    }
-                }),
+            state_store.circle_durability_policy(realm_id.as_str(), circle_id.as_str()),
         ),
         _ => return Err("unsupported MLS governance effective scope".to_owned()),
     };
     let content_scheme = match scheme.as_deref() {
-        Some("mls_rfc9420") => arkret_sdk::MlsContentScheme::MlsRfc9420,
-        Some("mls_exporter_aead_v1") => arkret_sdk::MlsContentScheme::MlsExporterAeadV1,
+        Some("mls_rfc9420") => arkret_wire::ContentScheme::MlsRfc9420,
+        Some("mls_exporter_aead_v1") => arkret_wire::ContentScheme::MlsExporterAeadV1,
         Some(value) => return Err(format!("unregistered MLS content scheme {value}")),
         None => {
             return Err(
@@ -663,7 +646,7 @@ pub(crate) fn seed_test_governance_proof(
     )
     .unwrap();
     let genesis_binding = arkret_sdk::MlsGroupGenesisBinding {
-        content_scheme: arkret_sdk::MlsContentScheme::MlsRfc9420,
+        content_scheme: arkret_wire::ContentScheme::MlsRfc9420,
         durability_policy: None,
     };
     let binding =

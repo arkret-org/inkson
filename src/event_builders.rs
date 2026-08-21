@@ -246,7 +246,6 @@ pub fn build_realm_bootstrap_facet_intents(
 ) -> anyhow::Result<Vec<crate::operation::EventIntent>> {
     let actor_id = facets.actor_id.as_str();
     let encryption_profile = facets.encryption_profile.as_str();
-    let content_scheme = facets.content_scheme.as_deref();
     let history_access = parse_wire_enum::<arkret_sdk::HistoryAccess>(
         "history_access",
         facets.history_access.as_str(),
@@ -274,12 +273,11 @@ pub fn build_realm_bootstrap_facet_intents(
     // root authority is the `ak.component.realm.authority_root.v1` cell the
     // create Event's registered reducer contract writes, so there is no
     // wire slot for a self-issued genesis grant.
-    let mut policy_bundle =
-        recommended_realm_policy_bundle_for_profile(encryption_profile, content_scheme)
-            .unwrap_or_else(|| arkret_sdk::RealmPolicyBundlePayload {
-                content_encryption_floor: Some(arkret_sdk::EncryptionFloor::AllowPlaintext),
-                ..arkret_sdk::RealmPolicyBundlePayload::new(1)
-            });
+    let mut policy_bundle = recommended_realm_policy_bundle_for_profile(encryption_profile)
+        .unwrap_or_else(|| arkret_sdk::RealmPolicyBundlePayload {
+            content_encryption_floor: Some(arkret_sdk::EncryptionFloor::AllowPlaintext),
+            ..arkret_sdk::RealmPolicyBundlePayload::new(1)
+        });
     policy_bundle.federation_policy = Some(parse_wire_enum(
         "federation_policy",
         &facets.federation_policy,
@@ -926,15 +924,13 @@ fn build_realm_delivery_binding_policy(
 }
 
 /// Genesis `ak.realm.policy_bundle` payload.
-pub fn recommended_realm_policy_bundle_value(
-    content_scheme: Option<&str>,
-) -> arkret_sdk::RealmPolicyBundlePayload {
+///
+/// `content_scheme` is deliberately absent: realm-and-space.md §2.3 freezes it
+/// at the accepted MLS group Genesis and the closed bundle schema does not
+/// declare it, so a bundle revision can neither select nor restate it.
+pub fn recommended_realm_policy_bundle_value() -> arkret_sdk::RealmPolicyBundlePayload {
     arkret_sdk::RealmPolicyBundlePayload {
         policy_revision: 1,
-        // §2.10 content scheme — soland projects the effective scheme from THIS
-        // policy_bundle cell (`policy_floor_field(components, "content_scheme")`),
-        // not from the realm.create object, and applies a one-way ratchet.
-        content_scheme: Some(resolve_realm_content_scheme(content_scheme).to_owned()),
         content_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
         metadata_encryption_floor: Some(RECOMMENDED_REALM_ENCRYPTION_FLOOR_TYPED),
         ..arkret_sdk::RealmPolicyBundlePayload::new(1)
@@ -943,10 +939,8 @@ pub fn recommended_realm_policy_bundle_value(
 
 pub fn recommended_realm_policy_bundle_for_profile(
     profile: &str,
-    content_scheme: Option<&str>,
 ) -> Option<arkret_sdk::RealmPolicyBundlePayload> {
-    encryption_profile_uses_recommended_floor(profile)
-        .then(|| recommended_realm_policy_bundle_value(content_scheme))
+    encryption_profile_uses_recommended_floor(profile).then(recommended_realm_policy_bundle_value)
 }
 
 /// Build a `ak.space.create` event per spec realm-and-space.md §3.2.

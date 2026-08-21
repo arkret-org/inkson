@@ -410,7 +410,9 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
 /// are independent from the Realm group, so the parent Realm scheme is never
 /// used as a fallback.
 pub(crate) fn circle_projection_content_scheme(body: &Value, circle_id: &str) -> Option<String> {
-    circle_projection_object(body, circle_id)?.content_scheme
+    circle_projection_object(body, circle_id)?
+        .content_scheme
+        .map(|scheme| scheme.as_str().to_owned())
 }
 
 /// Resolve one Circle's create-locked durability profile from the same
@@ -418,7 +420,7 @@ pub(crate) fn circle_projection_content_scheme(body: &Value, circle_id: &str) ->
 pub(crate) fn circle_projection_durability_policy(
     body: &Value,
     circle_id: &str,
-) -> Option<arkret_sdk::CircleDurabilityPolicy> {
+) -> Option<arkret_wire::DurabilityPolicy> {
     circle_projection_object(body, circle_id)?.durability_policy
 }
 

@@ -9,7 +9,6 @@
 
 mod admin_panel;
 mod capabilities;
-mod durability;
 mod members_panel;
 mod metadata;
 mod organization;

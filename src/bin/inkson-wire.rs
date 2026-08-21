@@ -15,8 +15,8 @@ struct CanonicalInput {
 struct MlsGovernanceProofInput {
     request: arkret_sdk::MlsGovernanceProofRequestBody,
     target_checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
-    content_scheme: arkret_sdk::MlsContentScheme,
-    durability_policy: Option<arkret_sdk::MlsDurabilityPolicy>,
+    content_scheme: arkret_wire::ContentScheme,
+    durability_policy: Option<arkret_wire::DurabilityPolicy>,
     local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
 }
 

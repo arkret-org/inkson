@@ -447,11 +447,9 @@ pub async fn set_realm_policy_events(
         //
         // The cell is a `cas_register`: this revision restates the COMPLETE
         // enabled component set, and anything omitted is cleared. Starting from
-        // the recommended genesis bundle keeps `content_scheme` (whose one-way
-        // ratchet would otherwise reject the write) and the encryption floors.
-        let mut policy_bundle = recommended_realm_policy_bundle_value(None);
+        // the recommended genesis bundle keeps the encryption floors.
+        let mut policy_bundle = recommended_realm_policy_bundle_value();
         if !preserve_recommended_encryption_floor {
-            policy_bundle.content_scheme = None;
             policy_bundle.content_encryption_floor = None;
             policy_bundle.metadata_encryption_floor = None;
         }
@@ -472,53 +470,6 @@ pub async fn set_realm_policy_events(
         join_rule: join_rule.to_owned(),
         history_access_tightened: tighten_history_access,
     })
-}
-
-/// Set (or clear) the Realm Recovery Key (RRK) `durability_policy` via a
-/// `ak.realm.policy_bundle` event (realm-and-space.md §2.3.1 write path —
-/// no new event kind; durability is a policy component).
-///
-/// `policy` is the SDK-typed [`arkret_models_collaboration::objects::realm::DurabilityPolicy`]
-/// so the client never re-defines the spec shape. `policy_revision` MUST be a
-/// monotonic increment of the Realm's current policy revision (the reducer
-/// rejects a stale revision). After this lands, a subsequent `ak.mls.commit`
-/// covering the membership frontier activates the new epoch's sealing
-/// obligation and triggers re-disclosure (§2.10.8) — the caller SHOULD prompt
-/// an MLS commit / self-update afterward.
-///
-/// Pre-condition (caller-enforced): RRK durability is only effective when the
-/// Realm uses `content_scheme=mls_exporter_aead_v1`; declaring `mode != none`
-/// on a plain `mls_rfc9420` Realm is rejected server-side
-/// (`durability_scheme_incompatible`).
-pub async fn set_realm_durability_policy(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    digest_suite: arkret_sdk::DigestSuite,
-    policy: &arkret_models_collaboration::objects::realm::DurabilityPolicy,
-    policy_revision: u64,
-) -> anyhow::Result<()> {
-    let actor_id = actor_id.trim();
-    if actor_id.is_empty() {
-        return Err(anyhow::anyhow!(
-            "actor_id is required for ak.realm.policy_bundle"
-        ));
-    }
-    // Same `cas_register` restatement rule as the join-policy write: begin from
-    // the recommended component set so this revision does not clear
-    // `content_scheme` or the encryption floors on its way to setting one
-    // component.
-    let mut policy_bundle = recommended_realm_policy_bundle_value(None);
-    policy_bundle.policy_revision = policy_revision;
-    policy_bundle.durability_policy = Some(policy.clone());
-    let event = build_realm_state_event::<arkret_sdk::event_spec::RealmPolicyBundle>(
-        realm_id,
-        actor_id,
-        digest_suite,
-        policy_bundle,
-    )?;
-    submitter.submit_sdk_event(&event).await?;
-    Ok(())
 }
 
 /// Close an open invite via `ak.invite.cancel` (spec-canonical).

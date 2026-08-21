@@ -303,15 +303,6 @@ pub fn RealmAdminPanel(
                     }
                 }
             }
-            // encryption-and-audit.md §2.10.8 disclosure obligation — RRK
-            // durability banner. Renders only when this Realm's effective
-            // durability_policy.mode != none AND content_scheme is
-            // mls_exporter_aead_v1; otherwise it is a no-op. Until verified
-            // coverage exists, it discloses policy configuration and the
-            // client's pending capability without claiming key delivery.
-            crate::components::DurabilityDisclosureBanner {
-                realm_id: selected_realm_id.clone(),
-            }
             // Realm-wide notary-paused banner. Fires whenever any tracked
             // Move for this Realm has surfaced `NotaryPaused`. The Space
             // cannot advance until ops rotate the recovery notary.
@@ -496,15 +487,6 @@ pub fn RealmAdminPanel(
                             span { "{security_next_step}" }
                         }
                     }
-                }
-                // RRK durability policy editor (realm-and-space.md §2.3.1 /
-                // encryption-and-audit.md §2.10.8). Writes durability_policy via
-                // ak.realm.policy_bundle; prompts the operator that a
-                // following ak.mls.commit activates sealing + re-disclosure.
-                super::durability::DurabilityPolicyEditor {
-                    token,
-                    realm_id: selected_realm_id.clone(),
-                    actor_id: account_did.clone(),
                 }
                 // Read-only MLS epoch widget from the current Seal view.
                 div { class: "event", "data-testid": "mls-epoch-widget",

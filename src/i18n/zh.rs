@@ -495,88 +495,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.leave_confirm_target", "将退出的工作区");
     dict.set("realm_admin.leave_confirm_button", "退出工作区");
     dict.set("realm_admin.leave_confirm_cancel", "取消");
-    dict.set(
-        "realm_admin.durability_title",
-        "工作区恢复密钥（durability）",
-    );
-    dict.set(
-        "realm_admin.durability_scheme_not_eligible",
-        "加密方案不符合条件",
-    );
-    dict.set(
-        "realm_admin.durability_intro",
-        "设定当所有成员设备都丢失或全部成员退出后,谁可以解开本工作区的历史记录。更改只对之后的新内容生效,并在下次成员变更后重新向成员共享密钥。",
-    );
-    dict.set(
-        "realm_admin.durability_scheme_warning",
-        "此工作区的加密格式不支持历史恢复,因此选择「无」以外的任何模式都会被拒绝。",
-    );
-    dict.set("realm_admin.durability_mode_label", "模式");
-    dict.set(
-        "realm_admin.durability_mode_none",
-        "none — 无组织恢复（丢光即永久丢失）",
-    );
-    dict.set(
-        "realm_admin.durability_mode_org",
-        "org_recovery_key — 单把组织 RRK",
-    );
-    dict.set(
-        "realm_admin.durability_mode_threshold",
-        "threshold — k-of-n 门限",
-    );
-    dict.set("realm_admin.durability_recipients_label", "恢复接收方");
-    dict.set(
-        "realm_admin.durability_recipients_hint",
-        "每行一个接收方,字段用 | 分隔:接收方名称 | 身份地址(did:…)| 验证密钥 [ | 所属组织]",
-    );
-    dict.set(
-        "realm_admin.durability_threshold_label",
-        "门限 k（n = 接收方数量）",
-    );
-    dict.set(
-        "realm_admin.durability_revision_label",
-        "策略版本号（单调递增）",
-    );
-    dict.set("realm_admin.durability_apply_button", "应用持久化策略");
-    dict.set("realm_admin.durability_submitting", "提交中…");
-    dict.set(
-        "realm_admin.durability_submitted",
-        "策略已保存。下次成员变更后生效,届时会重新向成员共享密钥。",
-    );
-    dict.set("realm_admin.durability_submit_failed", "提交失败：{error}");
-    dict.set(
-        "realm_admin.durability_parse_failed",
-        "解析恢复方失败：{error}",
-    );
-    dict.set("realm_admin.durability_policy_invalid", "策略无效：{error}");
-    dict.set(
-        "realm_admin.durability_err_recipient_fields",
-        "第 {line} 行：应为 `recipient_id | principal_did | verification_method`",
-    );
-    dict.set(
-        "realm_admin.durability_err_principal_did",
-        "第 {line} 行：principal DID 无效：{error}",
-    );
-    dict.set(
-        "realm_admin.durability_err_org_did",
-        "第 {line} 行：controller_organization DID 无效：{error}",
-    );
-    dict.set(
-        "realm_admin.durability_err_unknown_mode",
-        "未知的持久化模式 {mode}",
-    );
-    dict.set(
-        "realm_admin.durability_err_recipients_required",
-        "mode != none 至少需要一个恢复接收方",
-    );
-    dict.set(
-        "realm_admin.durability_err_duplicate_recipient",
-        "recipient_id 重复：{recipient_id}",
-    );
-    dict.set(
-        "realm_admin.durability_err_threshold_k",
-        "门限必须介于 1 和接收方数量({n})之间,当前输入为 {k}。",
-    );
     dict.set("directory.list_contacts", "列出");
     dict.set("directory.search_button", "搜索");
     dict.set("directory.resolve_selected", "解析选中");
@@ -2821,16 +2739,4 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.contact_no_scopes", "无共享范围");
     dict.set("manage.contact_dm", "私聊 {state}");
     dict.set("manage.contact_no_dm", "无私聊");
-    dict.set("durability_banner.title", "本工作区历史已持续封存给恢复方");
-    dict.set("durability_banner.mode_single", "单一恢复密钥");
-    dict.set("durability_banner.mode_threshold", "门限恢复");
-    dict.set("durability_banner.body", "该恢复方持有者可解密本工作区的全部历史。恢复方处于离线状态、不是群组成员、不接收实时消息,仅在需要恢复时才会取出密钥。");
-    dict.set("durability_banner.verifying", "正在验证恢复方身份…");
-    dict.set("durability_banner.verified", "已验证");
-    dict.set("durability_banner.controlled_by", "受控于 {org}");
-    dict.set("durability_banner.unverifiable", "无法验证");
-    dict.set(
-        "durability_banner.unverifiable_detail",
-        "恢复方 {did}(无法确认其恢复密钥服务处于活跃状态)",
-    );
 }

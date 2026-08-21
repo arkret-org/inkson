@@ -228,12 +228,12 @@ impl LocalStatePersistBarrier {
 /// Extract the effective `durability_policy` (RRK, realm-and-space.md §2.3.1)
 /// from a cached realm-tree projection body, if present. Scans the same nested
 /// containers as the encryption-state reader since the local projection nests
-/// the realm body. Returns the SDK-typed
-/// [`arkret_models_collaboration::objects::realm::DurabilityPolicy`] so the client never re-defines
-/// the spec shape; `None` when absent or malformed.
+/// the realm body. Returns the SDK-typed closed union
+/// [`arkret_wire::DurabilityPolicy`] so the client never re-defines the spec
+/// shape; `None` when absent or outside the registered value set.
 fn realm_tree_projection_value_durability_policy(
     body: &Value,
-) -> Option<arkret_models_collaboration::objects::realm::DurabilityPolicy> {
+) -> Option<arkret_wire::DurabilityPolicy> {
     let null = Value::Null;
     for container in [
         body,
@@ -244,9 +244,8 @@ fn realm_tree_projection_value_durability_policy(
     ] {
         if let Some(policy) = container.get("durability_policy")
             && !policy.is_null()
-            && let Ok(parsed) = serde_json::from_value::<
-                arkret_models_collaboration::objects::realm::DurabilityPolicy,
-            >(policy.clone())
+            && let Ok(parsed) =
+                serde_json::from_value::<arkret_wire::DurabilityPolicy>(policy.clone())
         {
             return Some(parsed);
         }

@@ -19,11 +19,6 @@ pub mod device_authorization_prompt;
 pub mod device_pair_approval_prompt;
 pub mod did_resolution_health_banner;
 pub mod dismissible_popup;
-/// encryption-and-audit.md §2.10.8 — Realm Recovery Key (RRK) durability
-/// disclosure banner. Renders when a Realm's `durability_policy.mode != none`
-/// (and `content_scheme=mls_exporter_aead_v1`), disclosing the verified recovery
-/// holder identity + mode. Never phrases the holder as "listening in real time".
-pub mod durability_banner;
 pub mod empty_state;
 /// Entry-time auto-acknowledgement for accounts whose visible PCR / Realm
 /// projections do not yet show the recommended metadata+content E2EE floor.
@@ -72,7 +67,6 @@ pub use device_authorization_prompt::DeviceAuthorizationPrompt;
 pub use device_pair_approval_prompt::DevicePairApprovalPrompt;
 pub use did_resolution_health_banner::{DidResolutionHealth, DidResolutionHealthBanner};
 pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
-pub use durability_banner::DurabilityDisclosureBanner;
 pub use empty_state::{EmptyState, EmptyStateKind};
 pub use encryption_floor_prompt::EncryptionFloorPrompt;
 pub use feedback::{

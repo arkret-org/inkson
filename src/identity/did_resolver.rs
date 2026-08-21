@@ -730,48 +730,6 @@ async fn fetch_did_webvh_document(
     ))
 }
 
-/// Fetch a recipient principal's **raw** DID Document JSON (carrying `service`
-/// and `keyAgreement`, which the SDK [`DidDocument`] projection drops).
-///
-/// The Realm Recovery Key (RRK) verification path
-/// (`arkret_identity::history_recovery::resolve_realm_history_recovery_key`,
-/// encryption-and-audit.md §2.10.8 / identity-did.md §8.3) needs the original
-/// document to confirm an active `ArkretRealmHistoryRecoveryKey` service entry
-/// designates the declared verification method. This reuses the same
-/// SSRF-guarded, size-capped, `https`-only fetch path as the authority resolver:
-///
-/// - `did:web` → `…/.well-known/did.json` (or path form) raw bytes parsed as JSON.
-/// - `did:webvh` → the resolved document body (the append-only log's SCID / chain validation is NOT
-///   re-run here; callers that need verified key rotation must anchor through [`ResolverDidAnchor`]
-///   first). The raw document is sufficient for the SDK's `service` / `keyAgreement` designation
-///   check.
-/// - `did:key` → has no off-host document and no `service` entries, so RRK is structurally
-///   impossible; returns `None`.
-///
-/// Returns `None` (fail-closed) on any transport / SSRF / size / parse failure;
-/// the SDK resolver then fails closed with `durability_recovery_recipient_unverified`.
-pub async fn fetch_raw_did_document_json(
-    http: &reqwest::Client,
-    did: &arkret_sdk::DidFullId,
-) -> Option<serde_json::Value> {
-    match did.method() {
-        "web" => {
-            let url = DidWebResolver::document_url(did).ok()?;
-            let (_content_type, body) =
-                fetch_did_bytes(http, &url, DID_WEB_MAX_DOCUMENT_BYTES).await?;
-            serde_json::from_slice(&body).ok()
-        }
-        "webvh" => {
-            let url = DidWebvhResolver::document_url(did).ok()?;
-            let (_content_type, body) =
-                fetch_did_bytes(http, &url, DID_WEB_MAX_DOCUMENT_BYTES).await?;
-            serde_json::from_slice(&body).ok()
-        }
-        // did:key carries no off-host document / service entries.
-        _ => None,
-    }
-}
-
 /// Y1: cache-first authority resolution helper.
 ///
 /// Authority call sites should enter here before `verify_principal`:

@@ -329,7 +329,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
             "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
         )
         .unwrap(),
-        arkret_sdk::MlsContentScheme::MlsRfc9420,
+        arkret_sdk::ContentScheme::MlsRfc9420,
         None,
         arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
         arkret_sdk::CORE_REDUCER_PROFILE,

@@ -18,7 +18,7 @@ fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindin
         0,
         0,
         security_frontier_digest,
-        arkret_sdk::MlsContentScheme::MlsRfc9420,
+        arkret_sdk::ContentScheme::MlsRfc9420,
         None,
         arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
         arkret_sdk::CORE_REDUCER_PROFILE,

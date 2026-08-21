@@ -1024,7 +1024,7 @@ mod tests {
             6,
             7,
             arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap(),
-            arkret_sdk::MlsContentScheme::MlsRfc9420,
+            arkret_sdk::ContentScheme::MlsRfc9420,
             None,
             arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
             arkret_sdk::CORE_REDUCER_PROFILE,
