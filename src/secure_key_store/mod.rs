@@ -179,13 +179,13 @@ pub(crate) const E2EE_PLAINTEXT_CACHE_KEY_PREFIX: &str = "inkson.e2ee_plaintext_
 /// Per-account main `ClientLocalState` blob. Historically this lived in
 /// near-plaintext `localStorage`; phase 2 of the E2EE-local-state work moved it
 /// into the IndexedDB + non-extractable SubtleCrypto encrypted entries store.
-/// The semantic key is `inkson.local_state.v2.account.<core_id>`; v1 data is
+/// The semantic key is `inkson.local_state.v1.account.<core_id>`; v1 data is
 /// intentionally ignored rather than migrated or read through compatibility
 /// fallbacks. Classifying the prefix as IndexedDB-only makes the localStorage secure tier
 /// refuse it — so it fails closed before the wrapping key is ready and is never
 /// mirrored back to localStorage.
 #[cfg(any(target_arch = "wasm32", test))]
-pub(crate) const ACCOUNT_LOCAL_STATE_KEY_PREFIX: &str = "inkson.local_state.v2.account.";
+pub(crate) const ACCOUNT_LOCAL_STATE_KEY_PREFIX: &str = "inkson.local_state.v1.account.";
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {

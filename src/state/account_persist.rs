@@ -3,7 +3,7 @@
 //! On wasm the per-account `ClientLocalState` blob is stored in the
 //! IndexedDB + non-extractable SubtleCrypto encrypted entries store
 //! (the same `inkson.secret.inkson`/`entries` store the seed-grade secrets
-//! use). The semantic key is `inkson.local_state.v2.account.<core_id>`, and the physical backend
+//! use). The semantic key is `inkson.local_state.v1.account.<core_id>`, and the physical backend
 //! is the hardened secure store, so the account
 //! blob is ciphertext at rest instead of near-plaintext localStorage JSON.
 //!
@@ -542,8 +542,8 @@ pub(crate) async fn run_browser_account_persist_fault_contract() -> anyhow::Resu
     let store = IndexedDbSecureKeyStore::new_async(&service)
         .await
         .context("open browser account store")?;
-    let key_a = "inkson.local_state.v2.account.ak:did_core:example:contract-a";
-    let key_b = "inkson.local_state.v2.account.ak:did_core:example:contract-b";
+    let key_a = "inkson.local_state.v1.account.ak:did_core:example:contract-a";
+    let key_b = "inkson.local_state.v1.account.ak:did_core:example:contract-b";
     let mut queue = AccountPersistQueueState::default();
 
     queue.enqueue(key_a.to_owned(), state_json("sx:a1", &["a1"])?);

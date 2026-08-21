@@ -1113,7 +1113,7 @@ pub struct ClientLocalState {
     /// DID-P2-B — accepted DID bindings that survive a restart.
     ///
     /// Scope: this vector lives inside the **per-account** `ClientLocalState`
-    /// entry (`inkson.local_state.v2.account.<core_id>` on wasm, a sibling account
+    /// entry (`inkson.local_state.v1.account.<core_id>` on wasm, a sibling account
     /// file on native), so principal scoping is structural — account B's blob is
     /// a different key and can never be read while account A is active. The
     /// residual scoping dimension *inside* one account is the trust domain
@@ -1352,7 +1352,7 @@ pub struct PendingLogin {
 
 /// Small, cold-written root index that replaces the former single global
 /// `ClientLocalState` blob. Each account's full [`ClientLocalState`] lives in
-/// its own sibling key (`inkson.local_state.v2.account.<core_id>`); this index only
+/// its own sibling key (`inkson.local_state.v1.account.<core_id>`); this index only
 /// records which account is active, the cross-account [`DevicePrefs`], any
 /// in-flight [`PendingLogin`] device material, and the set of known account
 /// DIDs (for enumeration / cleanup). Hot per-write flushes touch only the

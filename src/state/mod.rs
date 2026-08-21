@@ -18,7 +18,7 @@ use crate::notification_rules::WatchLevel;
 /// Root-index storage key. Per-account `ClientLocalState` entries live under
 /// the sibling key `account_state_key(did)`.
 #[cfg(target_arch = "wasm32")]
-const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v2";
+const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
 
 /// Reserved namespace for the pre-login (signed-out) account entry. Local state
 /// exists before any DID is known — drafts, UI scratch, the boot-time device
