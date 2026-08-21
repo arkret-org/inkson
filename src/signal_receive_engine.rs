@@ -755,7 +755,6 @@ mod tests {
             7,
             arkret_sdk::CallSignalData::Invite(arkret_sdk::CallInviteSignalData {
                 lifetime_ms: 30_000,
-                mode: arkret_models_collaboration::call_signal::CallMode::P2p,
                 offer: arkret_sdk::SessionDescription {
                     sdp_type: arkret_sdk::SessionDescriptionType::Offer,
                     sdp: "v=0".to_owned(),

@@ -32,7 +32,6 @@ pub(super) async fn relay_local_signals(
                 if let Some(media) = initial_invite_media.clone() {
                     arkret_sdk::CallSignalData::Invite(arkret_sdk::CallInviteSignalData {
                         lifetime_ms: 60_000,
-                        mode: arkret_models_collaboration::call_signal::CallMode::P2p,
                         offer,
                         media,
                     })
