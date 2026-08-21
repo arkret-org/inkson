@@ -1001,7 +1001,7 @@ pub struct RealmPolicyResult {
     pub ok: bool,
     pub realm_id: String,
     pub join_rule: String,
-    pub history_visibility: String,
+    pub history_access_tightened: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

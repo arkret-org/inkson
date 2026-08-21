@@ -340,7 +340,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
                                                     crate::transport::account::grant_consent(
-                                                        &crate::event_submit::EventSubmitter::new(http),
+                                                        &crate::event_submit::EventSubmitter::from_current_session(http),
                                                         &holder, &peer, &scope, expires_at,
                                                     ).await
                                                 })
@@ -553,7 +553,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                                                         spawn(async move {
                                                                             match with_authed_sdk_client(&base, api_token, |http| async move {
                                                                                 crate::transport::account::grant_consent(
-                                                        &crate::event_submit::EventSubmitter::new(http),
+                                                        &crate::event_submit::EventSubmitter::from_current_session(http),
                                                         &holder, &peer, &scope, expires_at,
                                                     ).await
                                                                             })
@@ -629,7 +629,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
                                                                 spawn(async move {
                                                                     match with_authed_sdk_client(&base, api_token, |http| async move {
                                                                         crate::transport::account::revoke_consent(
-                                                        &crate::event_submit::EventSubmitter::new(http),
+                                                        &crate::event_submit::EventSubmitter::from_current_session(http),
                                                         &holder, &peer, &scope,
                                                     ).await
                                                                     })

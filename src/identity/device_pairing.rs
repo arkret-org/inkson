@@ -15,7 +15,7 @@
 
 use serde_json::{Value, json};
 
-pub fn sign_target_attestation(
+pub async fn sign_target_attestation(
     signer: &crate::event_signer::InksonEventSigner,
     actor_id: &str,
     device_id: &str,
@@ -31,11 +31,12 @@ pub fn sign_target_attestation(
         .public_key_multibase()
         .ok_or_else(|| anyhow::anyhow!("target device signer cannot expose its Ed25519 key"))?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+    let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair_durable(
         secure_store.as_ref(),
         actor_id,
         device_id,
-    )?;
+    )
+    .await?;
     let unsigned = arkret_sdk::UnsignedDevicePairingTargetAttestation::new(
         arkret_sdk::DeviceId::new(device_id.to_owned())?,
         arkret_sdk::DidKey::new(format!("did:key:{public_key_multibase}"))
@@ -349,6 +350,10 @@ pub async fn author_pairing_request_body(
     let authorized = submitter
         .author_independent_events(vec![authorize.into_intent()])
         .await?;
+    let authorize_digest_suite = authorized
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("device authorize Event was not authored"))?
+        .digest_suite();
     let authorize_event = submitter
         .prepare_initial_submissions(&authorized)
         .await?
@@ -401,7 +406,7 @@ pub async fn author_pairing_request_body(
         device_pairing_request_id,
         challenge_transcript,
     };
-    attestation.validate_against_pair_request(&request)?;
+    attestation.validate_against_pair_request(&request, authorize_digest_suite)?;
     Ok(request)
 }
 
@@ -430,8 +435,9 @@ pub async fn verify_authorized_pairing_event(
         .events_resolve(&arkret_sdk::EventsResolveRequestBody {
             event_ids: vec![event_ref.clone()],
             event_digests: Vec::new(),
-            seal_refs: Vec::new(),
             include_payload: Some(true),
+            history_traversal_access: None,
+            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
         })
         .await?;
     let event = resolved
@@ -439,7 +445,6 @@ pub async fn verify_authorized_pairing_event(
         .into_iter()
         .find(|event| &event.event_id == event_ref)
         .ok_or_else(|| anyhow::anyhow!("authorized device Event is not accepted"))?;
-    event.verify_event_id_matches_content()?;
     let principal_actor = arkret_sdk::project_full_id_to_core_id(principal)?;
     if event.kind != arkret_sdk::EventKind::DeviceAuthorize || event.actor_id != principal_actor {
         anyhow::bail!(
@@ -450,14 +455,17 @@ pub async fn verify_authorized_pairing_event(
     if event.realm_id != pcr {
         anyhow::bail!("authorized pairing Event is outside the principal control Realm");
     }
-    let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
-    if !resolved.seals.iter().any(|seal| {
-        seal.realm_id == event.realm_id
-            && seal.delta.contains(&digest)
-            && seal.covered_event_digests.contains(&digest)
-    }) {
-        anyhow::bail!("authorized pairing Event lacks its exact accepted covering Seal");
-    }
+    crate::event_submit::verify_event_is_covered_by_accepted_seal(
+        http,
+        &event,
+        |_, _, _, _| {
+            Err(arkret_sdk::WireError::Protocol(
+                "pairing bootstrap cannot trust Native Agent evidence without a pinned external authority"
+                    .to_owned(),
+            ))
+        },
+    )
+    .await?;
     let payload: arkret_sdk::DeviceAuthorizePayload =
         serde_json::from_value(serde_json::to_value(&event.payload)?)?;
     if payload.principal_id != principal_actor

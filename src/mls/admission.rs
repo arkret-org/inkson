@@ -1,8 +1,5 @@
-use std::collections::BTreeMap;
-
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use serde_json::Value;
 
 use crate::mls::persistence::MlsSnapshotEnvelope;
 use crate::operation::trim_realm_id;
@@ -29,6 +26,20 @@ pub(crate) struct RealmMlsBatchAdmissionEvents {
     pub(crate) commit: crate::operation::LocalOperation,
     pub(crate) welcomes: Vec<WelcomeIntentStep>,
     pub(crate) snapshot: MlsSnapshotEnvelope,
+}
+
+pub(crate) struct WelcomePayloadInputs {
+    pub(crate) realm_id: String,
+    pub(crate) actor_id: String,
+    pub(crate) device_id: String,
+    pub(crate) requester_device_authorize_event_id: arkret_sdk::EventId,
+    pub(crate) claim: arkret_sdk::KeyPackageClaimRecord,
+    pub(crate) keypackage_id: String,
+    pub(crate) welcome_envelope: arkret_sdk::MlsWelcomeEnvelope,
+    pub(crate) governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+    pub(crate) claim_nonce: String,
+    pub(crate) claim_receipt: arkret_sdk::MlsWelcomeClaimReceipt,
+    pub(crate) effective_scope: Option<arkret_sdk::ScopeRef>,
 }
 
 pub(crate) async fn current_requester_device_authorize_event_id(
@@ -342,217 +353,7 @@ fn validate_claim_receipt_for_admission(
     Ok(())
 }
 
-/// Build a `ak.realm_key.share` event carrying a HPKE-sealed bundle of
-/// retained `history_secret`s so `recipient` can decrypt pre-join
-/// `mls_exporter_aead_v1` content (`encryption-and-audit.md` history sharing).
-///
-/// `sealed_ciphertext` is the `base64url(eph_pub || ct)` blob produced by
-/// [`crate::mls::secret_share::seal_history_secret_to_device_pubkey`] for the
-/// recipient device's advertised HPKE public key. `from_epoch`/`to_epoch` bound
-/// the shared range and are recorded in the `key_scope` so the receiver can
-/// match the share to the epochs it is missing.
-///
-/// The provider MUST have built `sealed_ciphertext` against the recipient's
-/// HPKE public key; this builder does not derive or validate that key.
-///
-/// `source_authorization_ref` is the durable policy/grant Control Move event
-/// ref covering this delivery (encryption-and-audit.md §2.3.5(c)); the
-/// registered payload schema requires it, so this fails closed on a
-/// non-event-ref value.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_realm_key_share_event(
-    realm_id: &str,
-    actor_id: &str,
-    sender_device_id: &str,
-    recipient_principal_id: &str,
-    recipient_device_id: &str,
-    from_epoch: u64,
-    to_epoch: u64,
-    policy_digest: String,
-    sealed_ciphertext: String,
-    source_authorization_ref: &str,
-    authorization_grant_ref: &str,
-) -> Result<crate::operation::LocalOperation, String> {
-    let source_authorization_ref =
-        arkret_sdk::EventId::new(source_authorization_ref.trim().to_owned())
-            .map_err(|err| format!("invalid realm_key.share source_authorization_ref: {err:?}"))?;
-    let recipient_did = crate::mls_api_helpers::principal_core_id(recipient_principal_id)
-        .map_err(|err| format!("invalid realm_key.share recipient DID: {err:?}"))?;
-    let policy_digest = arkret_sdk::Hash::new(policy_digest.trim().to_owned())
-        .map_err(|err| format!("invalid realm_key.share policy_digest: {err:?}"))?;
-    let digest_suite_name = policy_digest
-        .as_str()
-        .split_once(':')
-        .map(|(suite, _)| suite)
-        .ok_or_else(|| "realm_key.share policy_digest has no digest suite".to_owned())?;
-    let digest_suite = arkret_sdk::canonical::digest_suite(digest_suite_name)
-        .map_err(|err| format!("unsupported realm_key.share digest suite: {err}"))?;
-    let authorization_grant_ref =
-        arkret_sdk::GrantId::new(authorization_grant_ref.trim().to_owned())
-            .map_err(|err| format!("invalid realm_key.share authorization grant ref: {err:?}"))?;
-    let key_scope = arkret_sdk::RealmKeyScope {
-        effective_scope: arkret_wire::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-                .map_err(|err| format!("invalid realm_key.share Realm id: {err:?}"))?,
-        },
-        policy_digest,
-        membership_frontier_digest: None,
-        from_epoch: Some(from_epoch),
-        to_epoch: Some(to_epoch),
-        history_visibility: None,
-    };
-    let mut payload = arkret_sdk::RealmKeySharePayload {
-        share_kind: arkret_sdk::RealmKeyShareClass::MemberDevice,
-        recipient_principal_id: recipient_did,
-        target: arkret_sdk::RealmKeyShareTarget::MemberDevice {
-            recipient_device_id: arkret_sdk::DeviceId::new(recipient_device_id.trim().to_owned())
-                .map_err(|err| {
-                format!("invalid realm_key.share recipient device id: {err:?}")
-            })?,
-        },
-        sender_device_id: arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
-            .map_err(|err| format!("invalid realm_key.share sender device id: {err:?}"))?,
-        source_authorization_ref,
-        // Filled below with a real Ed25519 signature over
-        // `RealmKeySharePayload::sender_signing_input()` (device-lifecycle.md
-        // §13). Initialized empty only while constructing the signing input and
-        // replaced before the Event is serialized. The per-secret HPKE seal
-        // (AEAD tag) bound to the recipient device already covers confidentiality
-        // + integrity of the shared keys; this detached signature additionally
-        // authenticates the *sender device* to the receiver, independent of the
-        // durable Event-envelope proof.
-        sender_device_signature: arkret_sdk::SignatureMaterial::Variant1(BTreeMap::new()),
-        key_scope,
-        material: arkret_sdk::RealmKeyShareMaterial::Ciphertext {
-            ciphertext: arkret_sdk::NonEmptyString::new(sealed_ciphertext)
-                .map_err(|err| format!("invalid realm_key.share ciphertext: {err}"))?,
-        },
-        aad_digest: None,
-        expires_at: None,
-        created_at: crate::clock::now_utc_canonical(),
-    };
-    // Sign `sender_signing_input()` with this device's active Ed25519 event
-    // signer and embed the detached signature. The registered payload schema
-    // requires this signature, so a provider without an active signer must
-    // fail closed and retry after device signing is ready.
-    payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
-        .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
-    let event =
-        crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmKeyShare>(
-            realm_id, actor_id, payload,
-        )
-        .authorization_ref(authorization_grant_ref.as_str())
-        .build_sdk_event("inkson")
-        .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
-    // The delivery-log append is derived from the registered contract, so the
-    // producer no longer stamps it. The projection runs on the intent, before
-    // any identity exists: an `ak.realm_key.share` cell is keyed by the key
-    // scope its payload names, never by this Event's own id.
-    let _ = digest_suite;
-    crate::operation::pre_authoring_cell_writes(event.intent())
-        .map_err(|err| format!("ak.realm_key.share cell-write projection failed: {err}"))?;
-    Ok(event)
-}
-
-/// Wrap an already-constructed [`arkret_sdk::RealmKeySharePayload`] (e.g. the
-/// provider-initiated RRK seal produced by
-/// `arkret_crypto::secret_share::seal_history_secret_to_device_pubkey`)
-/// into a durable `ak.realm_key.share` Event, filling the
-/// `sender_device_signature` with this device's active Ed25519 signer. The
-/// registered payload schema requires this signature, so this fails closed when
-/// no active signer is installed.
-///
-/// Unlike [`build_realm_key_share_event`], the seal + payload are already done by
-/// the SDK authority; this only authenticates the sender device and converts to
-/// a wire Event.
-pub(crate) fn wrap_realm_key_share_payload_event(
-    realm_id: &str,
-    actor_id: &str,
-    mut payload: arkret_sdk::RealmKeySharePayload,
-    authorization_grant_ref: &str,
-) -> Result<crate::operation::LocalOperation, String> {
-    let digest_suite_name = payload
-        .key_scope
-        .policy_digest
-        .as_str()
-        .split_once(':')
-        .map(|(suite, _)| suite)
-        .ok_or_else(|| "realm_key.share policy_digest has no digest suite".to_owned())?;
-    let digest_suite = arkret_sdk::canonical::digest_suite(digest_suite_name)
-        .map_err(|err| format!("unsupported realm_key.share digest suite: {err}"))?;
-    let authorization_grant_ref =
-        arkret_sdk::GrantId::new(authorization_grant_ref.trim().to_owned())
-            .map_err(|err| format!("invalid realm_key.share authorization grant ref: {err:?}"))?;
-    payload.sender_device_signature = sign_realm_key_share_sender_signature(&payload)
-        .ok_or_else(|| "ak.realm_key.share requires an active sender device signer".to_owned())?;
-    let event =
-        crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmKeyShare>(
-            realm_id, actor_id, payload,
-        )
-        .authorization_ref(authorization_grant_ref.as_str())
-        .build_sdk_event("inkson")
-        .map_err(|err| format!("ak.realm_key.share SDK Event conversion failed: {err}"))?;
-    // The delivery-log append is derived from the registered contract, so the
-    // producer no longer stamps it. The projection runs on the intent, before
-    // any identity exists: an `ak.realm_key.share` cell is keyed by the key
-    // scope its payload names, never by this Event's own id.
-    let _ = digest_suite;
-    crate::operation::pre_authoring_cell_writes(event.intent())
-        .map_err(|err| format!("ak.realm_key.share cell-write projection failed: {err}"))?;
-    Ok(event)
-}
-
-/// Sign the canonical `RealmKeySharePayload::sender_signing_input()` with this
-/// device's active Ed25519 event signer (raw signature over canonical JSON,
-/// not a detached JWS — the receiver verifies the raw signature in
-/// [`crate::mls::runtime::verify_realm_key_share_sender_signature`]).
-///
-/// Returns a typed `sender_device_signature` object:
-/// ```json
-/// { "signature_algorithm": "Ed25519", "signature": "<b64url>", "signer_public_key_multibase": "z.." }
-/// ```
-/// or `None` when no raw-capable signer is installed.
-pub(crate) fn sign_realm_key_share_sender_signature(
-    payload: &arkret_sdk::RealmKeySharePayload,
-) -> Option<arkret_sdk::SignatureMaterial> {
-    let signer = crate::event_signer::active_signer()?;
-    let pubkey_multibase = signer.public_key_multibase()?;
-    // Canonicalization failure must not degrade into signing empty bytes.
-    let signing_input = payload.sender_signing_input().ok()?;
-    let signature = signer.sign_raw(&signing_input).ok()?;
-    let mut fields = BTreeMap::new();
-    fields.insert(
-        "signature_algorithm".to_owned(),
-        Value::String("Ed25519".to_owned()),
-    );
-    fields.insert(
-        "signature".to_owned(),
-        Value::String(URL_SAFE_NO_PAD.encode(signature)),
-    );
-    fields.insert(
-        "signer_public_key_multibase".to_owned(),
-        Value::String(pubkey_multibase),
-    );
-    Some(arkret_sdk::SignatureMaterial::Variant1(fields))
-}
-
-#[allow(clippy::too_many_arguments)]
-/// Everything a Welcome needs except the Commit identity it references.
-pub(crate) struct WelcomePayloadInputs {
-    pub(crate) realm_id: String,
-    pub(crate) actor_id: String,
-    pub(crate) device_id: String,
-    pub(crate) requester_device_authorize_event_id: arkret_sdk::EventId,
-    pub(crate) claim: arkret_sdk::KeyPackageClaimRecord,
-    pub(crate) keypackage_id: String,
-    pub(crate) welcome_envelope: arkret_sdk::MlsWelcomeEnvelope,
-    pub(crate) governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
-    pub(crate) claim_nonce: String,
-    pub(crate) claim_receipt: arkret_sdk::MlsWelcomeClaimReceipt,
-    pub(crate) effective_scope: Option<arkret_sdk::ScopeRef>,
-}
-
-/// Defer one Welcome until the Commit it references has a final identity.
 fn welcome_intent_step(inputs: WelcomePayloadInputs) -> WelcomeIntentStep {
     Box::new(move |commit_event_id| {
         let payload = build_mls_welcome_payload(
@@ -755,25 +556,10 @@ fn sign_welcome_claim_envelope(
 }
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
 
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;
     use crate::state::isolated_store_for_tests;
-
-    struct ActiveSignerGuard {
-        _guard: crate::event_signer::ActiveSignerTestGuard,
-    }
-
-    impl ActiveSignerGuard {
-        fn install(seed: [u8; 32], signer_did: &str) -> Self {
-            let signer =
-                std::sync::Arc::new(crate::event_signer::build_ed25519_signer(seed, signer_did));
-            Self {
-                _guard: crate::event_signer::ActiveSignerTestGuard::replace(Some(signer)),
-            }
-        }
-    }
 
     fn claim_from_key_package(
         record: &arkret_sdk::MlsKeyPackageRecord,
@@ -827,7 +613,8 @@ mod tests {
             intended_realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
             requester: crate::mls_api_helpers::principal_core_id(requester).unwrap(),
             mls_group_id: arkret_sdk::NonEmptyString::new(
-                crate::mls::runtime::mls_group_id_for_realm(realm_id),
+                crate::mls::runtime::mls_group_id_for_realm(realm_id)
+                    .expect("test Realm scope must derive a canonical MLS group id"),
             )
             .unwrap(),
             claim_purpose: arkret_sdk::PeerKeyPackageClaimPurpose::RealmMembership,
@@ -938,80 +725,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn realm_key_share_event_matches_registered_payload_schema() {
-        let _signer_guard =
-            ActiveSignerGuard::install([9u8; 32], "did:key:zRealmKeyShareSchemaTest");
-        let realm = "ak:realm:AYLi9-CkMrvB65FQ_HLu_5w83MhPZH0RYn8AEhK7ADLy";
-        let policy_digest =
-            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
-        let event = build_realm_key_share_event(
-            realm,
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-0000000000a1",
-            "did:web:bob.example",
-            "ak:device:01904100-0000-7000-8000-0000000000b1",
-            0,
-            2,
-            policy_digest.clone(),
-            "c2VhbGVk".to_owned(),
-            "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
-            "ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU",
-        )
-        .unwrap();
-
-        let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
-        catalog
-            .validate_payload(
-                event.kind().as_str(),
-                &serde_json::to_value(&event.payload()).unwrap(),
-            )
-            .unwrap_or_else(|err| {
-                panic!(
-                    "ak.realm_key.share payload violates registered schema: {err}\npayload: {}",
-                    serde_json::to_string_pretty(&event.payload()).unwrap()
-                )
-            });
-        assert_eq!(
-            event.payload()["key_scope"]["effective_scope"],
-            json!({ "kind": "realm", "realm_id": realm })
-        );
-        assert_eq!(event.payload()["key_scope"]["policy_digest"], policy_digest);
-        assert!(
-            event
-                .payload()
-                .get("requester_device_authorize_event_id")
-                .is_none()
-        );
-        assert_eq!(
-            event
-                .intent()
-                .authorization_ref()
-                .map(arkret_sdk::AuthorizationRef::as_str),
-            Some("ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU")
-        );
-        // v1 derives the delivery-log write from the registry instead of
-        // shipping it: assert the projection, which is what the receiver runs.
-        let authored = crate::operation::author_for_test(&event);
-        let writes = crate::operation::direct_registered_cell_writes(&authored).unwrap();
-        assert_eq!(writes.len(), 1);
-        let cell = arkret_sdk::CellId::from_ref(&writes[0].cell).unwrap();
-        assert_eq!(
-            cell.component(),
-            arkret_wire::CellFamilyId::REALM_KEY_DELIVERY_V1
-        );
-        assert_eq!(
-            arkret_sdk::events::cba_cell_family_plane(cell.component()),
-            Some(arkret_sdk::events::CbaEffectPlane::Data)
-        );
-        let created_at = event.payload()["created_at"]
-            .as_str()
-            .expect("realm_key.share created_at is a string");
-        arkret_sdk::canonical::validate_timestamp_canonical(created_at)
-            .expect("realm_key.share created_at is canonical RFC3339 UTC");
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn mismatched_claim_target_cannot_authorize_welcome() {
         let alice_state = isolated_store_for_tests("peer-self-claim-fail-closed");

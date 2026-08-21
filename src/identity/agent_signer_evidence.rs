@@ -129,7 +129,14 @@ pub(crate) async fn prefetch_from_realm_projections(
             };
             match http.agent_signer_evidence_query(&request).await {
                 Ok(outcome) => {
-                    for evidence in outcome.evidence {
+                    for root in outcome.evidence {
+                        let arkret_sdk::AuthenticatedSignerResolutionEvidence::NativeAgent {
+                            agent_signer_evidence: evidence,
+                            ..
+                        } = root
+                        else {
+                            continue;
+                        };
                         let Some(receipt) = historical_receipt(&evidence) else {
                             continue;
                         };
@@ -223,13 +230,9 @@ pub(crate) fn verify_cached_event(
             agent_id: agent_id.clone(),
             verification_method: verification_method.clone(),
             event_id: event.event_id.clone(),
-            event_digest: match event
-                .event_digest()
-                .ok()
-                .and_then(|digest| Hash::new(digest).ok())
-            {
-                Some(digest) => digest,
-                None => {
+            event_digest: match arkret_sdk::signed_event_digest_claim(&event) {
+                Ok(digest) => digest,
+                Err(_) => {
                     saw_rejected = true;
                     continue;
                 }
@@ -449,7 +452,14 @@ pub(crate) async fn prefetch_for_signal(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         did_cache.get(),
     );
-    for evidence in outcome.evidence {
+    for root in outcome.evidence {
+        let arkret_sdk::AuthenticatedSignerResolutionEvidence::NativeAgent {
+            agent_signer_evidence: evidence,
+            ..
+        } = root
+        else {
+            continue;
+        };
         let binding = signing_key_binding(&evidence);
         let sender_actor_id = envelope.sender_actor_id.clone();
         if binding.agent_id != sender_actor_id
@@ -614,7 +624,7 @@ fn verify_seal_signature(
         NotarySig::Multi(multi) if !multi.signatures.is_empty() => {
             multi.signatures.iter().collect()
         }
-        NotarySig::Multi(_) | NotarySig::Threshold(_) => {
+        NotarySig::Multi(_) => {
             return Err(AgentEvidenceRejectedReason::SigningKeyMismatch);
         }
     };
@@ -671,10 +681,8 @@ fn verify_lifecycle_reducer(
     if witness.agent_id != event.actor_id
         || event.executed_by.as_ref() != Some(&witness.controller_id)
         || event.realm_id != snapshot.core.principal_control_realm_id
-        || event
-            .event_digest()
+        || arkret_sdk::signed_event_digest_claim(event)
             .ok()
-            .and_then(|digest| Hash::new(digest).ok())
             .is_none_or(|digest| {
                 !witness.seal.delta.contains(&digest)
                     && !witness.seal.covered_event_digests.contains(&digest)
@@ -898,7 +906,7 @@ fn seal_signature_methods(seal: &arkret_sdk::Seal) -> Option<Vec<DidUrl>> {
                 .map(|signature| signature.verification_method.clone())
                 .collect(),
         ),
-        NotarySig::Multi(_) | NotarySig::Threshold(_) => None,
+        NotarySig::Multi(_) => None,
     }
 }
 
@@ -1108,7 +1116,7 @@ fn selector_from_object(
     let (event, agent_id, verification_method) =
         event_agent_identity(&Value::Object(object.clone()))?;
     let realm_id = event.realm_id.clone();
-    let event_digest = Hash::new(event.event_digest().ok()?).ok()?;
+    let event_digest = arkret_sdk::signed_event_digest_claim(&event).ok()?;
     let event_admitted_seal_id = event.seal_ref?;
     Some(EventAgentSelector {
         realm_id,

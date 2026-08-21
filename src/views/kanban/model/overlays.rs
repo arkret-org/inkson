@@ -39,7 +39,7 @@ pub(crate) fn local_created_card(
         primary_strand_id: strand_id,
         locked_strand: None,
         external_visibility: "Not shared externally".to_owned(),
-        history_visibility: "board default".to_owned(),
+        history_access: "board default".to_owned(),
         security_encrypted: None,
         state,
         lifecycle: StrandLifecycleState::Active,

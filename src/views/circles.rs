@@ -187,7 +187,7 @@ pub fn CirclesPanel(
                             } }
                             div { strong { "Your access" } span { "{membership_label(circle.viewer_membership)}" } }
                             div { strong { "Join rule" } span { "{circle.join_rule:?}" } }
-                            div { strong { "History" } span { "{circle.history_visibility:?}" } }
+                            div { strong { "History" } span { "{circle.history_access:?}" } }
                             div { strong { "Directory" } span { "{circle.directory_visibility:?}" } }
                             div { strong { "Encryption" } span { "{encryption_label(&circle.encryption_profile)}" } }
                         }
@@ -458,7 +458,7 @@ pub fn CirclesPanel(
                                                 display: crate::operation::ak_ops::circle_display_from_title(&title),
                                                 directory_visibility: arkret_sdk::CircleDirectoryVisibility::Members,
                                                 join_rule: arkret_sdk::CircleJoinRule::Public,
-                                                history_visibility: arkret_sdk::HistoryVisibility::Joined,
+                                                history_access: arkret_sdk::HistoryAccess::SinceJoin,
                                                 encryption_profile,
                                             },
                                         )

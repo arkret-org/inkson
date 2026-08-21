@@ -153,20 +153,15 @@ pub fn encrypt_reaction_with_device_snapshot(
         snapshot.app_messages_observed,
         state_store.realm_has_pending_mls_binding(realm_id),
     ) {
-        let previous_governance_binding = group
-            .current_governance_binding()
-            .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?
-            .ok_or_else(|| {
-                MlsRuntimeError::Commit(
-                    "MLS commit requires the current governance binding predecessor".to_owned(),
-                )
-            })?;
-        Some(PreparedMlsCommit {
-            envelope: group
-                .self_update_commit()
-                .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?,
-            previous_governance_binding,
-        })
+        Some(
+            super::message::self_update_with_verified_governance_binding(
+                state_store,
+                realm_id,
+                None,
+                None,
+                &mut group,
+            )?,
+        )
     } else {
         None
     };
@@ -232,7 +227,9 @@ pub fn encrypt_reaction_with_device_snapshot(
         let new_envelope = new_envelope
             .carry_epoch_started_at(&snapshot)
             .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
-        state_store.save_mls_snapshot(realm_id.to_owned(), new_envelope);
+        state_store
+            .save_mls_snapshot(realm_id.to_owned(), new_envelope)
+            .map_err(MlsRuntimeError::Commit)?;
         Ok(EncryptedReaction {
             routing_tag,
             encrypted_payload,

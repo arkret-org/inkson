@@ -394,12 +394,12 @@ export async function mockArkretApi(
     },
     directory_visibility: "realm_members",
     join_rule: circleMetadata.get(circleId)?.join_rule ?? "invite",
-    history_visibility: "joined",
+    history_access: "since_join",
     content_encryption_floor: "e2ee_required",
     metadata_encryption_floor: "e2ee_required",
     encryption_profile:
       circleMetadata.get(circleId)?.encryption_profile ?? "mls_rfc9420",
-    mls_group_ref: "ak:mls:mls_rfc9420:demo-circle",
+    mls_group_id: "ak:mls:mls_rfc9420:demo-circle",
     pending_mls_removals: [],
     state: circleStates.get(circleId) ?? "active",
     member_count: circleMembers.get(circleId)?.length ?? 0,
@@ -1565,15 +1565,20 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/events/mls-governance-proof" &&
-      route.request().method() === "QUERY"
+      url.pathname === "/_arkret/self/seals/mls-governance-proof" &&
+      route.request().method() === "POST"
     ) {
       const request = (await route.request().postDataJSON()) as Record<
         string,
         unknown
       >;
+      const effectiveScope = request.effective_scope as
+        | Record<string, unknown>
+        | undefined;
       const realmId =
-        typeof request.realm_id === "string" ? request.realm_id : "";
+        typeof effectiveScope?.realm_id === "string"
+          ? effectiveScope.realm_id
+          : "";
       const seal = managedPcrSealHeads.get(realmId);
       if (!seal) {
         return json(
@@ -1593,7 +1598,25 @@ export async function mockArkretApi(
       );
       const bundle = inksonWire<Record<string, unknown>>(
         "mls-governance-proof",
-        { request, events, seals: managedPcrSealPaths.get(realmId) ?? [seal] },
+        {
+          request,
+          target_checkpoint: {
+            realm_id: realmId,
+            basis: request.proof_target_basis,
+            accepted_seals: managedPcrSealPaths.get(realmId) ?? [seal],
+            accepted_events: events,
+            governance_dependencies: [],
+          },
+          content_scheme: "mls_rfc9420",
+          durability_policy: null,
+          local_mls_leaves: [
+            {
+              leaf_index: 0,
+              principal_id: accountPrincipalCoreId,
+              credential_ref: currentDeviceId,
+            },
+          ],
+        },
       );
       return json(route, bundle);
     }
@@ -1606,6 +1629,7 @@ export async function mockArkretApi(
       const outcome = inksonWire<Record<string, unknown>>("control-proposal-ack", {
         request,
         device_id: currentDeviceId,
+        digest_suite: "sha256",
       });
       return json(route, outcome);
     }
@@ -1813,6 +1837,7 @@ export async function mockArkretApi(
         receiptableSubmissions.length > 0
           ? inksonWire<Array<Record<string, unknown>>>("ingress-receipts", {
               submissions: receiptableSubmissions,
+              digest_suite: "sha256",
             })
           : [];
       for (const event of submittedEvents) {

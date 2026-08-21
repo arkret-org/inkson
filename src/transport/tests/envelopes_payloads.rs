@@ -5,7 +5,7 @@ use crate::event_builders::{
     build_member_state_transition_event, build_realm_bootstrap_steps, build_realm_create_event,
     build_realm_state_event, build_sas_key_verification_content,
     build_signed_device_verification_proof, build_space_create_event,
-    ensure_device_verification_proof_is_signed, recommended_history_sharing_policy_for_visibility,
+    ensure_device_verification_proof_is_signed, test_single_signer_notary,
 };
 use crate::operation::TypedOperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
@@ -38,16 +38,16 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
+            test_single_signer_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Roadmap work"),
             "listed",
             "invite",
-            "shared",
+            "all_history_for_current_members",
             "mls_rfc9420",
             "standard",
             "restricted",
-            "single_did",
             "sha256",
             "ak:trust_domain:server.example",
             &["ak:did_core:web:bob.example".to_owned()],
@@ -71,7 +71,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "ak.realm.profile",
             "ak.realm.policy_bundle",
             "ak.realm.join_rule",
-            "ak.realm.history_visibility",
+            "ak.realm.history_access",
             "ak.realm.discovery",
             "ak.realm.plaintext_visible_services",
             "ak.realm.delivery_binding_policy",
@@ -103,7 +103,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         "created_by",
         "created_at",
         "default_join_rule",
-        "history_visibility",
+        "history_access",
         "content_encryption_floor",
         "metadata_encryption_floor",
     ] {
@@ -112,26 +112,16 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[1].payload["schema"], "ak.schema.realm_profile.v1");
     assert_eq!(events[1].payload["title"], "Engineering");
     assert_eq!(events[1].payload["summary"], "Roadmap work");
-    assert_eq!(create.payload["object"]["notary"]["kind"], "single_did");
+    assert_eq!(create.payload["object"]["notary"]["kind"], "single_signer");
     assert_eq!(
-        create.payload["object"]["notary"]["actor_id"],
+        create.payload["object"]["notary"]["signer"]["actor_id"],
         "ak:did_core:web:server.example"
-    );
-    assert_eq!(
-        create.payload["object"]["notary"]["recovery_members"][0],
-        "ak:did_core:web:server.example:recovery:notary",
-    );
-    assert_eq!(
-        create.payload["object"]["notary"]["controller_organization"],
-        "ak:did_core:web:server.example",
-    );
-    assert_eq!(
-        create.payload["object"]["notary"]["recovery_controller_organizations"][0],
-        "ak:did_core:web:server.example:recovery",
     );
     // v1 has no producer `effects[]`: the genesis leaf set is what the
     // registered `ak.realm.create` contract projects.
-    let create_writes = crate::operation::direct_registered_cell_writes(create).unwrap();
+    let create_writes =
+        crate::operation::direct_registered_cell_writes(create, arkret_sdk::DigestSuite::Sha256)
+            .unwrap();
     // realm-and-space.md §2.5: genesis intent, create audit append, founding
     // notary, reducer profile and authority root.
     assert_eq!(create_writes.len(), 5);
@@ -160,6 +150,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         arkret_sdk::schema::validate_registered_cell_writes_in_context(
             event,
             arkret_sdk::schema::EventCellContractContext::OrdinaryRealmBootstrap,
+            arkret_sdk::DigestSuite::Sha256,
         )
         .unwrap_or_else(|error| {
             panic!(
@@ -171,10 +162,13 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     }
     for facet in &events[1..8] {
         assert!(
-            crate::operation::project_registered_cell_writes(facet)
-                .unwrap()
-                .iter()
-                .all(|write| write.cell.as_str().ends_with(":null")),
+            crate::operation::project_registered_cell_writes(
+                facet,
+                arkret_sdk::DigestSuite::Sha256,
+            )
+            .unwrap()
+            .iter()
+            .all(|write| write.cell.as_str().ends_with(":null")),
             "Realm singleton facet {} must use the canonical null subject",
             facet.kind.as_str()
         );
@@ -188,7 +182,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert!(create.proofs.is_empty());
 
     // Bootstrap order: create, profile, encryption floor policy, join_rule,
-    // history_visibility, discovery,
+    // history_access, discovery,
     // plaintext_visible, delivery binding policy, creator member join.
     assert_eq!(
         events[2].payload["content_encryption_floor"],
@@ -201,7 +195,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[2].payload["policy_revision"], 1);
     assert_eq!(events[2].payload["content_scheme"], "mls_exporter_aead_v1");
     assert_eq!(events[3].payload["value"], "invite");
-    assert_eq!(events[4].payload["value"], "shared");
+    assert_eq!(events[4].payload["to"], "all_history_for_current_members");
     assert_eq!(events[5].payload["value"], "listed");
     assert_eq!(
         events[6].payload["services"][0]["service_id"],
@@ -244,16 +238,15 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     let envelope = build_realm_create_event(
         test_genesis_salt(),
         "did:web:alice.example",
-        "did:web:server.example",
+        test_single_signer_notary("did:web:server.example").unwrap(),
         "Public updates",
         None,
         "listed",
         "public",
-        "world_readable",
+        "all_history_for_current_members",
         "none",
         "standard",
         "open",
-        "single_did",
         "sha256",
         "ak:trust_domain:server.example",
         None,
@@ -280,16 +273,16 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
+        test_single_signer_notary("did:web:server.example").unwrap(),
         "https://server.example",
         "Strict history",
         None,
         "listed",
         "invite",
-        "shared",
+        "all_history_for_current_members",
         "mls_rfc9420",
         "standard",
         "restricted",
-        "single_did",
         "sha256",
         "ak:trust_domain:server.example",
         &[],
@@ -300,9 +293,11 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
     .err()
     .expect("pre-join history requires the history-capable content scheme");
 
-    assert!(err.to_string().contains(
-        arkret_sdk::error::ReasonCode::HISTORY_VISIBILITY_REQUIRES_HISTORY_CAPABLE_SCHEME
-    ));
+    assert!(
+        err.to_string().contains(
+            arkret_sdk::error::ReasonCode::HISTORY_ACCESS_REQUIRES_HISTORY_CAPABLE_SCHEME
+        )
+    );
 }
 
 #[test]
@@ -312,16 +307,16 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
+            test_single_signer_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Strict history",
             None,
             "listed",
             "invite",
-            "joined",
+            "since_join",
             "mls_rfc9420",
             "standard",
             "restricted",
-            "single_did",
             "sha256",
             "ak:trust_domain:server.example",
             &[],
@@ -337,30 +332,6 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     // `content_scheme`. Index 3 is the join rule, whose payload value is a bare
     // string — reading `content_scheme` off it silently yields Null.
     assert_eq!(events[2].payload["content_scheme"], "mls_rfc9420");
-}
-
-#[test]
-fn default_history_sharing_policy_matches_prejoin_visibility() {
-    let shared = serde_json::to_value(
-        recommended_history_sharing_policy_for_visibility("shared")
-            .expect("shared visibility should install a key sharing policy"),
-    )
-    .expect("history sharing policy serializes");
-    assert_eq!(shared["default_key_share"], "event_time_visibility");
-    assert_eq!(shared["pre_join_history"], "visibility_condition_allowed");
-    assert_eq!(
-        shared["allowed_key_sources"],
-        json!(["verified_member_device"])
-    );
-    assert_eq!(shared["allowed_receiver_states"], json!(["active_member"]));
-    assert_eq!(
-        shared["audit"],
-        json!({
-            "share_audit_event_required": false,
-            "access_audit_required": false
-        })
-    );
-    assert!(recommended_history_sharing_policy_for_visibility("joined").is_none());
 }
 
 /// Regression: every genesis bootstrap envelope must produce the SAME
@@ -379,16 +350,16 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
+            test_single_signer_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             None,
             "listed",
             "invite",
-            "shared",
+            "all_history_for_current_members",
             "mls_rfc9420",
             "standard",
             "restricted",
-            "single_did",
             "sha256",
             "ak:trust_domain:server.example",
             // Seed invitees are validated as canonical Core DIDs here, but their
@@ -415,14 +386,14 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     for event in events {
         let kind = event.kind.as_str().to_owned();
         let digest = event
-            .event_digest()
+            .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
             .unwrap_or_else(|err| panic!("{kind}: SDK event_digest: {err}"));
         let roundtrip: arkret_sdk::Event = serde_json::from_value(
             serde_json::to_value(&event).unwrap_or_else(|err| panic!("{kind}: to_value: {err}")),
         )
         .unwrap_or_else(|err| panic!("{kind}: SDK roundtrip: {err}"));
         let roundtrip_digest = roundtrip
-            .event_digest()
+            .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
             .unwrap_or_else(|err| panic!("{kind}: roundtrip event_digest: {err}"));
         assert_eq!(digest, roundtrip_digest, "{kind}: SDK digest drift");
     }
@@ -434,16 +405,16 @@ fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
+        test_single_signer_notary("did:web:server.example").unwrap(),
         "https://server.example",
         "Engineering",
         None,
         "listed",
         "invite",
-        "shared",
+        "all_history_for_current_members",
         "mls_rfc9420",
         "standard",
         "restricted",
-        "single_did",
         "sha256",
         "ak:trust_domain:server.example",
         &["bob:example.com".to_owned()],
@@ -490,7 +461,11 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     // `ak.member.state` registers a `transition_to` projection: `to` comes from
     // the signed payload, `from` is resolved by the reducer against the frozen
     // pre-state rather than asserted by the producer.
-    let writes = crate::operation::pre_authoring_cell_writes(event.intent()).unwrap();
+    let writes = crate::operation::pre_authoring_cell_writes(
+        event.intent(),
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
     assert_eq!(writes.len(), 1);
     assert_eq!(
         writes[0].cell.as_str(),
@@ -583,16 +558,16 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
+            test_single_signer_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Roadmap work"),
             "listed",
             "invite",
-            "shared",
+            "all_history_for_current_members",
             "mls_rfc9420",
             "standard",
             "restricted",
-            "single_did",
             "sha256",
             "ak:trust_domain:server.example",
             &["ak:did_core:web:bob.example".to_owned()],
@@ -646,6 +621,7 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
     build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
         realm_id,
         actor_id,
+        arkret_sdk::DigestSuite::Sha256,
         arkret_sdk::StatePayload {
             value: Some(json!("knock_restricted")),
             state: None,
@@ -656,6 +632,7 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
     build_realm_state_event::<arkret_sdk::event_spec::RealmDiscovery>(
         realm_id,
         actor_id,
+        arkret_sdk::DigestSuite::Sha256,
         arkret_sdk::StatePayload {
             value: Some(json!("invite_only")),
             state: None,

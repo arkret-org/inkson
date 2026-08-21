@@ -433,11 +433,12 @@ pub(crate) fn calendar_rsvp_operation(
 pub(crate) fn calendar_schedule_revision_heads(
     events: &[arkret_sdk::Event],
     strand_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
     let mut by_digest = std::collections::BTreeMap::new();
     let mut revisions = std::collections::BTreeSet::new();
     for event in events {
-        let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+        let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
         if calendar_event_revises_schedule(event, strand_id) {
             revisions.insert(digest.as_str().to_owned());
         }

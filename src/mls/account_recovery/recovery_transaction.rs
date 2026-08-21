@@ -165,11 +165,12 @@ pub(crate) async fn prepare_root_anchored_recovery(
         .ok_or_else(|| anyhow::anyhow!("replacement device signer has no Ed25519 public key"))?;
     let device_public_key = format!("did:key:{device_public_key_multibase}");
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+    let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair_durable(
         secure_store.as_ref(),
         verified_session.principal_authority.principal_id.as_str(),
         verified_session.requesting_device_id.as_str(),
-    )?;
+    )
+    .await?;
     let hpke_key = crate::identity::did_key::encode_x25519_multibase(&hpke_public_key);
     let algorithms = crate::identity::principal_genesis::INKSON_DEVICE_ALGORITHMS
         .iter()

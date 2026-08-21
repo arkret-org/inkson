@@ -5,7 +5,7 @@ use arkret_wire::event_kind_str;
 
 use super::{
     MlsRuntimeError, load_device_snapshot_secret, load_mls_key_package_identity_state,
-    load_or_create_account_mls_secret, should_force_epoch_advance,
+    should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
 
@@ -89,9 +89,6 @@ pub(crate) struct WelcomeConsumeCandidate {
     pub(crate) mls_group_id: String,
     pub(crate) epoch: u64,
     pub(crate) welcome_digest: arkret_sdk::Hash,
-    /// Present only for a peer claim whose purpose is the replacement-repair
-    /// profile and whose exact target ref matches the Welcome payload.
-    pub(crate) repair_target_keypackage_ref: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,16 +113,14 @@ pub(crate) fn realm_content_scheme_is_exporter_aead(
         .is_some_and(|scheme| scheme == "mls_exporter_aead_v1")
 }
 
-fn realm_content_scheme_is_exporter_aead_for_send(
+pub(super) fn realm_content_scheme_is_exporter_aead_for_send(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     circle: Option<&str>,
 ) -> Result<bool, MlsRuntimeError> {
-    if circle.is_some() {
-        return Ok(false);
-    }
-    let scheme = state_store
-        .realm_content_scheme(realm_id)
+    let scheme = circle
+        .map(|circle_id| state_store.circle_content_scheme(realm_id, circle_id))
+        .unwrap_or_else(|| state_store.realm_content_scheme(realm_id))
         .ok_or(MlsRuntimeError::EncryptionPolicyPending)?
         .trim()
         .to_ascii_lowercase()
@@ -139,6 +134,29 @@ fn realm_content_scheme_is_exporter_aead_for_send(
     }
 }
 
+pub(crate) fn verify_exporter_sender_domain_for_send(
+    device_id: &str,
+    is_minimal_metadata: bool,
+    use_exporter_aead: bool,
+) -> Result<(), MlsRuntimeError> {
+    if !use_exporter_aead {
+        return Ok(());
+    }
+    if is_minimal_metadata {
+        return Err(MlsRuntimeError::Encrypt(
+            "minimal-metadata exporter-AEAD is not ready: the active MLS BasicCredential identity must equal utf8(Event.actor_id), but the current MLS identity profile binds principal#device"
+                .to_owned(),
+        ));
+    }
+    arkret_sdk::DeviceId::new(device_id.trim().to_owned())
+        .map(|_| ())
+        .map_err(|error| {
+            MlsRuntimeError::Identity(format!(
+                "ordinary exporter-AEAD requires a canonical local device id: {error}"
+            ))
+        })
+}
+
 pub fn decrypt_application_payload(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -147,7 +165,7 @@ pub fn decrypt_application_payload(
     device_id: &str,
     payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
-    decrypt_application_payload_for_effective_scope(
+    decrypt_application_payload_for_effective_scope_internal(
         state_store,
         secure_store,
         realm_id,
@@ -155,7 +173,44 @@ pub fn decrypt_application_payload(
         device_id,
         payload,
         None,
+        None,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn decrypt_application_payload_from_verified_sender(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    verified_sender_domain: &[u8],
+    payload: &arkret_sdk::EncryptedPayload,
+) -> Option<Vec<u8>> {
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
+    };
+    let plaintext = decrypt_application_payload_for_effective_scope_internal(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload,
+        None,
+        Some(verified_sender_domain),
+    )?;
+    authenticate_received_identity_link(
+        state_store,
+        secure_store,
+        actor_id,
+        device_id,
+        &effective_scope,
+        payload,
+        verified_sender_domain,
+        &plaintext,
+    )?;
+    Some(plaintext)
 }
 
 pub fn decrypt_application_payload_for_effective_scope(
@@ -167,6 +222,29 @@ pub fn decrypt_application_payload_for_effective_scope(
     payload: &arkret_sdk::EncryptedPayload,
     circle_id: Option<&str>,
 ) -> Option<Vec<u8>> {
+    decrypt_application_payload_for_effective_scope_internal(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload,
+        circle_id,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decrypt_application_payload_for_effective_scope_internal(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload: &arkret_sdk::EncryptedPayload,
+    circle_id: Option<&str>,
+    verified_sender_domain: Option<&[u8]>,
+) -> Option<Vec<u8>> {
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?;
     let effective_scope = match circle_id.map(str::trim).filter(|value| !value.is_empty()) {
         Some(circle_id) => arkret_sdk::ScopeRef::Circle {
@@ -175,7 +253,7 @@ pub fn decrypt_application_payload_for_effective_scope(
         },
         None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
     };
-    decrypt_application_payload_for_scope(
+    decrypt_application_payload_for_scope_internal(
         state_store,
         secure_store,
         realm_id,
@@ -183,6 +261,7 @@ pub fn decrypt_application_payload_for_effective_scope(
         device_id,
         payload,
         &effective_scope,
+        verified_sender_domain,
     )
 }
 
@@ -194,6 +273,154 @@ pub fn decrypt_application_payload_for_scope(
     device_id: &str,
     payload: &arkret_sdk::EncryptedPayload,
     effective_scope: &arkret_sdk::ScopeRef,
+) -> Option<Vec<u8>> {
+    decrypt_application_payload_for_scope_internal(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload,
+        effective_scope,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn decrypt_application_payload_for_scope_from_verified_sender(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload: &arkret_sdk::EncryptedPayload,
+    effective_scope: &arkret_sdk::ScopeRef,
+    verified_sender_domain: &[u8],
+) -> Option<Vec<u8>> {
+    let plaintext = decrypt_application_payload_for_scope_internal(
+        state_store,
+        secure_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload,
+        effective_scope,
+        Some(verified_sender_domain),
+    )?;
+    authenticate_received_identity_link(
+        state_store,
+        secure_store,
+        actor_id,
+        device_id,
+        effective_scope,
+        payload,
+        verified_sender_domain,
+        &plaintext,
+    )?;
+    Some(plaintext)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn authenticate_received_identity_link(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    effective_scope: &arkret_sdk::ScopeRef,
+    payload: &arkret_sdk::EncryptedPayload,
+    verified_sender_domain: &[u8],
+    plaintext: &[u8],
+) -> Option<()> {
+    if payload.content_type != arkret_sdk::IDENTITY_LINK_MLS_CONTENT_TYPE {
+        return Some(());
+    }
+    let identity_link: arkret_sdk::IdentityLink = serde_json::from_slice(plaintext).ok()?;
+    identity_link.validate_minimal().ok()?;
+    let canonical = arkret_sdk::canonical::canonical_json_bytes(&identity_link).ok()?;
+    let trusted_domain = state_store.load().server_trust_domain?;
+    if canonical != plaintext
+        || identity_link.status != arkret_sdk::IdentityLinkStatus::Active
+        || identity_link.pairwise_actor_id.as_str().as_bytes() != verified_sender_domain
+        || identity_link.trust_domain.as_str() != trusted_domain
+        || effective_scope.realm_id_opt()? != &identity_link.realm_id
+        || identity_link.mls_group_id.as_deref() != Some(payload.group_id.as_str())
+        || identity_link.mls_epoch != payload.epoch
+        || identity_link
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= chrono::Utc::now())
+    {
+        return None;
+    }
+    let accepted_ref = state_store
+        .mls_group_state_ref_for_effective_scope(
+            identity_link.realm_id.as_str(),
+            match effective_scope {
+                arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
+                _ => None,
+            },
+            &payload.group_id,
+            payload.epoch,
+        )
+        .ok()?;
+    let view = minimal_metadata_author_view_for_scope(
+        state_store,
+        secure_store,
+        actor_id,
+        device_id,
+        effective_scope,
+        &payload.group_id,
+        payload.epoch,
+        accepted_ref.as_str(),
+    )?;
+    let leaf_index = u32::try_from(identity_link.mls_leaf_index).ok()?;
+    let mut matching = view.active_leaves.iter().filter(|leaf| {
+        leaf.leaf_index == leaf_index
+            && matches!(
+                &leaf.credential,
+                arkret_sdk::mls::AuthorLeafCredential::Basic { identity }
+                    if identity.as_slice() == identity_link.pairwise_actor_id.as_str().as_bytes()
+            )
+    });
+    let leaf = matching.next()?;
+    if matching.next().is_some() || leaf.leaf_node_canonical_bytes.is_empty() {
+        return None;
+    }
+    let entry = crate::state::LocallyAuthenticatedIdentityLink {
+        identity_link,
+        identity_link_canonical_bytes_b64u: arkret_sdk::Base64UrlString::new(
+            arkret_sdk::base64url_encode(&canonical),
+        )
+        .ok()?,
+        identity_link_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            &canonical,
+        ))
+        .ok()?,
+        leaf_node_canonical_bytes_b64u: arkret_sdk::Base64UrlString::new(
+            arkret_sdk::base64url_encode(&leaf.leaf_node_canonical_bytes),
+        )
+        .ok()?,
+        leaf_node_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            &leaf.leaf_node_canonical_bytes,
+        ))
+        .ok()?,
+        winning_group_state_ref: accepted_ref,
+    };
+    state_store
+        .cache_locally_authenticated_identity_link(entry)
+        .ok()?;
+    Some(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decrypt_application_payload_for_scope_internal(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload: &arkret_sdk::EncryptedPayload,
+    effective_scope: &arkret_sdk::ScopeRef,
+    verified_sender_domain: Option<&[u8]>,
 ) -> Option<Vec<u8>> {
     if effective_scope.realm_id_opt()?.as_str() != realm_id {
         return None;
@@ -223,10 +450,18 @@ pub fn decrypt_application_payload_for_scope(
     // granted history via the group-free standalone path below. When no snapshot
     // is present we skip straight to tier-3 history decrypt.
     let Some(snapshot) = state_store.mls_snapshot_for_scope(effective_scope) else {
-        let plaintext = (!sidecar_scoped && circle.is_none())
-            .then(|| try_history_decrypt_standalone(state_store, realm_id, payload))
+        let plaintext = (!sidecar_scoped)
+            .then(|| {
+                try_history_decrypt_standalone(
+                    state_store,
+                    realm_id,
+                    payload,
+                    effective_scope,
+                    verified_sender_domain,
+                )
+            })
             .flatten();
-        if plaintext.is_none() && circle.is_none() && !sidecar_scoped {
+        if plaintext.is_none() && !sidecar_scoped {
             warn_mls_decrypt_once(
                 realm_id,
                 digest,
@@ -279,9 +514,9 @@ pub fn decrypt_application_payload_for_scope(
             // at epoch N can derive `history_secret[N]` directly from the group.
             // Do so and open it — this keeps post-join content readable once a
             // Realm uses the exporter-aead content scheme, without depending on a
-            // prior retain or a `ak.realm_key.share`. Past-epoch / pre-join
-            // content (epoch != current) still needs a retained or granted
-            // secret, handled by the group-free standalone path below.
+            // prior local retain. Past-epoch or pre-join content still needs a
+            // retained local-authoritative secret or an event-local external
+            // candidate, handled by the group-free path below.
             if payload.scheme == arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
                 && snapshot.epoch == payload.epoch
                 && let Ok(secret) = group.derive_and_retain_history_secret(realm_id)
@@ -300,6 +535,7 @@ pub fn decrypt_application_payload_for_scope(
                 && payload.verify_mls_payload_digest(&nonce_and_ct).is_ok()
                 && let Ok(plaintext) = group.decrypt_content_exporter_aead(
                     &secret,
+                    verified_sender_domain?,
                     key_ref,
                     payload.epoch,
                     &nonce_and_ct,
@@ -314,10 +550,18 @@ pub fn decrypt_application_payload_for_scope(
             // payload's epoch and decrypt it as `mls_exporter_aead_v1` content.
             // This is group-free, so it works whether or not the snapshot could
             // ratchet to the payload's epoch.
-            let plaintext = (!sidecar_scoped && circle.is_none())
-                .then(|| try_history_decrypt_standalone(state_store, realm_id, payload))
+            let plaintext = (!sidecar_scoped)
+                .then(|| {
+                    try_history_decrypt_standalone(
+                        state_store,
+                        realm_id,
+                        payload,
+                        effective_scope,
+                        verified_sender_domain,
+                    )
+                })
                 .flatten();
-            if plaintext.is_none() && circle.is_none() && !sidecar_scoped {
+            if plaintext.is_none() && !sidecar_scoped {
                 warn_mls_decrypt_once(
                     realm_id,
                     digest,
@@ -383,14 +627,46 @@ pub fn minimal_metadata_author_view(
     epoch: u64,
     group_state_ref: &str,
 ) -> Option<arkret_sdk::mls::AuthorGroupStateView> {
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
+    };
+    minimal_metadata_author_view_for_scope(
+        state_store,
+        secure_store,
+        actor_id,
+        device_id,
+        &effective_scope,
+        group_id,
+        epoch,
+        group_state_ref,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn minimal_metadata_author_view_for_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    actor_id: &str,
+    device_id: &str,
+    effective_scope: &arkret_sdk::ScopeRef,
+    group_id: &str,
+    epoch: u64,
+    group_state_ref: &str,
+) -> Option<arkret_sdk::mls::AuthorGroupStateView> {
+    let realm_id = effective_scope.realm_id_opt()?.as_str();
+    let circle_id = match effective_scope {
+        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
+        _ => None,
+    };
     let snapshot = state_store
-        .mls_snapshot_for(realm_id)
+        .mls_snapshot_for_scope(effective_scope)
         .filter(|snapshot| snapshot.epoch == epoch && snapshot.group_id == group_id)
         .or_else(|| {
-            state_store.historical_mls_snapshot_for_effective_scope(realm_id, None, group_id, epoch)
+            state_store
+                .historical_mls_snapshot_for_effective_scope(realm_id, circle_id, group_id, epoch)
         })?;
     let accepted_ref = state_store
-        .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, epoch)
+        .mls_group_state_ref_for_effective_scope(realm_id, circle_id, group_id, epoch)
         .ok()?;
     if accepted_ref.as_str() != group_state_ref {
         return None;
@@ -493,6 +769,8 @@ fn try_history_decrypt_standalone(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     payload: &arkret_sdk::EncryptedPayload,
+    effective_scope: &arkret_sdk::ScopeRef,
+    verified_sender_domain: Option<&[u8]>,
 ) -> Option<Vec<u8>> {
     if payload.scheme != arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
         || payload.group_id.trim().is_empty()
@@ -516,10 +794,36 @@ fn try_history_decrypt_standalone(
     // from the envelope. `encryption-and-audit.md` §2.10.2 requires the producer
     // to carry it; a payload without it is not decryptable here rather than
     // decryptable under a guessed suite.
+    if effective_scope.realm_id_opt()?.as_str() != realm_id {
+        return None;
+    }
+    let secret =
+        state_store.history_secret_for(effective_scope, &payload.group_id, payload.epoch)?;
+    try_history_decrypt_with_secret(realm_id, payload, verified_sender_domain?, &secret)
+}
+
+fn try_history_decrypt_with_secret(
+    realm_id: &str,
+    payload: &arkret_sdk::EncryptedPayload,
+    verified_sender_domain: &[u8],
+    secret: &[u8],
+) -> Option<Vec<u8>> {
+    let nonce_and_ct = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes()).ok()?;
+    payload.verify_mls_payload_digest(&nonce_and_ct).ok()?;
+    let key_ref = payload.key_ref.as_ref()?;
+    if key_ref
+        != &arkret_sdk::KeyRefObject::mls_exporter_aead(payload.group_id.clone(), payload.epoch)
+    {
+        return None;
+    }
+    let aad = payload.aad.as_ref()?;
+    if aad.realm_id.as_str() != realm_id {
+        return None;
+    }
     let aead_profile = payload.aead_profile.as_deref()?;
-    let secret = state_store.history_secret_for(realm_id, payload.epoch)?;
     arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
-        &secret,
+        secret,
+        verified_sender_domain,
         key_ref,
         payload.epoch,
         aead_profile,
@@ -529,14 +833,109 @@ fn try_history_decrypt_standalone(
     .ok()
 }
 
-/// Provider-side: derive + retain the **current** epoch `history_secret` for a
-/// Realm and persist it locally, so this device can later seal it into a
-/// `ak.realm_key.share` for a late joiner (`encryption-and-audit.md` history
-/// sharing). MUST be called while the group is at the epoch whose key is being
-/// retained (OpenMLS only exports the current epoch). Returns
+/// Try bounded external history-secret candidates against one exact accepted
+/// Event and durably bind every outcome before exposing plaintext.
+///
+/// This never promotes candidate material into the local-authoritative epoch
+/// ledger. A successful binding is scoped to the exact Event identity, digest,
+/// verified sender domain, effective scope, group, and epoch.
+pub(crate) fn decrypt_external_history_candidates_for_event(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    payload: &arkret_sdk::EncryptedPayload,
+    effective_scope: &arkret_sdk::ScopeRef,
+    event_binding_key: arkret_sdk::EventCandidateBindingKey,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<Vec<u8>>, MlsRuntimeError> {
+    if payload.scheme != arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+        || payload.purpose.as_deref() != Some(arkret_sdk::mls::MLS_EXPORTER_AEAD_CONTENT_PURPOSE)
+        || effective_scope.realm_id_opt().map(|realm| realm.as_str()) != Some(realm_id)
+    {
+        return Ok(None);
+    }
+    let expected_scope = match effective_scope {
+        arkret_sdk::ScopeRef::Realm { realm_id } => arkret_sdk::HistoryEffectiveScope::Realm {
+            realm_id: realm_id.clone(),
+        },
+        arkret_sdk::ScopeRef::Circle {
+            realm_id,
+            circle_id,
+        } => arkret_sdk::HistoryEffectiveScope::Circle {
+            realm_id: realm_id.clone(),
+            circle_id: circle_id.clone(),
+        },
+        _ => return Ok(None),
+    };
+    if event_binding_key.effective_scope != expected_scope
+        || event_binding_key.mls_group_id != payload.group_id
+        || event_binding_key.epoch != payload.epoch
+        || event_binding_key.event_id.identity_key().event_digest()
+            != event_binding_key.event_digest
+        || event_binding_key.verified_sender_domain.is_empty()
+    {
+        return Err(MlsRuntimeError::Decrypt(
+            "external history candidate Event binding is inconsistent".to_owned(),
+        ));
+    }
+    let verified_sender_domain = event_binding_key.verified_sender_domain.as_bytes();
+    let candidates = state_store
+        .history_candidates_for(
+            secure_store,
+            &expected_scope,
+            &payload.group_id,
+            payload.epoch,
+        )
+        .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
+    for candidate in candidates {
+        let secret = arkret_sdk::base64url_decode(candidate.secret_b64u.as_bytes())
+            .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
+        let plaintext =
+            try_history_decrypt_with_secret(realm_id, payload, verified_sender_domain, &secret);
+        let existing = state_store.history_candidate_binding(
+            &event_binding_key,
+            &candidate.material_key.candidate_digest,
+        );
+        if let Some(existing) = existing {
+            if (plaintext.is_some())
+                != (existing.outcome == arkret_sdk::EventCandidateBindingOutcome::Success)
+            {
+                return Err(MlsRuntimeError::Decrypt(
+                    "durable external history candidate binding contradicts AEAD outcome"
+                        .to_owned(),
+                ));
+            }
+        } else {
+            let binding = arkret_sdk::EventCandidateBinding {
+                event_binding_key: event_binding_key.clone(),
+                candidate_digest: candidate.material_key.candidate_digest.clone(),
+                outcome: if plaintext.is_some() {
+                    arkret_sdk::EventCandidateBindingOutcome::Success
+                } else {
+                    arkret_sdk::EventCandidateBindingOutcome::Failure
+                },
+                first_observed_at: now,
+                expires_at: now + chrono::Duration::days(30),
+            };
+            state_store
+                .record_history_candidate_binding(binding, now)
+                .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
+        }
+        if plaintext.is_some() {
+            return Ok(plaintext);
+        }
+    }
+    Ok(None)
+}
+
+/// Derive and retain the **current** epoch `history_secret` as local-authoritative
+/// material. It can later be included in a portable backup or used as a source
+/// for the receipt-bound history-key recovery protocol. This MUST be called
+/// while the group is at the epoch whose key is being retained because OpenMLS
+/// only exports the current epoch. Returns
 /// `(epoch, history_secret)` on success.
 ///
-/// Persisting into the provider's own `history_secrets` lets a past epoch's key
+/// Persisting into the device's own `history_secrets` lets a past epoch's key
 /// survive an app restart (OpenMLS could not re-derive it once the group has
 /// advanced past that epoch).
 type RetainedRealmHistorySecret = (
@@ -572,7 +971,12 @@ pub(crate) fn derive_and_retain_realm_history_secret(
     let Some(pending) = state_store
         .prepare_history_secrets(
             secure_store,
-            realm_id.to_owned(),
+            &arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
+                    MlsRuntimeError::Serialize(format!("invalid Realm id: {error:?}"))
+                })?,
+            },
+            &snapshot.group_id,
             [(epoch, history_secret.to_vec())],
         )
         .map_err(MlsRuntimeError::DeviceSecret)?
@@ -582,415 +986,6 @@ pub(crate) fn derive_and_retain_realm_history_secret(
     Ok(Some((epoch, history_secret, pending)))
 }
 
-fn realm_key_share_payload_candidate(value: &serde_json::Value) -> Option<&serde_json::Value> {
-    value
-        .get("key_scope")
-        .is_some()
-        .then_some(value)
-        .filter(|candidate| {
-            candidate.get("recipient_principal_id").is_some()
-                || candidate.get("ciphertext").is_some()
-                || candidate.get("share_kind").is_some()
-        })
-}
-
-fn realm_key_share_payload_value(envelope: &serde_json::Value) -> Option<&serde_json::Value> {
-    envelope
-        .get("payload")
-        .and_then(realm_key_share_payload_candidate)
-        .or_else(|| {
-            envelope
-                .get("payload")
-                .and_then(|payload| payload.get("content"))
-                .and_then(realm_key_share_payload_candidate)
-        })
-        // soland's durable to-device projection (sync `to_device[]` and
-        // device-messages) nests the spec payload under `content.payload`,
-        // mirroring the request direction handled in
-        // `parse_realm_key_request_envelope`.
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("payload"))
-                .and_then(realm_key_share_payload_candidate)
-        })
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(realm_key_share_payload_candidate)
-        })
-        .or_else(|| realm_key_share_payload_candidate(envelope))
-}
-
-/// Extract the Realm named by a `ak.realm_key.share` to-device/event envelope.
-/// The spec payload binds it under `key_scope.effective_scope.realm_id`; soland's
-/// to-device projection also repeats it at top-level for routing. If both are
-/// present they must agree, otherwise the envelope is ignored fail-closed.
-pub fn realm_key_share_message_realm_id(envelope: &serde_json::Value) -> Option<String> {
-    let payload_realm = realm_key_share_payload_value(envelope)
-        .and_then(|payload| payload.get("key_scope"))
-        .and_then(|scope| scope.get("effective_scope"))
-        .and_then(|scope| scope.get("realm_id"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let top_realm = envelope
-        .get("realm_id")
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("realm_id"))
-        })
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    match (payload_realm, top_realm) {
-        (Some(scope), Some(top)) if scope != top => None,
-        (Some(scope), _) => Some(scope.to_owned()),
-        (None, Some(top)) => Some(top.to_owned()),
-        (None, None) => None,
-    }
-}
-
-/// Stable source Event identifier for a projected `ak.realm_key.share`, when
-/// present. Used only for local inbox dismissal after successful install.
-pub fn realm_key_share_message_operation_id(envelope: &serde_json::Value) -> Option<String> {
-    envelope
-        .get("operation_id")
-        .or_else(|| envelope.get("event_id"))
-        .or_else(|| {
-            envelope
-                .get("payload")
-                .and_then(|payload| payload.get("operation_id"))
-        })
-        .or_else(|| {
-            envelope
-                .get("payload")
-                .and_then(|payload| payload.get("event_id"))
-        })
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("operation_id"))
-        })
-        .or_else(|| {
-            envelope
-                .get("content")
-                .and_then(|content| content.get("event_id"))
-        })
-        .or_else(|| {
-            envelope
-                .get("unsigned")
-                .and_then(|unsigned| unsigned.get("source_event_id"))
-        })
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-/// Filter a to-device inbox / device-messages batch down to the
-/// `ak.realm_key.share` envelopes addressed at this Realm. The discriminator is
-/// the envelope `kind`; the Realm binding is the share payload's
-/// `key_scope.effective_scope.realm_id` (set by
-/// [`crate::mls::admission::build_realm_key_share_event`]).
-pub fn collect_realm_key_share_messages_for_realm(
-    messages: &[serde_json::Value],
-    realm_id: &str,
-) -> Vec<serde_json::Value> {
-    let realm_id = realm_id.trim();
-    messages
-        .iter()
-        .filter(|message| {
-            message
-                .get("kind")
-                .or_else(|| message.get("type"))
-                .and_then(|t| t.as_str())
-                == Some(arkret_sdk::EventKind::RealmKeyShare.as_str())
-        })
-        .filter(|message| realm_key_share_message_realm_id(message).as_deref() == Some(realm_id))
-        .cloned()
-        .collect()
-}
-
-/// Open one inbound `ak.realm_key.share` with this device's HPKE private key and
-/// install every recovered `(epoch, history_secret)` into local state, so the
-/// tier-3 decrypt path can read pre-join content. Returns the number of secrets
-/// installed (0 when the share is not for this device / does not open / carries
-/// no ciphertext). The share `ciphertext` is the
-/// `base64url(eph_pub || ct)` blob produced by
-/// [`crate::mls::secret_share::seal_history_secret_to_device_pubkey`].
-pub(crate) fn ingest_realm_key_share(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    share_envelope: &serde_json::Value,
-) -> Result<Vec<crate::state::PendingHistorySecrets>, MlsRuntimeError> {
-    let content = realm_key_share_payload_value(share_envelope)
-        .or_else(|| share_envelope.get("payload"))
-        .unwrap_or(share_envelope);
-    let payload: arkret_sdk::RealmKeySharePayload = match serde_json::from_value(content.clone()) {
-        Ok(payload) => payload,
-        Err(err) => {
-            tracing::debug!(%realm_id, error = %err, "skip malformed ak.realm_key.share");
-            return Ok(Vec::new());
-        }
-    };
-    let Some(expected_authorization_ref) =
-        crate::views::realm_admin::realm_history_share_source_authorization_ref(
-            state_store,
-            realm_id,
-        )
-    else {
-        tracing::debug!(%realm_id, "defer ak.realm_key.share: history policy unavailable");
-        return Ok(Vec::new());
-    };
-    if payload.source_authorization_ref.as_str() != expected_authorization_ref {
-        tracing::debug!(%realm_id, "reject ak.realm_key.share: source authorization mismatch");
-        return Ok(Vec::new());
-    }
-    // Only consume member_device shares addressed to THIS device (the seal opens
-    // only with this device's HPKE private key anyway, but check the routing
-    // first). RRK shares (share_kind=realm_recovery_key) carry no
-    // recipient_device_id and are not consumed here.
-    let arkret_sdk::RealmKeyShareTarget::MemberDevice {
-        ref recipient_device_id,
-    } = payload.target
-    else {
-        return Ok(Vec::new());
-    };
-    if recipient_device_id.as_str().trim() != device_id.trim() {
-        return Ok(Vec::new());
-    }
-    // SEC-02 / device-lifecycle.md §13: sender-device authentication. When the
-    // share carries a sender principal, the sender device must sign the share;
-    // a revoked/absent device is rejected, and a cache miss after prefetch still
-    // fails closed for empty signatures.
-    let sender_principal_id = realm_key_share_sender_principal_id(share_envelope);
-    if !verify_realm_key_share_sender_signature(&payload, sender_principal_id.as_deref()) {
-        tracing::debug!(%realm_id, "reject ak.realm_key.share: sender_device_signature failed");
-        return Ok(Vec::new());
-    }
-    let arkret_sdk::RealmKeyShareMaterial::Ciphertext { ref ciphertext } = payload.material else {
-        return Ok(Vec::new());
-    };
-    let sealed = ciphertext.as_str();
-    if sealed.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let privkey = match super::load_device_hpke_private_key(secure_store, actor_id, device_id) {
-        Ok(Some(privkey)) => privkey,
-        Ok(None) => {
-            tracing::debug!(%realm_id, "no device HPKE key to open ak.realm_key.share");
-            return Ok(Vec::new());
-        }
-        Err(err) => {
-            tracing::debug!(%realm_id, error = %err, "load device HPKE key failed");
-            return Ok(Vec::new());
-        }
-    };
-    let secrets = match arkret_crypto::secret_share::open_history_secret_with_device_privkey(
-        &privkey, sealed,
-    ) {
-        Ok(secrets) => secrets,
-        Err(err) => {
-            tracing::debug!(%realm_id, error = %err, "open ak.realm_key.share failed");
-            return Ok(Vec::new());
-        }
-    };
-    let pending = state_store
-        .prepare_history_secrets(secure_store, realm_id.to_owned(), secrets)
-        .map_err(MlsRuntimeError::DeviceSecret)?;
-    Ok(pending.into_iter().collect())
-}
-
-/// Extract the sender's principal DID from a `ak.realm_key.share` to-device
-/// envelope so [`verify_realm_key_share_sender_signature`] can bind the signing
-/// key to the sender's device-directory record.
-fn realm_key_share_sender_principal_id(envelope: &serde_json::Value) -> Option<String> {
-    envelope
-        .get("sender_principal_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-/// SEC-02: derive the `(sender_principal_id, sender_device_id)` directory pair
-/// for a `ak.realm_key.share` to-device envelope. Callers prime the
-/// device-directory cache with this pair (a `keys/query`) before
-/// [`ingest_realm_key_share`] runs, so the synchronous
-/// [`verify_realm_key_share_sender_signature`] can fail-closed on a directory
-/// Miss instead of tolerating an unauthenticated empty signature. Returns
-/// `None` when the envelope exposes no sender principal or no sender device id.
-pub fn realm_key_share_sender_device_pair(
-    envelope: &serde_json::Value,
-) -> Option<(String, String)> {
-    let principal = realm_key_share_sender_principal_id(envelope)?;
-    let payload = realm_key_share_payload_value(envelope);
-    let device_id = envelope
-        .get("sender_device_id")
-        .or_else(|| {
-            envelope
-                .get("payload")
-                .and_then(|payload| payload.get("sender_device_id"))
-        })
-        .or_else(|| payload.and_then(|payload| payload.get("sender_device_id")))
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?
-        .to_owned();
-    Some((principal, device_id))
-}
-
-/// Verify a `ak.realm_key.share` payload's `sender_device_signature`
-/// (device-lifecycle.md §13), binding the verifying key to the sender's device
-/// directory record when available (SEC-02).
-///
-/// Trust resolution for `(sender_principal_id, payload.sender_device_id)`:
-/// - **Directory Hit**: the self-asserted `signer_public_key_multibase` MUST byte-equal the
-///   directory's authoritative key (which itself required a full device-authorization /
-///   service-attested trust chain to be cached). A populated signature is REQUIRED and MUST verify;
-///   an empty signature is rejected.
-/// - **Directory NegativeHit** (revoked / absent / no signing key): rejected.
-/// - **Directory Miss** (resolution failed for a claimed sender, even after the caller's prefetch):
-///   a populated signature must verify under its own embedded key; an empty signature is
-///   **rejected** (SEC-02 fail-closed — the prior fail-open window that tolerated an
-///   unauthenticated empty signature on Miss is closed). The per-secret HPKE seal remains the
-///   confidentiality/integrity gate.
-/// - **No sender principal at all**: the share cannot impersonate any actor, so an empty signature
-///   is tolerated and a populated one is verified under its embedded key (HPKE seal gates the
-///   payload).
-pub(crate) fn verify_realm_key_share_sender_signature(
-    payload: &arkret_sdk::RealmKeySharePayload,
-    sender_principal_id: Option<&str>,
-) -> bool {
-    use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
-
-    let sig_obj = match &payload.sender_device_signature {
-        arkret_sdk::SignatureMaterial::Variant1(fields) => fields,
-        arkret_sdk::SignatureMaterial::NonEmptyString(_) => return false,
-    };
-    let is_empty = sig_obj.is_empty() || !sig_obj.contains_key("signature");
-
-    // Resolve the sender device's authoritative directory key (sync, cache-only).
-    // The caller (`app::history-share` install loop) primes this cache with a
-    // `keys/query` for the sender device BEFORE this verifier runs, so a Miss
-    // here means directory resolution genuinely failed for a claimed sender.
-    let directory_key = sender_principal_id.map(|principal| {
-        match crate::identity::device_directory::cached_device_signing_key(
-            principal,
-            payload.sender_device_id.as_str(),
-        ) {
-            crate::identity::device_directory::CacheLookup::Hit(material) => {
-                DirectoryVerdict::Key(material)
-            }
-            crate::identity::device_directory::CacheLookup::NegativeHit => {
-                DirectoryVerdict::Revoked
-            }
-            crate::identity::device_directory::CacheLookup::Miss => DirectoryVerdict::Unresolved,
-        }
-    });
-
-    // Fail closed on a revoked / absent sender device.
-    if matches!(directory_key, Some(DirectoryVerdict::Revoked)) {
-        return false;
-    }
-
-    if is_empty {
-        // SEC-02 fail-closed: an empty `sender_device_signature` is acceptable
-        // ONLY when the envelope carries no claimed sender principal at all (an
-        // unbindable share that cannot impersonate any actor; the per-secret
-        // HPKE seal remains the confidentiality/integrity gate). Whenever a
-        // sender principal IS claimed — Hit, revoked, or unresolved (Miss after
-        // a prefetch attempt) — the sender MUST sign the share. This closes the
-        // prior fail-open window where a Miss tolerated an empty signature.
-        return directory_key.is_none();
-    }
-
-    let Some(sig_b64) = sig_obj.get("signature").and_then(serde_json::Value::as_str) else {
-        return false;
-    };
-    let Some(pubkey_multibase) = sig_obj
-        .get("signer_public_key_multibase")
-        .and_then(serde_json::Value::as_str)
-    else {
-        return false;
-    };
-    let Ok(pubkey_bytes) = arkret_sdk::decode_ed25519_multibase(pubkey_multibase) else {
-        return false;
-    };
-    // SEC-02: when a directory key is cached, the self-asserted signer key MUST
-    // match it byte-for-byte — otherwise an attacker could self-sign with any key.
-    if let Some(DirectoryVerdict::Key(material)) = &directory_key {
-        let Ok(directory_bytes) = material.ed25519_bytes() else {
-            return false;
-        };
-        if directory_bytes.as_slice() != pubkey_bytes.as_slice() {
-            return false;
-        }
-    }
-    let Ok(sig_bytes) = arkret_sdk::base64url_decode(sig_b64.as_bytes()) else {
-        return false;
-    };
-    let Ok(signature) = Signature::from_slice(&sig_bytes) else {
-        return false;
-    };
-    let Ok(verifying_key) = VerifyingKey::from_bytes(&pubkey_bytes) else {
-        return false;
-    };
-    // Fail closed when the transcript cannot be rebuilt: verifying against
-    // empty bytes would accept a signature over nothing.
-    let Ok(signing_input) = payload.sender_signing_input() else {
-        return false;
-    };
-    verifying_key.verify(&signing_input, &signature).is_ok()
-}
-
-/// Outcome of a synchronous device-directory lookup for the realm-key-share
-/// sender device.
-enum DirectoryVerdict {
-    /// A trusted authoritative verify key is cached.
-    Key(arkret_sdk::signatures::PublicKeyMaterial),
-    /// The sender device is revoked / absent / has no signing key.
-    Revoked,
-    /// A sender principal was claimed but the directory key could not be
-    /// resolved (cache Miss after a prefetch attempt). A populated signature is
-    /// still verified under its embedded key (best effort, HPKE seal gates
-    /// confidentiality); an empty signature is rejected (SEC-02 fail-closed).
-    Unresolved,
-}
-
-/// Read-only: list the principal DIDs currently in this Realm's local MLS
-/// group, or `None` when this device holds no MLS state for the Realm (it can
-/// neither introspect the roster nor produce Welcomes). Used by the admin-side
-/// admission reconciler to find joined members not yet represented in the
-/// group. Does NOT advance or persist any chain.
-pub fn mls_group_member_principal_ids_for_realm(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-) -> Option<Vec<String>> {
-    let snapshot = state_store.mls_snapshot_for(realm_id)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
-    // COR-04: read-only roster introspection — floor 0 is intentional (does NOT
-    // advance or persist any chain; just reads the local snapshot's member list).
-    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
-    Some(
-        group
-            .member_principal_ids()
-            .iter()
-            .map(|did| did.as_str().to_owned())
-            .collect(),
-    )
-}
-
-/// Export + re-encrypt the post-decrypt group state as a snapshot envelope,
-/// carrying the epoch clock and bumping the §5.6 observed-message counter.
 fn export_receive_chain_envelope(
     group: &arkret_sdk::ArkretMlsGroup,
     realm_id: &str,
@@ -1085,17 +1080,6 @@ fn welcome_consume_candidate(
     let payload =
         serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(entry.content.clone()).ok()?;
     let receipt = &payload.claim_receipt;
-    let repair_target_keypackage_ref = if receipt.request.claim_purpose
-        == arkret_sdk::PeerKeyPackageClaimPurpose::DirectConversationRepair
-    {
-        let target = receipt.request.target_keypackage_ref.as_ref()?;
-        if target.as_str() != payload.keypackage_ref.as_str() {
-            return None;
-        }
-        Some(target.as_str().to_owned())
-    } else {
-        None
-    };
     let strand_id = receipt.request.strand_id.as_ref().map(ToString::to_string);
     Some(WelcomeConsumeCandidate {
         key_package_id: entry.key_package_id.clone()?,
@@ -1106,7 +1090,6 @@ fn welcome_consume_candidate(
         mls_group_id: payload.mls_group_id.as_str().to_owned(),
         epoch: payload.epoch,
         welcome_digest: payload.claim_envelope.welcome_digest,
-        repair_target_keypackage_ref,
     })
 }
 
@@ -1120,8 +1103,12 @@ pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Val
         .collect()
 }
 
-pub fn mls_group_id_for_realm(realm_id: &str) -> String {
-    arkret_sdk::base64url_encode(realm_id.trim().as_bytes())
+pub fn mls_group_id_for_realm(realm_id: &str) -> Result<String, String> {
+    let realm_id = arkret_sdk::RealmId::new(realm_id.trim().to_owned())
+        .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
+    arkret_sdk::ScopeRef::Realm { realm_id }
+        .canonical_mls_group_id()
+        .map_err(|error| error.to_string())
 }
 
 pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: &str) -> bool {
@@ -1133,16 +1120,46 @@ pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: 
     {
         return false;
     }
-    let expected_group_id = mls_group_id_for_realm(realm_id);
-    message
-        .get("content")
-        .and_then(|content| {
-            content
-                .get("group_id")
-                .or_else(|| content.get("mls_group_id"))
-        })
+    let Some(content) = message.get("content") else {
+        return false;
+    };
+    if content
+        .get("governance_binding")
+        .and_then(|binding| binding.get("effective_scope"))
+        .and_then(|scope| scope.get("realm_id"))
+        .and_then(serde_json::Value::as_str)
+        == Some(realm_id)
+    {
+        return true;
+    }
+    let Ok(expected_group_id) = mls_group_id_for_realm(realm_id) else {
+        return false;
+    };
+    content
+        .get("group_id")
+        .or_else(|| content.get("mls_group_id"))
         .and_then(serde_json::Value::as_str)
         == Some(expected_group_id.as_str())
+}
+
+/// Reads the local MLS roster without advancing or persisting any chain.
+pub fn mls_group_member_principal_ids_for_realm(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+) -> Option<Vec<String>> {
+    let snapshot = state_store.mls_snapshot_for(realm_id)?;
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    Some(
+        group
+            .member_principal_ids()
+            .iter()
+            .map(|did| did.as_str().to_owned())
+            .collect(),
+    )
 }
 
 pub fn collect_mls_welcome_messages_for_realm(
@@ -1312,19 +1329,13 @@ fn welcome_recipient_endpoint(
 ///   `prefetch_device_keys` during bootstrap), never from the envelope's self-declared `kid` or
 ///   `requester_did`.
 ///
-/// Returns `Ok(())` only when either the Welcome contains no `claim_envelope`
-/// (a reduced routing+ciphertext Welcome with no material to verify, covered by
-/// the governance-binding gate and the server admin gate) or it carries a
-/// directory-resolved device signature that verifies.
+/// Returns `Ok(())` only when the required claim envelope is present and its
+/// directory-resolved device signature verifies.
 fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Result<(), String> {
     use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 
     let Some(claim_value) = welcome_value.get("claim_envelope") else {
-        // No verifiable claim_envelope is present on this reduced Welcome. This
-        // does not grant authorization; the epoch/Seal binding is enforced by
-        // governance-binding gate (2), with the server admission admin gate as
-        // an additional layer.
-        return Ok(());
+        return Err("claim_envelope missing; Welcome remains decryption_pending".to_owned());
     };
     let envelope: arkret_sdk::MlsWelcomeClaimEnvelope = serde_json::from_value(claim_value.clone())
         .map_err(|err| format!("claim_envelope decode: {err}"))?;
@@ -1573,7 +1584,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // The snapshot secret / identity are prerequisites for ALL welcomes: if they
     // are unavailable no welcome could possibly apply, so surface them as a hard
     // error (the readiness status machinery keys off these).
-    let secret = load_or_create_account_mls_secret(secure_store, actor_id)
+    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let principal_did = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
@@ -1772,7 +1783,10 @@ pub fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         }
-        state_store.save_mls_snapshot_for_scope(&effective_scope, snapshot);
+        if let Err(error) = state_store.save_mls_snapshot_for_scope(&effective_scope, snapshot) {
+            outcome.record_failure(format!("persist Welcome MLS snapshot: {error}"));
+            continue;
+        }
         // Retain the claimed KeyPackage private state until redelivery has
         // quiesced. The server-side package is single-use, but the durable
         // to-device queue may replay the same Welcome before its ACK lands; the
@@ -1876,6 +1890,11 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     }
     let use_exporter_aead = sidecar_binding.is_none()
         && realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
+    verify_exporter_sender_domain_for_send(
+        device_id,
+        state_store.realm_projection_is_minimal_metadata(realm_id),
+        use_exporter_aead,
+    )?;
     let should_commit = should_force_epoch_advance(
         state_store.realm_projection_is_minimal_metadata(realm_id),
         snapshot.epoch_started_at,
@@ -1926,11 +1945,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     // The author never decrypts its own ciphertext (OpenMLS refuses), so the
     // lazy decrypt-path retain (see `decrypt_application_payload`) never fires
     // for content this device wrote. Without an explicit retain here the secret
-    // is lost the moment the epoch advances (forward secrecy), so a later
-    // `ak.realm_key.request` finds nothing in `history_secrets_for` and
-    // `share_history_to_requester` returns `Ok(false)` — leaving every late
-    // joiner's pre-join cards permanently locked. `group.epoch()` is read after
-    // any forced commit above, so it matches the epoch the content rides.
+    // is lost the moment the epoch advances (forward secrecy). `group.epoch()`
+    // is read after any forced commit above, so it matches the epoch the
+    // content rides and remains available to a future verified share path.
     let pending_history_secrets = if use_exporter_aead {
         let history_secret = group
             .derive_and_retain_history_secret(realm_id)
@@ -1943,7 +1960,8 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         state_store
             .prepare_history_secrets(
                 secure_store,
-                realm_id.to_owned(),
+                &effective_scope,
+                &group.group_id(),
                 [(group.epoch(), history_secret.to_vec())],
             )
             .map_err(MlsRuntimeError::DeviceSecret)?
@@ -1985,7 +2003,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
-    state_store.save_mls_snapshot_for_scope(&effective_scope, new_envelope);
+    state_store
+        .save_mls_snapshot_for_scope(&effective_scope, new_envelope)
+        .map_err(MlsRuntimeError::Commit)?;
     Ok((
         schedule_hash,
         member_dids,
@@ -2067,6 +2087,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     }
     let use_exporter_aead = sidecar_binding.is_none()
         && realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
+    verify_exporter_sender_domain_for_send(device_id, is_minimal_metadata, use_exporter_aead)?;
     let should_commit = should_force_epoch_advance(
         is_minimal_metadata,
         snapshot.epoch_started_at,
@@ -2131,7 +2152,8 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         state_store
             .prepare_history_secrets(
                 secure_store,
-                realm_id.to_owned(),
+                &effective_scope,
+                &group.group_id(),
                 [(group.epoch(), history_secret.to_vec())],
             )
             .map_err(MlsRuntimeError::DeviceSecret)?
@@ -2178,7 +2200,9 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     new_envelope = new_envelope
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
-    state_store.save_mls_snapshot_for_scope(&effective_scope, new_envelope);
+    state_store
+        .save_mls_snapshot_for_scope(&effective_scope, new_envelope)
+        .map_err(MlsRuntimeError::Commit)?;
     Ok((
         schedule_hash,
         member_dids,
@@ -2240,7 +2264,7 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
     Some(members == joined)
 }
 
-fn self_update_with_verified_governance_binding(
+pub(super) fn self_update_with_verified_governance_binding(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,

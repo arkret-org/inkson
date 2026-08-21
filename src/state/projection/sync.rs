@@ -2,7 +2,7 @@ use arkret_wire::event_kind_str;
 use serde_json::Value;
 use yoface::utils::text::short_protocol_id;
 
-use super::decrypt::try_local_mls_decrypt_core_for_scope;
+use super::decrypt::try_local_mls_decrypt_core_for_scope_from_verified_sender;
 use super::model::ProjectionEvent;
 
 /// Read the sender identity from an account event projection envelope.
@@ -68,7 +68,7 @@ pub fn projection_events_from_sync_realms(
 
         for event in wire_events {
             if event.get("kind").and_then(Value::as_str)
-                == Some(crate::late_recovery::INKSON_POLICY_ACCESS_AUDIT_KIND)
+                == Some(arkret_wire::event_kind_str::AUDIT_ACCESSED)
             {
                 match crate::late_recovery::late_recovered_event_from_audit_policy_access_event(
                     event, false,
@@ -175,13 +175,21 @@ pub fn projection_events_from_sync_realms(
                                 serde_json::from_value::<arkret_sdk::ScopeRef>(scope).ok()
                             })
                             .and_then(|effective_scope| {
-                                try_local_mls_decrypt_core_for_scope(
+                                let sender_domain =
+                                    crate::views::chat::verified_chat_sender_domain_for_realm(
+                                        message_realm,
+                                        event,
+                                        Some(store),
+                                        Some((actor_id, device_id)),
+                                    );
+                                try_local_mls_decrypt_core_for_scope_from_verified_sender(
                                     store,
                                     message_realm,
                                     actor_id,
                                     device_id,
                                     encrypted_content,
                                     &effective_scope,
+                                    sender_domain.as_deref(),
                                 )
                             })
                             .and_then(|plaintext| serde_json::from_slice::<Value>(&plaintext).ok())

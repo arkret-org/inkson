@@ -116,11 +116,11 @@ export async function gotoAndDismissRecovery(
   url: string,
 ) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
-  await dismissRealmKeyMissingModal(page);
+  await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);
 }
 
-export async function dismissRealmKeyMissingModal(
+export async function dismissHistoryRecoveryModal(
   page: import("@playwright/test").Page,
 ) {
   const modal = page.getByTestId("mls-recovery-missing-modal").last();
@@ -174,7 +174,7 @@ export async function openKanban(page: import("@playwright/test").Page) {
   await assertRealmTreeSeeded(page);
   await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
-  await dismissRealmKeyMissingModal(page);
+  await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);
 }
 

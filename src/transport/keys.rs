@@ -12,10 +12,8 @@
 //! The key-backup / recovery / device-pairing / device-revoke methods and the
 //! device-message pull loop (receive / ack / cursor) carry signing,
 //! trust-anchor, or durable cursor semantics and remain inherent `TransportClient`
-//! methods. The one-shot device-message send and the `ak.realm_key.request`
-//! directed message below are plain transport writes (the caller prepares any
-//! signed `content`), so they are
-//! migrated here.
+//! methods. Plain one-shot device-message sends remain transport writes; the
+//! caller prepares any signed content before dispatch.
 
 use std::collections::BTreeMap;
 
@@ -102,68 +100,4 @@ pub async fn send_device_message_with_id<K: arkret_sdk::DeviceMessageSpec>(
     http.send_device_messages(txn_id, &payload)
         .await
         .map_err(anyhow::Error::from)
-}
-
-/// Submit a directed `ak.realm_key.request` device message (realm-and-space.md
-/// history-sharing): a late-joining device asks the provider device named by
-/// `target_source_ref` to seal the retained `history_secret` range to
-/// `recipient_hpke_public_key`. The provider answers with a
-/// durable `ak.realm_key.share`.
-#[allow(clippy::too_many_arguments)]
-pub async fn submit_realm_key_request(
-    http: &arkret_sdk::http_client::Client,
-    realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    provider_device_ref: &str,
-    provider_principal_id: &str,
-    recipient_hpke_public_key: &str,
-    from_epoch: u64,
-    to_epoch: u64,
-) -> anyhow::Result<DeviceMessagesSendOutcome> {
-    let realm_id = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?;
-    let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
-    let payload = arkret_sdk::RealmKeyRequestPayload {
-        key_scope: arkret_sdk::RealmKeyRequestScope {
-            effective_scope: arkret_wire::ScopeRef::Realm {
-                realm_id: realm_id.clone(),
-            },
-            policy_digest: None,
-            membership_frontier_digest: None,
-            from_epoch,
-            to_epoch,
-            history_visibility: None,
-        },
-        recipient_principal_id: crate::mls_api_helpers::principal_core_id(actor_id)?,
-        recipient_device_id: device_id.clone(),
-        recipient_hpke_public_key: arkret_sdk::NonEmptyString::new(
-            recipient_hpke_public_key.trim(),
-        )
-        .map_err(anyhow::Error::msg)?,
-        requested_source_kind: arkret_sdk::HistoryKeySource::VerifiedMemberDevice,
-        target_source_ref: arkret_sdk::RealmKeySourceRef::Device(arkret_sdk::DeviceId::new(
-            provider_device_ref.trim().to_owned(),
-        )?),
-        // The principal that owns `target_source_ref` (the provider device the
-        // requester picked as its history source). Required by the SDK request
-        // schema so the relay can route to the provider's to-device queue.
-        target_principal_id: crate::mls_api_helpers::principal_core_id(provider_principal_id)?,
-        created_at: crate::clock::now_utc(),
-    };
-    payload
-        .validate()
-        .map_err(|err| anyhow::anyhow!("ak.realm_key.request invalid: {err}"))?;
-    let expires_at = arkret_sdk::canonical::format_timestamp_canonical(
-        crate::clock::now_utc() + chrono::Duration::minutes(4),
-    );
-    let txn_id = format!("realm-key-request-{}", crate::operation::uuid_v7());
-    send_device_message::<arkret_sdk::device_message_spec::RealmKeyRequest>(
-        http,
-        &txn_id,
-        provider_principal_id,
-        provider_device_ref,
-        &expires_at,
-        payload,
-    )
-    .await
 }

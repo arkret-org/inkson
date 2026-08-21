@@ -994,7 +994,12 @@ mod tests {
             }),
         )
         .unwrap();
-        let digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
+        let digest = arkret_sdk::Hash::new(
+            event
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap(),
+        )
+        .unwrap();
         let producer = arkret_sdk::ProducerEventProof {
             kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
             verification_method: arkret_sdk::DidUrl::new(
@@ -1002,6 +1007,8 @@ mod tests {
             )
             .unwrap(),
             event_digest: digest.clone(),
+            signer_resolution_evidence_ref: None,
+            signer_resolution_evidence_digest: None,
             created_at: event.created_at,
             domain: None,
             audience: None,
@@ -1023,6 +1030,16 @@ mod tests {
                 producer_verification_method: producer.verification_method.clone(),
                 producer_signing_key: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
                     .unwrap(),
+                signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
+                    "ak:signer_evidence:sha256:{}",
+                    "11".repeat(32)
+                ))
+                .unwrap(),
+                signer_resolution_evidence_digest: arkret_sdk::Hash::new(format!(
+                    "sha256:{}",
+                    "11".repeat(32)
+                ))
+                .unwrap(),
                 accepted_at: event.created_at,
                 jws: "header..admission".to_owned(),
             }
@@ -1057,6 +1074,7 @@ mod tests {
                 .run_stream(
                     &Transport(frames.clone()),
                     realm_id.clone(),
+                    arkret_sdk::DigestSuite::Sha256,
                     &Projector {
                         fail: true,
                         calls: Arc::clone(&calls),
@@ -1076,6 +1094,7 @@ mod tests {
             .run_stream(
                 &Transport(frames),
                 realm_id,
+                arkret_sdk::DigestSuite::Sha256,
                 &Projector {
                     fail: false,
                     calls: Arc::clone(&calls),

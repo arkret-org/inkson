@@ -200,8 +200,12 @@ pub async fn update_profile(
         )
     };
     let signed = submitter.author_for_direct_submission(&event).await?;
-    let profile_event =
-        crate::authorization_lease::standard_initial_submission(submitter.http(), &signed).await?;
+    let profile_event = crate::authorization_lease::standard_initial_submission(
+        submitter.http(),
+        &signed,
+        signed.digest_suite(),
+    )
+    .await?;
     let mut successor_seal = Some(
         crate::transport::contacts::prepare_principal_successor_seal(submitter.http(), &signed)
             .await?,
@@ -213,10 +217,15 @@ pub async fn update_profile(
         &principal_id,
         &authority_evidence.principal_control_realm_id,
         accepted_basis.as_ref(),
+        signed.digest_suite(),
     )?;
     const FRONTIER_RETRY_ATTEMPTS: usize = 120;
     for attempt in 0..FRONTIER_RETRY_ATTEMPTS {
-        match submitter.http().account_update_profile(&body).await {
+        match submitter
+            .http()
+            .account_update_profile(&body, signed.digest_suite())
+            .await
+        {
             Ok(outcome) => return Ok(outcome),
             Err(error) => {
                 let error = anyhow::Error::from(error);
@@ -463,8 +472,9 @@ async fn verify_contact_request_receipt(
         .events_resolve(&arkret_sdk::EventsResolveRequestBody {
             event_ids: vec![receipt.core.request_event_ref.clone()],
             event_digests: vec![receipt.core.request_digest.clone()],
-            seal_refs: Vec::new(),
             include_payload: Some(true),
+            history_traversal_access: None,
+            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
         })
         .await?;
     let request = resolved
@@ -472,14 +482,12 @@ async fn verify_contact_request_receipt(
         .iter()
         .find(|event| event.event_id == receipt.core.request_event_ref)
         .ok_or_else(|| anyhow::anyhow!("Contact request receipt Event is not accepted"))?;
-    let request_digest = arkret_sdk::Hash::new(request.event_digest()?)?;
+    let request_digest = arkret_sdk::Hash::new(
+        request.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+    )?;
     if request_digest != receipt.core.request_digest {
         anyhow::bail!("Contact request receipt does not bind the exact resolved Event");
     }
-    if !resolved.seals.is_empty() {
-        anyhow::bail!("Contact verified-mirror resolve unexpectedly disclosed a Seal");
-    }
-
     let issuer_full_id = arkret_sdk::DidFullId::new(
         receipt
             .signature
@@ -622,11 +630,6 @@ pub async fn direct_conversation_resolve(
         .direct_conversation_resolve(&body)
         .await
         .map_err(anyhow::Error::from)?;
-    if outcome.coordinates().is_some() {
-        // The fixed profile baseline is the effective policy. Do not require or
-        // author a fourth founding Event for this Realm class.
-        direct_conversation_history_sharing_policy()?;
-    }
     if enable_owned_agent_reply && direct_conversation_coordinates(&outcome).is_some() {
         preserve_resolved_direct_conversation(
             peer,
@@ -663,56 +666,6 @@ pub async fn direct_conversation_found(
     }
 }
 
-/// Dispatch one already-frozen requester-authorized repair trigger through
-/// the authenticated Principal Server. Remote service resolution, routing and
-/// target-device fan-out remain server responsibilities; Inkson retains only
-/// the exact request and the returned durable-enqueue receipt.
-// Spec-required Direct Conversation repair half whose caller has not landed
-// yet: wiring is blocked on resolving the peer's `target_service_id` from the
-// delivery binding (see arkret-work task
-// 2026-08-18-0515-dead-code-clusters-in-soland-and-inkson, adjudication (b)
-// keep). The receiving half (`record_consumed_direct_conversation_repair_welcome`)
-// is already live in bootstrap.
-#[allow(dead_code)]
-pub async fn direct_conversation_repair_dispatch(
-    http: &arkret_sdk::http_client::Client,
-    request: &arkret_sdk::DirectConversationRepairDispatchRequest,
-) -> anyhow::Result<arkret_sdk::DirectConversationRepairEnqueueOutcome> {
-    request.validate_shape()?;
-    let outcome = http.direct_conversation_repair_dispatch(request).await?;
-    outcome.validate_shape()?;
-    Ok(outcome)
-}
-
-/// Extract the resolver's digest of the complete current active-generation
-/// cell value. Event ids and locally reconstructed payload digests are not
-/// substitutes for this CAS predecessor.
-// Part of the same pending repair-dispatch wiring as
-// `direct_conversation_repair_dispatch` above.
-#[allow(dead_code)]
-pub(crate) fn direct_conversation_current_generation_value_digest(
-    outcome: &arkret_sdk::DirectConversationResolveOutcome,
-) -> anyhow::Result<arkret_sdk::Hash> {
-    outcome.validate_shape()?;
-    match outcome {
-        arkret_sdk::DirectConversationResolveOutcome::Found {
-            active_mls_generation_value_digest,
-            ..
-        }
-        | arkret_sdk::DirectConversationResolveOutcome::Provisional {
-            active_mls_generation_value_digest: Some(active_mls_generation_value_digest),
-            ..
-        }
-        | arkret_sdk::DirectConversationResolveOutcome::Suspended {
-            active_mls_generation_value_digest: Some(active_mls_generation_value_digest),
-            ..
-        } => Ok(active_mls_generation_value_digest.clone()),
-        _ => anyhow::bail!(
-            "Direct Conversation resolver omitted the current whole-value digest required for repair"
-        ),
-    }
-}
-
 /// Author, sign and durably submit the resolver-authorized closed founding
 /// unit.  The resolver material is copied verbatim; Garth persists the exact
 /// signed carrier before its first network attempt.
@@ -729,9 +682,11 @@ pub async fn create_direct_conversation_from_resolve(
         anyhow::bail!("Direct Conversation resolver did not grant founding authority");
     };
     let trust_domain = submitter.events_describe().await?.trust_domain;
+    let notary = submitter.current_service_notary().await?;
     let steps = crate::event_builders::build_direct_conversation_founding_steps(
         founder_id,
         peer_id,
+        notary,
         trust_domain,
         next_founding_input,
     )?;
@@ -824,11 +779,23 @@ pub(crate) fn direct_conversation_client_local_blockers(
     if crate::account_data::is_blocked(&state_store.client_blocklist(), peer) {
         blockers.insert(Local::PersonalBlocked);
     }
-    if let Some(coordinates) = outcome.coordinates()
-        && crate::secure_key_store::load_realm_history_secrets(coordinates.realm_id.as_str())
-            .is_none_or(|secrets| secrets.is_empty())
-    {
-        blockers.insert(Local::HistoryKeyUnavailable);
+    if let Some(coordinates) = outcome.coordinates() {
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: coordinates.realm_id.clone(),
+        };
+        let history_unavailable = scope
+            .canonical_mls_group_id()
+            .ok()
+            .and_then(|group_id| {
+                crate::state::mls_scope_snapshot_key_for_group(&scope, &group_id).ok()
+            })
+            .and_then(|scope_group_key| {
+                crate::secure_key_store::load_history_secrets(&scope_group_key)
+            })
+            .is_none_or(|secrets| secrets.is_empty());
+        if history_unavailable {
+            blockers.insert(Local::HistoryKeyUnavailable);
+        }
     }
     blockers
 }
@@ -847,14 +814,6 @@ pub(crate) fn direct_conversation_entry_with_local_blockers(
     } else {
         entry
     }
-}
-
-/// Direct Conversation history policy is profile-fixed and exists even though
-/// the closed four-Event founding unit carries no policy Event.
-pub(crate) fn direct_conversation_history_sharing_policy()
--> anyhow::Result<arkret_sdk::HistorySharingPolicyPayloadValue> {
-    arkret_policy::history_visibility::direct_conversation_realm_history_sharing_policy()
-        .map_err(anyhow::Error::from)
 }
 
 const DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY: &str = "ak.local.direct_conversation.peer.v1";
@@ -948,11 +907,14 @@ async fn ensure_owned_agent_direct_reply(
     // The capability grant is a governance Control Move.  Arm the known
     // coverage repair immediately so the first human message does not have to
     // discover the stale MLS accumulator by failing once.
-    state_store.write().record_mls_coverage_stale(
-        scope.realm_id().as_str().to_owned(),
-        None,
-        "agent reply participation grant changed the Realm governance frontier",
-    );
+    state_store
+        .write()
+        .record_mls_coverage_stale(
+            scope.realm_id().as_str().to_owned(),
+            None,
+            "agent reply participation grant changed the Realm governance frontier",
+        )
+        .map_err(anyhow::Error::msg)?;
     Ok(())
 }
 
@@ -1776,8 +1738,6 @@ mod tests {
                     "main_strand_id": "ak:strand:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M",
                     "binding_event_ref": "ak:event:AZ6GqZWWvnQ2KFwbBD-MenomzWNz-31MUAuKzBXIP0zv"
                 },
-                "active_mls_generation_ref": "ak:event:AYzJYUhgTz2x0CgaGJf0NxMJJVlUkwYIF8Q-9PGE-gXn",
-                "active_mls_generation_value_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "send_blockers": []
             }))
             .expect("found Direct Conversation outcome");

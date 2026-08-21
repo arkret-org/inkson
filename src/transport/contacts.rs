@@ -74,7 +74,9 @@ pub(crate) async fn submit_principal_successor_seal(
     let seal = signer
         .sign_self_principal_linear_successor_seal(&accepted, &context.predecessor, hlc)
         .map_err(|error| anyhow::anyhow!("sign principal successor Seal: {error}"))?;
-    let principal_digest = arkret_sdk::Hash::new(principal_event.event_digest()?)?;
+    let principal_digest = arkret_sdk::Hash::new(
+        principal_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+    )?;
     let outcome = http.events_submit_seal(&seal).await?;
     if !outcome
         .accepted_event_digests
@@ -131,7 +133,8 @@ pub(crate) fn sign_prepared_contact_event(
         &mut event,
         crate::event_signer::EventProofContext::default(),
     )?;
-    let signed_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    let signed_digest =
+        arkret_sdk::Hash::new(event.event_digest_with_digest_suite(event.digest_suite())?)?;
     if signed_digest != draft.event_digest {
         anyhow::bail!("signing changed the prepared Contact Event digest");
     }

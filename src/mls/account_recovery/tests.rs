@@ -1,4 +1,3 @@
-use arkret_models_crypto::KeyBackupContentItem;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::Signer as _;
@@ -14,18 +13,13 @@ use super::backup_body::{
     decrypt_mls_private_plaintext_backup, is_mls_account_secret_backup,
     is_mls_private_plaintext_backup,
 };
-use super::restore::{
-    encrypted_restore_projection_complete, mls_backup_prompt_required, mls_restore_prompt_required,
-    restore_mls_history_with_passphrase_from_payload,
-    restore_mls_history_with_recovery_key_from_payload,
-};
+use super::restore::mls_backup_prompt_required;
 use super::selection::{
-    backup_series_seq, mls_account_secret_backup_version, mls_history_series_tail_ids,
-    select_mls_account_secret_backup, select_mls_history_backups,
-    select_mls_history_tail_for_realm, select_mls_private_plaintext_backup,
+    backup_series_seq, mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_history_backups, select_mls_private_plaintext_backup,
     select_preferred_mls_account_secret_backup,
 };
-use super::series::{series_supersedes_digest, verify_series_chain};
+use super::series::verify_series_chain;
 use crate::key_backup::BackupKind;
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;
@@ -36,13 +30,9 @@ const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 const PASSPHRASE: &[u8] = b"correct horse battery staple";
 const ACCOUNT_SECRET: &str = "qr6h9rJ8nU0H2pP5w3sLx1A4bC7dE9fG2hI5jK8lM0N";
-const PROMPT_REALM_ID: &str = "ak:realm:AVhuTxNRfvs8PkA_2QeAUlsYOpHzfEp_kiZRFVSOjw66";
-const FIRST_REALM_ID: &str = "ak:realm:AV_l4Xf09ysIbg4CxsKfVp3aXFo61xh25D97twFGKPC0";
-const OTHER_REALM_ID: &str = "ak:realm:AcLPXXLU3U1Pgf8Eb5R9XIsn27h_1OOAno7DpRNia4cX";
 const ACTIVE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000a1";
 const STALE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000a2";
 const ACTIVE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b1";
-const STALE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b2";
 
 fn backup_frontier_ref() -> arkret_sdk::KeyBackupFrontierRef {
     arkret_sdk::KeyBackupFrontierRef {
@@ -169,73 +159,7 @@ fn payload_with_inferred_active_series(backups: Vec<Value>) -> Value {
     })
 }
 
-// YOU-05-010: shared hermetic state-store fixture from `local_state`.
 use arkret_wire::SchemaId;
-
-use crate::state::isolated_store_for_tests as temp_state_store;
-
-fn history_envelope(
-    realm_id: &str,
-    group_id: &str,
-    epoch: u64,
-    secret: &str,
-) -> crate::mls::persistence::MlsSnapshotEnvelope {
-    crate::mls::persistence::encrypt_state(
-        realm_id,
-        group_id,
-        epoch,
-        b"opaque sdk state bytes",
-        secret,
-        b"deterministic-salt",
-    )
-}
-
-fn history_body(envelope: &crate::mls::persistence::MlsSnapshotEnvelope) -> Value {
-    sign_wire_envelope(key_backup_wire(
-        &envelope
-            .to_key_backup_body(
-                "ak:backup:01964137-0000-7000-8000-00000000feed",
-                ACTOR,
-                DEVICE,
-                &crate::mls::runtime::derive_mls_history_backup_key(ACCOUNT_SECRET).unwrap(),
-            )
-            .unwrap(),
-    ))
-}
-
-fn managed_agent_pcr_history_body(series_id: &str) -> Value {
-    let (_sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
-    sign_wire_envelope(key_backup_wire(
-        &crate::key_backup::build_recovery_public_key_backup_body_in_series(
-            "ak:backup:01964137-0000-7000-8000-00000000a6e1",
-            ACTOR,
-            DEVICE,
-            &pk,
-            "did:web:alice.example#recovery",
-            BackupKind::MlsHistory,
-            "managed_agent_pcr",
-            &KeyBackupContentItem {
-                item_kind: "mls_group_state".to_owned(),
-                secret_id: Some("inkson_managed_agent_pcr_snapshot".to_owned()),
-                realm_id: Some(
-                    arkret_sdk::RealmId::new(
-                        "ak:realm:ASAwuXNX4FrBIZ2he8T3cNEHQacp67dCT2GK6bzoZuTB".to_owned(),
-                    )
-                    .unwrap(),
-                ),
-                mls_group_id: Some("managed-agent-pcr-group".to_owned()),
-                epoch: Some(0),
-                ..Default::default()
-            },
-            b"managed Agent PCR state",
-            Some(("ak:policy:01964137-2000-7000-8000-000000000004", 3)),
-            Some(series_id),
-            None,
-            None,
-        )
-        .unwrap(),
-    ))
-}
 
 #[test]
 fn wrap_then_unwrap_round_trips_the_secret() {
@@ -433,161 +357,6 @@ fn select_account_secret_prefers_highest_series_seq() {
 }
 
 #[test]
-fn prompt_required_when_local_secret_exists_but_history_is_missing() {
-    let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, "stale-local-secret").unwrap();
-    let state = temp_state_store("prompt-missing-history");
-    let envelope = history_envelope(PROMPT_REALM_ID, "group-a", 7, ACCOUNT_SECRET);
-    let payload =
-        payload_with_inferred_active_series(vec![recovery_hpke_backup(), history_body(&envelope)]);
-
-    assert!(mls_restore_prompt_required(
-        &payload, &state, &store, ACTOR, DEVICE
-    ));
-}
-
-#[test]
-fn prompt_not_required_when_local_history_is_current_and_decryptable() {
-    let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
-    crate::mls::runtime::mark_account_mls_secret_verified(&store, ACTOR).unwrap();
-    let mut state = temp_state_store("prompt-current-history");
-    let envelope = history_envelope(PROMPT_REALM_ID, "group-a", 7, ACCOUNT_SECRET);
-    state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
-    let payload = payload_with_inferred_active_series(vec![wrap(), history_body(&envelope)]);
-
-    assert!(!mls_restore_prompt_required(
-        &payload, &state, &store, ACTOR, DEVICE
-    ));
-}
-
-#[test]
-fn first_device_unlock_probe_converges_after_backup_projection_race() {
-    let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
-    let mut state = temp_state_store("prompt-first-device-upload-race");
-    let envelope = history_envelope(FIRST_REALM_ID, "group-first", 0, ACCOUNT_SECRET);
-    state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
-    let account_backup = recovery_hpke_backup();
-    let account_backup_only = payload_with_inferred_active_series(vec![account_backup.clone()]);
-    let projected_history_body = history_body(&envelope);
-    let typed_projected_history: arkret_sdk::KeyBackup =
-        serde_json::from_value(projected_history_body.clone()).unwrap();
-    typed_projected_history.validate_envelope_fields().unwrap();
-    let decoded_projected_history = crate::mls::runtime::decode_mls_history_backup_envelope(
-        &typed_projected_history,
-        ACCOUNT_SECRET,
-    )
-    .unwrap();
-    assert_eq!(decoded_projected_history.realm_id, envelope.realm_id);
-    let projected_history =
-        payload_with_inferred_active_series(vec![account_backup, projected_history_body]);
-
-    assert!(
-        !crate::mls::runtime::account_mls_secret_verified(&store, ACTOR).unwrap(),
-        "fixture must cover the gap before the uploader persists its verified marker"
-    );
-    assert!(
-        mls_restore_prompt_required(&account_backup_only, &state, &store, ACTOR, DEVICE),
-        "the first projection can conservatively look like a device missing history"
-    );
-    assert!(
-        !encrypted_restore_projection_complete(&account_backup_only),
-        "the UI must not classify a half-projected first-device recovery set"
-    );
-    assert!(
-        encrypted_restore_projection_complete(&projected_history),
-        "account and history backups together form a classifiable projection"
-    );
-    assert!(
-        !mls_restore_prompt_required(&projected_history, &state, &store, ACTOR, DEVICE),
-        "the device that created the current decryptable backup has no history to restore"
-    );
-}
-
-#[test]
-fn first_device_prompt_does_not_decode_hpke_managed_history_as_secret_storage() {
-    let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
-    let mut state = temp_state_store("prompt-first-device-mixed-history-methods");
-    let envelope = history_envelope(FIRST_REALM_ID, "group-first", 0, ACCOUNT_SECRET);
-    state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
-
-    let local_history = history_body(&envelope);
-    let hpke_managed_history = managed_agent_pcr_history_body(backup_series_id(&local_history));
-    validate_wire_envelope(&local_history, BackupKind::MlsHistory).unwrap();
-    validate_wire_envelope(&hpke_managed_history, BackupKind::MlsHistory).unwrap();
-    assert_eq!(
-        local_history.pointer("/encryption/recipient_method"),
-        Some(&serde_json::json!("secret_storage_key"))
-    );
-    assert!(local_history.pointer("/encryption/aead/nonce").is_some());
-    assert!(local_history.pointer("/encryption/aead/enc").is_none());
-    assert_eq!(
-        hpke_managed_history.pointer("/encryption/recipient_method"),
-        Some(&serde_json::json!("recovery_public_key"))
-    );
-    assert!(
-        hpke_managed_history
-            .pointer("/encryption/aead/enc")
-            .is_some()
-    );
-    assert!(
-        hpke_managed_history
-            .pointer("/encryption/aead/nonce")
-            .is_none()
-    );
-
-    let account_backup = recovery_hpke_backup();
-    let hpke_only_projection = payload_with_inferred_active_series(vec![
-        account_backup.clone(),
-        hpke_managed_history.clone(),
-    ]);
-    assert!(
-        !encrypted_restore_projection_complete(&hpke_only_projection),
-        "an Agent PCR HPKE backup is not the first Realm's secret-storage history projection"
-    );
-
-    let complete_projection = payload_with_inferred_active_series(vec![
-        account_backup,
-        hpke_managed_history.clone(),
-        local_history,
-    ]);
-    assert!(encrypted_restore_projection_complete(&complete_projection));
-    assert!(
-        !mls_restore_prompt_required(&complete_projection, &state, &store, ACTOR, DEVICE),
-        "a valid HPKE Agent backup must not poison local Realm-history readiness"
-    );
-
-    let typed_hpke: arkret_sdk::KeyBackup = serde_json::from_value(hpke_managed_history).unwrap();
-    typed_hpke.validate_envelope_fields().unwrap();
-    let decode_error =
-        crate::mls::runtime::decode_mls_history_backup_envelope(&typed_hpke, ACCOUNT_SECRET)
-            .unwrap_err();
-    assert!(decode_error.user_message().contains("recipient_method"));
-    assert!(!decode_error.user_message().contains("nonce is required"));
-}
-
-#[test]
-fn unverified_secret_still_prompts_when_account_backup_came_from_another_device() {
-    let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
-    let mut state = temp_state_store("prompt-other-device-account-backup");
-    let envelope = history_envelope(OTHER_REALM_ID, "group-other", 0, ACCOUNT_SECRET);
-    state.save_mls_snapshot(envelope.realm_id.clone(), envelope.clone());
-    let mut account_backup = recovery_hpke_backup();
-    account_backup["device_id"] =
-        serde_json::json!("ak:device:01964137-0000-7000-8000-000000000002");
-    let payload =
-        payload_with_inferred_active_series(vec![account_backup, history_body(&envelope)]);
-
-    assert!(
-        mls_restore_prompt_required(&payload, &state, &store, ACTOR, DEVICE),
-        "decryptable local history must not bless another device's account-secret backup"
-    );
-}
-
-#[test]
 fn verify_series_chain_accepts_single_genesis() {
     let genesis = wrap();
     assert_eq!(backup_series_seq(&genesis), 0);
@@ -667,136 +436,6 @@ fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
     assert_eq!(
         decrypt_mls_private_plaintext_backup(ACCOUNT_SECRET.as_bytes(), &successor_wire).unwrap(),
         br#"{"realm":{"strand":{"title":"successor"}}}"#
-    );
-}
-
-#[test]
-fn prompt_required_when_local_snapshot_uses_forked_random_secret() {
-    // P0 regression: a new device's Welcome bootstrap minted a random
-    // account secret and saved a self-consistent local snapshot under it,
-    // while the server holds history encrypted under the REAL account
-    // secret. The old detection only checked the (self-decryptable) local
-    // snapshot and silently skipped the restore prompt, forking the chain.
-    let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, "forked-random-secret").unwrap();
-    let mut state = temp_state_store("prompt-forked-secret");
-    // Server backup is encrypted under the real account secret...
-    let server_envelope = history_envelope(PROMPT_REALM_ID, "group-a", 7, ACCOUNT_SECRET);
-    // ...but the local snapshot was saved under the forked random secret at
-    // the same (or higher) epoch, so it self-decrypts and passes the old
-    // epoch/group gates.
-    let local_envelope = history_envelope(PROMPT_REALM_ID, "group-a", 7, "forked-random-secret");
-    state.save_mls_snapshot(local_envelope.realm_id.clone(), local_envelope);
-    let payload = payload_with_inferred_active_series(vec![
-        recovery_hpke_backup(),
-        history_body(&server_envelope),
-    ]);
-
-    assert!(
-        mls_restore_prompt_required(&payload, &state, &store, ACTOR, DEVICE),
-        "forked random local secret must still trigger the restore prompt"
-    );
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn fresh_device_restores_via_recovery_key_no_passphrase() {
-    // A3 / the user's "cleared storage = device B" point: a brand-new device
-    // (empty secure store) recovers WITHOUT the passphrase, using only the
-    // recovery PRIVATE key to HPKE-open the account secret. Fully end-to-end
-    // on host (real OpenMLS group), no live soland.
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
-
-    let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
-    let realm = "ak:realm:AaaP6wEtKbZ9n8ohGefTx7GpDZNmZeC2QfGwbUk55gph";
-    let identity = ArkretMlsIdentity::new_basic(
-        crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
-        DeviceId::new(device_a.to_owned()).unwrap(),
-    )
-    .unwrap();
-    let group = identity.create_group(realm.as_bytes()).unwrap();
-    let record = group.export_state_record().unwrap();
-    // Device A's history is encrypted under the account secret.
-    let history = crate::mls::persistence::encrypt_state(
-        realm,
-        &record.group_id,
-        record.epoch,
-        &serde_json::to_vec(&record).unwrap(),
-        ACCOUNT_SECRET,
-        b"deterministic-salt",
-    );
-
-    // The account secret is ALSO backed up HPKE-sealed to the recovery
-    // public key (the passphrase-free path). Only the recovery PRIVATE key
-    // opens it.
-    let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
-    let account_secret_body = build_mls_account_secret_recovery_public_key_backup(
-        BACKUP_ID,
-        ACTOR,
-        DEVICE,
-        &recovery_pk,
-        "did:web:alice.example#recovery",
-        ACCOUNT_SECRET,
-        crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION,
-        ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
-    )
-    .unwrap();
-    let account_secret_body = sign_wire_envelope(key_backup_wire(&account_secret_body));
-    let history_body_value = sign_wire_envelope(history_body(&history));
-
-    let payload = serde_json::json!({
-        "active_series": [
-            active_series_record("secret_storage", backup_series_id(&account_secret_body)),
-            active_series_record("mls_history", backup_series_id(&history_body_value))
-        ],
-        "backups": [account_secret_body, history_body_value]
-    });
-    // Device B: empty secure store, empty state store.
-    let store = MemorySecureKeyStore::new();
-    let mut state = temp_state_store("fresh-device-recovery-key");
-
-    let report = restore_mls_history_with_recovery_key_from_payload(
-        &payload,
-        &mut state,
-        &store,
-        ACTOR,
-        DEVICE,
-        &recovery_sk,
-        ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
-    )
-    .unwrap();
-
-    assert!(
-        report.account_secret_imported,
-        "account secret HPKE-imported"
-    );
-    assert_eq!(report.restored, 1, "history restored");
-    assert_eq!(report.failed, 0);
-    let loaded = crate::mls::runtime::load_account_mls_secret(&store, ACTOR)
-        .unwrap()
-        .expect("account secret now local");
-    assert_eq!(loaded.secret, ACCOUNT_SECRET);
-    assert!(
-        state.mls_snapshot_for(realm).is_some(),
-        "snapshot decryptable"
-    );
-
-    // A WRONG recovery key cannot recover.
-    let (other_sk, _other_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
-    let store2 = MemorySecureKeyStore::new();
-    let mut state2 = temp_state_store("fresh-device-wrong-key");
-    assert!(
-        restore_mls_history_with_recovery_key_from_payload(
-            &payload,
-            &mut state2,
-            &store2,
-            ACTOR,
-            DEVICE,
-            &other_sk,
-            ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
-        )
-        .is_err(),
-        "wrong recovery key must fail"
     );
 }
 
@@ -929,61 +568,6 @@ fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected()
     );
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn restore_replaces_stale_local_secret_before_history_replay() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
-
-    let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
-    let realm = "ak:realm:AaaP6wEtKbZ9n8ohGefTx7GpDZNmZeC2QfGwbUk55gph";
-    let identity = ArkretMlsIdentity::new_basic(
-        crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
-        DeviceId::new(device_a.to_owned()).unwrap(),
-    )
-    .unwrap();
-    let group = identity.create_group(realm.as_bytes()).unwrap();
-    let record = group.export_state_record().unwrap();
-    let envelope = crate::mls::persistence::encrypt_state(
-        realm,
-        &record.group_id,
-        record.epoch,
-        &serde_json::to_vec(&record).unwrap(),
-        ACCOUNT_SECRET,
-        b"deterministic-salt",
-    );
-    let payload = payload_with_inferred_active_series(vec![
-        sign_wire_envelope(wrap()),
-        sign_wire_envelope(history_body(&envelope)),
-    ]);
-    let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret_version(
-        &store,
-        ACTOR,
-        crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION + 1,
-        "stale-local-secret",
-    )
-    .unwrap();
-    let mut state = temp_state_store("restore-stale-secret");
-
-    let report = restore_mls_history_with_passphrase_from_payload(
-        &payload, &mut state, &store, ACTOR, DEVICE, PASSPHRASE,
-    )
-    .unwrap();
-
-    assert!(report.account_secret_imported);
-    assert_eq!(report.restored, 1);
-    assert_eq!(report.failed, 0);
-    let loaded = crate::mls::runtime::load_account_mls_secret(&store, ACTOR)
-        .unwrap()
-        .expect("secret present");
-    assert_eq!(
-        loaded.version,
-        crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
-    );
-    assert_eq!(loaded.secret, ACCOUNT_SECRET);
-    assert!(state.mls_snapshot_for(realm).is_some());
-}
-
 #[test]
 fn backup_prompt_not_required_when_no_local_secret() {
     // User never used encryption: no local account secret, server has no
@@ -1013,103 +597,6 @@ fn backup_prompt_not_required_when_server_backup_present() {
     crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
     let payload = payload_with_inferred_active_series(vec![recovery_hpke_backup()]);
     assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
-}
-
-#[test]
-fn mls_history_successor_chains_onto_previous_tail() {
-    // §7.10 continuous backup: the n+1-th upload for a Realm must extend
-    // the SAME series (inherited series_id, seq+1, supersedes +
-    // supersedes_digest over the canonical predecessor) instead of opening
-    // a parallel genesis series.
-    let env_v1 = history_envelope(FIRST_REALM_ID, "g-a", 1, ACCOUNT_SECRET);
-    let genesis = history_body(&env_v1);
-    // Genesis shape: fresh series, seq 0, no predecessor fields.
-    assert_eq!(genesis["series_seq"], 0);
-    assert!(genesis.get("supersedes").is_none());
-    assert!(genesis.get("supersedes_digest").is_none());
-
-    let env_v2 = history_envelope(FIRST_REALM_ID, "g-a", 2, ACCOUNT_SECRET);
-    let predecessor: arkret_sdk::KeyBackup = serde_json::from_value(genesis.clone()).unwrap();
-    let successor = env_v2
-        .to_key_backup_successor_body(
-            "ak:backup:01964137-0000-7000-8000-000000000123",
-            ACTOR,
-            DEVICE,
-            &crate::mls::runtime::derive_mls_history_backup_key(ACCOUNT_SECRET).unwrap(),
-            &predecessor,
-            backup_frontier_ref(),
-        )
-        .unwrap();
-
-    assert_eq!(successor.series_id.as_str(), backup_series_id(&genesis));
-    assert_eq!(successor.series_seq, 1);
-    assert_eq!(
-        successor
-            .supersedes
-            .as_ref()
-            .map(ToString::to_string)
-            .as_deref(),
-        genesis.get("backup_id").and_then(Value::as_str)
-    );
-    assert_eq!(
-        successor.supersedes_digest.as_deref().unwrap(),
-        series_supersedes_digest(&genesis).unwrap(),
-        "supersedes_digest must be the canonical sha256 of the predecessor \
-         envelope without auth_data.signature (soland recomputes and 409s \
-         on mismatch)"
-    );
-    // Still a valid mls_history envelope after the successor mutation.
-    validate_wire_envelope(&key_backup_wire(&successor), BackupKind::MlsHistory).unwrap();
-    assert_eq!(
-        crate::mls::runtime::decode_mls_history_backup_envelope(&successor, ACCOUNT_SECRET)
-            .unwrap(),
-        env_v2
-    );
-}
-
-#[test]
-fn mls_history_tail_selection_uses_the_active_series_tail() {
-    let series_a = "ak:backup_series:01964137-0000-7000-8000-0000000000a0";
-    let env_a = history_envelope(FIRST_REALM_ID, "g-a", 1, ACCOUNT_SECRET);
-    let mut a0 = history_body(&env_a);
-    a0["backup_id"] = serde_json::json!("ak:backup:a0");
-    a0["series_id"] = serde_json::json!(series_a);
-    a0["series_seq"] = serde_json::json!(0);
-    let env_a2 = history_envelope(FIRST_REALM_ID, "g-a", 2, ACCOUNT_SECRET);
-    let mut a1 = history_body(&env_a2);
-    a1["backup_id"] = serde_json::json!("ak:backup:a1");
-    a1["series_id"] = serde_json::json!(series_a);
-    a1["series_seq"] = serde_json::json!(1);
-    let env_b = history_envelope(OTHER_REALM_ID, "g-b", 5, ACCOUNT_SECRET);
-    let mut b0 = history_body(&env_b);
-    b0["backup_id"] = serde_json::json!("ak:backup:b0");
-    b0["series_id"] = serde_json::json!(series_a);
-    // Non-history classes must never be selected as history tails.
-    let account = wrap();
-    let payload = serde_json::json!({
-        "active_series": [active_series_record("mls_history", series_a)],
-        "backups": [a0, a1.clone(), b0.clone(), account]
-    });
-
-    // Per-Realm chaining target: realm a -> highest-seq link a1; realm b
-    // -> its genesis; unknown realm -> none.
-    let tail_a = select_mls_history_tail_for_realm(&payload, FIRST_REALM_ID).unwrap();
-    assert_eq!(tail_a["backup_id"], "ak:backup:a1");
-    let tail_b = select_mls_history_tail_for_realm(&payload, OTHER_REALM_ID).unwrap();
-    assert_eq!(tail_b["backup_id"], "ak:backup:b0");
-    assert!(select_mls_history_tail_for_realm(&payload, PROMPT_REALM_ID).is_none());
-
-    // Restore-side quota guard: only series tails survive the filter.
-    let tails = mls_history_series_tail_ids(&payload);
-    assert!(tails.contains("ak:backup:a1"));
-    assert!(
-        !tails.contains("ak:backup:b0"),
-        "one active series has exactly one fetchable tail"
-    );
-    assert!(
-        !tails.contains("ak:backup:a0"),
-        "superseded chain links must not be fetched/restored"
-    );
 }
 
 #[test]
@@ -1181,51 +668,6 @@ fn select_account_secret_fails_closed_when_active_series_is_missing() {
     });
 
     assert!(select_mls_account_secret_backup(&payload).is_none());
-}
-
-#[test]
-fn select_history_honors_active_series_record() {
-    let env_a1 = history_envelope(FIRST_REALM_ID, "g-a", 1, ACCOUNT_SECRET);
-    let mut active0 = history_body(&env_a1);
-    active0["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b0");
-    active0["series_id"] = serde_json::json!(ACTIVE_MLS_HISTORY_SERIES);
-    active0["series_seq"] = serde_json::json!(0);
-    active0["created_at"] = serde_json::json!("2026-01-01T00:00:00.000Z");
-
-    let env_a2 = history_envelope(FIRST_REALM_ID, "g-a", 2, ACCOUNT_SECRET);
-    let mut active1 = history_body(&env_a2);
-    active1["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b1");
-    active1["series_id"] = serde_json::json!(ACTIVE_MLS_HISTORY_SERIES);
-    active1["series_seq"] = serde_json::json!(1);
-    active1["created_at"] = serde_json::json!("2026-01-02T00:00:00.000Z");
-
-    let env_stale = history_envelope(FIRST_REALM_ID, "g-a", 99, ACCOUNT_SECRET);
-    let mut stale = history_body(&env_stale);
-    stale["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000b2");
-    stale["series_id"] = serde_json::json!(STALE_MLS_HISTORY_SERIES);
-    stale["series_seq"] = serde_json::json!(99);
-    stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
-
-    let payload = serde_json::json!({
-        "active_series": [
-            active_series_record("mls_history", ACTIVE_MLS_HISTORY_SERIES)
-        ],
-        "backups": [stale, active0.clone(), active1.clone()]
-    });
-
-    let histories = select_mls_history_backups(&payload);
-    assert_eq!(histories.len(), 2);
-    assert!(histories.iter().all(|body| {
-        body.get("series_id").and_then(Value::as_str) == Some(ACTIVE_MLS_HISTORY_SERIES)
-    }));
-
-    let tails = mls_history_series_tail_ids(&payload);
-    assert!(tails.contains("ak:backup:01964137-0000-7000-8000-0000000000b1"));
-    assert!(!tails.contains("ak:backup:01964137-0000-7000-8000-0000000000b0"));
-    assert!(!tails.contains("ak:backup:01964137-0000-7000-8000-0000000000b2"));
-
-    let tail = select_mls_history_tail_for_realm(&payload, FIRST_REALM_ID).unwrap();
-    assert_eq!(tail["backup_id"], active1["backup_id"]);
 }
 
 #[test]
@@ -1380,97 +822,4 @@ fn select_sidecar_honors_active_series_record() {
 
     let found = select_mls_private_plaintext_backup(&payload).expect("active sidecar present");
     assert_eq!(found["backup_id"], active["backup_id"]);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn restore_brings_back_the_sidecar_into_the_store() {
-    use arkret_sdk::{ArkretMlsIdentity, DeviceId};
-
-    // Build a real, decryptable account-secret + history backup so Step 1/2
-    // succeed and the account secret is local for the sidecar KEK source.
-    let device_a = "ak:device:01964137-0000-7000-8000-00000000000a";
-    let realm = "ak:realm:AaaP6wEtKbZ9n8ohGefTx7GpDZNmZeC2QfGwbUk55gph";
-    let identity = ArkretMlsIdentity::new_basic(
-        crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
-        DeviceId::new(device_a.to_owned()).unwrap(),
-    )
-    .unwrap();
-    let group = identity.create_group(realm.as_bytes()).unwrap();
-    let record = group.export_state_record().unwrap();
-    let history = crate::mls::persistence::encrypt_state(
-        realm,
-        &record.group_id,
-        record.epoch,
-        &serde_json::to_vec(&record).unwrap(),
-        ACCOUNT_SECRET,
-        b"deterministic-salt",
-    );
-
-    // The sidecar is encrypted under the ACCOUNT SECRET (not the passphrase).
-    let account_secret_body = wrap();
-    let account_secret_predecessor: arkret_sdk::KeyBackup =
-        serde_json::from_value(account_secret_body.clone()).unwrap();
-    let sidecar_json = serde_json::to_vec(&sample_sidecar()).unwrap();
-    let sidecar_kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
-    let sidecar_body = arkret_crypto::backup::build_key_backup_successor_envelope(
-        arkret_sdk::BackupId::new(SIDECAR_BACKUP_ID).unwrap(),
-        &account_secret_predecessor,
-        "kb_1",
-        &sidecar_kek,
-        vec![arkret_sdk::PlaintextItem {
-            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND.to_owned(),
-            secret_id: MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned(),
-            secret_b64u: B64.encode(sidecar_json),
-            secret_generation: None,
-            realm_id: None,
-            managed_principal_binding: None,
-            mls_group_id: None,
-            epoch: None,
-            first_event_id: None,
-            last_event_id: None,
-            extra: Default::default(),
-        }],
-        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        1,
-    )
-    .unwrap();
-    let sidecar_body = sign_wire_envelope(key_backup_wire(&sidecar_body));
-
-    let payload = payload_with_inferred_active_series(vec![
-        sign_wire_envelope(account_secret_body),
-        sign_wire_envelope(history_body(&history)),
-        sidecar_body,
-    ]);
-    let store = MemorySecureKeyStore::new();
-    let mut state = temp_state_store("restore-sidecar");
-
-    let report = restore_mls_history_with_passphrase_from_payload(
-        &payload, &mut state, &store, ACTOR, DEVICE, PASSPHRASE,
-    )
-    .unwrap();
-
-    assert!(report.account_secret_imported);
-    assert_eq!(report.restored, 1);
-    assert!(
-        report.private_plaintext_restored,
-        "sidecar must be restored: {:?}",
-        report.first_error
-    );
-    assert_eq!(
-        state.private_plaintext_for(
-            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-            "ak:strand:Ag0CE2EBjaYARZ8GMXa7liKkM90gtiQk9wVadXyPVDyc",
-            "body"
-        ),
-        Some("\"author body\"".to_owned())
-    );
-    assert_eq!(
-        state.private_plaintext_for(
-            "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-            "ak:strand:Ag0CE2EBjaYARZ8GMXa7liKkM90gtiQk9wVadXyPVDyc",
-            "synthesis"
-        ),
-        Some("\"author synthesis\"".to_owned())
-    );
 }

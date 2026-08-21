@@ -32,16 +32,7 @@ use serde_json::Value;
 /// function so no surface can grow a private table of cell writes.
 pub fn project_registered_cell_writes(
     event: &Event,
-) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
-    project_registered_cell_writes_with_digest_suite(
-        event,
-        arkret_sdk::canonical::DigestSuite::Sha256,
-    )
-}
-
-pub fn project_registered_cell_writes_with_digest_suite(
-    event: &Event,
-    digest_suite: arkret_sdk::canonical::DigestSuite,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
     arkret_sdk::schema::project_registered_cell_writes(event, digest_suite)
 }
@@ -50,8 +41,11 @@ pub type EventCellProjectionError = arkret_sdk::schema::EventCellContractError;
 
 /// [`project_registered_cell_writes`] adapted to the SDK's injected
 /// `CellWriteProjector` callback shape (`Result<_, String>`).
-pub fn cell_write_projector(event: &Event) -> Result<Vec<ProjectedCellWrite>, String> {
-    project_registered_cell_writes(event).map_err(|error| error.to_string())
+pub fn cell_write_projector(
+    event: &Event,
+    digest_suite: arkret_sdk::DigestSuite,
+) -> Result<Vec<ProjectedCellWrite>, String> {
+    project_registered_cell_writes(event, digest_suite).map_err(|error| error.to_string())
 }
 
 /// The registered cells an intent will write, resolved before authoring.
@@ -60,8 +54,9 @@ pub fn cell_write_projector(event: &Event) -> Result<Vec<ProjectedCellWrite>, St
 /// projection can never disagree about which cell a write names.
 pub fn pre_authoring_cell_writes(
     intent: &EventIntent,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
-    arkret_sdk::pre_authoring_cell_writes(intent)
+    arkret_sdk::pre_authoring_cell_writes(intent, digest_suite)
 }
 
 /// Every registered write of `event` that is fully determined by the signed
@@ -73,8 +68,9 @@ pub fn pre_authoring_cell_writes(
 /// observed.
 pub fn direct_registered_cell_writes(
     event: &Event,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> Result<Vec<ProjectionEffect>, EventCellProjectionError> {
-    Ok(project_registered_cell_writes(event)?
+    Ok(project_registered_cell_writes(event, digest_suite)?
         .iter()
         .filter_map(ProjectedCellWrite::as_direct)
         .collect())
@@ -597,7 +593,7 @@ pub trait EventExt {
     fn local_operation_idempotency_alias(&self) -> Option<&str>;
     fn local_operation_id(&self) -> &str;
     fn local_target_ref(&self) -> Option<&str>;
-    fn canonical_digest(&self) -> anyhow::Result<String>;
+    fn canonical_digest(&self, digest_suite: arkret_sdk::DigestSuite) -> anyhow::Result<String>;
     fn require_proof(&self) -> anyhow::Result<&EventProof>;
 }
 
@@ -655,8 +651,8 @@ impl EventExt for Event {
         self.unsigned.get(LOCAL_TARGET_REF).and_then(Value::as_str)
     }
 
-    fn canonical_digest(&self) -> anyhow::Result<String> {
-        self.event_digest()
+    fn canonical_digest(&self, digest_suite: arkret_sdk::DigestSuite) -> anyhow::Result<String> {
+        self.event_digest_with_digest_suite(digest_suite)
             .map_err(|err| anyhow::anyhow!("SDK Event digest failed: {err}"))
     }
 
@@ -713,7 +709,11 @@ pub(crate) fn author_intent_for_test_at_seq(
     actor_seq: u64,
 ) -> arkret_sdk::AuthoredEvent {
     intent
-        .author(actor_seq, test_authoring_hlc_at_seq(actor_seq))
+        .author_with_digest_suite(
+            actor_seq,
+            test_authoring_hlc_at_seq(actor_seq),
+            arkret_sdk::DigestSuite::Sha256,
+        )
         .expect("a test intent finalizes")
 }
 

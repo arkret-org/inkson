@@ -595,22 +595,28 @@ fn history_secrets_json_drops_malformed_entries() {
     assert!(decoded.contains_key(&5));
 }
 
-/// The SecureKeyStore key for a realm is the hardened prefix plus a stable,
-/// character-safe base64 encoding of the realm id and is classified as
+/// The SecureKeyStore key for a scope/group pair is the hardened prefix plus a
+/// stable, character-safe base64 encoding and is classified as
 /// IndexedDB-only key material.
 #[test]
 fn history_secret_store_key_is_classified_indexeddb_only() {
-    let key = mls_history_secret_store_key("ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8");
+    let key = mls_history_secret_store_key(
+        "realm\u{1f}ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8\u{1f}ak:mls:group-a",
+    );
     assert!(key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX));
     assert!(is_wasm_indexeddb_required_secret_key(&key));
     // Stable across calls (no nonce / randomness in the key derivation).
     assert_eq!(
         key,
-        mls_history_secret_store_key("ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8")
+        mls_history_secret_store_key(
+            "realm\u{1f}ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8\u{1f}ak:mls:group-a",
+        )
     );
     assert_ne!(
         key,
-        mls_history_secret_store_key("ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo")
+        mls_history_secret_store_key(
+            "realm\u{1f}ak:realm:A5NOQJGC_6RcCjXoz2IvpY-Eg3e2khXp9KQJZkiliab8\u{1f}ak:mls:group-b",
+        )
     );
 }
 

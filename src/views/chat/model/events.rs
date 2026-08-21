@@ -880,6 +880,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
         device_id,
         effective_scope.as_ref(),
         encrypted_content,
+        None,
     )
     .and_then(|content_value| display_body_from_value(&content_value))
 }
@@ -891,6 +892,7 @@ fn decrypt_chat_encrypted_content_value(
     device_id: &str,
     effective_scope: Option<&arkret_sdk::ScopeRef>,
     encrypted_content: &Value,
+    verified_sender_domain: Option<&[u8]>,
 ) -> Option<Value> {
     let envelope =
         serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(encrypted_content.clone()).ok()?;
@@ -910,15 +912,29 @@ fn decrypt_chat_encrypted_content_value(
             .ok()?;
     let payload: arkret_sdk::EncryptedPayload = serde_json::from_value(payload_value).ok()?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let plaintext = crate::mls::runtime::decrypt_application_payload_for_scope(
-        state_store,
-        secure_store.as_ref(),
-        realm_id,
-        actor_id,
-        device_id,
-        &payload,
-        effective_scope,
-    )?;
+    let plaintext = match verified_sender_domain {
+        Some(sender_domain) => {
+            crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+                state_store,
+                secure_store.as_ref(),
+                realm_id,
+                actor_id,
+                device_id,
+                &payload,
+                effective_scope,
+                sender_domain,
+            )
+        }
+        None => crate::mls::runtime::decrypt_application_payload_for_scope(
+            state_store,
+            secure_store.as_ref(),
+            realm_id,
+            actor_id,
+            device_id,
+            &payload,
+            effective_scope,
+        ),
+    }?;
     serde_json::from_slice::<Value>(&plaintext).ok()
 }
 
@@ -960,8 +976,8 @@ fn verify_chat_envelope_proof_with_local_identity(
             // (claims an `actor_id`), it asserts a sender yet ships no proof
             // — flag it as needing verification rather than render it as
             // trusted plaintext (device-lifecycle.md §8.2 fail-closed, in
-            // parity with realm_key_share / member_identity / call_signal /
-            // welcome-claim receiver gates). Only a wholly unattributed row
+            // parity with history-response / member-identity / call-signal /
+            // Welcome receiver gates). Only a wholly unattributed row
             // (no actor_id anywhere — non-persistent / system) is
             // Unattributed.
             let attributed = candidates.iter().copied().any(|candidate| {
@@ -1142,6 +1158,40 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
         };
     }
     verify_chat_envelope_proof_with_local_identity(event, decrypt_identity)
+}
+
+pub(crate) fn verified_chat_sender_domain_for_realm(
+    realm_id: &str,
+    event: &Value,
+    state_store: Option<&LocalStateStore>,
+    decrypt_identity: Option<(&str, &str)>,
+) -> Option<Vec<u8>> {
+    if verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity)
+        != ChatProofVerdict::Verified
+    {
+        return None;
+    }
+    let store = state_store?;
+    // Minimal-metadata authoring is not yet executable: the current SDK MLS
+    // BasicCredential identity is `principal#device`, while this profile
+    // requires the exact active leaf identity to equal `utf8(Event.actor_id)`.
+    // Do not manufacture actor bytes as a substitute sender domain.
+    if store.realm_projection_is_minimal_metadata(realm_id) {
+        return None;
+    }
+    let envelope = message_candidates(event).into_iter().find(|candidate| {
+        candidate
+            .get("proofs")
+            .and_then(Value::as_array)
+            .is_some_and(|proofs| !proofs.is_empty())
+    })?;
+    let actor = envelope
+        .get("executed_by")
+        .or_else(|| envelope.get("actor_id"))
+        .and_then(Value::as_str)?;
+    let device = persistent_proof_sender_device(envelope, actor)?;
+    let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
+    Some(device.as_str().as_bytes().to_vec())
 }
 
 /// The §2.10.3 minimal-metadata branch: bind the Event proof to exactly one
@@ -1392,6 +1442,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     if proof_verdict == ChatProofVerdict::Rejected {
         return None;
     }
+    let verified_sender_domain = (proof_verdict == ChatProofVerdict::Verified)
+        .then(|| {
+            verified_chat_sender_domain_for_realm(realm_id, event, state_store, decrypt_identity)
+        })
+        .flatten();
     let effective_scope = candidates
         .iter()
         .find_map(|candidate| {
@@ -1492,6 +1547,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             device_id,
             effective_scope.as_ref(),
             encrypted,
+            verified_sender_domain.as_deref(),
         )
         .and_then(|content_value| display_body_from_value(&content_value))
     });
@@ -1659,11 +1715,21 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     let mut by_poll_id = std::collections::BTreeMap::<String, usize>::new();
     for event in events {
         let candidates = message_candidates(event);
-        if verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity)
-            == ChatProofVerdict::Rejected
-        {
+        let proof_verdict =
+            verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity);
+        if proof_verdict == ChatProofVerdict::Rejected {
             continue;
         }
+        let verified_sender_domain = (proof_verdict == ChatProofVerdict::Verified)
+            .then(|| {
+                verified_chat_sender_domain_for_realm(
+                    realm_id,
+                    event,
+                    state_store,
+                    decrypt_identity,
+                )
+            })
+            .flatten();
         let direct_content = poll_content_from_candidates(&candidates).cloned();
         let private_content = direct_content
             .is_none()
@@ -1697,6 +1763,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
                     device_id,
                     effective_scope.as_ref(),
                     encrypted_content,
+                    verified_sender_domain.as_deref(),
                 )
             });
         let Some(content) = direct_content

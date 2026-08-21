@@ -4,7 +4,7 @@ import {
   DEMO_REALM,
   DEMO_BOARD_SPACE,
   dismissBlockingRecoveryModal,
-  dismissRealmKeyMissingModal,
+  dismissHistoryRecoveryModal,
   refreshServer,
   gotoAndDismissRecovery,
   openDiscussion,
@@ -632,7 +632,7 @@ test("kanban hides list creation until a board exists", async ({ page }) => {
     .toContain("/board/ak:space:");
 
   await page.reload({ waitUntil: "domcontentloaded" });
-  await dismissRealmKeyMissingModal(page);
+  await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(page.getByTestId("add-column-button")).toBeVisible();
@@ -668,7 +668,7 @@ test("kanban submits canonical card-create events", async ({
   );
   expect(eventBody.payload.components).toBeUndefined();
   await page.reload({ waitUntil: "domcontentloaded" });
-  await dismissRealmKeyMissingModal(page);
+  await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await expect(page.getByTestId("kanban-board-grid")).toContainText(

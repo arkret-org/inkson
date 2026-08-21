@@ -309,7 +309,9 @@ fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
 
     let mut secure_writer = LocalStateStore::with_path(temp_state_path("e2ee-current-writer"));
     secure_writer.switch_active_account(actor);
-    secure_writer.save_mls_snapshot(realm, current.clone());
+    secure_writer
+        .save_mls_snapshot(realm, current.clone())
+        .unwrap();
     secure_writer
         .persist_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
@@ -317,7 +319,7 @@ fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
     let local_path = temp_state_path("e2ee-stale-local");
     let mut reloaded = LocalStateStore::with_path(local_path);
     reloaded.switch_active_account(actor);
-    reloaded.save_mls_snapshot(realm, stale.clone());
+    reloaded.save_mls_snapshot(realm, stale.clone()).unwrap();
     assert_eq!(reloaded.mls_snapshot_for(realm), Some(stale));
     assert!(
         reloaded
@@ -342,7 +344,7 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
     {
         let mut writer = LocalStateStore::with_path(path.clone());
         writer.switch_active_account(actor);
-        writer.save_mls_snapshot(realm, base.clone());
+        writer.save_mls_snapshot(realm, base.clone()).unwrap();
         writer.advance_mls_receive_chain(realm, advanced.clone(), digest, b"interrupted plaintext");
         assert_eq!(writer.mls_snapshot_for(realm), Some(advanced.clone()));
         assert_eq!(
@@ -394,10 +396,12 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
     {
         let mut writer = LocalStateStore::with_path(path.clone());
         writer.switch_active_account(actor);
-        writer.save_mls_snapshot(
-            realm,
-            encrypt_state(realm, "abcd", 7, b"base", "profile", b"salt"),
-        );
+        writer
+            .save_mls_snapshot(
+                realm,
+                encrypt_state(realm, "abcd", 7, b"base", "profile", b"salt"),
+            )
+            .unwrap();
         writer.advance_mls_receive_chain(
             realm,
             encrypt_state(realm, "abcd", 7, b"advanced", "profile", b"salt"),

@@ -43,11 +43,14 @@ pub(crate) fn note_e2ee_submit_refusal(
     if !crate::api_error::is_mls_governance_binding_stale_error(error) {
         return false;
     }
-    state_store.write().record_mls_coverage_stale(
+    if let Err(error) = state_store.write().record_mls_coverage_stale(
         realm_id.to_owned(),
         circle_id,
         &error.to_string(),
-    );
+    ) {
+        tracing::warn!(realm = %realm_id, %error, "refusing to persist an invalid MLS coverage scope");
+        return false;
+    }
     true
 }
 
@@ -231,8 +234,12 @@ pub(crate) async fn ensure_mls_governance_coverage(
             .map_err(|error| {
                 format!("MLS coverage repair accepted but reference persistence failed: {error}")
             })?;
-        store.save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle_id, next_snapshot);
-        store.clear_mls_coverage_stale(realm_id, circle_id);
+        store.save_mls_snapshot_for_effective_scope(
+            realm_id.to_owned(),
+            circle_id,
+            next_snapshot,
+        )?;
+        store.clear_mls_coverage_stale(realm_id, circle_id)?;
     }
     tracing::info!(
         realm = %realm_id,
@@ -263,7 +270,9 @@ mod tests {
     fn coverage_repair_needs_both_a_refusal_and_local_group_material() {
         let mut store = temp_store("pending");
         assert!(pending_mls_coverage_repairs(&store, REALM).is_empty());
-        store.record_mls_coverage_stale(REALM, None, "mls_governance_binding_stale: ...");
+        store
+            .record_mls_coverage_stale(REALM, None, "mls_governance_binding_stale: ...")
+            .unwrap();
         // Still not repairable: without group material there is nothing to
         // commit from, and the creator bootstrap owns that step.
         assert!(pending_mls_coverage_repairs(&store, REALM).is_empty());
@@ -273,8 +282,12 @@ mod tests {
     #[test]
     fn circle_scopes_are_tracked_as_their_own_repairs() {
         let mut store = temp_store("scopes");
-        store.record_mls_coverage_stale(REALM, None, "realm-default");
-        store.record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle");
+        store
+            .record_mls_coverage_stale(REALM, None, "realm-default")
+            .unwrap();
+        store
+            .record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle")
+            .unwrap();
         // Keyed by effective scope, but each record still names its Realm so
         // the Realm's MLS effect can find the Circle group it has to repair.
         let mut scopes = store.stale_mls_coverage_scopes(REALM);
@@ -290,25 +303,31 @@ mod tests {
     #[test]
     fn clearing_is_scoped_and_idempotent() {
         let mut store = temp_store("clear");
-        store.record_mls_coverage_stale(REALM, None, "first");
+        store
+            .record_mls_coverage_stale(REALM, None, "first")
+            .unwrap();
         assert_eq!(
             store.mls_coverage_stale_reason(REALM, None).as_deref(),
             Some("first")
         );
         // Last writer wins so the stored message always names the governance
         // Seals the receiver is currently missing.
-        store.record_mls_coverage_stale(REALM, None, "second");
+        store
+            .record_mls_coverage_stale(REALM, None, "second")
+            .unwrap();
         assert_eq!(
             store.mls_coverage_stale_reason(REALM, None).as_deref(),
             Some("second")
         );
-        store.clear_mls_coverage_stale(REALM, None);
-        store.clear_mls_coverage_stale(REALM, None);
+        store.clear_mls_coverage_stale(REALM, None).unwrap();
+        store.clear_mls_coverage_stale(REALM, None).unwrap();
         assert!(store.mls_coverage_stale_reason(REALM, None).is_none());
         // A Circle-scoped group is a separate MLS group with its own
         // accumulator; clearing the Realm-default scope must not touch it.
-        store.record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle");
-        store.clear_mls_coverage_stale(REALM, None);
+        store
+            .record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle")
+            .unwrap();
+        store.clear_mls_coverage_stale(REALM, None).unwrap();
         assert_eq!(
             store
                 .mls_coverage_stale_reason(REALM, Some("ak:circle:demo"))
@@ -322,16 +341,20 @@ mod tests {
         let mut store = temp_store("dedup-hint");
         assert_eq!(mls_coverage_repair_dedup_hint(&store, REALM), "");
 
-        store.record_mls_coverage_stale(REALM, None, "realm-default");
+        store
+            .record_mls_coverage_stale(REALM, None, "realm-default")
+            .unwrap();
         assert_eq!(mls_coverage_repair_dedup_hint(&store, REALM), "realm");
 
-        store.record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle");
+        store
+            .record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle")
+            .unwrap();
         assert_eq!(
             mls_coverage_repair_dedup_hint(&store, REALM),
             "ak:circle:demo,realm"
         );
 
-        store.clear_mls_coverage_stale(REALM, None);
+        store.clear_mls_coverage_stale(REALM, None).unwrap();
         assert_eq!(
             mls_coverage_repair_dedup_hint(&store, REALM),
             "ak:circle:demo"

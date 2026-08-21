@@ -361,9 +361,22 @@ pub fn DurabilityPolicyEditor(
                                 return;
                             }
                         };
+                        let Some(digest_suite) = state_store
+                            .read()
+                            .trusted_mls_governance_checkpoint(&realm_id)
+                            .map(|checkpoint| checkpoint.live_digest_suite)
+                        else {
+                            status.set(
+                                tr("realm_admin.durability_submit_failed").replace(
+                                    "{error}",
+                                    "Realm has no verified governance checkpoint",
+                                ),
+                            );
+                            return;
+                        };
                         status.set(tr("realm_admin.durability_submitting"));
                         let result = with_event_submitter(&base, session, |sub| async move {
-                            crate::transport::realm_write::set_realm_durability_policy(&sub, &realm_id, &actor_id, &policy, revision)
+                            crate::transport::realm_write::set_realm_durability_policy(&sub, &realm_id, &actor_id, digest_suite, &policy, revision)
                                 .await
                         })
                         .await;

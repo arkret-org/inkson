@@ -127,18 +127,17 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
                 "managed recovery MLS state record metadata does not match its keybag item"
             ));
         }
-        let owner_id = if let Some(binding) = &item.managed_principal_binding {
-            if binding.controller_id != actor_core_id
-                || binding.principal_control_realm_id.as_str() != realm_id
-            {
-                return Err(anyhow!(
-                    "managed recovery binding does not match controller or PCR"
-                ));
-            }
-            binding.managed_principal_id.to_string()
-        } else {
-            actor_id.to_owned()
-        };
+        let binding = item.managed_principal_binding.as_ref().ok_or_else(|| {
+            anyhow!("managed Agent PCR recovery item has no managed_principal_binding")
+        })?;
+        if binding.controller_id != actor_core_id
+            || binding.principal_control_realm_id.as_str() != realm_id
+        {
+            return Err(anyhow!(
+                "managed recovery binding does not match controller or PCR"
+            ));
+        }
+        let owner_id = binding.managed_principal_id.to_string();
         let epoch_floor = crate::mls::runtime::mls_restore_epoch_floor(state_store, &realm_id);
         if epoch < epoch_floor {
             return Err(anyhow!(
@@ -178,113 +177,14 @@ fn restore_managed_agent_pcr_history_with_recovery_key(
             &secret,
             &state.salt,
         );
-        state_store.save_mls_snapshot(state.realm_id.clone(), snapshot);
+        state_store
+            .save_mls_snapshot(state.realm_id.clone(), snapshot)
+            .map_err(anyhow::Error::msg)?;
     }
     Ok(decoded.len())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum MlsHistoryLocalStatus {
-    ServerBackupDecodeFailed(String),
-    ServerEnvelopeDecryptFailed {
-        realm_id: String,
-    },
-    LocalSnapshotMissing {
-        realm_id: String,
-    },
-    GroupMismatch {
-        realm_id: String,
-        server_group_id: String,
-        local_group_id: String,
-    },
-    EpochBehind {
-        realm_id: String,
-        server_epoch: u64,
-        local_epoch: u64,
-    },
-    LocalSnapshotDecryptFailed {
-        realm_id: String,
-    },
-    Current {
-        realm_id: String,
-        group_id: String,
-        server_epoch: u64,
-        local_epoch: u64,
-    },
-}
-
-impl MlsHistoryLocalStatus {
-    fn needs_restore(&self) -> bool {
-        !matches!(self, Self::Current { .. })
-    }
-}
-
-fn mls_history_backup_local_status(
-    body: &Value,
-    state_store: &crate::state::LocalStateStore,
-    local_secret: &str,
-) -> MlsHistoryLocalStatus {
-    let backup = match crate::mls::runtime::parse_mls_history_backup(body) {
-        Ok(backup) => backup,
-        Err(error) => {
-            return MlsHistoryLocalStatus::ServerBackupDecodeFailed(error.user_message());
-        }
-    };
-    let envelope =
-        match crate::mls::runtime::decode_mls_history_backup_envelope(&backup, local_secret) {
-            Ok(envelope) => envelope,
-            Err(error) => {
-                return MlsHistoryLocalStatus::ServerBackupDecodeFailed(error.user_message());
-            }
-        };
-    // P0 fork guard: verify the local secret can actually open the SERVER's
-    // history ciphertext. A new device's Welcome bootstrap mints a fresh random
-    // account/device-snapshot secret when none exists yet, then saves a local
-    // snapshot encrypted under that random secret. That local snapshot will
-    // always self-decrypt, so testing only the local snapshot (as we did below)
-    // cannot tell a genuinely-recovered secret apart from a forked random one.
-    // If the local secret fails to decrypt this server backup, the device has
-    // forked from the account-secret recovery chain and MUST be prompted to
-    // unlock/import before it pollutes the chain with its own history backups.
-    // (Backups this same device uploaded under the random secret still decrypt,
-    // so we rely on `.any()` across the full server set to catch a sibling
-    // device's backup made under the real account secret.)
-    if crate::mls::persistence::decrypt_envelope(&envelope, local_secret).is_err() {
-        return MlsHistoryLocalStatus::ServerEnvelopeDecryptFailed {
-            realm_id: envelope.realm_id,
-        };
-    }
-    let Some(local_snapshot) = state_store.mls_snapshot_for(&envelope.realm_id) else {
-        return MlsHistoryLocalStatus::LocalSnapshotMissing {
-            realm_id: envelope.realm_id,
-        };
-    };
-    if local_snapshot.group_id != envelope.group_id {
-        return MlsHistoryLocalStatus::GroupMismatch {
-            realm_id: envelope.realm_id,
-            server_group_id: envelope.group_id,
-            local_group_id: local_snapshot.group_id,
-        };
-    }
-    if local_snapshot.epoch < envelope.epoch {
-        return MlsHistoryLocalStatus::EpochBehind {
-            realm_id: envelope.realm_id,
-            server_epoch: envelope.epoch,
-            local_epoch: local_snapshot.epoch,
-        };
-    }
-    if crate::mls::persistence::decrypt_envelope(&local_snapshot, local_secret).is_err() {
-        return MlsHistoryLocalStatus::LocalSnapshotDecryptFailed {
-            realm_id: envelope.realm_id,
-        };
-    }
-    MlsHistoryLocalStatus::Current {
-        realm_id: envelope.realm_id,
-        group_id: envelope.group_id,
-        server_epoch: envelope.epoch,
-        local_epoch: local_snapshot.epoch,
-    }
-}
+const PORTABLE_HISTORY_PENDING: &str = "portable MLS history restore is not ready: history_secret_segment authorization requires complete accepted activation views";
 
 /// Decide whether the app should ask the user for their Recovery Key to unlock
 /// MLS history.
@@ -297,7 +197,7 @@ fn mls_history_backup_local_status(
 /// stale, or undecryptable.
 pub fn mls_restore_prompt_required(
     list_payload: &Value,
-    state_store: &crate::state::LocalStateStore,
+    _state_store: &crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
     device_id: &str,
@@ -314,137 +214,39 @@ pub fn mls_restore_prompt_required(
         );
         return false;
     };
-    let account_backup_id = account_secret_backup
-        .get("backup_id")
-        .and_then(Value::as_str)
-        .unwrap_or("<missing>");
-    let account_backup_device = account_secret_backup
-        .get("device_id")
-        .and_then(Value::as_str)
-        .unwrap_or("<missing>");
-    let (account_secret_verified, verification_error) =
-        match crate::mls::runtime::account_mls_secret_verified(secure_store, actor_id) {
-            Ok(verified) => (verified, String::new()),
-            Err(error) => (false, error.to_string()),
-        };
-    let local_secret_result =
-        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id);
-    let (local_secret, local_secret_error) = match local_secret_result {
-        Ok(secret) if !secret.trim().is_empty() => (Some(secret), String::new()),
-        Ok(_) => (None, "empty local account secret".to_owned()),
-        Err(error) => (None, error.to_string()),
-    };
-    let all_history_backups = select_mls_history_backups(list_payload);
-    let history_backups = all_history_backups
-        .iter()
-        .filter(|body| is_local_secret_mls_history_backup(body))
-        .cloned()
-        .collect::<Vec<_>>();
-    let alternate_recovery_history_backup_count = all_history_backups
-        .len()
-        .saturating_sub(history_backups.len());
-    let local_snapshot_count = state_store.mls_snapshots().len();
-    let Some(local_secret) = local_secret else {
-        tracing::warn!(
-            target: "recovery_diag",
-            actor_id,
-            device_id,
-            account_backup_id,
-            account_backup_device,
-            account_secret_verified,
-            verification_error,
-            local_secret_error,
-            history_backup_count = all_history_backups.len(),
-            local_secret_history_backup_count = history_backups.len(),
-            alternate_recovery_history_backup_count,
-            local_snapshot_count,
-            required = true,
-            reason = "local_account_secret_missing",
-            "MLS restore prompt decision v2"
-        );
-        return true;
-    };
-    let history_statuses = history_backups
-        .iter()
-        .map(|body| {
-            let backup_id = body
-                .get("backup_id")
-                .and_then(Value::as_str)
-                .unwrap_or("<missing>");
-            format!(
-                "{backup_id}:{:?}",
-                mls_history_backup_local_status(body, state_store, &local_secret)
-            )
-        })
-        .collect::<Vec<_>>();
-    if account_secret_verified {
-        let required = history_backups.iter().any(|body| {
-            mls_history_backup_local_status(body, state_store, &local_secret).needs_restore()
-        });
-        tracing::warn!(
-            target: "recovery_diag",
-            actor_id,
-            device_id,
-            account_backup_id,
-            account_backup_device,
-            account_secret_verified,
-            verification_error,
-            history_backup_count = all_history_backups.len(),
-            local_secret_history_backup_count = history_backups.len(),
-            alternate_recovery_history_backup_count,
-            local_snapshot_count,
-            history_statuses = ?history_statuses,
-            required,
-            reason = if required { "verified_history_gap" } else { "verified_history_current" },
-            "MLS restore prompt decision v2"
-        );
-        return required;
-    }
-    // A local secret may have been generated speculatively by fresh-device
-    // bootstrap before backup discovery. Presence alone does not prove that it
-    // belongs to the server recovery chain. Usually a successful upload/import
-    // sets the verified marker. There is one legitimate race: first-Realm
-    // creation uploads its current local history and account-secret backup
-    // before the upload path can persist that marker. If this same device
-    // authored the account backup and at least one server history backup is
-    // already current and decryptable locally, those facts are equivalent
-    // readiness proof and the first device must not be shown a restore modal.
-    //
-    // Keep failing closed for an empty history set or a backup authored by a
-    // different device. Those are the speculative fresh-device cases where the
-    // local secret still cannot be tied to the server recovery chain.
-    let same_device_authored_account_backup = account_backup_device == device_id;
-    let all_history_current = !history_backups.is_empty()
-        && history_backups.iter().all(|body| {
-            !mls_history_backup_local_status(body, state_store, &local_secret).needs_restore()
-        });
-    let required = !(same_device_authored_account_backup && all_history_current);
-    let reason = if !same_device_authored_account_backup {
-        "unverified_account_backup_other_device"
-    } else if history_backups.is_empty() {
-        "unverified_history_missing"
-    } else if !all_history_current {
-        "unverified_history_gap"
-    } else {
-        "unverified_same_device_history_current"
-    };
+    let account_secret_present =
+        crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
+            .ok()
+            .flatten()
+            .is_some();
+    let account_secret_verified =
+        crate::mls::runtime::account_mls_secret_verified(secure_store, actor_id).unwrap_or(false);
+    let portable_history_pending = select_local_secret_mls_history_backups(list_payload)
+        .into_iter()
+        .next()
+        .is_some();
+    let required = !account_secret_present || !account_secret_verified || portable_history_pending;
     tracing::warn!(
         target: "recovery_diag",
         actor_id,
         device_id,
-        account_backup_id,
-        account_backup_device,
+        account_backup_id = account_secret_backup
+            .get("backup_id")
+            .and_then(|value| value.as_str())
+            .unwrap_or("<missing>"),
+        account_secret_present,
         account_secret_verified,
-        verification_error,
-        history_backup_count = all_history_backups.len(),
-        local_secret_history_backup_count = history_backups.len(),
-        alternate_recovery_history_backup_count,
-        local_snapshot_count,
-        history_statuses = ?history_statuses,
-        same_device_authored_account_backup,
-        all_history_current,
+        portable_history_pending,
         required,
-        reason,
+        reason = if portable_history_pending {
+            "portable_history_capability_pending"
+        } else if !account_secret_present {
+            "local_account_secret_missing"
+        } else if !account_secret_verified {
+            "local_account_secret_unverified"
+        } else {
+            "account_secret_ready"
+        },
         "MLS restore prompt decision v2"
     );
     required
@@ -1373,25 +1175,15 @@ fn restore_history_and_sidecar(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     actor_id: &str,
-    device_id: &str,
+    _device_id: &str,
     report: &mut RestoreReport,
 ) {
-    for body in select_local_secret_mls_history_backups(list_payload) {
-        match crate::mls::runtime::restore_mls_history_backup_with_device_snapshot(
-            state_store,
-            secure_store,
-            actor_id,
-            device_id,
-            &body,
-        ) {
-            Ok(_) => report.restored += 1,
-            Err(err) => {
-                report.failed += 1;
-                if report.first_error.is_none() {
-                    report.first_error = Some(err.user_message());
-                }
-            }
-        }
+    let portable_history_count = select_local_secret_mls_history_backups(list_payload).len();
+    if portable_history_count > 0 {
+        report.failed = report.failed.saturating_add(portable_history_count);
+        report
+            .first_error
+            .get_or_insert_with(|| PORTABLE_HISTORY_PENDING.to_owned());
     }
 
     if let Some(sidecar_body) = select_mls_private_plaintext_backup(list_payload) {
@@ -1437,8 +1229,8 @@ fn restore_private_plaintext_sidecar(
 ///   1. Fetch the server's `mls_account_secret` backup when present, decrypt it with `passphrase`,
 ///      and replace the local account key with it. This also repairs stale local secrets left by
 ///      incomplete bootstraps.
-///   2. List every `mls_history` backup and restore each one via
-///      [`crate::mls::runtime::restore_mls_history_backup_with_device_snapshot`].
+///   2. Refuse portable full group snapshots until the typed activation-evidence restore path is
+///      available.
 ///
 /// This is the function the recovery UI / a future "unlock MLS" prompt calls
 /// once the user has supplied the passphrase. Returns per-backup counts.

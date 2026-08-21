@@ -139,8 +139,12 @@ pub async fn verify_recovery_authority_evidence(
     }
     let create = evidence.pcr_genesis_unit.create();
     let authorize = evidence.pcr_genesis_unit.founding_authorize();
-    let create_digest = arkret_sdk::Hash::new(create.event_digest()?)?;
-    let authorize_digest = arkret_sdk::Hash::new(authorize.event_digest()?)?;
+    let create_digest = arkret_sdk::Hash::new(
+        create.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+    )?;
+    let authorize_digest = arkret_sdk::Hash::new(
+        authorize.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+    )?;
     if !evidence.bootstrap_seal.delta.contains(&create_digest)
         || !evidence.bootstrap_seal.delta.contains(&authorize_digest)
         || !evidence
@@ -159,13 +163,21 @@ pub async fn verify_recovery_authority_evidence(
         .events_resolve(&arkret_sdk::EventsResolveRequestBody {
             event_ids: vec![create.event_id.clone(), authorize.event_id.clone()],
             event_digests: vec![create_digest, authorize_digest],
-            seal_refs: vec![evidence.bootstrap_seal.id.clone()],
             include_payload: Some(true),
+            history_traversal_access: None,
+            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
+        })
+        .await?;
+    let resolved_seals = http
+        .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
+            realm_id: evidence.bootstrap_seal.realm_id.clone(),
+            seal_refs: vec![evidence.bootstrap_seal.id.clone()],
+            history_traversal_access: None,
         })
         .await?;
     if !resolved.events.iter().any(|event| event == create)
         || !resolved.events.iter().any(|event| event == authorize)
-        || !resolved
+        || !resolved_seals
             .seals
             .iter()
             .any(|seal| seal == &evidence.bootstrap_seal)
@@ -534,9 +546,15 @@ async fn publish_recovery_policy(
     let submitter = api.event_submitter()?;
     let event = submitter.author_for_direct_submission(&event).await?;
     let http = api.sdk_http_client()?;
-    crate::authorization_lease::ensure_for_events(&http, std::slice::from_ref(event.event()))
-        .await?;
-    let submission = crate::authorization_lease::delayed_initial_submission(&http, &event).await?;
+    crate::authorization_lease::ensure_for_events(
+        &http,
+        std::slice::from_ref(event.event()),
+        &[event.digest_suite()],
+    )
+    .await?;
+    let submission =
+        crate::authorization_lease::delayed_initial_submission(&http, &event, event.digest_suite())
+            .await?;
     let request = arkret_sdk::RecoveryPolicyPublishRequest {
         event: submission.event,
         authorization_lease: submission
@@ -630,7 +648,9 @@ async fn submit_first_recovery_policy_seal(
         )
         .map_err(|error| anyhow::anyhow!("sign recovery-policy successor Seal: {error}"))?;
     let expected_id = seal.id.clone();
-    let expected_digest = arkret_sdk::Hash::new(policy_event.event_digest()?)?;
+    let expected_digest = arkret_sdk::Hash::new(
+        policy_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+    )?;
     let expected_state_root = seal.state_root.clone();
     let outcome = http.events_submit_seal(&seal).await?;
     if outcome.seal_id != expected_id

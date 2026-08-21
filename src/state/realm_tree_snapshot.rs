@@ -291,13 +291,38 @@ impl LocalStateStore {
             .and_then(crate::realm_tree::realm_projection_content_scheme)
     }
 
-    /// The effective `history_visibility` from the current projected facet
-    /// state, with materialized/create snapshots used only as fallbacks.
-    pub fn realm_history_visibility(&self, realm_id: &str) -> Option<String> {
+    /// The create-locked content scheme for one independent Circle MLS group.
+    pub fn circle_content_scheme(&self, realm_id: &str, circle_id: &str) -> Option<String> {
         self.load()
             .realm_tree_projections
             .get(realm_id.trim())
-            .and_then(crate::realm_tree::realm_projection_history_visibility)
+            .and_then(|body| {
+                crate::realm_tree::circle_projection_content_scheme(body, circle_id.trim())
+            })
+    }
+
+    /// The create-locked durability selector for one independent Circle MLS
+    /// group, resolved from the accepted Circle create projection.
+    pub fn circle_durability_policy(
+        &self,
+        realm_id: &str,
+        circle_id: &str,
+    ) -> Option<arkret_sdk::CircleDurabilityPolicy> {
+        self.load()
+            .realm_tree_projections
+            .get(realm_id.trim())
+            .and_then(|body| {
+                crate::realm_tree::circle_projection_durability_policy(body, circle_id.trim())
+            })
+    }
+
+    /// The effective `history_access` from the current projected facet
+    /// state, with materialized/create snapshots used only as fallbacks.
+    pub fn realm_history_access(&self, realm_id: &str) -> Option<String> {
+        self.load()
+            .realm_tree_projections
+            .get(realm_id.trim())
+            .and_then(crate::realm_tree::realm_projection_history_access)
     }
 
     /// True when `realm_id`'s effective durability policy is RRK-active: a

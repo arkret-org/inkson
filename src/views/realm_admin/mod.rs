@@ -10,7 +10,6 @@
 mod admin_panel;
 mod capabilities;
 mod durability;
-mod durability_recovery;
 mod members_panel;
 mod metadata;
 mod organization;
@@ -20,10 +19,7 @@ mod section;
 pub use admin_panel::RealmAdminPanel;
 pub use members_panel::RealmMembersPanel;
 pub(crate) use members_panel::{
-    mls_admission_candidate_realms_for_actor, parse_realm_key_request_envelope,
-    pending_history_request_dedup_key, realm_history_share_source_authorization_ref,
-    realm_key_request_answer_dedup_key, realm_key_source_ref_str,
-    reconcile_mls_admissions_for_realm, request_history_keys_for_realm, share_history_to_requester,
+    mls_admission_candidate_realms_for_actor, reconcile_mls_admissions_for_realm,
     submit_mls_admission_for_invitees,
 };
 pub use organization::{RealmOrganizationPanel, ServerAdminSignal, is_server_admin};

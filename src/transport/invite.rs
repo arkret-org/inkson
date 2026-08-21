@@ -274,8 +274,9 @@ impl crate::transport::TransportClient {
             .events_resolve(&arkret_sdk::EventsResolveRequestBody {
                 event_ids: vec![event_id.clone()],
                 event_digests: Vec::new(),
-                seal_refs: Vec::new(),
                 include_payload: Some(true),
+                history_traversal_access: None,
+                max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
             })
             .await?;
         let event = resolved

@@ -70,7 +70,7 @@ pub(crate) struct KanbanCard {
     pub(crate) primary_strand_id: String,
     pub(crate) locked_strand: Option<LockedStrand>,
     pub(crate) external_visibility: String,
-    pub(crate) history_visibility: String,
+    pub(crate) history_access: String,
     /// Explicit Strand security state from projection metadata. `None`
     /// means the Strand inherits the active Realm / Space posture.
     pub(crate) security_encrypted: Option<bool>,

@@ -527,6 +527,8 @@ pub fn build_requested_scope_disclosure_for_pairing(
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
             event_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
+            signer_resolution_evidence_ref: None,
+            signer_resolution_evidence_digest: None,
             created_at: issued_at,
             domain: None,
             audience: None,

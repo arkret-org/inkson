@@ -22,12 +22,13 @@ pub(crate) fn select_join_candidate(
     resolved
         .join_candidates
         .iter()
+        .filter(|candidate| candidate.validate().is_ok())
         .filter(|candidate| candidate.realm_id.as_str() == realm_id.as_str())
         .filter(|candidate| {
             candidate
                 .operations
                 .iter()
-                .any(|op| op == ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT)
+                .any(|op| op == ServiceOperationId::PEER_EVENTS_COMMAND_SUBMIT)
         })
         .filter(|candidate| candidate.join_methods.contains(&join_method))
         .filter(|candidate| join_candidate_is_current(candidate))

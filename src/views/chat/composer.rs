@@ -2169,10 +2169,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         state_store,
                                         secure_build,
                                         &realm_for_record,
-                                        &device_for_sidecar_backup,
-                                        base.clone(),
-                                        token_for_backup_trigger.clone(),
-                                        actor_for_backup_trigger.clone(),
                                         None,
                                         mention_digests,
                                     )

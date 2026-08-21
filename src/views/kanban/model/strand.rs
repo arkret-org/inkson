@@ -172,7 +172,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
     } else {
         "No external discussions linked".to_owned()
     };
-    let history_visibility = strand_projection_field_string(strand, None, &["history_visibility"])
+    let history_access = strand_projection_field_string(strand, None, &["history_access"])
         .unwrap_or_else(|| {
             if locked_strand.is_some() {
                 "lazy_link (cross-Space)".to_owned()
@@ -262,7 +262,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
         primary_strand_id: strand.strand_id.clone(),
         locked_strand,
         external_visibility,
-        history_visibility,
+        history_access,
         security_encrypted: strand_projection_security_state(strand),
         state: CardState::Synced,
         lifecycle: strand_lifecycle_from_projection(&strand.state),

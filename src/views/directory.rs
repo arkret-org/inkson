@@ -95,8 +95,8 @@ fn realm_tree_node_from_preview(preview: arkret_models_discovery::RealmPreview) 
     if let Some(join_rule) = preview.join_rule.clone() {
         tags.insert(join_rule);
     }
-    if let Some(history_visibility) = preview.history_visibility.clone() {
-        tags.insert(history_visibility);
+    if let Some(history_access) = preview.history_access.clone() {
+        tags.insert(history_access);
     }
     if let Some(member_count_bucket) = preview.member_count_bucket.as_ref() {
         tags.insert(format!(
@@ -244,7 +244,7 @@ pub fn DirectoryPanel(
                         span {
                             crate::components::VisibilityPill {
                                 prefix: "hist".to_owned(),
-                                value: "shared_history".to_owned(),
+                                value: "all_history_for_current_members".to_owned(),
                                 kind: "history".to_owned(),
                             }
                         }
@@ -255,13 +255,13 @@ pub fn DirectoryPanel(
                     crate::components::VisibilityPillRow {
                         discoverability: Some("public".to_owned()),
                         join_rule: Some("knock".to_owned()),
-                        history_visibility: Some("world_readable".to_owned()),
+                        history_access: Some("all_history_for_current_members".to_owned()),
                     }
                     span { class: "muted", "·" }
                     crate::components::VisibilityPillRow {
                         discoverability: Some("invite_only".to_owned()),
                         join_rule: Some("restricted".to_owned()),
-                        history_visibility: Some("invited".to_owned()),
+                        history_access: Some("since_join".to_owned()),
                     }
                 }
             }

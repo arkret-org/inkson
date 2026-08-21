@@ -53,7 +53,7 @@ pub fn SetupPanel(
     let realm_alias = use_signal(String::new);
     let realm_discoverability = use_signal(|| "listed".to_owned());
     let realm_policy_join_rule = use_signal(|| "invite".to_owned());
-    let realm_policy_history_visibility = use_signal(|| "shared".to_owned());
+    let realm_policy_history_access = use_signal(|| "since_join".to_owned());
     // Spec realm-and-space.md §2.3 — `encryption_profile` and `security_class`
     // are Realm create-locked fields; default to the safe `mls_rfc9420` +
     // `standard` case.
@@ -63,9 +63,9 @@ pub fn SetupPanel(
     let realm_content_scheme = use_signal(|| "mls_exporter_aead_v1".to_owned());
     let realm_security_class = use_signal(|| "standard".to_owned());
     // Spec realm-and-space.md §2.3 advanced create-locked fields; safe defaults
-    // `restricted` / `single_did` / `sha256`.
+    // `restricted` / `sha256`. The Realm notary signer is frozen from verified
+    // Principal Server signer evidence during submission.
     let realm_federation_policy = use_signal(|| "restricted".to_owned());
-    let realm_notary_profile = use_signal(|| "single_did".to_owned());
     let realm_digest_algorithm = use_signal(|| "sha256".to_owned());
     let realm_state = use_signal(|| tr("setup.state.draft"));
     let realm_create_busy = use_signal(|| false);
@@ -106,12 +106,11 @@ pub fn SetupPanel(
                     realm_alias,
                     realm_discoverability,
                     realm_policy_join_rule,
-                    realm_policy_history_visibility,
+                    realm_policy_history_access,
                     realm_encryption_profile,
                     realm_content_scheme,
                     realm_security_class,
                     realm_federation_policy,
-                    realm_notary_profile,
                     realm_digest_algorithm,
                     realm_state,
                     realm_create_busy,

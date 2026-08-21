@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 
 pub mod agent_runtime_approval_prompt;
 pub mod avatar_uploader;
-/// D3 — generic single-flight / debounce / backoff / digest-dedupe backup-job
-/// scheduler shared by `mls_history_backup` and `mls_backup_prompt`.
+/// Generic single-flight / debounce / backoff / digest-dedupe scheduler for
+/// the private-plaintext backup job.
 pub(crate) mod backup_job_scheduler;
 /// AKP-0007 P3B.2 — Circle error queue. Producers push
 /// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
@@ -38,10 +38,6 @@ pub mod generated_avatar;
 /// Mounted once near the app shell; renders only when boot/per-Realm
 /// detection flags `needs_mls_backup` (local secret exists, no server backup).
 pub mod mls_backup_prompt;
-/// key-management.md §7.10 — continuous `mls_history` backup job: re-uploads
-/// the per-Realm group-state envelope (series successor chain) after every
-/// accepted `ak.mls.commit`, once the 24-word Recovery Key is configured.
-pub mod mls_history_backup;
 /// Account-MLS-secret auto-unlock prompt — the recovery-passphrase banner
 /// that restores encrypted history on a fresh device. Mounted once near the
 /// app shell; renders only when boot detection flags `needs_mls_unlock`.
@@ -95,10 +91,6 @@ pub(crate) use mls_backup_prompt::{
     mark_mls_recovery_backup_configured, mls_recovery_backup_configured,
     schedule_mls_private_plaintext_backup_after_encrypted_write,
 };
-pub use mls_history_backup::{MlsHistoryBackupStatus, mls_history_backup_status};
-pub(crate) use mls_history_backup::{
-    schedule_mls_history_backup_after_commit, upload_mls_history_backup_now,
-};
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
 pub use qr_share_panel::QrSharePanel;
 pub use recovery_key_setup_prompt::RecoveryKeySetupPrompt;
@@ -111,7 +103,7 @@ pub use sync_badge::{SyncBadge, SyncBadgeState};
 pub use theme_switcher::{ThemeMode, ThemeSwitcher};
 pub use verify_badges::{TrustCacheBadge, TrustCacheState, trust_cache_state};
 pub use visibility_pill::{
-    Discoverability, HistoryVisibility, JoinRule, VisibilityPill, VisibilityPillRow,
+    Discoverability, HistoryAccess, JoinRule, VisibilityPill, VisibilityPillRow,
 };
 pub use write_state::{WriteState, WriteStateIcon};
 

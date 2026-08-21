@@ -17,6 +17,7 @@
 //! Every previously-public item is re-exported here so external paths such as
 //! `crate::mls::runtime::X` keep resolving identically.
 
+mod artifact_consumer;
 mod backup;
 mod commit;
 mod errors;
@@ -29,6 +30,7 @@ mod secret;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use artifact_consumer::*;
 pub use backup::*;
 pub use commit::*;
 pub use errors::*;

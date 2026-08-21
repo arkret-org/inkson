@@ -1701,12 +1701,12 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.join_rule", "加入规则");
     dict.set("setup.axis.join_rule.question", "主体如何成为成员？");
     dict.set("setup.axis.join_rule.unset", "尚未设置加入方式。");
-    dict.set("setup.axis.history_visibility", "历史可见性");
+    dict.set("setup.axis.history_access", "历史访问");
     dict.set(
-        "setup.axis.history_visibility.question",
+        "setup.axis.history_access.question",
         "新成员可以读到哪些历史？",
     );
-    dict.set("setup.axis.history_visibility.unset", "尚未设置历史范围。");
+    dict.set("setup.axis.history_access.unset", "尚未设置历史访问范围。");
     dict.set("setup.axis.encryption", "加密");
     dict.set("setup.axis.encryption.question", "保护方式");
     dict.set("setup.axis.encryption.unset", "尚未设置加密配置。");
@@ -1741,12 +1741,6 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.axis.federation_policy.high_assurance",
         "高保障等级只允许 restricted、closed 或 quarantine 联邦。",
     );
-    dict.set("setup.axis.seal_profile", "封存配置");
-    dict.set(
-        "setup.axis.seal_profile.question",
-        "由谁为这个领域签署持久封存？",
-    );
-    dict.set("setup.axis.seal_profile.unset", "尚未设置封存配置。");
     dict.set("setup.axis.hash_profile", "哈希配置");
     dict.set(
         "setup.axis.hash_profile.question",
@@ -1755,7 +1749,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.hash_profile.unset", "尚未设置哈希配置。");
     dict.set(
         "setup.boundary.advanced_summary",
-        "高级（联邦策略 / 封存配置 / 哈希配置）",
+        "高级（联邦策略 / 哈希配置）",
     );
 
     // 初始成员。
@@ -1803,7 +1797,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.progress.seeded_members", "已初始化 {count} 位成员");
     dict.set(
         "setup.progress.canonical_policy",
-        "规范策略 {discoverability} / {join_rule} / {history_visibility}",
+        "规范策略 {discoverability} / {join_rule} / {history_access}",
     );
     dict.set("setup.progress.plaintext_services", "明文服务 {count} 个");
     dict.set("setup.progress.mls_ready_backup", "MLS 就绪；历史备份 {id}");
@@ -1912,30 +1906,18 @@ fn setup_option_strings(dict: &mut TranslationDict) {
         "即使领域可被发现，加入仍取决于策略或声明。",
     );
 
-    dict.set("setup.opt.history_visibility.world_readable", "全网可读");
+    dict.set("setup.opt.history_access.since_join", "加入后历史");
     dict.set(
-        "setup.opt.history_visibility.world_readable.hint",
-        "无需加入即可读取过往历史。仅用于有意开放的领域。",
+        "setup.opt.history_access.since_join.hint",
+        "成员只能恢复当前成员身份加入之后的历史。此状态为终态，不能再放宽。",
     );
-    dict.set("setup.opt.history_visibility.shared", "共享");
     dict.set(
-        "setup.opt.history_visibility.shared.hint",
-        "新成员可以读取那些本就打算对全领域共享的加入前历史。",
+        "setup.opt.history_access.all_history_for_current_members",
+        "当前成员可访问全部历史",
     );
-    dict.set("setup.opt.history_visibility.invited", "受邀起");
     dict.set(
-        "setup.opt.history_visibility.invited.hint",
-        "历史仅从邀请使该主体具备资格的那一刻起可见。",
-    );
-    dict.set("setup.opt.history_visibility.joined", "加入起");
-    dict.set(
-        "setup.opt.history_visibility.joined.hint",
-        "历史从主体真正成为成员时开始。",
-    );
-    dict.set("setup.opt.history_visibility.restricted", "受限");
-    dict.set(
-        "setup.opt.history_visibility.restricted.hint",
-        "过往历史严格受限；新成员只能看到策略重新披露的部分。",
+        "setup.opt.history_access.all_history_for_current_members.hint",
+        "每个当前成员都可恢复该领域保留的全部历史；以后只能单向收紧为加入后历史。",
     );
 
     dict.set("setup.opt.encryption_profile.mls_rfc9420", "加密");
@@ -1993,27 +1975,6 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set(
         "setup.opt.federation_policy.quarantine.hint",
         "接受入站但先扣留待审。出站被阻断。",
-    );
-
-    dict.set("setup.opt.anchor_profile.single_did", "单一 DID");
-    dict.set(
-        "setup.opt.anchor_profile.single_did.hint",
-        "由一个主体签署封存。最简单的配置；默认值。",
-    );
-    dict.set("setup.opt.anchor_profile.threshold", "门限");
-    dict.set(
-        "setup.opt.anchor_profile.threshold.hint",
-        "k-of-n 签名；在策略中配置参与的 DID。",
-    );
-    dict.set("setup.opt.anchor_profile.open_set", "开放集合");
-    dict.set(
-        "setup.opt.anchor_profile.open_set.hint",
-        "任何持有公证能力的人都可以签署。",
-    );
-    dict.set("setup.opt.anchor_profile.mixed", "混合");
-    dict.set(
-        "setup.opt.anchor_profile.mixed.hint",
-        "上述方式的组合——通过策略配置。",
     );
 
     dict.set("setup.opt.hash_profile.sha256", "SHA-256");

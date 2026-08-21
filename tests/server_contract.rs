@@ -829,7 +829,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             owning_organizations: Vec::new(),
             preview_ref: None,
             discoverability: Some("public".to_owned()),
-            history_visibility: None,
+            history_access: None,
             join_candidates: Vec::new(),
             as_of: Utc::now(),
             source_refs: vec!["ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned()],

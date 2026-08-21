@@ -215,7 +215,7 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         primary_strand_id: String::new(),
         locked_strand: None,
         external_visibility: String::new(),
-        history_visibility: String::new(),
+        history_access: String::new(),
         security_encrypted: None,
         state: CardState::Synced,
         lifecycle: StrandLifecycleState::Active,

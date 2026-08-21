@@ -4,12 +4,12 @@ use dioxus::prelude::*;
 use dioxus_router::Link;
 
 use super::data::{
-    ANCHOR_PROFILE_OPTIONS, CONTENT_SCHEME_OPTIONS, DISCOVERABILITY_OPTIONS,
-    ENCRYPTION_PROFILE_OPTIONS, FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS,
-    HISTORY_VISIBILITY_OPTIONS, JOIN_RULE_OPTIONS, SECURITY_CLASS_OPTIONS, option_hint,
+    CONTENT_SCHEME_OPTIONS, DISCOVERABILITY_OPTIONS, ENCRYPTION_PROFILE_OPTIONS,
+    FEDERATION_POLICY_OPTIONS, HASH_PROFILE_OPTIONS, HISTORY_ACCESS_OPTIONS, JOIN_RULE_OPTIONS,
+    SECURITY_CLASS_OPTIONS, option_hint,
 };
 use super::helpers::{
-    content_scheme_constraint_hint, history_visibility_admits_prejoin, normalize_content_scheme,
+    content_scheme_constraint_hint, history_access_admits_prejoin, normalize_content_scheme,
     parse_seed_members, plaintext_services_for_policy, policy_combination_hint,
 };
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
@@ -43,7 +43,6 @@ struct BootstrapProgressStrings {
     seeded_members: String,
     canonical_policy: String,
     plaintext_services: String,
-    mls_ready_backup: String,
     mls_ready_local: String,
     mls_admission_failed: String,
     mls_welcome_queued: String,
@@ -64,7 +63,6 @@ impl BootstrapProgressStrings {
             seeded_members: tr("setup.progress.seeded_members"),
             canonical_policy: tr("setup.progress.canonical_policy"),
             plaintext_services: tr("setup.progress.plaintext_services"),
-            mls_ready_backup: tr("setup.progress.mls_ready_backup"),
             mls_ready_local: tr("setup.progress.mls_ready_local"),
             mls_admission_failed: tr("setup.progress.mls_admission_failed"),
             mls_welcome_queued: tr("setup.progress.mls_welcome_queued"),
@@ -123,12 +121,11 @@ pub(super) fn RealmsSection(
     mut realm_alias: Signal<String>,
     mut realm_discoverability: Signal<String>,
     mut realm_policy_join_rule: Signal<String>,
-    mut realm_policy_history_visibility: Signal<String>,
+    mut realm_policy_history_access: Signal<String>,
     mut realm_encryption_profile: Signal<String>,
     mut realm_content_scheme: Signal<String>,
     mut realm_security_class: Signal<String>,
     mut realm_federation_policy: Signal<String>,
-    mut realm_notary_profile: Signal<String>,
     mut realm_digest_algorithm: Signal<String>,
     mut realm_state: Signal<String>,
     mut realm_create_busy: Signal<bool>,
@@ -142,13 +139,12 @@ pub(super) fn RealmsSection(
 
     let realm_discoverability_selected = use_memo(move || Some(realm_discoverability()));
     let realm_policy_join_rule_selected = use_memo(move || Some(realm_policy_join_rule()));
-    let realm_policy_history_visibility_selected =
-        use_memo(move || Some(realm_policy_history_visibility()));
+    let realm_policy_history_access_selected =
+        use_memo(move || Some(realm_policy_history_access()));
     let realm_encryption_profile_selected = use_memo(move || Some(realm_encryption_profile()));
     let realm_content_scheme_selected = use_memo(move || Some(realm_content_scheme()));
     let realm_security_class_selected = use_memo(move || Some(realm_security_class()));
     let realm_federation_policy_selected = use_memo(move || Some(realm_federation_policy()));
-    let realm_notary_profile_selected = use_memo(move || Some(realm_notary_profile()));
     let realm_digest_algorithm_selected = use_memo(move || Some(realm_digest_algorithm()));
 
     let active_create_step = create_step();
@@ -157,21 +153,20 @@ pub(super) fn RealmsSection(
     let alias_value = realm_alias();
     let discoverability_value = realm_discoverability();
     let join_rule_value = realm_policy_join_rule();
-    let history_visibility_value = realm_policy_history_visibility();
+    let history_access_value = realm_policy_history_access();
     let encryption_profile_value = realm_encryption_profile();
     let content_scheme_value = realm_content_scheme();
     let encryption_is_e2ee =
         crate::security_state::encryption_profile_is_encrypted(&encryption_profile_value);
     let history_requires_exporter_aead =
-        encryption_is_e2ee && history_visibility_admits_prejoin(&history_visibility_value);
+        encryption_is_e2ee && history_access_admits_prejoin(&history_access_value);
     let content_scheme_warning = content_scheme_constraint_hint(
         encryption_is_e2ee,
-        &history_visibility_value,
+        &history_access_value,
         &content_scheme_value,
     );
     let security_class_value = realm_security_class();
     let federation_policy_value = realm_federation_policy();
-    let notary_profile_value = realm_notary_profile();
     let digest_algorithm_value = realm_digest_algorithm();
     let federation_policy_open_forbidden = security_class_value == "high_assurance";
 
@@ -186,7 +181,7 @@ pub(super) fn RealmsSection(
     let current_visibility_hint = policy_combination_hint(
         &discoverability_value,
         &join_rule_value,
-        &history_visibility_value,
+        &history_access_value,
     );
     let current_policy_error = matches!(current_visibility_hint, Some(("error", _, _)));
     let basics_ready = !title_value.trim().is_empty();
@@ -406,15 +401,15 @@ pub(super) fn RealmsSection(
                                 }
                             }
                             div { class: "metric directory-axis-card",
-                                strong { {tr("setup.axis.history_visibility")} }
+                                strong { {tr("setup.axis.history_access")} }
                                 div { class: "workflow-form setup-field",
-                                    label { {tr("setup.axis.history_visibility.question")} }
+                                    label { {tr("setup.axis.history_access.question")} }
                                     Select::<String> {
-                                        "data-testid": "realm-policy-history-visibility-input",
-                                        value: Some(realm_policy_history_visibility_selected.into()),
+                                        "data-testid": "realm-policy-history-access-input",
+                                        value: Some(realm_policy_history_access_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
-                                                if history_visibility_admits_prejoin(&v)
+                                                if history_access_admits_prejoin(&v)
                                                     && crate::security_state::encryption_profile_is_encrypted(
                                                         &realm_encryption_profile(),
                                                     )
@@ -423,10 +418,10 @@ pub(super) fn RealmsSection(
                                                         "mls_exporter_aead_v1".to_owned(),
                                                     );
                                                 }
-                                                realm_policy_history_visibility.set(v);
+                                                realm_policy_history_access.set(v);
                                             }
                                         },
-                                        for (i, (option_value, label, _)) in HISTORY_VISIBILITY_OPTIONS.iter().enumerate() {
+                                        for (i, (option_value, label, _)) in HISTORY_ACCESS_OPTIONS.iter().enumerate() {
                                             SelectOption::<String> {
                                                 index: i,
                                                 value: option_value.to_string(),
@@ -436,7 +431,7 @@ pub(super) fn RealmsSection(
                                         }
                                     }
                                     div { class: "muted",
-                                        {option_hint(&HISTORY_VISIBILITY_OPTIONS, &history_visibility_value, "setup.axis.history_visibility.unset")}
+                                        {option_hint(&HISTORY_ACCESS_OPTIONS, &history_access_value, "setup.axis.history_access.unset")}
                                     }
                                 }
                             }
@@ -454,8 +449,8 @@ pub(super) fn RealmsSection(
                                                 let encrypted =
                                                     crate::security_state::encryption_profile_is_encrypted(&v);
                                                 if encrypted
-                                                    && history_visibility_admits_prejoin(
-                                                        &realm_policy_history_visibility(),
+                                                    && history_access_admits_prejoin(
+                                                        &realm_policy_history_access(),
                                                     )
                                                 {
                                                     realm_content_scheme.set(
@@ -484,7 +479,7 @@ pub(super) fn RealmsSection(
                             }
                             // encryption-and-audit.md §2.10 — `content_scheme`
                             // capability axis. Only meaningful for E2EE realms;
-                            // orthogonal to History visibility (the runtime
+                            // orthogonal to history access (the runtime
                             // delivery toggle). Default exporter-AEAD.
                             if encryption_is_e2ee {
                                 div { class: "metric directory-axis-card",
@@ -497,12 +492,12 @@ pub(super) fn RealmsSection(
                                             on_value_change: move |v: Option<String>| {
                                                 if let Some(v) = v {
                                                     if v == "mls_rfc9420"
-                                                        && history_visibility_admits_prejoin(
-                                                            &realm_policy_history_visibility(),
+                                                        && history_access_admits_prejoin(
+                                                            &realm_policy_history_access(),
                                                         )
                                                     {
-                                                        realm_policy_history_visibility
-                                                            .set("joined".to_owned());
+                                                        realm_policy_history_access
+                                                            .set("since_join".to_owned());
                                                     }
                                                     realm_content_scheme.set(v);
                                                 }
@@ -567,10 +562,12 @@ pub(super) fn RealmsSection(
 
                         // Spec realm-and-space.md §2.3 advanced
                         // fields — collapsed by default. All
-                        // three are create-locked. Defaults
-                        // (restricted / single_did / sha256)
-                        // suit the dev + small-deployment cases;
-                        // production operators tweak as needed.
+                        // two are create-locked. Defaults
+                        // (restricted / sha256) suit the dev +
+                        // small-deployment cases; production operators
+                        // tweak as needed. The notary signer is derived from
+                        // verified Principal Server evidence, not selected by
+                        // an unbacked profile string.
                         details { class: "setup-advanced",
                             "data-testid": "realm-advanced-config",
                             summary { class: "setup-advanced-summary",
@@ -606,32 +603,6 @@ pub(super) fn RealmsSection(
                                             div { class: "muted",
                                                 {tr("setup.axis.federation_policy.high_assurance")}
                                             }
-                                        }
-                                    }
-                                }
-                                div { class: "metric directory-axis-card",
-                                    strong { {tr("setup.axis.seal_profile")} }
-                                    div { class: "workflow-form setup-field",
-                                        label { {tr("setup.axis.seal_profile.question")} }
-                                        Select::<String> {
-                                            "data-testid": "realm-seal-profile-input",
-                                            value: Some(realm_notary_profile_selected.into()),
-                                            on_value_change: move |v: Option<String>| {
-                                                if let Some(v) = v {
-                                                    realm_notary_profile.set(v);
-                                                }
-                                            },
-                                            for (i, (option_value, label, _)) in ANCHOR_PROFILE_OPTIONS.iter().enumerate() {
-                                                SelectOption::<String> {
-                                                    index: i,
-                                                    value: option_value.to_string(),
-                                                    text_value: tr(label),
-                                                    {tr(label)}
-                                                }
-                                            }
-                                        }
-                                        div { class: "muted",
-                                            {option_hint(&ANCHOR_PROFILE_OPTIONS, &notary_profile_value, "setup.axis.seal_profile.unset")}
                                         }
                                     }
                                 }
@@ -765,19 +736,19 @@ pub(super) fn RealmsSection(
                                     let strings = progress_strings.clone();
                                     move |_| {
                                         let strings = strings.clone();
-                                        let history_visibility = realm_policy_history_visibility();
+                                        let history_access = realm_policy_history_access();
                                         let encryption_profile = realm_encryption_profile();
                                         let content_scheme = normalize_content_scheme(
                                             crate::security_state::encryption_profile_is_encrypted(
                                                 &encryption_profile,
                                             ),
-                                            &history_visibility,
+                                            &history_access,
                                             &realm_content_scheme(),
                                         );
                                         if let Err(error) =
                                             crate::event_builders::validate_realm_history_content_scheme_for_profile(
                                                 &encryption_profile,
-                                                &history_visibility,
+                                                &history_access,
                                                 Some(content_scheme.as_str()),
                                             )
                                         {
@@ -823,7 +794,6 @@ pub(super) fn RealmsSection(
                                         let join_rule = realm_policy_join_rule();
                                         let security_class = realm_security_class();
                                         let federation_policy = realm_federation_policy();
-                                        let notary_profile = realm_notary_profile();
                                         let digest_algorithm = realm_digest_algorithm();
                                         let seed_text = seed_members();
                                         let actor = account_did();
@@ -910,11 +880,10 @@ pub(super) fn RealmsSection(
                                                         Some(&summary),
                                                         &discoverability,
                                                         &join_rule,
-                                                        &history_visibility,
+                                                        &history_access,
                                                         &encryption_profile,
                                                         &security_class,
                                                         &federation_policy,
-                                                        &notary_profile,
                                                         &digest_algorithm,
                                                         &trust_domain,
                                                         invitees.clone(),
@@ -972,7 +941,7 @@ pub(super) fn RealmsSection(
                                                                     discoverability: discoverability.clone(),
                                                                     encryption_profile: encryption_profile.clone(),
                                                                     content_scheme: content_scheme.clone(),
-                                                                    history_visibility: history_visibility.clone(),
+                                                                    history_access: history_access.clone(),
                                                                     plaintext_visible_services: plaintext_services.clone(),
                                                                     collaboration_role: None,
                                                                     encryption_floor: projection_floor,
@@ -995,7 +964,6 @@ pub(super) fn RealmsSection(
                                                         ));
                                                         create_step.set(NewRealmStep::Done);
 
-                                                        let mut initial_mls_backup_id = None;
                                                         if crate::security_state::encryption_profile_is_encrypted(
                                                             &encryption_profile,
                                                         ) {
@@ -1005,8 +973,7 @@ pub(super) fn RealmsSection(
                                                             // an interrupted attempt (unmount / network / closed tab) is
                                                             // replayed by the per-Realm bootstrap effect instead of leaving
                                                             // the Realm permanently unable to perform encrypted writes.
-                                                            let bootstrap =
-                                                                match crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+                                                            match crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
                                                                     &api,
                                                                     state_store,
                                                                     &realm_id,
@@ -1015,7 +982,7 @@ pub(super) fn RealmsSection(
                                                                 )
                                                                 .await
                                                                 {
-                                                                    Ok(outcome) => outcome,
+                                                                    Ok(()) => {}
                                                                     Err(err) => {
                                                                         let message = BootstrapProgressStrings::fill(
                                                                             &strings.created_then_failed,
@@ -1033,34 +1000,7 @@ pub(super) fn RealmsSection(
                                                                         );
                                                                         return;
                                                                     }
-                                                                };
-                                                            if let Some(snapshot) = bootstrap.fresh_snapshot {
-                                                                // §7.10: a brand-new Realm has no prior series, so
-                                                                // this resolves to a genesis envelope — and it seeds
-                                                                // the series-tail cache so post-commit continuous
-                                                                // uploads chain successors without an extra read.
-                                                                match crate::components::upload_mls_history_backup_now(
-                                                                    &api,
-                                                                    &base,
-                                                                    &actor,
-                                                                    &device,
-                                                                    &realm_id,
-                                                                    &snapshot,
-                                                                )
-                                                                .await
-                                                                {
-                                                                    Ok(backup_id) => {
-                                                                        initial_mls_backup_id = Some(backup_id);
-                                                                    }
-                                                                    Err(err) => {
-                                                                        tracing::warn!(
-                                                                            error = %err,
-                                                                            realm = %realm_id,
-                                                                            "initial MLS history backup upload failed"
-                                                                        );
-                                                                    }
                                                                 }
-                                                            }
                                                         }
 
                                                         let mut seeded_mls_ok = 0_usize;
@@ -1102,8 +1042,8 @@ pub(super) fn RealmsSection(
                                                                 ("discoverability", discoverability.clone()),
                                                                 ("join_rule", join_rule.clone()),
                                                                 (
-                                                                    "history_visibility",
-                                                                    history_visibility.clone(),
+                                                                    "history_access",
+                                                                    history_access.clone(),
                                                                 ),
                                                             ],
                                                         ));
@@ -1116,15 +1056,7 @@ pub(super) fn RealmsSection(
                                                                 )],
                                                             ));
                                                         }
-                                                        if let Some(backup_id) = initial_mls_backup_id {
-                                                            steps.push(fill(
-                                                                &strings.mls_ready_backup,
-                                                                &[(
-                                                                    "id",
-                                                                    short_protocol_id(&backup_id),
-                                                                )],
-                                                            ));
-                                                        } else if crate::security_state::encryption_profile_is_encrypted(
+                                                        if crate::security_state::encryption_profile_is_encrypted(
                                                             &encryption_profile,
                                                         ) {
                                                             steps.push(strings.mls_ready_local.clone());

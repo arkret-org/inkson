@@ -32,7 +32,7 @@ pub(super) fn parse_seed_members(seed_members: &str) -> Vec<String> {
 }
 
 /// Cross-axis policy warning for the current Discoverability / Join rule /
-/// History visibility combination.
+/// History access combination.
 ///
 /// Returns `(tone, heading_key, body_key)`. The two string fields are i18n
 /// keys, not display text — this is a pure helper with unit tests, so it
@@ -40,11 +40,9 @@ pub(super) fn parse_seed_members(seed_members: &str) -> Vec<String> {
 pub(super) fn policy_combination_hint(
     discoverability: &str,
     join_rule: &str,
-    history_visibility: &str,
+    history_access: &str,
 ) -> Option<(&'static str, &'static str, &'static str)> {
-    if discoverability == "secret"
-        && (join_rule == "public" || history_visibility == "world_readable")
-    {
+    if discoverability == "secret" && join_rule == "public" {
         return Some((
             "error",
             "setup.policy_hint.secret_conflict",
@@ -60,31 +58,20 @@ pub(super) fn policy_combination_hint(
         ));
     }
 
-    if matches!(discoverability, "invite_only" | "secret") && history_visibility == "world_readable"
-    {
-        return Some((
-            "warning",
-            "setup.policy_hint.history_leak",
-            "setup.policy_hint.history_leak.body",
-        ));
-    }
-
+    let _ = history_access;
     None
 }
 
-pub(super) fn history_visibility_admits_prejoin(history_visibility: &str) -> bool {
-    matches!(
-        history_visibility.trim().to_ascii_lowercase().as_str(),
-        "world_readable" | "shared" | "invited"
-    )
+pub(super) fn history_access_admits_prejoin(history_access: &str) -> bool {
+    history_access.trim() == "all_history_for_current_members"
 }
 
 pub(super) fn normalize_content_scheme(
     encryption_is_e2ee: bool,
-    history_visibility: &str,
+    history_access: &str,
     content_scheme: &str,
 ) -> String {
-    if encryption_is_e2ee && history_visibility_admits_prejoin(history_visibility) {
+    if encryption_is_e2ee && history_access_admits_prejoin(history_access) {
         "mls_exporter_aead_v1".to_owned()
     } else {
         content_scheme.to_owned()
@@ -96,11 +83,11 @@ pub(super) fn normalize_content_scheme(
 /// [`policy_combination_hint`].
 pub(super) fn content_scheme_constraint_hint(
     encryption_is_e2ee: bool,
-    history_visibility: &str,
+    history_access: &str,
     content_scheme: &str,
 ) -> Option<&'static str> {
     if encryption_is_e2ee
-        && history_visibility_admits_prejoin(history_visibility)
+        && history_access_admits_prejoin(history_access)
         && content_scheme.trim() == "mls_rfc9420"
     {
         Some("setup.content_scheme.prejoin_requires_exporter")
@@ -114,34 +101,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prejoin_history_values_are_detected() {
-        assert!(history_visibility_admits_prejoin("shared"));
-        assert!(history_visibility_admits_prejoin("invited"));
-        assert!(history_visibility_admits_prejoin("world_readable"));
-        assert!(!history_visibility_admits_prejoin("joined"));
-        assert!(!history_visibility_admits_prejoin("restricted"));
+    fn prejoin_history_access_is_detected() {
+        assert!(history_access_admits_prejoin(
+            "all_history_for_current_members"
+        ));
+        assert!(!history_access_admits_prejoin("since_join"));
     }
 
     #[test]
     fn e2ee_prejoin_history_normalizes_to_exporter_scheme() {
         assert_eq!(
-            normalize_content_scheme(true, "shared", "mls_rfc9420"),
+            normalize_content_scheme(true, "all_history_for_current_members", "mls_rfc9420"),
             "mls_exporter_aead_v1"
         );
         assert_eq!(
-            normalize_content_scheme(true, "joined", "mls_rfc9420"),
+            normalize_content_scheme(true, "since_join", "mls_rfc9420"),
             "mls_rfc9420"
         );
         assert_eq!(
-            normalize_content_scheme(false, "shared", "mls_rfc9420"),
+            normalize_content_scheme(false, "all_history_for_current_members", "mls_rfc9420"),
             "mls_rfc9420"
         );
     }
 
     #[test]
     fn invalid_history_content_scheme_hint_is_specific() {
-        assert!(content_scheme_constraint_hint(true, "shared", "mls_rfc9420").is_some());
-        assert!(content_scheme_constraint_hint(true, "shared", "mls_exporter_aead_v1").is_none());
-        assert!(content_scheme_constraint_hint(true, "joined", "mls_rfc9420").is_none());
+        assert!(
+            content_scheme_constraint_hint(true, "all_history_for_current_members", "mls_rfc9420")
+                .is_some()
+        );
+        assert!(
+            content_scheme_constraint_hint(
+                true,
+                "all_history_for_current_members",
+                "mls_exporter_aead_v1"
+            )
+            .is_none()
+        );
+        assert!(content_scheme_constraint_hint(true, "since_join", "mls_rfc9420").is_none());
     }
 }

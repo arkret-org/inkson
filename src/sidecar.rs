@@ -831,10 +831,6 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         state_store,
         build,
         &intent.source_realm_id,
-        device_id,
-        base_url.to_owned(),
-        api_token,
-        intent.controller_id.clone(),
         None,
         Vec::new(),
     )
@@ -1290,6 +1286,15 @@ fn refold_sidecar_exchanges_with_decrypt_report(
         if scope_hints.is_empty() {
             return SidecarRefoldOutcome::default();
         }
+        let Some(digest_suite) = store_ref
+            .trusted_mls_governance_checkpoint(realm_id)
+            .map(|checkpoint| checkpoint.live_digest_suite)
+        else {
+            return SidecarRefoldOutcome {
+                backfill_required: true,
+                ..SidecarRefoldOutcome::default()
+            };
+        };
         let stored_index_by_request_event_id = stored_facts
             .iter()
             .enumerate()
@@ -1331,7 +1336,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             if sidecar_id != expected_sidecar_id {
                 continue;
             }
-            let Ok(event_digest) = event.event_digest() else {
+            let Ok(event_digest) = event.event_digest_with_digest_suite(digest_suite) else {
                 continue;
             };
             if kind == &arkret_sdk::EventKind::MessageCreate {
@@ -2442,7 +2447,12 @@ mod tests {
             sidecar_id: session.sidecar_id.clone(),
         };
         event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
-        let event_digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
+        let event_digest = arkret_sdk::Hash::new(
+            event
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap(),
+        )
+        .unwrap();
         event.proofs.push(
             arkret_sdk::Proof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
@@ -2451,6 +2461,8 @@ mod tests {
                 ))
                 .unwrap(),
                 event_digest,
+                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_digest: None,
                 created_at: event.created_at,
                 domain: None,
                 audience: None,

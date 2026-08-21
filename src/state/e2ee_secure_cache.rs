@@ -30,6 +30,7 @@ pub(crate) struct PendingE2eePlaintextClear {
     json: String,
     previous_private: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     previous_decrypted: BTreeMap<String, BTreeMap<String, String>>,
+    previous_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
 }
 
 impl PendingE2eePlaintextClear {
@@ -81,6 +82,8 @@ struct E2eePlaintextCacheV1 {
     private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     #[serde(default)]
     decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
 }
 
 impl E2eePlaintextCacheV1 {
@@ -89,6 +92,7 @@ impl E2eePlaintextCacheV1 {
             mls_snapshots: state.mls_snapshots.clone(),
             private_plaintext: state.mls_private_plaintext.clone(),
             decrypted_plaintext: state.mls_decrypted_plaintext.clone(),
+            authenticated_identity_links: state.authenticated_identity_links.clone(),
         }
     }
 
@@ -96,6 +100,7 @@ impl E2eePlaintextCacheV1 {
         self.mls_snapshots.is_empty()
             && self.private_plaintext.is_empty()
             && self.decrypted_plaintext.is_empty()
+            && self.authenticated_identity_links.is_empty()
     }
 
     fn plaintext_usage(&self) -> E2eePlaintextCacheUsage {
@@ -176,6 +181,15 @@ impl E2eePlaintextCacheV1 {
                 });
             }
         }
+        for (key, identity_link) in self.authenticated_identity_links {
+            state
+                .authenticated_identity_links
+                .entry(key)
+                .or_insert_with(|| {
+                    changed = true;
+                    identity_link
+                });
+        }
         changed
     }
 }
@@ -239,12 +253,15 @@ impl LocalStateStore {
 
         let previous_private = self.cached.mls_private_plaintext.clone();
         let previous_decrypted = self.cached.mls_decrypted_plaintext.clone();
+        let previous_identity_links = self.cached.authenticated_identity_links.clone();
         let changed = match scope {
             E2eePlaintextCacheClearScope::All => {
                 let changed = !self.cached.mls_private_plaintext.is_empty()
-                    || !self.cached.mls_decrypted_plaintext.is_empty();
+                    || !self.cached.mls_decrypted_plaintext.is_empty()
+                    || !self.cached.authenticated_identity_links.is_empty();
                 self.cached.mls_private_plaintext.clear();
                 self.cached.mls_decrypted_plaintext.clear();
+                self.cached.authenticated_identity_links.clear();
                 changed
             }
             E2eePlaintextCacheClearScope::Realm(realm_id) => {
@@ -254,7 +271,13 @@ impl LocalStateStore {
                     .mls_decrypted_plaintext
                     .remove(realm_id)
                     .is_some();
-                removed_private || removed_decrypted
+                let retained = self.cached.authenticated_identity_links.len();
+                self.cached
+                    .authenticated_identity_links
+                    .retain(|_, entry| entry.identity_link.realm_id.as_str() != realm_id);
+                removed_private
+                    || removed_decrypted
+                    || retained != self.cached.authenticated_identity_links.len()
             }
         };
         if !changed {
@@ -264,6 +287,7 @@ impl LocalStateStore {
         let Some((key, json)) = self.e2ee_plaintext_cache_secure_write()? else {
             self.cached.mls_private_plaintext = previous_private;
             self.cached.mls_decrypted_plaintext = previous_decrypted;
+            self.cached.authenticated_identity_links = previous_identity_links;
             anyhow::bail!("cannot clear E2EE plaintext cache without an active account");
         };
         // Keep a minimal encrypted empty object instead of deleting the entry.
@@ -272,6 +296,7 @@ impl LocalStateStore {
             json: json.unwrap_or_else(|| "{}".to_owned()),
             previous_private,
             previous_decrypted,
+            previous_identity_links,
         }))
     }
 
@@ -303,6 +328,12 @@ impl LocalStateStore {
             for (digest, plaintext) in entries {
                 current_entries.entry(digest).or_insert(plaintext);
             }
+        }
+        for (key, identity_link) in pending.previous_identity_links {
+            self.cached
+                .authenticated_identity_links
+                .entry(key)
+                .or_insert(identity_link);
         }
     }
 
@@ -407,6 +438,7 @@ impl LocalStateStore {
         self.absorb_mls_receive_overlay();
         self.cached.mls_private_plaintext.clear();
         self.cached.mls_decrypted_plaintext.clear();
+        self.cached.authenticated_identity_links.clear();
     }
 
     pub(super) fn persist_e2ee_plaintext_cache_if_ready(&self) {

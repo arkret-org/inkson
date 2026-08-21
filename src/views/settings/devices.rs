@@ -1364,7 +1364,7 @@ fn render_pair_strand(
                                 &actor,
                                 &requesting_device_id,
                                 challenge_proof.transcript_digest.clone(),
-                            ) {
+                            ).await {
                                 Ok(attestation) => attestation,
                                 Err(err) => {
                                     pair_status.set(format!(

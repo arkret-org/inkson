@@ -293,6 +293,7 @@ fn authored_realm_bootstrap(
             test_genesis_salt(),
             TEST_ACTOR_ID,
             TEST_SERVICE_ID,
+            common::test_notary(TEST_SERVICE_ID),
             "https://server.example",
             "Engineering",
             None,
@@ -302,7 +303,6 @@ fn authored_realm_bootstrap(
             "mls_rfc9420",
             "standard",
             "restricted",
-            "single_did",
             "sha256",
             "ak:trust_domain:server.example",
             invitees,
@@ -507,7 +507,7 @@ fn build_realm_create_event_matches_event_schema() {
     let envelope = event_builders::build_realm_create_event(
         test_genesis_salt(),
         TEST_ACTOR_ID,
-        TEST_SERVICE_ID,
+        common::test_notary(TEST_SERVICE_ID),
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -516,7 +516,6 @@ fn build_realm_create_event_matches_event_schema() {
         "mls_rfc9420",
         "standard",
         "restricted",
-        "single_did",
         "sha256",
         "ak:trust_domain:server.example",
         None,
@@ -592,6 +591,7 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
         event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
             TEST_REALM_ID,
             TEST_ACTOR_ID,
+            arkret_sdk::DigestSuite::Sha256,
             arkret_sdk::StatePayload {
                 value: Some(serde_json::json!("invite")),
                 state: None,
@@ -604,44 +604,18 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
 }
 
 #[test]
-fn build_realm_state_event_history_visibility_matches_event_schema() {
+fn build_realm_state_event_history_access_matches_event_schema() {
     select_authoring_principal_server();
     let envelope =
-        event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryVisibility>(
+        event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryAccess>(
             TEST_REALM_ID,
             TEST_ACTOR_ID,
-            arkret_sdk::HistoryVisibilityPayload::new(arkret_sdk::HistoryVisibility::Shared),
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::HistoryAccessPayload::tighten(),
         )
-        .expect("build_realm_state_event(history_visibility) succeeds");
+        .expect("build_realm_state_event(history_access) succeeds");
     let envelope = wire_envelope(envelope);
-    assert_envelope_matches_schema("build_realm_state_event[history_visibility]", &envelope);
-}
-
-#[test]
-fn build_realm_history_sharing_policy_event_matches_event_schema() {
-    select_authoring_principal_server();
-    let envelope = event_builders::build_realm_history_sharing_policy_event(
-        TEST_REALM_ID,
-        TEST_ACTOR_ID,
-        arkret_sdk::HistorySharingPolicyPayloadValue {
-            version: 1,
-            default_key_share: arkret_sdk::HistoryKeyShareDefault::EventTimeVisibility,
-            pre_join_history: None,
-            post_removal_recovery: None,
-            allowed_key_sources: vec![arkret_sdk::HistoryKeySource::VerifiedMemberDevice],
-            allowed_receiver_states: Some(vec![
-                arkret_sdk::HistorySharingReceiverClass::ActiveMember,
-            ]),
-            audit: arkret_sdk::HistorySharingPolicyPayloadValueAudit {
-                share_audit_event_required: true,
-                access_audit_required: true,
-            },
-            restricted_rules: None,
-        },
-    )
-    .expect("build_realm_history_sharing_policy_event succeeds");
-    let envelope = wire_envelope(envelope);
-    assert_envelope_matches_schema("build_realm_state_event[history_sharing_policy]", &envelope);
+    assert_envelope_matches_schema("build_realm_state_event[history_access]", &envelope);
 }
 
 #[test]
@@ -651,11 +625,12 @@ fn build_realm_preview_policy_event_matches_event_schema() {
         event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmPreviewPolicy>(
             TEST_REALM_ID,
             TEST_ACTOR_ID,
+            arkret_sdk::DigestSuite::Sha256,
             serde_json::from_value(serde_json::json!({
                 "value": {
                     "mode": "stripped_state",
                     "audiences": ["link_token_holder"],
-                    "fields": ["title", "summary", "join_rule", "history_visibility"],
+                    "fields": ["title", "summary", "join_rule", "history_access"],
                     "token": {
                         "required": true,
                         "ttl_seconds": 600,
@@ -859,14 +834,18 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 #[test]
 fn managed_agent_pcr_prepare_builds_an_exact_ref_free_create() {
     select_authoring_principal_server();
+    let agent_full_id = arkret_sdk::DidFullId::new("did:web:agent.example").unwrap();
+    let root_public_key = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
     let events = common::author_unit(
         event_builders::build_managed_agent_pcr_bootstrap_steps(
-            "did:web:agent.example",
+            agent_full_id.as_str(),
             arkret_sdk::ResolutionCommitment {
-                full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+                full_id: agent_full_id.clone(),
                 method_history_head: format!("sha256:{}", "8".repeat(64)),
                 version_id: "1-Qmfixture".to_owned(),
             },
+            event_builders::managed_agent_inception_notary(&agent_full_id, &root_public_key)
+                .unwrap(),
             TEST_ACTOR_ID,
             "did:web:alice.example#delegation-0",
             "ak:trust_domain:server.example",

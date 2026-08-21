@@ -44,8 +44,8 @@ pub(crate) struct RealmProjectionInput {
     /// sync replaces it, so omitting this field would silently downgrade
     /// shared-history content to the `mls_rfc9420` scheme.
     pub content_scheme: String,
-    /// Initial history visibility selected at creation time.
-    pub history_visibility: String,
+    /// Initial history access selected at creation time.
+    pub history_access: String,
     pub plaintext_visible_services: Vec<String>,
     pub collaboration_role: Option<arkret_sdk::CollaborationRealmRole>,
     /// Recommended content/metadata floor (e.g. `e2ee_required`), or `None`
@@ -94,7 +94,7 @@ impl OptimisticRealmTreeProjection {
             discoverability,
             encryption_profile,
             content_scheme,
-            history_visibility,
+            history_access,
             plaintext_visible_services,
             collaboration_role,
             encryption_floor,
@@ -124,7 +124,7 @@ impl OptimisticRealmTreeProjection {
             members: members.clone(),
             encryption_profile: encryption_profile.clone(),
             content_scheme: content_scheme.clone(),
-            history_visibility: history_visibility.clone(),
+            history_access: history_access.clone(),
             plaintext_visible_services: plaintext_visible_services.clone(),
             collaboration_role,
             content_encryption_floor: encryption_floor.clone(),
@@ -137,7 +137,7 @@ impl OptimisticRealmTreeProjection {
                 discoverability,
                 encryption_profile,
                 content_scheme,
-                history_visibility,
+                history_access,
                 plaintext_visible_services,
                 owner,
                 admins,
@@ -184,7 +184,7 @@ pub(crate) struct RealmProjectionBody {
     members: Vec<String>,
     encryption_profile: String,
     content_scheme: String,
-    history_visibility: String,
+    history_access: String,
     plaintext_visible_services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     collaboration_role: Option<arkret_sdk::CollaborationRealmRole>,
@@ -206,7 +206,7 @@ struct RealmProjectionSummary {
     discoverability: String,
     encryption_profile: String,
     content_scheme: String,
-    history_visibility: String,
+    history_access: String,
     plaintext_visible_services: Vec<String>,
     owner: String,
     admins: Vec<String>,
@@ -280,7 +280,7 @@ fn projected_state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
         .chain(state_event_values(body))
 }
 
-fn normalized_history_visibility(value: Option<&Value>) -> Option<String> {
+fn normalized_history_access(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
         .map(str::trim)
@@ -288,23 +288,23 @@ fn normalized_history_visibility(value: Option<&Value>) -> Option<String> {
         .map(|value| value.to_ascii_lowercase())
 }
 
-/// Resolve the Realm's effective history-visibility projection without
+/// Resolve the Realm's effective history-access projection without
 /// treating the immutable create snapshot as newer than its per-facet state.
 /// `state_after` is the timeline-end state, followed by the current `state`
 /// container. Materialized reducer fields are derived snapshots; the create
 /// event is only an initial-state fallback when no facet is projected.
-pub(crate) fn realm_projection_history_visibility(body: &Value) -> Option<String> {
+pub(crate) fn realm_projection_history_access(body: &Value) -> Option<String> {
     let facet_value = projected_state_event_values(body)
         .filter(|event| {
             event
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some(event_kind_str::REALM_HISTORY_VISIBILITY)
+                == Some(event_kind_str::REALM_HISTORY_ACCESS)
         })
         .find_map(|event| {
-            normalized_history_visibility(event.pointer("/payload/value"))
-                .or_else(|| normalized_history_visibility(event.pointer("/content/value")))
+            normalized_history_access(event.pointer("/payload/to"))
+                .or_else(|| normalized_history_access(event.pointer("/content/to")))
         });
     if facet_value.is_some() {
         return facet_value;
@@ -318,7 +318,7 @@ pub(crate) fn realm_projection_history_visibility(body: &Value) -> Option<String
         body.get("realm").unwrap_or(&null),
         body.get("metadata").unwrap_or(&null),
     ] {
-        if let Some(value) = normalized_history_visibility(container.get("history_visibility")) {
+        if let Some(value) = normalized_history_access(container.get("history_access")) {
             return Some(value);
         }
     }
@@ -332,12 +332,9 @@ pub(crate) fn realm_projection_history_visibility(body: &Value) -> Option<String
                 == Some(arkret_sdk::EventKind::RealmCreate.as_str())
         })
         .find_map(|event| {
-            normalized_history_visibility(event.pointer("/payload/object/history_visibility"))
-                .or_else(|| {
-                    normalized_history_visibility(
-                        event.pointer("/content/object/history_visibility"),
-                    )
-                })
+            normalized_history_access(event.pointer("/payload/object/history_access")).or_else(
+                || normalized_history_access(event.pointer("/content/object/history_access")),
+            )
         })
 }
 
@@ -406,6 +403,50 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
                 == Some(arkret_sdk::EventKind::RealmCreate.as_str())
         })
         .then(|| "mls_rfc9420".to_owned())
+}
+
+/// Resolve one Circle's create-locked content scheme from its accepted
+/// `ak.circle.create` Event in the parent Realm projection. Circle MLS groups
+/// are independent from the Realm group, so the parent Realm scheme is never
+/// used as a fallback.
+pub(crate) fn circle_projection_content_scheme(body: &Value, circle_id: &str) -> Option<String> {
+    circle_projection_object(body, circle_id)?.content_scheme
+}
+
+/// Resolve one Circle's create-locked durability profile from the same
+/// accepted create Event as its content scheme.
+pub(crate) fn circle_projection_durability_policy(
+    body: &Value,
+    circle_id: &str,
+) -> Option<arkret_sdk::CircleDurabilityPolicy> {
+    circle_projection_object(body, circle_id)?.durability_policy
+}
+
+fn circle_projection_object(body: &Value, circle_id: &str) -> Option<arkret_sdk::Circle> {
+    projected_state_event_values(body)
+        .filter(|event| {
+            event
+                .get("kind")
+                .or_else(|| event.get("type"))
+                .and_then(Value::as_str)
+                == Some(arkret_sdk::EventKind::CircleCreate.as_str())
+        })
+        .find_map(|event| {
+            let payload = event.get("payload").or_else(|| event.get("content"))?;
+            let object: arkret_sdk::Circle =
+                serde_json::from_value(payload.get("object")?.clone()).ok()?;
+            let projected_id = match object.id.as_ref() {
+                Some(id) => id.clone(),
+                None => {
+                    let event_id = event
+                        .get("event_id")
+                        .and_then(Value::as_str)
+                        .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())?;
+                    arkret_sdk::CircleId::from_event_id(&event_id)
+                }
+            };
+            (projected_id.as_str() == circle_id).then_some(object)
+        })
 }
 
 fn nested_string_field(value: &Value, parent: &str, keys: &[&str]) -> Option<String> {
@@ -1107,39 +1148,39 @@ mod tests {
     }
 
     #[test]
-    fn history_visibility_prefers_current_facet_state_over_create_snapshot() {
+    fn history_access_prefers_current_facet_state_over_create_snapshot() {
         let projection = json!({
-            "object": {"history_visibility": "joined"},
+            "object": {"history_access": "all_history_for_current_members"},
             "state": {"events": [
                 {
                     "kind": "ak.realm.create",
-                    "payload": {"object": {"history_visibility": "joined"}}
+                    "payload": {"object": {"history_access": "all_history_for_current_members"}}
                 },
                 {
-                    "kind": "ak.realm.history_visibility",
-                    "payload": {"value": "shared"}
+                    "kind": "ak.realm.history_access",
+                    "payload": {"to": "since_join"}
                 }
             ]}
         });
 
         assert_eq!(
-            realm_projection_history_visibility(&projection).as_deref(),
-            Some("shared")
+            realm_projection_history_access(&projection).as_deref(),
+            Some("since_join")
         );
     }
 
     #[test]
-    fn history_visibility_falls_back_to_canonical_create_state() {
+    fn history_access_falls_back_to_canonical_create_state() {
         let projection = json!({
             "state": {"events": [{
                 "kind": "ak.realm.create",
-                "payload": {"object": {"history_visibility": "invited"}}
+                "payload": {"object": {"history_access": "since_join"}}
             }]}
         });
 
         assert_eq!(
-            realm_projection_history_visibility(&projection).as_deref(),
-            Some("invited")
+            realm_projection_history_access(&projection).as_deref(),
+            Some("since_join")
         );
     }
 
@@ -1246,7 +1287,7 @@ mod tests {
             discoverability: "restricted".to_owned(),
             encryption_profile: "mls_rfc9420".to_owned(),
             content_scheme: "mls_exporter_aead_v1".to_owned(),
-            history_visibility: "shared".to_owned(),
+            history_access: "all_history_for_current_members".to_owned(),
             plaintext_visible_services: vec!["directory".to_owned()],
             collaboration_role: None,
             encryption_floor: Some("e2ee_required".to_owned()),
@@ -1264,8 +1305,11 @@ mod tests {
         );
         assert_eq!(body["content_scheme"], "mls_exporter_aead_v1");
         assert_eq!(body["summary"]["content_scheme"], "mls_exporter_aead_v1");
-        assert_eq!(body["history_visibility"], "shared");
-        assert_eq!(body["summary"]["history_visibility"], "shared");
+        assert_eq!(body["history_access"], "all_history_for_current_members");
+        assert_eq!(
+            body["summary"]["history_access"],
+            "all_history_for_current_members"
+        );
         assert_eq!(body["timeline"]["events"], json!([]));
     }
 
@@ -1280,7 +1324,7 @@ mod tests {
             discoverability: "public".to_owned(),
             encryption_profile: "none".to_owned(),
             content_scheme: "mls_rfc9420".to_owned(),
-            history_visibility: "joined".to_owned(),
+            history_access: "since_join".to_owned(),
             plaintext_visible_services: Vec::new(),
             collaboration_role: None,
             encryption_floor: None,
@@ -1905,7 +1949,7 @@ mod tests {
                 json!({
                     "__kind": "realm",
                     "content_scheme": "mls_exporter_aead_v1",
-                    "history_visibility": "shared"
+                    "history_access": "all_history_for_current_members"
                 }),
             ),
             (

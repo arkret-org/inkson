@@ -132,7 +132,9 @@ fn card_assignment_mutations_create_and_tombstone_relation_events() {
     assert_eq!(create.operation().local_target_ref(), None);
     let authored = crate::operation::author_for_test(create.operation());
     let relation_id = arkret_sdk::RelationId::from_event_id(authored.event_id());
-    let writes = crate::operation::direct_registered_cell_writes(&authored).unwrap();
+    let writes =
+        crate::operation::direct_registered_cell_writes(&authored, arkret_sdk::DigestSuite::Sha256)
+            .unwrap();
     assert_eq!(
         writes[0].cell.as_str(),
         format!("ak:cell:ak.component.relation.v1:{relation_id}")

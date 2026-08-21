@@ -37,7 +37,7 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
     {
         let mut writer = LocalStateStore::with_path(path.clone());
         assert!(writer.mls_snapshot_for(realm).is_none());
-        writer.save_mls_snapshot(realm, envelope.clone());
+        writer.save_mls_snapshot(realm, envelope.clone()).unwrap();
     }
     let reader = LocalStateStore::with_path(path);
     let restored = reader.mls_snapshot_for(realm).expect("envelope persists");
@@ -53,7 +53,9 @@ fn mls_snapshot_drop_clears_persisted_record() {
     let path = temp_state_path("mls-snapshot-drop");
     let mut store = LocalStateStore::with_path(path);
     let realm = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
-    store.save_mls_snapshot(realm, encrypt_state(realm, "abcd", 1, b"x", "p", b"salt"));
+    store
+        .save_mls_snapshot(realm, encrypt_state(realm, "abcd", 1, b"x", "p", b"salt"))
+        .unwrap();
     assert!(store.mls_snapshot_for(realm).is_some());
     store.drop_mls_snapshot(realm);
     assert!(store.mls_snapshot_for(realm).is_none());
@@ -90,10 +92,12 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     {
         let mut store = LocalStateStore::with_path(path.clone());
         store.switch_active_account(actor);
-        store.save_mls_snapshot(
-            realm,
-            encrypt_state(realm, "abcd", 1, b"state", "secret", b"salt"),
-        );
+        store
+            .save_mls_snapshot(
+                realm,
+                encrypt_state(realm, "abcd", 1, b"state", "secret", b"salt"),
+            )
+            .unwrap();
         store.save_private_plaintext(realm, strand, "body", "author secret");
         store.advance_mls_receive_chain(
             realm,

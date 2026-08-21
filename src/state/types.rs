@@ -552,17 +552,16 @@ pub struct SnapshotSyncStatus {
     pub degraded_reason: Option<String>,
 }
 
-/// A full-profile MLS governance proof that was cryptographically verified
-/// before it entered local state. The original bundle is retained as JSON so
-/// a Welcome receiver can re-run verification without trusting a derived root
-/// cache, while the typed binding and Seal ids keep lookup/invalidation exact.
+/// A near-current MLS governance frontier proof that was fully verified before
+/// it entered local state. The original typed response is retained so a
+/// Welcome receiver can re-run validation without trusting a derived digest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedMlsGovernanceProof {
     pub request: arkret_sdk::MlsGovernanceProofRequestBody,
     pub governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
-    pub trusted_anchor_seal_id: arkret_sdk::SealId,
-    pub accepted_seal_id: arkret_sdk::SealId,
-    pub bundle: Value,
+    pub proof_base_basis: arkret_sdk::SealBasis,
+    pub proof_target_basis: arkret_sdk::SealBasis,
+    pub bundle: arkret_sdk::MlsGovernanceProofBundle,
     pub verified_at: DateTime<Utc>,
 }
 
@@ -609,16 +608,6 @@ where
     Ok(decode_accepted_did_bindings(Vec::<Value>::deserialize(
         deserializer,
     )?))
-}
-
-/// Durable, not-yet-verified chunk acquisition. Chunks remain inert JSON until
-/// the SDK authenticates the complete manifest and materializes every range.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MlsGovernanceProofAcquisition {
-    pub proof_request_digest: arkret_sdk::Hash,
-    pub bundle_digest: arkret_sdk::Hash,
-    pub chunks: BTreeMap<u32, Value>,
-    pub updated_at: DateTime<Utc>,
 }
 
 /// Public-only checkpoint for a client-authored principal registration.
@@ -865,16 +854,26 @@ pub(crate) struct StoredClientDelivery {
     pub last_error: Option<String>,
 }
 
+/// Private, MLS-authenticated IdentityLink material retained byte-exactly for
+/// later history-response verification. The inner Principal proof is verified
+/// from retained signer evidence when the mailbox record is admitted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LocallyAuthenticatedIdentityLink {
+    pub(crate) identity_link: arkret_sdk::IdentityLink,
+    pub(crate) identity_link_canonical_bytes_b64u: arkret_sdk::Base64UrlString,
+    pub(crate) identity_link_digest: arkret_sdk::Hash,
+    pub(crate) leaf_node_canonical_bytes_b64u: arkret_sdk::Base64UrlString,
+    pub(crate) leaf_node_digest: arkret_sdk::Hash,
+    pub(crate) winning_group_state_ref: arkret_sdk::EventId,
+}
+
+/// Persisted non-secret accounting for one resident external history-secret
+/// candidate. The SDK material key is the protocol identity; secret bytes are
+/// stored separately in `SecureKeyStore`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
-    /// Crash-safe requester-side Direct Conversation replacement repairs,
-    /// keyed by the frozen dispatch `request_id`. The SDK/Garth snapshot owns
-    /// the canonical request bytes, digest, exact KeyPackage ref and stage.
-    /// It intentionally contains stable service core ids only: endpoint and
-    /// remote service-resolution authority remain Principal Server concerns.
-    #[serde(default)]
-    pub direct_conversation_repairs: BTreeMap<String, garth::DirectConversationRepairSnapshot>,
     /// Highest verified `ak.key_backup.active_series` pointer observed per
     /// `(actor_id, backup_kind)`. This is rollback protection, not a cache:
     /// a complete server response below this floor must fail closed.
@@ -1097,19 +1096,20 @@ pub struct ClientLocalState {
     /// forever.
     #[serde(default)]
     pub mls_coverage_stale: BTreeMap<String, MlsCoverageStale>,
-    /// Bounded cache of complete, locally verified MLS governance proof
-    /// bundles. Keys are canonical request digests; values expire quickly and
-    /// are invalidated when sync observes a different accepted Seal head.
+    /// Bounded cache of complete, locally verified near-current MLS governance
+    /// frontier outcomes. Keys are canonical query digests; values expire
+    /// quickly and are invalidated when sync observes a different accepted
+    /// Seal head.
     #[serde(default)]
     pub mls_governance_proofs: BTreeMap<String, CachedMlsGovernanceProof>,
-    /// Incomplete MLS governance proof chunks, keyed by proof identity digest.
-    /// These are resumable transport state only and never authorize an epoch.
+    /// Complete locally verified replay checkpoint used as the next proof
+    /// base. T1 installs the event-derived Realm genesis checkpoint.
+    /// Successful full verification atomically advances it to the exact target
+    /// checkpoint (T3); a bare Seal basis or service response never changes
+    /// this pin.
     #[serde(default)]
-    pub mls_governance_proof_acquisitions: BTreeMap<String, MlsGovernanceProofAcquisition>,
-    /// First-use pins for Realm governance proof chains. A different anchor is
-    /// never accepted implicitly; explicit recovery/re-pin UI is required.
-    #[serde(default)]
-    pub mls_governance_trust_anchors: BTreeMap<String, arkret_sdk::SealId>,
+    pub mls_governance_checkpoints:
+        BTreeMap<String, arkret_sdk::MlsGovernanceVerificationCheckpoint>,
     /// DID-P2-B — accepted DID bindings that survive a restart.
     ///
     /// Scope: this vector lives inside the **per-account** `ClientLocalState`
@@ -1178,17 +1178,22 @@ pub struct ClientLocalState {
     /// hardened storage is unavailable it remains memory-only.
     #[serde(default, skip_serializing)]
     pub mls_decrypted_plaintext: BTreeMap<String, BTreeMap<String, String>>,
-    /// Per-(realm, epoch) MLS `history_secret`s installed from an inbound
-    /// `ak.realm_key.share` (encryption-and-audit.md history-sharing). Each
-    /// value is a 32-byte exporter-derived secret that lets this device
-    /// decrypt `mls_exporter_aead_v1` content authored at that epoch — even
-    /// epochs that predate this device's join (tier-3 history decrypt).
+    /// Exact IdentityLink and LeafNode bytes observed through an authenticated
+    /// MLS decrypt. This pairwise-to-principal mapping is private and therefore
+    /// persists only in the hardened E2EE cache.
+    #[serde(default, skip_serializing)]
+    pub(crate) authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
+    /// Per-(effective scope, MLS group, epoch) locally authoritative MLS
+    /// `history_secret`s derived from a verified and durably persisted local
+    /// MLS post-state. Each value is a 32-byte exporter-derived secret for
+    /// `mls_exporter_aead_v1` content.
     ///
-    /// Keyed `realm_id -> epoch -> secret`. Durable persistence must go through
-    /// the hardened secure store; this inline field is only a transient memory
+    /// Keyed `canonical scope/group key -> epoch -> secret`. Durable persistence
+    /// must go through the hardened secure store; this inline field is only a transient memory
     /// fallback and is never serialized into plaintext account-state storage.
-    /// Like the other MLS sidecars this is device-local: the secrets arrive
-    /// HPKE-sealed to this device and are never re-shared from here.
+    /// Like the other MLS sidecars this is device-local. External history-key,
+    /// recovery-archive, and portable-backup material belongs in the separate
+    /// bounded candidate ledger and never promotes this authoritative map.
     ///
     /// Nested string-keyed maps (not a `(String, u64)` tuple key) because
     /// `serde_json` rejects non-string map keys — the store flushes to JSON, so
@@ -1196,6 +1201,15 @@ pub struct ClientLocalState {
     /// strings, which round-trips cleanly.
     #[serde(default, skip_serializing)]
     pub history_secrets: BTreeMap<String, BTreeMap<u64, Vec<u8>>>,
+    /// Garth-owned bounded external candidate ledger. Secret bytes remain in
+    /// the hardened secure store and never enter this metadata snapshot.
+    #[serde(default)]
+    pub(crate) history_candidate_state: garth::HistoryCandidateStoreSnapshot,
+    /// Crash-safe history request/mailbox/retry state owned by Garth. The
+    /// revision participates in compare-and-swap updates across concurrent UI
+    /// tasks so ACK high-water and exact retries cannot be rolled back.
+    #[serde(default)]
+    pub(crate) history_runtime_state: garth::VersionedHistoryRuntimeSnapshot,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1450,7 +1464,6 @@ impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
             sync_cursor: None,
-            direct_conversation_repairs: BTreeMap::new(),
             key_backup_active_series_highest_seen: BTreeMap::new(),
             realm_events_cursors: BTreeMap::new(),
             realm_scan_cursors: BTreeMap::new(),
@@ -1504,12 +1517,14 @@ impl Default for ClientLocalState {
             agent_signer_evidence: BTreeMap::new(),
             mls_coverage_stale: BTreeMap::new(),
             mls_governance_proofs: BTreeMap::new(),
-            mls_governance_proof_acquisitions: BTreeMap::new(),
-            mls_governance_trust_anchors: BTreeMap::new(),
+            mls_governance_checkpoints: BTreeMap::new(),
             accepted_did_bindings: Vec::new(),
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
+            authenticated_identity_links: BTreeMap::new(),
             history_secrets: BTreeMap::new(),
+            history_candidate_state: garth::HistoryCandidateStoreSnapshot::default(),
+            history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             accepted_human_contact_principals: BTreeSet::new(),
@@ -1550,6 +1565,7 @@ pub(crate) struct MlsReceiveOverlay {
     /// `ClientLocalState::mls_decrypted_plaintext`
     /// (`realm_id -> payload_digest -> base64url(plaintext)`).
     pub(crate) plaintexts: BTreeMap<String, BTreeMap<String, String>>,
+    pub(crate) identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
 }
 
 impl MlsReceiveOverlay {
@@ -1557,6 +1573,7 @@ impl MlsReceiveOverlay {
         self.snapshots.is_empty()
             && self.recovery_snapshots.is_empty()
             && self.plaintexts.is_empty()
+            && self.identity_links.is_empty()
     }
 
     /// Merge this overlay over a `ClientLocalState` (overlay wins — see the
@@ -1581,6 +1598,11 @@ impl MlsReceiveOverlay {
             for (digest, plaintext) in entries {
                 slot.insert(digest.clone(), plaintext.clone());
             }
+        }
+        for (key, identity_link) in &self.identity_links {
+            state
+                .authenticated_identity_links
+                .insert(key.clone(), identity_link.clone());
         }
     }
 }

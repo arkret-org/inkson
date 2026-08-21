@@ -12,7 +12,7 @@ use super::backup_body::{
     build_mls_private_plaintext_backup_successor_body_with_kek,
 };
 use super::restore::fetch_mls_restore_payload;
-use super::selection::{select_mls_history_tail_for_realm, select_mls_private_plaintext_backup};
+use super::selection::select_mls_private_plaintext_backup;
 use super::series::fresh_backup_id;
 use crate::recovery_crypto::derive_vault_kek;
 
@@ -134,8 +134,12 @@ async fn ensure_initial_active_series(
     let seal = signer
         .sign_self_principal_linear_successor_seal(&accepted, &frontier, hlc)
         .map_err(|error| anyhow!("sign {wire_kind} active-series successor Seal: {error}"))?;
-    let active_series_digest =
-        arkret_sdk::Hash::new(accepted.last().expect("checked").event_digest()?)?;
+    let active_series_digest = arkret_sdk::Hash::new(
+        accepted
+            .last()
+            .expect("checked")
+            .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+    )?;
     let seal_outcome = http.events_submit_seal(&seal).await?;
     if !seal_outcome
         .accepted_event_digests
@@ -522,101 +526,5 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     )
     .await?;
 
-    Ok((backup_id, serde_json::to_value(sent_body)?))
-}
-
-/// Fetch the FULL body of the current `mls_history` series tail for `realm_id`
-/// (or `None` when the Realm has no history backup yet).
-///
-/// soland's list endpoint redacts `ciphertext` / `key_commitment` /
-/// `auth_data.signature`, and `supersedes_digest` must be computed over the
-/// full persisted predecessor — so a cache miss costs one unlock-proof read
-/// (bounded: once per Realm per session; afterwards the uploader caches the
-/// body it just PUT).
-pub async fn fetch_mls_history_tail_for_realm(
-    api: &crate::transport::TransportClient,
-    actor_id: &str,
-    device_id: &str,
-    realm_id: &str,
-) -> Result<Option<Value>> {
-    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
-    let Some(tail) = select_mls_history_tail_for_realm(&list_payload, realm_id) else {
-        return Ok(None);
-    };
-    if tail.get("ciphertext").and_then(Value::as_str).is_some() {
-        return Ok(Some(tail));
-    }
-    let signer = crate::event_signer::active_signer();
-    let full = crate::key_backup::fetch_key_backup_with_device_unlock_proof(
-        api,
-        &tail,
-        actor_id,
-        device_id,
-        signer.as_ref(),
-    )
-    .await
-    .map_err(|err| anyhow!("fetch mls_history series tail: {err}"))?;
-    Ok(Some(full))
-}
-
-/// Build + upload one `mls_history` envelope for `snapshot`, chained as the
-/// SUCCESSOR of `previous` when given (key-management.md §7.10 continuous
-/// backup; soland enforces `series_seq` strictly +1 with
-/// `supersedes`/`supersedes_digest`, and rejects parallel fresh series piling
-/// as the read-quota anti-pattern). With `previous == None` this is a series
-/// genesis (first backup for the Realm, or a deliberate post-rotation reset).
-///
-/// The successor mutation happens before transport closes the unsigned
-/// envelope through the SDK signing typestate, so `supersedes` and
-/// `supersedes_digest` are covered by the canonical signed-fields set.
-///
-/// Returns `(backup_id, uploaded_body)`; callers should cache the body as the
-/// new series tail for the next chain link.
-pub async fn upload_mls_history_backup_with_previous(
-    api: &crate::transport::TransportClient,
-    snapshot: &crate::mls::persistence::MlsSnapshotEnvelope,
-    actor_id: &str,
-    device_id: &str,
-    _previous: Option<&Value>,
-) -> Result<(String, Value)> {
-    let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
-    let previous = fetch_active_series_tail(
-        api,
-        &list_payload,
-        actor_id,
-        device_id,
-        BackupRotationKind::MlsHistory,
-    )
-    .await?;
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let (backup_id, body) = if let Some(previous) = previous.as_ref() {
-        let predecessor = typed_backup_predecessor(previous)?;
-        let frontier = current_backup_frontier_ref(api, actor_id, device_id).await?;
-        crate::mls::runtime::build_mls_history_backup_successor_body(
-            snapshot,
-            actor_id,
-            device_id,
-            &predecessor,
-            frontier,
-        )
-        .map_err(|error| anyhow!(error.user_message()))?
-    } else {
-        crate::mls::runtime::build_mls_history_backup_body(snapshot, actor_id, device_id)
-            .map_err(|error| anyhow!(error.user_message()))?
-    };
-    let (_, sent_body) = api
-        .put_key_backup_returning_sent_body(&backup_id, body, &signer)
-        .await
-        .map_err(|err| anyhow!("upload mls_history backup: {err}"))?;
-    let series_id = sent_body.series_id.to_string();
-    ensure_initial_active_series(
-        api,
-        actor_id,
-        device_id,
-        BackupRotationKind::MlsHistory,
-        &series_id,
-    )
-    .await?;
     Ok((backup_id, serde_json::to_value(sent_body)?))
 }

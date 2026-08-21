@@ -41,7 +41,7 @@ pub fn RealmAdminPanel(
     let mut principal_admission_methods = use_signal(|| "did:webvh".to_owned());
     let mut principal_admission_allowed_dids = use_signal(String::new);
     let mut principal_admission_denied_dids = use_signal(String::new);
-    let mut history_visibility = use_signal(|| "shared".to_owned());
+    let mut tighten_history_access = use_signal(|| false);
     let mut status_msg = use_signal(String::new);
     // Capability grant/revoke Move-strand inputs (see capability-grant-card)
     let mut cap_grant_id = use_signal(String::new);
@@ -166,12 +166,6 @@ pub fn RealmAdminPanel(
         + usize::from(!bottom_cells.is_empty());
     let projected_member_count =
         projected_members_for_realm(&state_store.read(), &selected_realm_id).len();
-    // RRK durability active (mode != none + mls_exporter_aead_v1) gates the
-    // Realm-level recovery panel in the Security section.
-    let durability_rrk_active = state_store
-        .read()
-        .realm_durability_is_rrk_active(&selected_realm_id);
-
     rsx! {
         div { class: "settings realm-settings", "data-testid": "realm-admin-panel",
             div { class: "settings-shell realm-settings-shell",
@@ -243,7 +237,7 @@ pub fn RealmAdminPanel(
                         }
                         div { class: "metric",
                             strong { {crate::i18n::tr("realm_admin.access")} }
-                            span { "{join_rule()} / {history_visibility()}" }
+                            span { "{join_rule()}" }
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
@@ -271,9 +265,9 @@ pub fn RealmAdminPanel(
             // encryption-and-audit.md §2.10.8 disclosure obligation — RRK
             // durability banner. Renders only when this Realm's effective
             // durability_policy.mode != none AND content_scheme is
-            // mls_exporter_aead_v1; otherwise it is a no-op. Members MUST see
-            // that history is continuously sealed to a verifiable recovery
-            // holder who can decrypt all history (never "real-time listening").
+            // mls_exporter_aead_v1; otherwise it is a no-op. Until verified
+            // coverage exists, it discloses policy configuration and the
+            // client's pending capability without claiming key delivery.
             crate::components::DurabilityDisclosureBanner {
                 realm_id: selected_realm_id.clone(),
             }
@@ -471,12 +465,6 @@ pub fn RealmAdminPanel(
                     realm_id: selected_realm_id.clone(),
                     actor_id: account_did.clone(),
                 }
-                // Realm-level RRK recovery panel — only when durability is active.
-                if durability_rrk_active {
-                    super::durability_recovery::DurabilityRecoveryPanel {
-                        realm_id: selected_realm_id.clone(),
-                    }
-                }
                 // Read-only MLS epoch widget from the current Seal view.
                 div { class: "event", "data-testid": "mls-epoch-widget",
                     div { class: "event-head",
@@ -647,6 +635,17 @@ pub fn RealmAdminPanel(
                                             },
                                         );
                                         let patch = Value::Object(patch);
+                                        let Some(digest_suite) = state_store
+                                            .read()
+                                            .trusted_mls_governance_checkpoint(&home_realm_id)
+                                            .map(|checkpoint| checkpoint.live_digest_suite)
+                                        else {
+                                            status_msg.set(
+                                                "profile update failed: Realm has no verified governance checkpoint"
+                                                    .to_owned(),
+                                            );
+                                            return;
+                                        };
                                         spawn(async move {
                                             match crate::transport::auth::with_event_submitter(
                                                 &base,
@@ -654,7 +653,7 @@ pub fn RealmAdminPanel(
                                                 |sub| async move {
                                                     let profile_result = match subject_kind {
                                                         RealmTreeNodeKind::Realm => {
-                                                            crate::transport::realm_write::update_realm_metadata(&sub, &home_realm_id, &actor_id, patch).await
+                                                            crate::transport::realm_write::update_realm_metadata(&sub, &home_realm_id, &actor_id, digest_suite, patch).await
                                                         }
                                                         RealmTreeNodeKind::Space => {
                                                             crate::transport::realm_write::update_space_metadata(&sub, &home_realm_id, &subject_id, &actor_id, patch).await
@@ -814,29 +813,14 @@ pub fn RealmAdminPanel(
                 }
             }
 
-            // History visibility selector
-            div { class: "event", "data-testid": "history-visibility",
-                div { class: "event-head", span { "History Visibility" } span { "" } }
+            // History access can only tighten from all-history to since-join.
+            div { class: "event", "data-testid": "history-access",
+                div { class: "event-head", span { "History Access" } span { "One-way tightening" } }
                 div { class: "actions",
                     Button {
-                        variant: if history_visibility() == "shared" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                        onclick: move |_| history_visibility.set("shared".to_owned()),
-                        "Shared"
-                    }
-                    Button {
-                        variant: if history_visibility() == "invited" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                        onclick: move |_| history_visibility.set("invited".to_owned()),
-                        "Invited"
-                    }
-                    Button {
-                        variant: if history_visibility() == "joined" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                        onclick: move |_| history_visibility.set("joined".to_owned()),
-                        "Joined"
-                    }
-                    Button {
-                        variant: if history_visibility() == "world_readable" { ButtonVariant::Primary } else { ButtonVariant::Secondary },
-                        onclick: move |_| history_visibility.set("world_readable".to_owned()),
-                        "World Readable"
+                        variant: if tighten_history_access() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
+                        onclick: move |_| tighten_history_access.set(!tighten_history_access()),
+                        "Tighten to since joining"
                     }
                 }
                 div { class: "actions",
@@ -853,7 +837,7 @@ pub fn RealmAdminPanel(
                                 let actor = actor.clone();
                                 let api_token = token();
                                 let rule = join_rule();
-                                let vis = history_visibility();
+                                let tighten_access = tighten_history_access();
                                 let join_policy = match build_principal_admission_join_policy(
                                     principal_admission_enabled(),
                                     &principal_admission_methods(),
@@ -872,6 +856,17 @@ pub fn RealmAdminPanel(
                                     .realm_tree_projections
                                     .get(&realm)
                                     .is_some_and(projection_has_recommended_encryption_floor);
+                                let Some(digest_suite) = state_store
+                                    .read()
+                                    .trusted_mls_governance_checkpoint(&realm)
+                                    .map(|checkpoint| checkpoint.live_digest_suite)
+                                else {
+                                    status_msg.set(
+                                        "policy failed: Realm has no verified governance checkpoint"
+                                            .to_owned(),
+                                    );
+                                    return;
+                                };
                                 spawn(async move {
                                     match crate::transport::auth::with_event_submitter(
                                         &base,
@@ -881,8 +876,9 @@ pub fn RealmAdminPanel(
                                                 &sub,
                                                 &realm,
                                                 &actor,
+                                                digest_suite,
                                                 &rule,
-                                                &vis,
+                                                tighten_access,
                                                 join_policy,
                                                 preserve_recommended_encryption_floor,
                                             )
@@ -892,8 +888,8 @@ pub fn RealmAdminPanel(
                                     .await
                                     {
                                         Ok(resp) => status_msg.set(format!(
-                                            "policy: join={}, history={}",
-                                            resp.join_rule, resp.history_visibility
+                                            "policy: join={}, history_access_tightened={}",
+                                            resp.join_rule, resp.history_access_tightened
                                         )),
                                         Err(err) => status_msg.set(format!(
                                             "policy failed: {}", err.display()
@@ -1010,10 +1006,15 @@ pub fn RealmAdminPanel(
                                                 ));
                                                 return;
                                             }
-                                            state_store.write().save_mls_snapshot(
+                                            if let Err(error) = state_store.write().save_mls_snapshot(
                                                 realm.clone(),
                                                 snapshot,
-                                            );
+                                            ) {
+                                                status_msg.set(format!(
+                                                    "MLS snapshot persist failed: {error}"
+                                                ));
+                                                return;
+                                            }
                                             // A self-update is also the spec-defined
                                             // recovery commit when a historical
                                             // membership transition changed the

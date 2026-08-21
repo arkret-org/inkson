@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) use super::*;
 
+mod history_candidates;
 mod identity;
 mod mls_snapshot;
 mod move_submission;

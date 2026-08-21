@@ -35,13 +35,6 @@ use crate::ui::input::Input;
 use crate::views::ConnectionState;
 use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
 
-const REALM_KEY_SHARE_ANSWER_RETRY_BACKOFF_MS: u64 = 60_000;
-
-/// Entry cap for the realm-key answer retry cooldown table. A single device only
-/// tracks the handful of unanswered `ak.realm_key.request` dedup keys currently
-/// backing off; the cap bounds a pathological key space.
-const REALM_KEY_ANSWER_BACKOFF_MAX_ENTRIES: usize = 64;
-
 // YOU-07-001: post-login / startup-check effects and small types moved to
 // `crate::app::bootstrap` (move-only; logic, signatures, and bytes unchanged).
 // The re-export keeps existing app.rs call sites and `app_tests.rs`
@@ -531,20 +524,6 @@ fn AppBootstrap() -> Element {
     // when the (realm, blocking-reason) pair changes, so a genuinely stuck
     // admin gets one visible line per cause.
     let mls_admission_diag_last = use_signal(String::new);
-    // History sharing (encryption-and-audit.md): single-flight guard for the
-    // to-device `ak.realm_key.share` ingest + `ak.realm_key.request` provider
-    // response pass, so inbox changes and explicit retries cannot overlap.
-    let realm_key_sharing_in_flight = use_signal(|| false);
-    // History sharing (receiver-initiated pull): dedup key of the last
-    // `ak.realm_key.request` this device emitted, as
-    // `"{realm}|{from}|{to}|{installed_signature}"`. The installed-secret
-    // signature is folded in so that once a `ak.realm_key.share` lands and
-    // installs a `history_secret`, the key changes and a still-open gap can be
-    // re-requested — but an unchanged state never re-emits the same request.
-    let realm_key_request_dedup = use_signal(|| Option::<String>::None);
-    let realm_key_answer_backoff_until = use_signal(|| {
-        crate::keyed_cooldown::KeyedCooldown::new(REALM_KEY_ANSWER_BACKOFF_MAX_ENTRIES)
-    });
     // Step 3 of the account-MLS-secret auto-unlock strand: set by the bootstrap
     // effect when this device has no local account secret yet but the server
     // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
@@ -1319,9 +1298,6 @@ fn AppBootstrap() -> Element {
                     realm_events_route_enabled,
                     selected_realm_id,
                     device_queue,
-                    realm_key_sharing_in_flight,
-                    realm_key_request_dedup,
-                    realm_key_answer_backoff_until,
                     mls_welcome_bootstrap_key_seen,
                     crypto_state,
                     needs_mls_backup,

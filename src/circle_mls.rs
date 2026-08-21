@@ -53,7 +53,7 @@ fn build_remove_proposal_event(
     actor_id: &str,
     target_principal_id: &str,
     proposal: &arkret_sdk::MlsProposalEnvelope,
-    governance_binding: Option<arkret_sdk::MlsGovernanceBindingPayload>,
+    governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<crate::operation::LocalOperation, String> {
     let target_principal = crate::mls_api_helpers::principal_core_id(target_principal_id)
         .map_err(|err| format!("invalid remove target principal id: {err:?}"))?;
@@ -66,6 +66,7 @@ fn build_remove_proposal_event(
         proposal_digest: Some(proposal.proposal_digest.clone()),
         target_principal_id: Some(target_principal),
         target_device_id: None,
+        target_authorization_incarnation: None,
         governance_binding,
     };
     let mut builder = crate::operation::ak_ops::mls_proposal_with_governance(
@@ -158,7 +159,7 @@ fn build_remove_scope_rotate_draft(
                 actor_id,
                 removed_principal.as_str(),
                 proposal,
-                Some(proposal_governance_binding.clone()),
+                proposal_governance_binding.clone(),
             )?
             .into_intent(),
         );
@@ -340,11 +341,13 @@ pub async fn submit_circle_scope_rotate_draft(
             accepted_commit_ref,
         )
         .map_err(anyhow::Error::msg)?;
-    state_store.save_mls_snapshot_for_effective_scope(
-        realm_id.to_owned(),
-        Some(circle_id),
-        draft.post_commit_snapshot,
-    );
+    state_store
+        .save_mls_snapshot_for_effective_scope(
+            realm_id.to_owned(),
+            Some(circle_id),
+            draft.post_commit_snapshot,
+        )
+        .map_err(anyhow::Error::msg)?;
     Ok(outcome)
 }
 

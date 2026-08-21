@@ -175,6 +175,9 @@ impl AccountClientEventProjector {
             ClientEvent::Event(_) => {
                 report.decoded_events += 1;
             }
+            ClientEvent::RealmAccepted { .. } => {
+                report.decoded_events += 1;
+            }
             ClientEvent::Notification(_) => {
                 report.notifications += 1;
             }
@@ -645,7 +648,8 @@ impl
         );
 
         if !self.ctx.account_did.trim().is_empty() {
-            let submitter = crate::event_submit::EventSubmitter::new(http.clone());
+            let submitter = crate::event_submit::EventSubmitter::new(http.clone())
+                .with_state_store(self.ctx.state_store.clone());
             if let Err(error) = submitter.drain_outbound(self.ctx.account_did.trim()).await {
                 tracing::debug!(
                     ?error,
@@ -1165,7 +1169,7 @@ async fn run_circle_scope_rotate_pass(
                             post_commit_snapshot.epoch,
                             commit_event_id,
                         )?;
-                        store.save_mls_snapshot(realm_id.clone(), post_commit_snapshot);
+                        store.save_mls_snapshot(realm_id.clone(), post_commit_snapshot)?;
                         Ok::<_, String>(())
                     });
                     if let Err(error) = persisted {
@@ -1384,7 +1388,7 @@ async fn run_circle_scope_rotate_pass(
                     realm_id.clone(),
                     Some(&circle_id),
                     post_commit_snapshot,
-                );
+                )?;
                 Ok::<_, String>(())
             });
             if let Err(error) = persisted {
@@ -1402,7 +1406,7 @@ async fn run_circle_scope_rotate_pass(
                 ?target_principal_ids,
                 ?removed_leaves,
                 ?removed_principals,
-                mls_group_ref = ?outcome.mls_group_ref,
+                mls_group_id = ?outcome.mls_group_id,
                 note = ?outcome.note,
                 "sync_engine: Circle scope-rotate commit accepted",
             );
@@ -1522,7 +1526,7 @@ async fn run_idle_self_update_pass(
                         snapshot.epoch,
                         commit_event_id,
                     )?;
-                    store.save_mls_snapshot(realm_id.clone(), snapshot);
+                    store.save_mls_snapshot(realm_id.clone(), snapshot)?;
                     Ok::<_, String>(())
                 });
                 if let Err(error) = persisted {
@@ -1680,21 +1684,6 @@ pub(crate) async fn prefetch_persistent_event_sender_keys_from_values<
         state_store,
     )
     .await
-}
-
-/// Public alias of [`prefetch_persistent_event_sender_key_pairs`] for callers
-/// outside the persistent-event projection path (e.g. the history-share install
-/// loop priming `ak.realm_key.share` sender device keys before SEC-02
-/// fail-closed verification).
-pub(crate) async fn prefetch_device_key_pairs<
-    S: crate::mls::governance_proof::GovernanceProofStateStore,
->(
-    api: &TransportClient,
-    pairs: Vec<(String, String)>,
-    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
-    state_store: S,
-) -> bool {
-    prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache, state_store).await
 }
 
 /// DID-P2-B: `state_store` is the durable accepted-binding handle.
@@ -3203,7 +3192,7 @@ mod tests {
         let cached = json!({
             "__kind": "realm",
             "content_scheme": "mls_exporter_aead_v1",
-            "history_visibility": "shared",
+            "history_access": "all_history_for_current_members",
             "summary": {"title": "Shared history"},
             "state": {"events": [
                 {

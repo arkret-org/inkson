@@ -144,7 +144,11 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
     // so asserting the projection is the successor to the old array, and a
     // stronger claim: the pre-closure client shipped no effect at all and the
     // Event never reached its cell.
-    let writes = crate::operation::pre_authoring_cell_writes(event.intent()).unwrap();
+    let writes = crate::operation::pre_authoring_cell_writes(
+        event.intent(),
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
     assert_eq!(writes.len(), 1);
     assert!(
         writes[0]
@@ -153,8 +157,11 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
             .starts_with("ak:cell:ak.component.calendar.rsvp.v1:")
     );
     assert_eq!(
-        crate::operation::direct_registered_cell_writes(&crate::operation::author_for_test(&event))
-            .unwrap()[0]
+        crate::operation::direct_registered_cell_writes(
+            &crate::operation::author_for_test(&event),
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap()[0]
             .op
             .value
             .as_ref()

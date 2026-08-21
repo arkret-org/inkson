@@ -22,19 +22,15 @@ const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.iden
 // device republishes an ordinary package after each successfully applied
 // Welcome.
 const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v1";
-/// Per-(actor, device) X25519 keypair used to receive HPKE-sealed
-/// `history_secret`s in a `ak.realm_key.share`. This device advertises the
-/// public half as `recipient_hpke_public_key` in a `ak.realm_key.request` and
-/// opens the sealed reply with the private half.
+/// Per-(actor, device) X25519 keypair used to open HPKE-sealed history-key
+/// recovery records addressed to this device.
 ///
-/// TODO(history-share): ideally the receiver would advertise (and open with)
+/// The receiver should eventually advertise (and open with)
 /// the X25519 init-key private half of its published MLS KeyPackage so a
-/// provider can seal proactively at admission time from the claim alone.
+/// source can seal proactively at admission time from the claim alone.
 /// OpenMLS does not surface that raw private scalar through the current SDK,
-/// so we mint a dedicated, persisted device HPKE keypair instead. The provider
-/// therefore can only seal once the receiver has advertised this key (the
-/// request path); the admission-time proactive push is best-effort and skipped
-/// when the invitee's HPKE public key is not yet known.
+/// so we mint a dedicated, persisted device HPKE keypair instead. A history-key
+/// request binds the corresponding public key through its mailbox capability.
 const DEVICE_HPKE_PRIVATE_KEY_PREFIX: &str = "inkson.device_hpke_x25519.private.v1";
 
 /// Stored account-scoped MLS snapshot secret plus the local key version that
@@ -285,6 +281,31 @@ pub async fn ensure_account_mls_secret_durable(
     Ok(secret)
 }
 
+/// Re-commit an existing account MLS secret durably without creating one.
+///
+/// Returning devices and Welcome consumers must recover the account recovery
+/// unit when the secret is absent. Minting here would create a second wrapping
+/// root that cannot open the account's existing snapshots or backups.
+pub async fn ensure_existing_account_mls_secret_durable(
+    store: &dyn SecureKeyStore,
+    actor_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    let actor = actor_id.trim();
+    if actor.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "actor_id is required for MLS snapshot secret".to_owned(),
+        ));
+    }
+    let existing = load_account_mls_secret(store, actor)?.ok_or(SecureKeyStoreError::NotFound)?;
+    store
+        .store_secret_durable(
+            &account_mls_secret_key_for_version(actor, existing.version),
+            &existing.secret,
+        )
+        .await?;
+    Ok(existing.secret)
+}
+
 pub fn mls_key_package_identity_state_key(
     actor_id: &str,
     device_id: &str,
@@ -483,17 +504,9 @@ pub fn prepare_account_mls_secret_rotation(
             "actor_id is required for MLS snapshot secret".to_owned(),
         )));
     }
-    let previous_secret =
-        match load_account_mls_secret(store, actor).map_err(MlsRuntimeError::DeviceSecret)? {
-            Some(secret) => secret,
-            None => {
-                let _ = load_or_create_account_mls_secret(store, actor)
-                    .map_err(MlsRuntimeError::DeviceSecret)?;
-                load_account_mls_secret(store, actor)
-                    .map_err(MlsRuntimeError::DeviceSecret)?
-                    .ok_or(MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound))?
-            }
-        };
+    let previous_secret = load_account_mls_secret(store, actor)
+        .map_err(MlsRuntimeError::DeviceSecret)?
+        .ok_or(MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound))?;
     let new_version = previous_secret
         .version
         .saturating_add(1)
@@ -551,7 +564,7 @@ pub fn prepare_account_mls_secret_rotation(
     })
 }
 
-/// Storage key for this device's HPKE X25519 private key (history sharing).
+/// Storage key for this device's history-recovery HPKE X25519 private key.
 fn device_hpke_private_key_key(
     actor_id: &str,
     device_id: &str,
@@ -571,35 +584,40 @@ fn device_hpke_private_key_key(
     Ok(format!("{DEVICE_HPKE_PRIVATE_KEY_PREFIX}.{actor}.{device}"))
 }
 
-/// Load (or first-create + persist) this device's raw 32-byte X25519 HPKE
-/// private key for history sharing, returning `(private_key, public_key)` as
-/// raw 32-byte vectors. The public half is advertised in a
-/// `ak.realm_key.request`; the private half opens the sealed reply. Stable
-/// across calls and restarts on the same device.
-pub fn load_or_create_device_hpke_keypair(
+/// Load or create the device HPKE keypair and await the private-key commit.
+/// Network requests that advertise the public half must use this entry point.
+pub async fn load_or_create_device_hpke_keypair_durable(
     store: &dyn SecureKeyStore,
     actor_id: &str,
     device_id: &str,
 ) -> Result<(Vec<u8>, Vec<u8>), SecureKeyStoreError> {
+    static HPKE_KEY_CREATE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+    let _guard = HPKE_KEY_CREATE_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let key = device_hpke_private_key_key(actor_id, device_id)?;
     if let Some(existing) = store.get_secret(&key)?
         && !existing.trim().is_empty()
     {
-        let sk = URL_SAFE_NO_PAD
+        let private_key = URL_SAFE_NO_PAD
             .decode(existing.trim().as_bytes())
-            .map_err(|err| {
-                SecureKeyStoreError::Backend(format!("decode device HPKE private key: {err}"))
+            .map_err(|error| {
+                SecureKeyStoreError::Backend(format!("decode device HPKE private key: {error}"))
             })?;
-        let pk = x25519_public_from_private(&sk)?;
-        return Ok((sk, pk));
+        let public_key = x25519_public_from_private(&private_key)?;
+        return Ok((private_key, public_key));
     }
     let mut seed = [0u8; 32];
     getrandom::fill(&mut seed)
-        .map_err(|err| SecureKeyStoreError::Backend(format!("getrandom: {err}")))?;
-    let sk = seed.to_vec();
-    let pk = x25519_public_from_private(&sk)?;
-    store.store_secret(&key, &URL_SAFE_NO_PAD.encode(&sk))?;
-    Ok((sk, pk))
+        .map_err(|error| SecureKeyStoreError::Backend(format!("getrandom: {error}")))?;
+    let private_key = seed.to_vec();
+    let public_key = x25519_public_from_private(&private_key)?;
+    store
+        .store_secret_durable(&key, &URL_SAFE_NO_PAD.encode(&private_key))
+        .await?;
+    Ok((private_key, public_key))
 }
 
 /// Load (without creating) this device's HPKE X25519 private key, if present.
@@ -645,7 +663,9 @@ pub fn commit_account_mls_secret_rotation(
     rotation: &AccountMlsSecretRotation,
 ) -> Result<(), SecureKeyStoreError> {
     for (realm_id, envelope) in &rotation.rewrapped_snapshots {
-        state_store.save_mls_snapshot(realm_id.clone(), envelope.clone());
+        state_store
+            .save_mls_snapshot(realm_id.clone(), envelope.clone())
+            .map_err(SecureKeyStoreError::Backend)?;
     }
     store_account_mls_secret_version(
         secure_store,

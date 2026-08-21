@@ -182,7 +182,11 @@ mod tests {
         // is named by `retype(event_id)`, so the write only has a subject once
         // the Event is finalized.
         let event = crate::operation::author_for_test(&operation);
-        let writes = crate::operation::direct_registered_cell_writes(&event).unwrap();
+        let writes = crate::operation::direct_registered_cell_writes(
+            &event,
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap();
         assert_eq!(writes.len(), 1);
         let grant_id = arkret_sdk::GrantId::from_event_id(event.event_id());
         assert_eq!(

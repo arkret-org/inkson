@@ -29,8 +29,6 @@
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 
-pub(crate) const INKSON_POLICY_ACCESS_AUDIT_KIND: &str = "org.arkret.inkson.audit.policy_access";
-
 /// One late-recovered event surfaced to message readers. Constructed from
 /// the server's `recovery.recovered_at` + the event's
 /// `original_received_at` timestamps.
@@ -50,29 +48,26 @@ pub struct LateRecoveredEvent {
 
 /// Minimal pure guard inputs for the late -> late_recovered transition.
 ///
-/// The caller resolves these booleans from sealed T0 membership/policy state,
-/// the recovery-source policy, and retention projections. This
+/// The caller resolves this fact from sealed T0 membership state. Key-source
+/// authorization is enforced by the verified history-key acquisition path, not
+/// by an untrusted event-side carrier. This
 /// module keeps only the fail-closed transition decision so UI and storage
 /// paths share one ordering and one reason vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LateRecoveryGuardInput {
     /// Receiver was a joined Realm member at the target event's T0/epoch.
     pub receiver_joined_at_event_epoch: bool,
-    /// The late key source is allowed by the Realm recovery/share policy.
-    pub key_share_source_authorized: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LateRecoveryRejection {
     Membership,
-    ShareNotAuthorized,
 }
 
 impl LateRecoveryRejection {
     pub const fn reason_code(self) -> &'static str {
         match self {
             Self::Membership => arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP,
-            Self::ShareNotAuthorized => arkret_sdk::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED,
         }
     }
 }
@@ -102,15 +97,12 @@ impl LateRecoveryDecision {
 /// Evaluate the normative late key recovery guards before moving a local
 /// event from `decryption_failed` to `late_recovered`.
 ///
-/// Guard order mirrors spec section 2.3.5: membership at T0/epoch, recovery
-/// source authorization. The first failure is returned
-/// so callers can log one distinguishable `late_recovery_*` reason.
+/// The membership check mirrors spec section 2.3.5. Recovery-source
+/// authorization is already a prerequisite of acquiring the history key and
+/// is not re-decided from event JSON here.
 pub fn evaluate_late_recovery_guards(input: LateRecoveryGuardInput) -> LateRecoveryDecision {
     if !input.receiver_joined_at_event_epoch {
         return LateRecoveryDecision::Reject(LateRecoveryRejection::Membership);
-    }
-    if !input.key_share_source_authorized {
-        return LateRecoveryDecision::Reject(LateRecoveryRejection::ShareNotAuthorized);
     }
     LateRecoveryDecision::Accept
 }
@@ -145,8 +137,8 @@ impl LateRecoveryTransitionDecision {
 /// Convert a synced/projection event into the late-recovery transition
 /// decision used by decrypt retry and local plaintext replay paths.
 ///
-/// Once a late-recovery marker is present, missing membership/source evidence
-/// is treated as false so the transition fails closed in spec order. Expiry and
+/// Once a late-recovery marker is present, missing membership evidence is
+/// treated as false so the transition fails closed. Expiry and
 /// retention guards reject only when the projection explicitly says the event
 /// is expired or the content key has been destroyed.
 pub fn evaluate_late_recovery_transition_event(event: &Value) -> LateRecoveryTransitionDecision {
@@ -165,17 +157,6 @@ pub fn evaluate_late_recovery_transition_event(event: &Value) -> LateRecoveryTra
                 "receiver_visible_at_t0",
                 "receiver_joined_at_t0",
                 "t0_membership_joined",
-            ],
-        )
-        .unwrap_or(false),
-        key_share_source_authorized: bool_from_contexts(
-            &contexts,
-            &[
-                "key_share_source_authorized",
-                "late_key_source_authorized",
-                "source_authorized",
-                "source_rechecked_current_share_policy",
-                "current_share_policy_allows_delivery",
             ],
         )
         .unwrap_or(false),
@@ -310,7 +291,7 @@ fn timestamp_from_contexts(value: &Value, keys: &[&str]) -> Option<DateTime<Utc>
 
 fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
     if string_from_value(event, &["kind", "type", "event_type"])
-        == Some(INKSON_POLICY_ACCESS_AUDIT_KIND)
+        == Some(arkret_wire::event_kind_str::AUDIT_ACCESSED)
     {
         return event
             .get("payload")
@@ -322,7 +303,7 @@ fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
             continue;
         };
         if string_from_value(candidate, &["kind", "type", "event_type"])
-            == Some(INKSON_POLICY_ACCESS_AUDIT_KIND)
+            == Some(arkret_wire::event_kind_str::AUDIT_ACCESSED)
             || string_from_value(candidate, &["access_kind"]) == Some("e2ee_late_recovery")
         {
             return Some(candidate);
@@ -493,7 +474,6 @@ mod tests {
     fn base_guard_input() -> LateRecoveryGuardInput {
         LateRecoveryGuardInput {
             receiver_joined_at_event_epoch: true,
-            key_share_source_authorized: true,
         }
     }
 
@@ -514,22 +494,6 @@ mod tests {
     }
 
     #[test]
-    fn late_recovery_rejects_unauthorized_key_share_source() {
-        let decision = evaluate_late_recovery_guards(LateRecoveryGuardInput {
-            key_share_source_authorized: false,
-            ..base_guard_input()
-        });
-        assert_eq!(
-            decision,
-            LateRecoveryDecision::Reject(LateRecoveryRejection::ShareNotAuthorized)
-        );
-        assert_eq!(
-            decision.rejection_reason_code(),
-            Some(arkret_sdk::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED)
-        );
-    }
-
-    #[test]
     fn late_recovery_accepts_when_all_guards_pass() {
         let decision = evaluate_late_recovery_guards(base_guard_input());
         assert!(decision.is_accept());
@@ -537,31 +501,17 @@ mod tests {
     }
 
     #[test]
-    fn transition_event_rejects_in_spec_order() {
-        let both_membership_and_share_fail = serde_json::json!({
+    fn transition_event_rejects_missing_membership() {
+        let membership_fail = serde_json::json!({
             "kind": "ak.message.create",
             "decryption_state": "decryption_failed",
             "late_recovery": {
-                "receiver_visible_at_t0": false,
-                "source_rechecked_current_share_policy": false
+                "receiver_visible_at_t0": false
             }
         });
         assert_eq!(
-            evaluate_late_recovery_transition_event(&both_membership_and_share_fail),
+            evaluate_late_recovery_transition_event(&membership_fail),
             LateRecoveryTransitionDecision::Reject(LateRecoveryRejection::Membership)
-        );
-
-        let share_fail = serde_json::json!({
-            "kind": "ak.message.create",
-            "decryption_state": "decryption_failed",
-            "late_recovery": {
-                "receiver_visible_at_t0": true,
-                "source_rechecked_current_share_policy": false
-            }
-        });
-        assert_eq!(
-            evaluate_late_recovery_transition_event(&share_fail),
-            LateRecoveryTransitionDecision::Reject(LateRecoveryRejection::ShareNotAuthorized)
         );
     }
 
@@ -580,8 +530,7 @@ mod tests {
             "kind": "ak.message.create",
             "decryption_state": "decryption_failed",
             "late_recovery": {
-                "receiver_visible_at_t0": true,
-                "source_rechecked_current_share_policy": true
+                "receiver_visible_at_t0": true
             }
         });
         assert_eq!(
@@ -594,12 +543,11 @@ mod tests {
     fn audit_policy_access_conversion_is_guarded() {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         let event = serde_json::json!({
-            "kind": INKSON_POLICY_ACCESS_AUDIT_KIND,
+            "kind": arkret_wire::event_kind_str::AUDIT_ACCESSED,
             "event_id": "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
             "original_received_at": "2026-05-19T23:45:00.000Z",
             "late_recovery": {
-                "receiver_visible_at_t0": true,
-                "source_rechecked_current_share_policy": true
+                "receiver_visible_at_t0": true
             },
             "payload": {
                 "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
@@ -623,10 +571,9 @@ mod tests {
         }
 
         let rejected = serde_json::json!({
-            "kind": INKSON_POLICY_ACCESS_AUDIT_KIND,
+            "kind": arkret_wire::event_kind_str::AUDIT_ACCESSED,
             "late_recovery": {
-                "receiver_visible_at_t0": false,
-                "source_rechecked_current_share_policy": true
+                "receiver_visible_at_t0": false
             },
             "payload": {
                 "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",

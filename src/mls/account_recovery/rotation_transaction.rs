@@ -10,7 +10,7 @@ use arkret_wire::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use dioxus::prelude::{SyncSignal, WritableExt};
+use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use garth::{PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore};
 use serde_json::Value;
 use zeroize::Zeroizing;
@@ -81,33 +81,11 @@ pub(crate) fn prepare_rotation_backup_material(
         vec![account_body],
     )?;
 
-    if rotation.rewrapped_snapshots.is_empty() {
+    if !rotation.rewrapped_snapshots.is_empty() {
         return Err(anyhow!(
-            "security rotation requires at least one replacement MLS history backup"
+            "device security rotation is not ready for accounts with local MLS snapshots: portable history_secret_segment rotation requires complete accepted activation views"
         ));
     }
-    let history_series_id =
-        BackupSeriesId::new(format!("ak:backup_series:{}", crate::operation::uuid_v7()))?;
-    let mut history_bodies = Vec::with_capacity(rotation.rewrapped_snapshots.len());
-    for snapshot in rotation.rewrapped_snapshots.values() {
-        let (_, body) = crate::mls::runtime::build_mls_history_backup_body_with_secret_in_series(
-            snapshot,
-            actor_id,
-            device_id,
-            &rotation.new_secret,
-            history_series_id.clone(),
-        )
-        .map_err(|error| anyhow!(error.user_message()))?;
-        history_bodies.push(sign_rotation_key_backup(body, signer, trust_anchor)?);
-    }
-    history_bodies.sort_by(|left, right| left.backup_id.as_str().cmp(right.backup_id.as_str()));
-    let mut mls_history = prepare_class(
-        list_payload,
-        BackupRotationKind::MlsHistory,
-        "mls_history",
-        history_bodies,
-    )?;
-    mls_history.new_series_id = history_series_id;
 
     let commitment = Hash::new(arkret_sdk::canonical::sha256_digest(
         &arkret_sdk::canonical::canonical_json_bytes(&serde_json::json!({
@@ -119,7 +97,7 @@ pub(crate) fn prepare_rotation_backup_material(
     Ok(PreparedRotationBackupMaterial {
         rotation,
         new_secret_commitment: commitment,
-        classes: vec![secret_storage, mls_history],
+        classes: vec![secret_storage],
     })
 }
 
@@ -238,11 +216,17 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         .iter()
         .map(|event| event.event().clone())
         .collect::<Vec<_>>();
-    crate::authorization_lease::acquire_for_events(&http, &envelopes).await?;
+    let digest_suites = signed_events
+        .iter()
+        .map(arkret_sdk::AuthoredEvent::digest_suite)
+        .collect::<Vec<_>>();
+    crate::authorization_lease::acquire_for_events(&http, &envelopes, &digest_suites).await?;
     let mut submissions = Vec::with_capacity(envelopes.len());
-    for event in &envelopes {
-        submissions
-            .push(crate::authorization_lease::delayed_initial_submission(&http, event).await?);
+    for (event, digest_suite) in envelopes.iter().zip(digest_suites.iter().copied()) {
+        submissions.push(
+            crate::authorization_lease::delayed_initial_submission(&http, event, digest_suite)
+                .await?,
+        );
     }
     let revoke_submission = EventsSubmitBatchRequestBody {
         events: vec![submissions.remove(0)],
@@ -414,6 +398,11 @@ async fn drive_security_rotation(
         ));
     };
     if transaction.next_required_step == Some(SecurityTransactionStep::EraseOldMaterial) {
+        let digest_suite = state_store
+            .read()
+            .trusted_mls_governance_checkpoint(control_realm.as_str())
+            .ok_or_else(|| anyhow!("security rotation has no verified PCR governance checkpoint"))?
+            .live_digest_suite;
         let erase_frontier = submitter
             .events_frontier_realm_seal_view(control_realm.as_str())
             .await?;
@@ -429,6 +418,7 @@ async fn drive_security_rotation(
                 risk_tier: RiskTier::High,
                 basis_ref: LeaseBasisRef::Seal(erase_frontier.seal_id),
             },
+            digest_suite,
         )
         .await?;
         let erase_request = BackupSeriesEraseRequestBody {

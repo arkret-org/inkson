@@ -13,6 +13,29 @@
 
 use inkson::operation::LocalOperation;
 
+pub fn test_notary(signer_did: &str) -> arkret_sdk::NotaryValue {
+    let full_id =
+        arkret_sdk::DidFullId::new(signer_did.to_owned()).expect("test notary DID is canonical");
+    let actor_id = arkret_sdk::DidCoreId::from(
+        arkret_sdk::project_full_id_to_core_id(&full_id)
+            .expect("test notary DID projects to a core id"),
+    );
+    let public_key = [7_u8; 32];
+    let descriptor = arkret_sdk::NotarySignerDescriptor {
+        actor_id,
+        verification_method: arkret_sdk::DidUrl::new(format!("{signer_did}#notary"))
+            .expect("test notary method is canonical"),
+        key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+        jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+        frozen_public_key_b64u: arkret_sdk::base64url_encode(&public_key),
+        frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            public_key,
+        ))
+        .expect("test notary key digest is canonical"),
+    };
+    arkret_sdk::NotaryValue::single_signer(descriptor)
+}
+
 /// The pinned signing stamp for position `actor_seq`.
 pub fn pinned_hlc(actor_seq: u64) -> arkret_sdk::Hlc {
     arkret_sdk::Hlc::new(format!("01970e589d21-{actor_seq:04}-a13f9c2e"))
@@ -28,7 +51,11 @@ pub fn author(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
 pub fn author_at_seq(operation: LocalOperation, actor_seq: u64) -> arkret_sdk::AuthoredEvent {
     operation
         .into_intent()
-        .author(actor_seq, pinned_hlc(actor_seq))
+        .author_with_digest_suite(
+            actor_seq,
+            pinned_hlc(actor_seq),
+            arkret_sdk::DigestSuite::Sha256,
+        )
         .expect("a built write finalizes")
 }
 
@@ -67,6 +94,10 @@ pub fn author_intent_at_seq(
     actor_seq: u64,
 ) -> arkret_sdk::AuthoredEvent {
     intent
-        .author(actor_seq, pinned_hlc(actor_seq))
+        .author_with_digest_suite(
+            actor_seq,
+            pinned_hlc(actor_seq),
+            arkret_sdk::DigestSuite::Sha256,
+        )
         .expect("an intent finalizes")
 }

@@ -2076,14 +2076,14 @@ fn setup_strings(dict: &mut TranslationDict) {
         "How does a principal become a member?",
     );
     dict.set("setup.axis.join_rule.unset", "Join path is not set.");
-    dict.set("setup.axis.history_visibility", "History visibility");
+    dict.set("setup.axis.history_access", "History access");
     dict.set(
-        "setup.axis.history_visibility.question",
+        "setup.axis.history_access.question",
         "What history can new members read?",
     );
     dict.set(
-        "setup.axis.history_visibility.unset",
-        "History scope is not set.",
+        "setup.axis.history_access.unset",
+        "History access is not set.",
     );
     dict.set("setup.axis.encryption", "Encryption");
     dict.set("setup.axis.encryption.question", "Protection");
@@ -2131,12 +2131,6 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.axis.federation_policy.high_assurance",
         "High assurance allows only restricted, closed, or quarantine federation.",
     );
-    dict.set("setup.axis.seal_profile", "Seal profile");
-    dict.set(
-        "setup.axis.seal_profile.question",
-        "Who signs durable seals for this Realm?",
-    );
-    dict.set("setup.axis.seal_profile.unset", "Seal profile is not set.");
     dict.set("setup.axis.hash_profile", "Hash profile");
     dict.set(
         "setup.axis.hash_profile.question",
@@ -2145,7 +2139,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.axis.hash_profile.unset", "Hash profile is not set.");
     dict.set(
         "setup.boundary.advanced_summary",
-        "Advanced (federation policy / seal profile / hash profile)",
+        "Advanced (federation policy / hash profile)",
     );
 
     // Seed step.
@@ -2194,7 +2188,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.progress.seeded_members", "seeded {count} member(s)");
     dict.set(
         "setup.progress.canonical_policy",
-        "canonical policy {discoverability} / {join_rule} / {history_visibility}",
+        "canonical policy {discoverability} / {join_rule} / {history_access}",
     );
     dict.set(
         "setup.progress.plaintext_services",
@@ -2318,33 +2312,18 @@ fn setup_option_strings(dict: &mut TranslationDict) {
         "Joining depends on policy or claims, even if the Realm is discoverable.",
     );
 
+    dict.set("setup.opt.history_access.since_join", "Since joining");
     dict.set(
-        "setup.opt.history_visibility.world_readable",
-        "World readable",
+        "setup.opt.history_access.since_join.hint",
+        "A member can recover only history from the start of its current membership incarnation. This terminal value cannot be widened.",
     );
     dict.set(
-        "setup.opt.history_visibility.world_readable.hint",
-        "Past history is readable without joining. Use only with intentionally open Realms.",
+        "setup.opt.history_access.all_history_for_current_members",
+        "All history for current members",
     );
-    dict.set("setup.opt.history_visibility.shared", "Shared");
     dict.set(
-        "setup.opt.history_visibility.shared.hint",
-        "New members can read the pre-join history that is meant to be shared with the whole Realm.",
-    );
-    dict.set("setup.opt.history_visibility.invited", "Invited");
-    dict.set(
-        "setup.opt.history_visibility.invited.hint",
-        "History is visible only from the point an invite made the principal eligible.",
-    );
-    dict.set("setup.opt.history_visibility.joined", "Joined");
-    dict.set(
-        "setup.opt.history_visibility.joined.hint",
-        "History starts when the principal actually becomes a member.",
-    );
-    dict.set("setup.opt.history_visibility.restricted", "Restricted");
-    dict.set(
-        "setup.opt.history_visibility.restricted.hint",
-        "Past history stays tightly scoped; new members see only what policy re-discloses.",
+        "setup.opt.history_access.all_history_for_current_members.hint",
+        "Every current member can recover all retained Realm history. The policy may later tighten only to since_join.",
     );
 
     dict.set("setup.opt.encryption_profile.mls_rfc9420", "Encrypted");
@@ -2402,27 +2381,6 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set(
         "setup.opt.federation_policy.quarantine.hint",
         "Inbound is accepted but held for review. Outbound is blocked.",
-    );
-
-    dict.set("setup.opt.anchor_profile.single_did", "Single DID");
-    dict.set(
-        "setup.opt.anchor_profile.single_did.hint",
-        "One principal signs seals. Simplest setup; default.",
-    );
-    dict.set("setup.opt.anchor_profile.threshold", "Threshold");
-    dict.set(
-        "setup.opt.anchor_profile.threshold.hint",
-        "k-of-n signature; configure the participating DIDs in policy.",
-    );
-    dict.set("setup.opt.anchor_profile.open_set", "Open set");
-    dict.set(
-        "setup.opt.anchor_profile.open_set.hint",
-        "Any holder of the notary capability may sign.",
-    );
-    dict.set("setup.opt.anchor_profile.mixed", "Mixed");
-    dict.set(
-        "setup.opt.anchor_profile.mixed.hint",
-        "Combination of the above — configure via policy.",
     );
 
     dict.set("setup.opt.hash_profile.sha256", "SHA-256");

@@ -614,58 +614,6 @@ impl LocalStateStore {
         removed
     }
 
-    /// Drop a handled `ak.realm_key.request` from the local to-device inbox.
-    ///
-    /// `DeviceMessageEnvelope.device_message_id` is top-level required in
-    /// `device-message.schema.json`; the protocol has no second legal position
-    /// for it. An envelope that omits it, or that only carries the id nested
-    /// under `content` / `payload`, is schema-invalid and MUST NOT reach dedupe
-    /// or dispatch.
-    pub fn dismiss_realm_key_request_to_device_message(&mut self, request_id: &str) -> usize {
-        self.ensure_cached_loaded();
-        let request_id = request_id.trim();
-        if request_id.is_empty() {
-            return 0;
-        }
-        let before = self.cached.to_device_inbox.len();
-        self.cached.to_device_inbox.retain(|message| {
-            if message.get("kind").and_then(Value::as_str) != Some("ak.realm_key.request") {
-                return true;
-            }
-            to_device_message_id(message).as_deref() != Some(request_id)
-        });
-        let removed = before - self.cached.to_device_inbox.len();
-        if removed > 0 {
-            let _ = self.flush();
-        }
-        removed
-    }
-
-    /// Drop a handled `ak.realm_key.share` from the local to-device inbox once
-    /// its history secrets were installed. soland projects durable shares with
-    /// the source Event `operation_id`, while event-shaped envelopes may expose
-    /// `event_id`; accept both identifiers.
-    pub fn dismiss_realm_key_share_to_device_message(&mut self, operation_id: &str) -> usize {
-        self.ensure_cached_loaded();
-        let operation_id = operation_id.trim();
-        if operation_id.is_empty() {
-            return 0;
-        }
-        let before = self.cached.to_device_inbox.len();
-        self.cached.to_device_inbox.retain(|message| {
-            if message.get("kind").and_then(Value::as_str) != Some(event_kind_str::REALM_KEY_SHARE)
-            {
-                return true;
-            }
-            realm_key_share_message_id(message).as_deref() != Some(operation_id)
-        });
-        let removed = before - self.cached.to_device_inbox.len();
-        if removed > 0 {
-            let _ = self.flush();
-        }
-        removed
-    }
-
     pub fn append_raw_operation(
         &mut self,
         operation_id: impl Into<String>,
@@ -862,54 +810,6 @@ fn realm_scan_cursor_key(
         realm_id.as_str(),
         order.unwrap_or("")
     )
-}
-
-/// Delivery identity of a to-device envelope.
-///
-/// The single legal carrier is the top-level `device_message_id`
-/// (`device-message.schema.json` required member). Values that do not parse as
-/// a canonical `ak:device_message:<uuidv7>` are rejected here so a
-/// schema-invalid envelope never reaches dedupe, state update or UI dispatch.
-fn to_device_message_id(message: &Value) -> Option<String> {
-    let raw = message.get("device_message_id").and_then(Value::as_str)?;
-    arkret_sdk::DeviceMessageId::new(raw.to_owned())
-        .ok()
-        .map(|id| id.as_str().to_owned())
-}
-
-fn realm_key_share_message_id(message: &Value) -> Option<String> {
-    message
-        .get("operation_id")
-        .or_else(|| message.get("event_id"))
-        .or_else(|| {
-            message
-                .get("content")
-                .and_then(|content| content.get("operation_id"))
-        })
-        .or_else(|| {
-            message
-                .get("content")
-                .and_then(|content| content.get("event_id"))
-        })
-        .or_else(|| {
-            message
-                .get("payload")
-                .and_then(|payload| payload.get("operation_id"))
-        })
-        .or_else(|| {
-            message
-                .get("payload")
-                .and_then(|payload| payload.get("event_id"))
-        })
-        .or_else(|| {
-            message
-                .get("unsigned")
-                .and_then(|unsigned| unsigned.get("source_event_id"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 fn raw_payload_string(payload: &Value, key: &str) -> Option<String> {

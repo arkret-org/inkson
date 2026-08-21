@@ -40,6 +40,7 @@ use crate::operation::{EventIntent, LocalOperation, uuid_v7};
 pub struct EventSubmitter {
     http: arkret_sdk::http_client::Client,
     describe_cache: OnceCell<ServiceDescribe>,
+    state_store: Option<crate::runtime::input::StateStoreHandle>,
 }
 
 /// Ordinary Realm and self-principal bootstrap units intentionally publish
@@ -129,7 +130,9 @@ async fn persist_post_accept_action(
                 accepted_event_id,
             )
             .map_err(garth::Error::Protocol)?;
-        store.save_mls_snapshot(snapshot_realm_id, snapshot);
+        store
+            .save_mls_snapshot(snapshot_realm_id, snapshot)
+            .map_err(garth::Error::Protocol)?;
         store.begin_durable_flush().map_err(|error| {
             garth::Error::Protocol(format!(
                 "begin durable MLS post-accept snapshot persist: {error}"
@@ -205,15 +208,37 @@ struct EventOutboundSubmitter<'a> {
 
 impl EventOutboundSubmitter<'_> {
     async fn verify_covering_seal(&self, event: &arkret_sdk::Event) -> anyhow::Result<()> {
-        let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+        let state_store = self.state_store.as_ref();
+        let digest_suite = verify_event_is_covered_by_accepted_seal(
+            &self.owner.http,
+            event,
+            |event, digest_suite, evidence, dependencies| {
+                let state_store = state_store.ok_or_else(|| {
+                    arkret_sdk::WireError::Protocol(
+                        "Native Agent Event verification requires a durable governance trust store"
+                            .to_owned(),
+                    )
+                })?;
+                crate::mls::governance_proof::verify_native_agent_history_key(
+                    state_store,
+                    event,
+                    digest_suite,
+                    evidence,
+                    dependencies,
+                )
+            },
+        )
+        .await?;
+        let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
         let outcome = self
             .owner
             .http
             .events_resolve(&arkret_sdk::EventsResolveRequestBody {
                 event_ids: vec![event.event_id.clone()],
                 event_digests: vec![digest.clone()],
-                seal_refs: Vec::new(),
                 include_payload: Some(true),
+                history_traversal_access: None,
+                max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
             })
             .await?;
         let resolved = outcome
@@ -228,20 +253,11 @@ impl EventOutboundSubmitter<'_> {
             })?;
         if arkret_sdk::canonical::canonical_json_bytes(resolved)?
             != arkret_sdk::canonical::canonical_json_bytes(event)?
-            || arkret_sdk::Hash::new(resolved.event_digest()?)? != digest
+            || arkret_sdk::Hash::new(resolved.event_digest_with_digest_suite(digest_suite)?)?
+                != digest
         {
             anyhow::bail!(
                 "events.resolve returned different canonical bytes for Event {}",
-                event.event_id
-            );
-        }
-        if !outcome.seals.iter().any(|seal| {
-            seal.realm_id == event.realm_id
-                && seal.delta.contains(&digest)
-                && seal.covered_event_digests.contains(&digest)
-        }) {
-            anyhow::bail!(
-                "Event {} is not covered by any returned accepted Seal",
                 event.event_id
             );
         }
@@ -551,6 +567,67 @@ impl EventOutboundSubmitter<'_> {
             }
         }
     }
+}
+
+pub(crate) async fn verify_event_is_covered_by_accepted_seal<VerifyNativeAgentHistoryKey>(
+    http: &arkret_sdk::http_client::Client,
+    event: &arkret_sdk::Event,
+    verify_native_agent_history_key: VerifyNativeAgentHistoryKey,
+) -> anyhow::Result<arkret_sdk::DigestSuite>
+where
+    VerifyNativeAgentHistoryKey: Fn(
+            &arkret_sdk::Event,
+            arkret_sdk::DigestSuite,
+            &arkret_sdk::AuthenticatedSignerResolutionEvidence,
+            &[arkret_sdk::GovernanceDependency],
+        ) -> Result<arkret_sdk::signatures::PublicKeyMaterial, arkret_sdk::WireError>
+        + Copy,
+{
+    let frontier = http
+        .events_frontier(&arkret_sdk::EventsFrontierSelector::RealmSeal {
+            realm_id: event.realm_id.clone(),
+        })
+        .await?;
+    let arkret_sdk::EventsFrontierView::RealmSeal(frontier) = frontier.frontier else {
+        anyhow::bail!("Realm Seal frontier returned the wrong selector variant");
+    };
+    let basis = arkret_sdk::SealBasis {
+        leaves: vec![frontier.seal_id],
+    };
+    let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(
+        http,
+        &event.realm_id,
+        &basis,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    let verified = arkret_sdk::verify_mls_governance_closure(
+        &event.realm_id,
+        &resolved.target_basis,
+        &resolved.seals,
+        &resolved.events,
+        &resolved.dependencies,
+        verify_native_agent_history_key,
+    )?;
+    let digest = arkret_sdk::signed_event_digest_claim(event)?;
+    let digest_suite = verified
+        .event_digest_suites
+        .get(&digest)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("Event {} has no accepted covering Seal", event.event_id))?;
+    event.verify_event_id_matches_content_with_digest_suite(digest_suite)?;
+    let event_bytes = arkret_sdk::canonical::canonical_json_bytes(event)?;
+    let exact_event_is_accepted = verified.checkpoint.accepted_events.iter().any(|accepted| {
+        arkret_sdk::canonical::canonical_json_bytes(accepted)
+            .is_ok_and(|accepted_bytes| accepted_bytes == event_bytes)
+    });
+    if !exact_event_is_accepted {
+        anyhow::bail!(
+            "Event {} is not byte-exact in the verified accepted closure",
+            event.event_id
+        );
+    }
+    Ok(digest_suite)
 }
 
 impl OutboundSubmitter for EventOutboundSubmitter<'_> {
@@ -989,6 +1066,24 @@ impl EventSubmitter {
         Self {
             http,
             describe_cache: OnceCell::new(),
+            state_store: None,
+        }
+    }
+
+    pub(crate) fn with_state_store(
+        mut self,
+        state_store: crate::runtime::input::StateStoreHandle,
+    ) -> Self {
+        self.state_store = Some(state_store);
+        self
+    }
+
+    pub(crate) fn from_current_session(http: arkret_sdk::http_client::Client) -> Self {
+        match dioxus::prelude::try_consume_context::<crate::app::SessionContext>() {
+            Some(context) => Self::new(http).with_state_store(
+                crate::app::runtime_adapter::state_store_handle(context.state_store),
+            ),
+            None => Self::new(http),
         }
     }
 
@@ -1549,6 +1644,30 @@ impl EventSubmitter {
             .to_string())
     }
 
+    /// Resolve and freeze the exact Principal Server signer used as the
+    /// single-signer notary for a newly created Realm.
+    ///
+    /// The descriptor is derived only from independently verified,
+    /// content-addressable signer evidence. Describe fields or a separately
+    /// fetched current DID document are not authority for Realm genesis.
+    pub(crate) async fn current_service_notary(&self) -> anyhow::Result<arkret_sdk::NotaryValue> {
+        let service_id = self.describe_cached().await?.service_id.clone();
+        let resolution = self
+            .http
+            .open_service_resolution(&service_id)
+            .await
+            .map_err(anyhow::Error::from)?;
+        let evidence = arkret_identity::service_signer_evidence_from_authenticated_resolution(
+            resolution,
+            &service_id,
+            chrono::Utc::now(),
+        )
+        .map_err(anyhow::Error::from)?;
+        let descriptor = arkret_sdk::ed25519_notary_signer_descriptor_from_evidence(&evidence)
+            .map_err(anyhow::Error::from)?;
+        Ok(arkret_sdk::NotaryValue::single_signer(descriptor))
+    }
+
     /// Mint a DataEvent `seal_ref` head from the membership-gated Realm Seal
     /// view. Only the CBA data-plane stamping path uses this.
     pub(crate) async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
@@ -1705,18 +1824,15 @@ impl EventSubmitter {
         Ok((view, state.receipts))
     }
 
-    /// Return the accepted controller-signed head needed to author the next
-    /// managed Agent PCR Seal. The head can intentionally lag accepted Events.
-    /// DID-P2-B: `state_store` carries the account-level accepted-binding set
-    /// down to the controller-device-key prefetch, so a frontier read outside
-    /// the sync loop reuses (and contributes to) durable bindings instead of
-    /// resolving into a scratch cache that is dropped immediately.
+    /// Return the accepted head needed to author the next managed Agent PCR
+    /// Seal. The head can intentionally lag accepted Events. It is accepted
+    /// only when its exact bytes occur in the locally replayed checkpoint.
     pub(crate) async fn events_frontier_managed_agent_seal_head<
         S: crate::mls::governance_proof::GovernanceProofStateStore,
     >(
         &self,
         realm_id: &str,
-        controller_id: &arkret_sdk::DidFullId,
+        _controller_id: &arkret_sdk::DidFullId,
         state_store: S,
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
         let (view, receipts) = self.events_frontier_realm_state(realm_id).await?;
@@ -1724,18 +1840,20 @@ impl EventSubmitter {
             anyhow::anyhow!("events/frontier omitted the accepted managed Agent PCR Seal head")
         })?;
         let seal = receipt.seal.clone();
-        crate::mls::governance_proof::prefetch_managed_agent_pcr_seal_head_device_key(
-            &self.http,
-            &seal,
-            controller_id,
-            state_store,
-        )
-        .await
-        .map_err(|error| {
-            anyhow::anyhow!("resolve managed Agent PCR Seal head device key: {error}")
-        })?;
-        crate::mls::governance_proof::verify_managed_agent_pcr_seal_head(&seal, controller_id)
-            .map_err(|error| anyhow::anyhow!("invalid managed Agent PCR Seal head: {error}"))?;
+        let checkpoint = state_store
+            .with_read(|store| store.trusted_mls_governance_checkpoint(realm_id))
+            .ok_or_else(|| {
+                anyhow::anyhow!("managed Agent PCR has no verified governance checkpoint")
+            })?;
+        if !checkpoint
+            .accepted_seals
+            .iter()
+            .any(|accepted| accepted == &seal)
+        {
+            anyhow::bail!(
+                "managed Agent PCR Seal head is not byte-exact in the verified checkpoint"
+            );
+        }
         if seal.realm_id != view.realm_id
             || seal.id != view.seal_id
             || seal.control_event_set_root != view.control_event_set_root
@@ -1781,13 +1899,22 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("events describe: {error}"))
     }
 
-    pub(crate) async fn event_proof_context(
+    pub(crate) fn event_proof_context(
         &self,
-        intent: &EventIntent,
-    ) -> anyhow::Result<crate::event_signer::EventProofContext> {
+        digest_suite: arkret_sdk::DigestSuite,
+    ) -> crate::event_signer::EventProofContext {
         // Durable Event envelopes are portable Realm facts. Binding their
         // proof to the authoring Principal Server would make the original
         // signature unverifiable after federation to another Realm host.
+        crate::event_signer::EventProofContext::new().with_digest_suite(digest_suite)
+    }
+
+    fn trusted_digest_suite_for_intent(
+        &self,
+        intent: &EventIntent,
+        explicit_prejoin_suite: Option<arkret_sdk::DigestSuite>,
+        state_store: Option<&crate::runtime::input::StateStoreHandle>,
+    ) -> anyhow::Result<arkret_sdk::DigestSuite> {
         let digest_suite = if intent.kind() == &arkret_sdk::EventKind::RealmCreate {
             serde_json::from_value::<arkret_sdk::RealmCreatePayload>(serde_json::to_value(
                 intent.payload(),
@@ -1795,38 +1922,47 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("decode Realm genesis digest suite: {error}"))?
             .object
             .digest_algorithm
-        } else if intent.kind() == &arkret_sdk::EventKind::InviteAccept {
-            let leaf = intent
-                .seal_basis()
-                .and_then(|basis| (basis.leaves.len() == 1).then(|| &basis.leaves[0]))
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "pre-join invite accept requires a single-leaf candidate seal_basis"
-                    )
-                })?;
-            crate::event_signer::digest_suite_from_trusted_seal_id(leaf)?
+        } else if let Some(digest_suite) = explicit_prejoin_suite {
+            digest_suite
         } else {
             let realm_id = intent.realm_id_opt().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "{} needs a Realm Seal view but carries no Realm scope",
+                    "{} needs a verified Realm digest suite but carries no Realm scope",
                     intent.kind().as_str()
                 )
             })?;
-            let frontier = self
-                .events_frontier_realm_seal_view(realm_id.as_str())
-                .await?;
-            crate::event_signer::digest_suite_from_trusted_hash(&frontier.state_root)?
+            let state_store = state_store.or(self.state_store.as_ref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} authoring requires the durable verified Realm governance checkpoint",
+                    intent.kind().as_str()
+                )
+            })?;
+            let checkpoint = state_store
+                .read(|store| store.trusted_mls_governance_checkpoint(realm_id.as_str()))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Realm {} has no durable verified governance checkpoint",
+                        realm_id
+                    )
+                })?;
+            checkpoint.validate_checkpoint().map_err(|error| {
+                anyhow::anyhow!("invalid trusted governance checkpoint: {error}")
+            })?;
+            if checkpoint.realm_id != *realm_id {
+                anyhow::bail!("trusted governance checkpoint belongs to another Realm");
+            }
+            checkpoint.live_digest_suite
         };
-        Ok(crate::event_signer::EventProofContext::new().with_digest_suite(digest_suite))
+        Ok(digest_suite)
     }
 
     async fn post_persisted_signed_sdk_event(
         &self,
-        signed: &arkret_sdk::Event,
+        signed: &arkret_sdk::AuthoredEvent,
         idempotency_key: &str,
         canonical_body_bytes: &[u8],
     ) -> anyhow::Result<SubmitEventResult> {
-        validate_signed_sdk_event_for_submit(signed)?;
+        validate_signed_sdk_event_for_submit(signed.event(), signed.digest_suite())?;
         if arkret_sdk::canonical::canonical_json_bytes(signed)? != canonical_body_bytes {
             anyhow::bail!("persisted signed Event bytes do not match the queued Event");
         }
@@ -1837,8 +1973,12 @@ impl EventSubmitter {
         // permanently rejected (`offline-publication.md` §2). Replaying a
         // stale wrapper would hide that from the user instead of prompting a
         // re-authorization.
-        let submission =
-            crate::authorization_lease::standard_initial_submission(&self.http, signed).await?;
+        let submission = crate::authorization_lease::standard_initial_submission(
+            &self.http,
+            signed,
+            signed.digest_suite(),
+        )
+        .await?;
         let response: arkret_sdk::EventsSubmitOutcome = self
             .http
             .post_with_options(
@@ -1875,7 +2015,7 @@ impl EventSubmitter {
         &self,
         operation: &LocalOperation,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.submit_sdk_event_queued(operation, None, None, None)
+        self.submit_sdk_event_queued(operation, None, None, None, None)
             .await
     }
 
@@ -1885,9 +2025,16 @@ impl EventSubmitter {
         &self,
         operation: &LocalOperation,
         encryption_profile: &arkret_sdk::EncryptionProfile,
+        digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.submit_sdk_event_queued(operation, None, None, Some(encryption_profile))
-            .await
+        self.submit_sdk_event_queued(
+            operation,
+            None,
+            None,
+            Some(encryption_profile),
+            Some(digest_suite),
+        )
+        .await
     }
 
     pub(crate) async fn submit_mls_event_with_snapshot(
@@ -1905,6 +2052,7 @@ impl EventSubmitter {
             }),
             Some(state_store),
             None,
+            None,
         )
         .await
     }
@@ -1915,6 +2063,7 @@ impl EventSubmitter {
         post_accept: Option<PostAcceptAction>,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
         join_encryption_profile: Option<&arkret_sdk::EncryptionProfile>,
+        explicit_prejoin_digest_suite: Option<arkret_sdk::DigestSuite>,
     ) -> anyhow::Result<SubmitEventResult> {
         let _single_writer = outbound_submit_lock().lock().await;
         let intent = operation.intent();
@@ -1958,7 +2107,16 @@ impl EventSubmitter {
                 }
                 Err(error) => return Err(error),
             };
-        let queued_intent = QueuedEventIntent::new(intent);
+        let digest_suite = self.trusted_digest_suite_for_intent(
+            &intent,
+            explicit_prejoin_digest_suite,
+            state_store.as_ref(),
+        )?;
+        let queued_intent = if explicit_prejoin_digest_suite.is_some() {
+            QueuedEventIntent::with_pinned_cba_basis(intent, digest_suite)
+        } else {
+            QueuedEventIntent::new(intent, digest_suite)
+        };
         self.enqueue_and_drive_sdk_event(
             QueuedSdkEvent::unauthored(
                 queued_intent,
@@ -2038,8 +2196,15 @@ impl EventSubmitter {
         // `event_id`. Building the Welcomes from that value is what makes the
         // reference real; the old path authored both against a draft id and then
         // rewrote the Welcomes when the Commit's id moved.
+        let digest_suite =
+            self.trusted_digest_suite_for_intent(intent, None, Some(&state_store))?;
         let attempt = self
-            .author_intent(intent, &local_operation_id, SemanticAuthoring::Fresh)
+            .author_intent(
+                intent,
+                &local_operation_id,
+                SemanticAuthoring::Fresh,
+                digest_suite,
+            )
             .await?;
         let welcome_intents = welcomes
             .into_iter()
@@ -2047,7 +2212,7 @@ impl EventSubmitter {
             .collect::<anyhow::Result<Vec<_>>>()?;
         self.enqueue_and_drive_sdk_event(
             QueuedSdkEvent::authored(
-                QueuedEventIntent::new(intent.clone()),
+                QueuedEventIntent::new(intent.clone(), digest_suite),
                 attempt.envelope,
                 local_operation_id,
                 attempt.transport_idempotency_key,
@@ -2319,7 +2484,7 @@ impl EventSubmitter {
 
     async fn submit_sdk_event_direct(
         &self,
-        event: &arkret_sdk::Event,
+        event: &arkret_sdk::AuthoredEvent,
         idempotency_key: &str,
         canonical_body_bytes: &[u8],
     ) -> anyhow::Result<SubmitEventResult> {
@@ -2369,6 +2534,7 @@ impl EventSubmitter {
         intent: &EventIntent,
         local_operation_id: &str,
         authoring: SemanticAuthoring,
+        digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<AuthoredAttempt> {
         #[cfg(all(debug_assertions, not(test)))]
         self.diagnose_exact_development_sdk_build().await?;
@@ -2388,7 +2554,7 @@ impl EventSubmitter {
         let (actor_seq, prev_refs) = self.resolve_actor_chain_basis(&intent).await?;
         intent = intent.with_prev_refs(prev_refs);
         let hlc = self.issue_intent_hlc(&intent).await?;
-        let proof_context = self.event_proof_context(&intent).await?;
+        let proof_context = self.event_proof_context(digest_suite);
         let mut event = intent
             .author_with_digest_suite(actor_seq, hlc, proof_context.digest_suite)
             .map_err(|error| anyhow::anyhow!("author Event: {error}"))?;
@@ -2426,11 +2592,17 @@ impl EventSubmitter {
         &self,
         operation: &LocalOperation,
     ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
+        let digest_suite = self.trusted_digest_suite_for_intent(
+            operation.intent(),
+            None,
+            self.state_store.as_ref(),
+        )?;
         Ok(self
             .author_intent(
                 operation.intent(),
                 operation.local_operation_id().as_str(),
                 SemanticAuthoring::Fresh,
+                digest_suite,
             )
             .await?
             .envelope)
@@ -2439,11 +2611,16 @@ impl EventSubmitter {
     /// [`Self::author_intent`] for a frozen durable-queue intent.
     pub(crate) async fn author_frozen_intent(
         &self,
-        intent: &EventIntent,
+        intent: &QueuedEventIntent,
         local_operation_id: &str,
     ) -> anyhow::Result<AuthoredAttempt> {
-        self.author_intent(intent, local_operation_id, SemanticAuthoring::FrozenIntent)
-            .await
+        self.author_intent(
+            &intent.intent,
+            local_operation_id,
+            SemanticAuthoring::FrozenIntent,
+            intent.digest_suite,
+        )
+        .await
     }
 
     /// Resolve the CBA basis this attempt authors against.
@@ -2663,7 +2840,7 @@ impl EventSubmitter {
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
         for sdk_event in sdk_events {
-            validate_signed_sdk_event_for_submit(sdk_event)?;
+            validate_signed_sdk_event_for_submit(sdk_event.event(), sdk_event.digest_suite())?;
         }
         // `idempotency_key` is not a body field in v1: it travels only in the
         // `Idempotency-Key` header.
@@ -2673,11 +2850,19 @@ impl EventSubmitter {
             let submission = if uses_bare_online_anchor_submission(anchor_unit, event) {
                 let submission = arkret_wire::EventInitialSubmission::online(event.event().clone());
                 submission
-                    .validate_structural_in_context(arkret_wire::EventSubmitContext::AnchorUnit)
+                    .validate_structural_in_context(
+                        arkret_wire::EventSubmitContext::AnchorUnit,
+                        event.digest_suite(),
+                    )
                     .map_err(anyhow::Error::from)?;
                 submission
             } else {
-                crate::authorization_lease::standard_initial_submission(&self.http, event).await?
+                crate::authorization_lease::standard_initial_submission(
+                    &self.http,
+                    event,
+                    event.digest_suite(),
+                )
+                .await?
             };
             submissions.push(submission);
         }
@@ -2757,13 +2942,23 @@ impl EventSubmitter {
                 }
                 intent = intent.with_prev_refs(prev_refs);
                 let hlc = self.issue_intent_hlc(&intent).await?;
-                let proof_context = match chain.genesis_digest_suite() {
-                    // Every Event in a genesis unit is bound to the suite the
-                    // genesis payload declares; there is no accepted Seal to
-                    // read one from yet.
-                    Some(digest_suite) => crate::event_signer::EventProofContext::new()
-                        .with_digest_suite(digest_suite),
-                    None => self.event_proof_context(&intent).await?,
+                let proof_context = match (
+                    intent.kind() == &arkret_sdk::EventKind::RealmCreate,
+                    chain.genesis_digest_suite(),
+                ) {
+                    // The Realm create Event is the SHA-256 bootstrap identity.
+                    // Other founding Events use the live suite declared by its
+                    // payload before the first Seal exists.
+                    (true, Some(_)) => self.event_proof_context(arkret_sdk::DigestSuite::Sha256),
+                    (false, Some(digest_suite)) => self.event_proof_context(digest_suite),
+                    (_, None) => {
+                        let digest_suite = self.trusted_digest_suite_for_intent(
+                            &intent,
+                            None,
+                            self.state_store.as_ref(),
+                        )?;
+                        self.event_proof_context(digest_suite)
+                    }
                 };
                 let mut event = intent
                     .author_with_digest_suite(actor_seq, hlc, proof_context.digest_suite)
@@ -2820,16 +3015,17 @@ impl EventSubmitter {
             return arkret_bootstrap::validate_self_principal_pcr_genesis_unit(
                 &events[0],
                 &events[1],
-                &crate::operation::cell_write_projector,
+                &|event| {
+                    crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
+                },
             )
             .map(|_| ())
             .map_err(|error| anyhow::anyhow!("prepared self-principal PCR unit: {error}"));
         }
         if events.len() == 1
-            && arkret_bootstrap::materialize_managed_agent_pcr_control(
-                &events,
-                &crate::operation::cell_write_projector,
-            )
+            && arkret_bootstrap::materialize_managed_agent_pcr_control(&events, &|event| {
+                crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
+            })
             .is_ok()
         {
             return Ok(());
@@ -2852,7 +3048,12 @@ impl EventSubmitter {
         let mut submissions = Vec::with_capacity(events.len());
         for event in events {
             submissions.push(
-                crate::authorization_lease::standard_initial_submission(&self.http, event).await?,
+                crate::authorization_lease::standard_initial_submission(
+                    &self.http,
+                    event,
+                    event.digest_suite(),
+                )
+                .await?,
             );
         }
         Ok(submissions)
@@ -2940,7 +3141,10 @@ pub(crate) fn validate_capability_grant_payload(intent: &EventIntent) -> anyhow:
     Ok(())
 }
 
-fn validate_signed_sdk_event_for_submit(event: &arkret_sdk::Event) -> anyhow::Result<()> {
+fn validate_signed_sdk_event_for_submit(
+    event: &arkret_sdk::Event,
+    digest_suite: arkret_sdk::DigestSuite,
+) -> anyhow::Result<()> {
     let [arkret_sdk::EventProof::Producer(_)] = event.proofs.as_slice() else {
         anyhow::bail!(
             "submit requires exactly one producer proof and forbids caller-supplied admission proofs (event_id={}, kind={})",
@@ -2948,9 +3152,11 @@ fn validate_signed_sdk_event_for_submit(event: &arkret_sdk::Event) -> anyhow::Re
             event.kind.as_str()
         );
     };
-    event.validate_proof_bindings().map_err(|err| {
-        anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
-    })?;
+    event
+        .validate_proof_bindings_with_digest_suite(digest_suite)
+        .map_err(|err| {
+            anyhow::anyhow!("event proof binding invalid for {}: {err}", event.event_id)
+        })?;
     validate_outgoing_registered_event_payload(event.kind.as_str(), &event.payload)
 }
 
@@ -3112,8 +3318,9 @@ fn validate_projected_cba_plane(event: &arkret_sdk::AuthoredEvent) -> anyhow::Re
     let Some(plane) = cba_effect_plane_for_intent(&event.kind)? else {
         return Ok(());
     };
+    let digest_suite = event.digest_suite();
     let event = event.event();
-    for write in crate::operation::project_registered_cell_writes(event)
+    for write in crate::operation::project_registered_cell_writes(event, digest_suite)
         .map_err(|error| anyhow::anyhow!("cell-write projection failed: {error}"))?
     {
         let cell = arkret_sdk::CellId::from_ref(&write.cell)
@@ -3304,7 +3511,9 @@ pub(crate) fn author_event_unit_for_test(
             let hlc = crate::operation::test_authoring_hlc_at_seq(actor_seq);
             let event = match chain.genesis_digest_suite() {
                 Some(digest_suite) => intent.author_with_digest_suite(actor_seq, hlc, digest_suite),
-                None => intent.author(actor_seq, hlc),
+                None => {
+                    intent.author_with_digest_suite(actor_seq, hlc, arkret_sdk::DigestSuite::Sha256)
+                }
             }
             .map_err(|error| anyhow::anyhow!("author unit Event: {error}"))?;
             chain.record(&event);
@@ -3368,7 +3577,7 @@ mod tests {
 
     /// The queue slot a locally built write occupies.
     fn fixture_queued_intent(intent: EventIntent) -> QueuedEventIntent {
-        QueuedEventIntent::new(intent)
+        QueuedEventIntent::new(intent, arkret_sdk::DigestSuite::Sha256)
     }
 
     #[test]
@@ -3529,13 +3738,21 @@ mod tests {
 
         let first = intent
             .clone()
-            .author(1, crate::operation::test_authoring_hlc_at_seq(1))
+            .author_with_digest_suite(
+                1,
+                crate::operation::test_authoring_hlc_at_seq(1),
+                arkret_sdk::DigestSuite::Sha256,
+            )
             .unwrap();
         let mut second = intent
             .with_prev_refs(vec![fixture_event_id(
                 "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
             )])
-            .author(42, crate::operation::test_authoring_hlc_at_seq(42))
+            .author_with_digest_suite(
+                42,
+                crate::operation::test_authoring_hlc_at_seq(42),
+                arkret_sdk::DigestSuite::Sha256,
+            )
             .unwrap();
         second.insert_unsigned(
             crate::operation::LOCAL_OPERATION_IDEMPOTENCY_ALIAS,
@@ -4070,8 +4287,9 @@ mod tests {
 
         // …but a replay of the frozen intent must reproduce its choice verbatim,
         // or the authored envelope diverges from the intent it is bound to.
+        let frozen_queued = fixture_queued_intent(frozen.clone());
         let replayed = dead_endpoint_submitter()
-            .author_frozen_intent(&frozen, "frozen-operation")
+            .author_frozen_intent(&frozen_queued, "frozen-operation")
             .await;
         // The dead endpoint fails the attempt later, at the seal fetch; what
         // this test pins down is that the claim decision was never revisited.
@@ -4170,7 +4388,11 @@ mod tests {
                 key_epoch: 0,
                 credential_epoch: None,
             })
-            .author(7, crate::operation::test_authoring_hlc_at_seq(7))
+            .author_with_digest_suite(
+                7,
+                crate::operation::test_authoring_hlc_at_seq(7),
+                arkret_sdk::DigestSuite::Sha256,
+            )
             .unwrap();
         authored.insert_unsigned(
             crate::operation::LOCAL_OPERATION_IDEMPOTENCY_ALIAS,
@@ -4257,14 +4479,19 @@ mod tests {
             // onboarding; it is not what this probe tests, so use the same
             // prepare + lease + submit primitives without the durable queue.
             let notary_did = submitter
-                .service_id()
+                .service_full_id()
                 .await
                 .map_err(|error| format!("service describe failed: {error:#}"))?;
+            let notary = submitter
+                .current_service_notary()
+                .await
+                .map_err(|error| format!("service signer evidence failed: {error:#}"))?;
             let bootstrap = crate::event_builders::build_realm_bootstrap_steps(
                 arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
                     .unwrap(),
                 &actor,
                 &notary_did,
+                notary,
                 BASE,
                 "root-claim live probe",
                 Some("authority-root claim end-to-end probe"),
@@ -4274,7 +4501,6 @@ mod tests {
                 "mls_rfc9420",
                 "standard",
                 "restricted",
-                "single_did",
                 "sha256",
                 "ak:trust_domain:local.host",
                 &[],
@@ -4334,8 +4560,12 @@ mod tests {
                 .map(arkret_sdk::AuthoredEvent::event)
                 .cloned()
                 .collect::<Vec<_>>();
+            let prepared_digest_suites = prepared
+                .iter()
+                .map(arkret_sdk::AuthoredEvent::digest_suite)
+                .collect::<Vec<_>>();
             let submissions = sdk
-                .prepare_initial_submissions(&prepared_events)
+                .prepare_initial_submissions(&prepared_events, &prepared_digest_suites)
                 .await
                 .map_err(|error| format!("bootstrap lease issuance rejected: {error:#}"))?;
             sdk.events_submit_batch(&submissions)
@@ -4369,7 +4599,10 @@ mod tests {
                         ));
                     }
                     let submissions = sdk
-                        .prepare_initial_submissions(std::slice::from_ref(signed.event()))
+                        .prepare_initial_submissions(
+                            std::slice::from_ref(signed.event()),
+                            std::slice::from_ref(&signed.digest_suite()),
+                        )
                         .await
                         .map_err(|error| format!("{label} lease issuance rejected: {error:#}"))?;
                     let submission = submissions
@@ -4492,6 +4725,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: "010203".to_owned(),
             epoch: 7,
+            admission_epoch: 0,
             group_state_event_id: None,
             salt_hex: "00".repeat(16),
             ciphertext_hex: "11".repeat(32),
@@ -4579,6 +4813,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: "010203".to_owned(),
             epoch: 1,
+            admission_epoch: 0,
             group_state_event_id: None,
             salt_hex: "00".repeat(16),
             ciphertext_hex: "11".repeat(32),
@@ -4659,6 +4894,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: "010203".to_owned(),
             epoch: 1,
+            admission_epoch: 0,
             group_state_event_id: None,
             salt_hex: "00".repeat(16),
             ciphertext_hex: "11".repeat(32),
@@ -4715,9 +4951,10 @@ mod tests {
 
         let authored = intent
             .with_prev_refs(frontier.frontier_event_ids.clone())
-            .author(
+            .author_with_digest_suite(
                 frontier.next_actor_seq,
                 crate::operation::test_authoring_hlc_at_seq(frontier.next_actor_seq),
+                arkret_sdk::DigestSuite::Sha256,
             )
             .unwrap();
 
@@ -4739,7 +4976,7 @@ mod tests {
         let intent = crate::event_builders::build_realm_create_event(
             arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
             "did:web:alice.example",
-            "did:web:alice.example",
+            crate::event_builders::test_single_signer_notary("did:web:alice.example").unwrap(),
             "Frontier",
             None,
             "invite_only",
@@ -4751,7 +4988,6 @@ mod tests {
             "none",
             "standard",
             "open",
-            "single_did",
             "sha256",
             "ak:trust_domain:did.web.example",
             None,
@@ -4759,7 +4995,7 @@ mod tests {
         .unwrap()
         .into_intent();
         let create_log_issuer_seq = |event: &arkret_sdk::Event| {
-            crate::operation::direct_registered_cell_writes(event)
+            crate::operation::direct_registered_cell_writes(event, arkret_sdk::DigestSuite::Sha256)
                 .unwrap()
                 .into_iter()
                 .find(|write| write.cell.as_str() == arkret_bootstrap::REALM_CREATE_CELL)
@@ -4768,7 +5004,7 @@ mod tests {
                 .issuer_seq
         };
         let other_writes = |event: &arkret_sdk::Event| {
-            crate::operation::direct_registered_cell_writes(event)
+            crate::operation::direct_registered_cell_writes(event, arkret_sdk::DigestSuite::Sha256)
                 .unwrap()
                 .into_iter()
                 .filter(|write| write.cell.as_str() != arkret_bootstrap::REALM_CREATE_CELL)
@@ -4865,6 +5101,7 @@ mod tests {
             arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
             "did:web:alice.example",
             "did:web:server.example",
+            crate::event_builders::test_single_signer_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Realm genesis must not query its own nonexistent frontier"),
@@ -4874,7 +5111,6 @@ mod tests {
             "mls_rfc9420",
             "standard",
             "restricted",
-            "single_did",
             "sha256",
             "ak:trust_domain:server.example",
             &[],

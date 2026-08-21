@@ -105,6 +105,28 @@ pub fn build_genesis_unit(
         )?,
     };
     descriptor.validate()?;
+    let founding_notary_public_key = URL_SAFE_NO_PAD
+        .decode(payload.device_public_key.as_str())
+        .map_err(|error| anyhow::anyhow!("decode founding device public key: {error}"))?;
+    if founding_notary_public_key.len() != 32 {
+        anyhow::bail!("founding device public key must contain 32 Ed25519 bytes");
+    }
+    let founding_notary =
+        arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
+            actor_id: principal_core_id.clone(),
+            verification_method: arkret_sdk::DidUrl::new(format!(
+                "{}#{}",
+                principal_id, payload.device_id
+            ))
+            .map_err(anyhow::Error::msg)?,
+            key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+            jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+            frozen_public_key_b64u: payload.device_public_key.as_str().to_owned(),
+            frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+                &founding_notary_public_key,
+            ))?,
+        });
+    founding_notary.validate()?;
     let registry_digest = arkret_sdk::current_capability_action_registry_digest()
         .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(
@@ -112,6 +134,7 @@ pub fn build_genesis_unit(
             principal_id: principal_core_id.clone(),
             principal_server_id,
             principal_full_id: principal_id.clone(),
+            notary: founding_notary,
             genesis_salt,
             trust_domain,
             did_inception_ref: arkret_sdk::EventRef::new(
@@ -128,7 +151,7 @@ pub fn build_genesis_unit(
             created_at,
             hlc: create_hlc,
         },
-        &crate::operation::cell_write_projector,
+        &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
     )?;
     let root_did = arkret_sdk::DidFullId::new(format!("did:key:{root_public_key_multibase}"))?;
     let root_method = did_key_verification_method(root_public_key_multibase)?;
@@ -181,7 +204,7 @@ pub fn build_genesis_unit(
     arkret_bootstrap::build_self_principal_pcr_genesis_unit(
         create.into_event(),
         authorize.into_event(),
-        &crate::operation::cell_write_projector,
+        &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
     )
     .map_err(Into::into)
 }

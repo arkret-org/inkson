@@ -9,8 +9,9 @@
 pub fn schedule_revision_heads(
     events: &[arkret_sdk::Event],
     strand_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
-    crate::views::kanban::calendar_schedule_revision_heads(events, strand_id)
+    crate::views::kanban::calendar_schedule_revision_heads(events, strand_id, digest_suite)
 }
 
 #[allow(clippy::too_many_arguments)]

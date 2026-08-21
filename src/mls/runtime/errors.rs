@@ -5,6 +5,9 @@ use crate::secure_key_store::SecureKeyStoreError;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MlsRuntimeStatus {
     Ready,
+    Pending(String),
+    RecoveryRequired(String),
+    Denied(String),
     MissingWelcome,
     MissingDeviceSecret(String),
     SnapshotDecryptFailed(String),
@@ -15,6 +18,9 @@ impl MlsRuntimeStatus {
     pub fn user_message(&self) -> String {
         match self {
             Self::Ready => "MLS state ready".to_owned(),
+            Self::Pending(reason) => format!("MLS state convergence is pending: {reason}"),
+            Self::RecoveryRequired(reason) => format!("MLS recovery is required: {reason}"),
+            Self::Denied(reason) => format!("MLS operation was denied: {reason}"),
             Self::MissingWelcome => {
                 "MLS state is not ready on this device yet; wait for an MLS Welcome or restore this device's encrypted MLS history backup.".to_owned()
             }
@@ -49,6 +55,7 @@ pub enum MlsRuntimeError {
     EncryptionPolicyPending,
     Commit(String),
     Encrypt(String),
+    Decrypt(String),
     Backup(String),
     BackupDecode(String),
     Serialize(String),
@@ -64,7 +71,7 @@ pub enum MlsRuntimeError {
 impl MlsRuntimeError {
     pub fn status(&self) -> MlsRuntimeStatus {
         match self {
-            Self::EmptyPlaintext => MlsRuntimeStatus::Ready,
+            Self::EmptyPlaintext => MlsRuntimeStatus::Denied("plaintext is empty".to_owned()),
             Self::MissingWelcome => MlsRuntimeStatus::MissingWelcome,
             Self::DeviceSecret(err) => MlsRuntimeStatus::MissingDeviceSecret(err.to_string()),
             Self::Identity(reason) | Self::Welcome(reason) => {
@@ -73,17 +80,24 @@ impl MlsRuntimeError {
             Self::SnapshotRestore(reason) => {
                 MlsRuntimeStatus::SnapshotDecryptFailed(reason.clone())
             }
-            Self::Genesis(_)
-            | Self::EncryptionTransitionPending
-            | Self::EncryptionPolicyPending
-            | Self::Commit(_)
-            | Self::Encrypt(_)
-            | Self::Backup(_)
-            | Self::BackupDecode(_)
-            | Self::Serialize(_)
-            | Self::Export(_)
-            | Self::Salt(_)
-            | Self::AadPolicy(_) => MlsRuntimeStatus::Ready,
+            Self::Genesis(reason) | Self::Commit(reason) => {
+                MlsRuntimeStatus::Pending(reason.clone())
+            }
+            Self::EncryptionTransitionPending => {
+                MlsRuntimeStatus::Pending("encryption transition".to_owned())
+            }
+            Self::EncryptionPolicyPending => {
+                MlsRuntimeStatus::Pending("encryption policy".to_owned())
+            }
+            Self::Backup(reason) | Self::BackupDecode(reason) => {
+                MlsRuntimeStatus::RecoveryRequired(reason.clone())
+            }
+            Self::Encrypt(reason)
+            | Self::Decrypt(reason)
+            | Self::Serialize(reason)
+            | Self::Export(reason)
+            | Self::Salt(reason)
+            | Self::AadPolicy(reason) => MlsRuntimeStatus::Denied(reason.clone()),
         }
     }
 
@@ -100,6 +114,7 @@ impl MlsRuntimeError {
             Self::EncryptionPolicyPending => "encryption_policy_pending: the Realm content scheme is not projected yet; wait for verified policy sync before sending".to_owned(),
             Self::Commit(reason) => format!("MLS commit failed: {reason}"),
             Self::Encrypt(reason) => format!("MLS payload encryption failed: {reason}"),
+            Self::Decrypt(reason) => format!("MLS payload decryption failed: {reason}"),
             Self::Backup(reason) => format!("MLS history backup failed: {reason}"),
             Self::BackupDecode(reason) => format!("MLS history backup is invalid: {reason}"),
             Self::Serialize(reason) => {

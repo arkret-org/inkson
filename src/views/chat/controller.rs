@@ -815,6 +815,8 @@ impl ChatController {
         let mention_values = mention_nodes_to_values(&message.mentions);
         let base_url = context.base_url;
         let actor = context.account_did;
+        let device_id = context.device_id;
+        let encrypted = context.selected_channel_security_encrypted;
         let api_token = (context.token)();
         let wait_for = active_sync_token((context.sync_cursor)());
         let mut frontier_state = context.frontier_state;
@@ -843,6 +845,137 @@ impl ChatController {
                     return;
                 }
             };
+            if encrypted {
+                let content_value = match sdk_payload_value(
+                    content.to_value(),
+                    "chat retry encrypted content block serialize",
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        mark_message_command_failed(
+                            &mut messages,
+                            &message_id_for_lookup,
+                            format!("send failed: {error:#}"),
+                        );
+                        status_msg.set(format!("send failed: {error:#}"));
+                        return;
+                    }
+                };
+                let content_bytes = match serde_json::to_vec(&content_value) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        mark_message_command_failed(
+                            &mut messages,
+                            &message_id_for_lookup,
+                            format!("send failed: {error}"),
+                        );
+                        status_msg.set(format!("send failed: {error}"));
+                        return;
+                    }
+                };
+                let seal_view = state_store.read().seal_view_for_realm(&message.realm_id);
+                let build = match crate::views::secure_send::build_secure_send(
+                    state_store,
+                    &seal_view,
+                    &message.realm_id,
+                    &actor,
+                    &device_id,
+                    &message.strand_id,
+                    &retry_message_id,
+                    message.reply_to.as_deref(),
+                    &content_bytes,
+                    None,
+                    None,
+                    None,
+                ) {
+                    Ok(build) => build,
+                    Err(error) => {
+                        mark_message_command_failed(
+                            &mut messages,
+                            &message_id_for_lookup,
+                            error.clone(),
+                        );
+                        status_msg.set(format!("Message send failed: {error}"));
+                        return;
+                    }
+                };
+                let mention_digests = mention_sidecar_digests(
+                    &message.mentions,
+                    build.mention_routing_key.as_deref(),
+                );
+                let local_operation_id = build.message_local_operation_id.to_string();
+                let api = match authed_api_with_sync(&base_url, api_token.clone(), wait_for) {
+                    Ok(api) => api,
+                    Err(error) => {
+                        mark_message_command_failed(
+                            &mut messages,
+                            &message_id_for_lookup,
+                            format!("send failed: {error}"),
+                        );
+                        status_msg.set(format!("Message send failed: {error}"));
+                        return;
+                    }
+                };
+                let outcome = crate::views::secure_send::submit_secure_send(
+                    &api,
+                    state_store,
+                    build,
+                    &message.realm_id,
+                    None,
+                    mention_digests,
+                )
+                .await;
+                match outcome {
+                    crate::views::secure_send::SecureSendOutcome::Sent { event_id, status } => {
+                        let protocol_message_id = arkret_sdk::EventId::new(event_id.clone())
+                            .ok()
+                            .map(|event_id| {
+                                arkret_sdk::MessageId::from_event_id(&event_id).to_string()
+                            })
+                            .unwrap_or_else(|| retry_message_id.clone());
+                        state_store.write().append_raw_operation(
+                            local_operation_id,
+                            Some(message.realm_id.clone()),
+                            json!({
+                                "event_id": event_id.clone(),
+                                "kind": event_kind_str::MESSAGE_CREATE,
+                                "actor_id": actor,
+                                "strand_id": message.strand_id.clone(),
+                                "message_id": protocol_message_id.clone(),
+                                "encrypted_content": true,
+                                "status": status,
+                            }),
+                        );
+                        state_store.write().save_private_plaintext(
+                            &message.realm_id,
+                            &message.strand_id,
+                            &format!("message:{protocol_message_id}"),
+                            &message.body,
+                        );
+                        if let Some(found) = messages.write().iter_mut().find(|candidate| {
+                            candidate.matches_id_or_protocol(&message_id_for_lookup)
+                        }) {
+                            found.id = event_id.clone();
+                            found.protocol_message_id = Some(protocol_message_id);
+                            found.pending = false;
+                            found.failed = false;
+                            found.error = None;
+                        }
+                        frontier_state.set(event_id);
+                        status_msg.set("Message sent".to_owned());
+                    }
+                    crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
+                    | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
+                        mark_message_command_failed(
+                            &mut messages,
+                            &message_id_for_lookup,
+                            message.clone(),
+                        );
+                        status_msg.set(format!("Message send failed: {message}"));
+                    }
+                }
+                return;
+            }
             let operation = match chat_message_create_operation_with_content(
                 &message.realm_id,
                 &actor,

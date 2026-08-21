@@ -300,6 +300,8 @@ fn sign_chat_fixture(value: &mut Value) {
                 )
                 .unwrap(),
                 event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
+                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_digest: None,
                 created_at: chrono::DateTime::parse_from_rfc3339("2026-07-10T00:00:00.000Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),
@@ -2863,8 +2865,7 @@ fn late_recovery_guards_block_sidecar_plaintext_before_timeline_entry() {
         "message_id": message_id,
         "decryption_state": "decryption_failed",
         "late_recovery": {
-            "receiver_visible_at_t0": false,
-            "source_rechecked_current_share_policy": true
+            "receiver_visible_at_t0": false
         },
         "content": {
             "encrypted_content": true
@@ -2908,8 +2909,7 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
         "message_id": message_id,
         "decryption_state": "decryption_failed",
         "late_recovery": {
-            "receiver_visible_at_t0": true,
-            "source_rechecked_current_share_policy": true
+            "receiver_visible_at_t0": true
         },
         "content": {
             "encrypted_content": true

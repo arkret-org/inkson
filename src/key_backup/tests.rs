@@ -417,7 +417,7 @@ fn key_backup_validator_rejects_missing_series_fields() {
 }
 
 #[test]
-fn mls_history_rejects_passphrase_kdf() {
+fn device_bound_mls_group_state_requires_managed_binding() {
     let root = test_root();
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     let mut body = wire(&body);
@@ -426,43 +426,25 @@ fn mls_history_rejects_passphrase_kdf() {
     attach_key_backup_domain_separation(&mut body, BackupKind::MlsHistory, "mls_snapshot");
 
     let err = validate_wire_envelope(&body, BackupKind::MlsHistory)
-        .expect_err("MLS history passphrase KDF backup must be rejected");
-    assert!(err.contains("passphrase_kdf"));
-}
-
-#[test]
-fn mls_history_accepts_secret_storage_key() {
-    let envelope = crate::mls::persistence::encrypt_state(
-        REALM_ID,
-        "group-a",
-        3,
-        b"opaque sdk state",
-        "device-secret",
-        b"salt",
-    );
-    let body = envelope
-        .to_key_backup_body(
-            "ak:backup:01964137-0000-7000-8000-00000000feed",
-            ACTOR,
-            DEVICE,
-            &crate::mls::runtime::derive_mls_history_backup_key("device-secret").unwrap(),
-        )
-        .unwrap();
-    assert_eq!(
-        body.encryption.recipient_method,
-        arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey
-    );
-    assert_eq!(
-        body.encryption.recipient_key_ref.as_deref(),
-        Some("mls_group_secrets_backup_key")
-    );
-    validate_wire_envelope(&wire(&body), BackupKind::MlsHistory)
-        .expect("mls_history secret_storage_key envelope should validate");
+        .expect_err("device-bound MLS state without managed binding must be rejected");
+    assert!(err.contains("managed_principal_binding"), "{err}");
 }
 
 #[test]
 fn recovery_public_key_backup_round_trips_and_validates() {
     let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+    let binding = ManagedPrincipalBinding {
+        managed_principal_id: crate::mls_api_helpers::principal_core_id("did:web:agent.example")
+            .unwrap(),
+        controller_id: crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
+        principal_control_realm_id: arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap(),
+        authorization_ref: "did:web:agent.example#managed-controller".to_owned(),
+        managed_frontier_ref: ManagedFrontierRef {
+            frontier_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            seal_ref: "ak:seal:01964137-0000-7000-8000-000000000098".to_owned(),
+            mls_epoch: 0,
+        },
+    };
     let body = build_recovery_public_key_backup_body(
         BACKUP_ID,
         ACTOR,
@@ -474,6 +456,10 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         &KeyBackupContentItem {
             item_kind: "mls_group_state".to_owned(),
             secret_id: Some("inkson_mls_snapshot".to_owned()),
+            realm_id: Some(binding.principal_control_realm_id.clone()),
+            managed_principal_binding: Some(binding),
+            mls_group_id: Some("managed-agent-pcr-group".to_owned()),
+            epoch: Some(0),
             ..Default::default()
         },
         b"opaque mls snapshot bytes",
@@ -504,28 +490,15 @@ fn recovery_public_key_backup_round_trips_and_validates() {
 }
 
 #[test]
-fn mls_history_rejects_obvious_plaintext_fields() {
-    let envelope = crate::mls::persistence::encrypt_state(
-        REALM_ID,
-        "group-a",
-        3,
-        b"not real sdk state",
-        "device-secret",
-        b"salt",
-    );
-    let body = envelope
-        .to_key_backup_body(
-            "ak:backup:01964137-0000-7000-8000-00000000beef",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-            &crate::mls::runtime::derive_mls_history_backup_key("device-secret").unwrap(),
-        )
-        .unwrap();
+fn key_backup_rejects_obvious_plaintext_fields() {
+    let root = test_root();
+    let body =
+        build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"opaque").unwrap();
     let mut body = wire(&body);
     body["serialized_state"] = json!("plaintext sdk bytes");
 
-    let err = validate_wire_envelope(&body, BackupKind::MlsHistory)
-        .expect_err("MLS history backups must stay opaque");
+    let err = validate_wire_envelope(&body, BackupKind::SecretStorage)
+        .expect_err("key backups must stay opaque");
     assert!(err.contains("extension keys must match"), "{err}");
 }
 

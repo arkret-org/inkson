@@ -278,7 +278,7 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
+fn encrypted_private_patch_rejects_pending_welcome_without_claim_envelope() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
@@ -320,11 +320,10 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
         },
     }))
     .unwrap()]);
-    // Deliberately DO NOT store the KeyPackage identity state for this device:
-    // the Welcome names a KeyPackage whose private init key is absent from the
-    // secure store, so the apply must fail closed at the early identity-state
-    // gate (the observable form of the old OpenMLS `NoMatchingKeyPackage`).
+    // A durable Welcome without its accepted claim envelope is not authorized,
+    // irrespective of whether local KeyPackage private state is also absent.
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    crate::mls::runtime::store_account_mls_secret(&secure, bob_actor, "snapshot-secret").unwrap();
     let patch = json!({
         "content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown",
@@ -338,8 +337,11 @@ fn encrypted_private_patch_reports_unusable_pending_local_welcome() {
     )
     .unwrap_err();
 
-    assert!(error.contains("MLS Welcome could not be applied from local device inbox"));
-    assert!(error.contains("no local KeyPackage identity state"));
+    assert!(
+        error.contains("MLS Welcome could not be applied from local device inbox"),
+        "{error}"
+    );
+    assert!(error.contains("claim_envelope missing"), "{error}");
     assert!(state.mls_snapshot_for(realm).is_none());
     assert!(
         state
@@ -394,6 +396,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     }))
     .unwrap()]);
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    crate::mls::runtime::store_account_mls_secret(&secure, bob_actor, "snapshot-secret").unwrap();
     crate::mls::runtime::store_mls_key_package_identity_state(
         &secure,
         bob_actor,
@@ -416,7 +419,10 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     let (patched, mls_events) = match blocked {
         Ok(value) => value,
         Err(error) => {
-            assert!(error.contains("decryption_pending") || error.contains("state_mismatch"));
+            assert!(
+                error.contains("decryption_pending") || error.contains("state_mismatch"),
+                "{error}"
+            );
             assert!(state.mls_snapshot_for(realm).is_none());
             return;
         }
@@ -559,7 +565,7 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
     // Reproduce the broken state seen after first-Realm creation: the local
     // group exists and an incomplete path set the emitted bit, but no
     // accepted Event id was attached to the snapshot.
-    state.mark_mls_genesis_emitted(realm);
+    state.mark_mls_genesis_emitted(realm).expect("valid Realm");
     assert!(
         state
             .mls_group_state_ref_for_effective_scope(
@@ -663,7 +669,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         },
     );
     envelope.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_snapshot(realm, envelope);
+    state.save_mls_snapshot(realm, envelope).unwrap();
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
@@ -982,7 +988,9 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         &secret,
         &realm_salt,
     );
-    state.save_mls_snapshot(realm.to_owned(), realm_snapshot.clone());
+    state
+        .save_mls_snapshot(realm.to_owned(), realm_snapshot.clone())
+        .unwrap();
     let binding = arkret_sdk::SidecarMlsBinding {
         sidecar_id: arkret_sdk::SidecarId::new(
             "ak:sidecar:ATob4lPqhrmzS4tLm6aZjJ77NIrYnI5OGb4qpgykXoRa".to_owned(),
@@ -1001,7 +1009,9 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         sidecar_id: binding.sidecar_id.clone(),
     };
-    state.save_mls_snapshot_for_scope(&effective_scope, snapshot);
+    state
+        .save_mls_snapshot_for_scope(&effective_scope, snapshot)
+        .expect("valid effective scope");
     state
         .record_mls_group_state_ref_for_scope(
             &effective_scope,

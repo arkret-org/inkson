@@ -329,6 +329,8 @@ fn mls_commit_builder_matches_registered_payload_schema() {
             "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_owned(),
         )
         .unwrap(),
+        arkret_sdk::MlsContentScheme::MlsRfc9420,
+        None,
         arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
         arkret_sdk::CORE_REDUCER_PROFILE,
     )
@@ -571,8 +573,11 @@ fn object_patch_family_builders_match_registered_payload_schema() {
         assert_registered_payload_valid(event);
         // Every one of these is a reducer-input kind, so the registry must be
         // able to derive its writes from `kind + payload` alone.
-        crate::operation::pre_authoring_cell_writes(event.intent())
-            .unwrap_or_else(|err| panic!("{} projection: {err}", event.kind()));
+        crate::operation::pre_authoring_cell_writes(
+            event.intent(),
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap_or_else(|err| panic!("{} projection: {err}", event.kind()));
     }
 }
 
@@ -729,8 +734,12 @@ fn canonical_digest_is_stable_across_key_order() {
 
     assert_eq!(event_a.event_id(), event_b.event_id());
     assert_eq!(
-        event_a.canonical_digest().unwrap(),
-        event_b.canonical_digest().unwrap()
+        event_a
+            .canonical_digest(arkret_sdk::DigestSuite::Sha256)
+            .unwrap(),
+        event_b
+            .canonical_digest(arkret_sdk::DigestSuite::Sha256)
+            .unwrap()
     );
 }
 
@@ -806,8 +815,16 @@ fn a_signed_envelope_keeps_the_digest_its_proof_committed_to() {
         )
         .expect("sign ok");
 
-    let local_digest = event.canonical_digest().unwrap();
-    assert_eq!(event.event_digest().unwrap().as_str(), local_digest);
+    let local_digest = event
+        .canonical_digest(arkret_sdk::DigestSuite::Sha256)
+        .unwrap();
+    assert_eq!(
+        event
+            .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+            .unwrap()
+            .as_str(),
+        local_digest
+    );
     assert_eq!(
         event.require_proof().unwrap().event_digest.as_str(),
         local_digest
@@ -886,8 +903,9 @@ fn invite_helpers_emit_canonical_kinds() {
     // `ak.invite.create` is control-plane: its `seal_basis` is attached by the
     // submit gate, not by authoring. The authoring-time claim is that the
     // registry can derive the writes at all.
-    let writes = crate::operation::project_registered_cell_writes(&created)
-        .expect("direct invite create must carry both registered FSM writes");
+    let writes =
+        crate::operation::project_registered_cell_writes(&created, arkret_sdk::DigestSuite::Sha256)
+            .expect("direct invite create must carry both registered FSM writes");
     assert_eq!(
         writes
             .iter()
@@ -910,8 +928,11 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(accept.payload()["invite_id"], invite_id);
     assert!(!accept.payload().contains_key("state"));
     assert_registered_payload_valid(&accept);
-    let accept_writes = crate::operation::pre_authoring_cell_writes(accept.intent())
-        .expect("invite accept must atomically advance invite and member FSMs");
+    let accept_writes = crate::operation::pre_authoring_cell_writes(
+        accept.intent(),
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .expect("invite accept must atomically advance invite and member FSMs");
     assert_eq!(accept_writes.len(), 2);
 
     let cancel = ak_ops::invite_cancel(
@@ -933,8 +954,11 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(cancel.payload()["target_state"], "revoked");
     assert!(!cancel.payload().contains_key("state"));
     assert_registered_payload_valid(&cancel);
-    let pre_state_error = crate::operation::pre_authoring_cell_writes(cancel.intent())
-        .expect_err("direct cancel must be bound to accepted frozen invite state");
+    let pre_state_error = crate::operation::pre_authoring_cell_writes(
+        cancel.intent(),
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .expect_err("direct cancel must be bound to accepted frozen invite state");
     assert_eq!(pre_state_error.reason_code(), "invite_kind_requires_revoke");
     let lifecycle_cell = arkret_sdk::CellRef::new(format!(
         "ak:cell:ak.component.invite.lifecycle.v1:{invite_id}"
@@ -1071,7 +1095,11 @@ fn applet_helpers_emit_canonical_kinds_and_target_refs() {
     // The cell subject comes from `resource_id`, so the write is knowable before
     // the Event has an identity.
     assert_eq!(
-        crate::operation::pre_authoring_cell_writes(disc.intent()).unwrap()[0]
+        crate::operation::pre_authoring_cell_writes(
+            disc.intent(),
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap()[0]
             .cell
             .as_str(),
         format!("ak:cell:ak.component.applet.discovery.v1:{service_id}")

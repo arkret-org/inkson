@@ -120,14 +120,8 @@ fn option_table_keys_exist_for_every_wire_value() {
         ),
         ("join_rule", &["public", "invite", "knock", "restricted"]),
         (
-            "history_visibility",
-            &[
-                "world_readable",
-                "shared",
-                "invited",
-                "joined",
-                "restricted",
-            ],
+            "history_access",
+            &["since_join", "all_history_for_current_members"],
         ),
         ("encryption_profile", &["mls_rfc9420", "none"]),
         ("content_scheme", &["mls_exporter_aead_v1", "mls_rfc9420"]),
@@ -135,10 +129,6 @@ fn option_table_keys_exist_for_every_wire_value() {
         (
             "federation_policy",
             &["open", "restricted", "closed", "quarantine"],
-        ),
-        (
-            "anchor_profile",
-            &["single_did", "threshold", "open_set", "mixed"],
         ),
         ("hash_profile", &["sha256", "sha512", "sha3_256", "blake3"]),
         (

@@ -162,7 +162,9 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         ratchet_tree_bytes,
         cipher_suite,
     };
-    state_store.save_mls_snapshot_for_scope(&effective_scope, snapshot);
+    state_store
+        .save_mls_snapshot_for_scope(&effective_scope, snapshot)
+        .map_err(MlsRuntimeError::Genesis)?;
     Ok(Some(summary))
 }
 

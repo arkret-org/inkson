@@ -4,17 +4,18 @@
 //!
 //! - **Discoverability** decides whether a Space / Org / Actor / Applet can be found.
 //! - **Join Rule** decides how a subject can join.
-//! - **History Visibility** decides what history a joined subject can read.
+//! - **History Access** decides whether a current member starts at its join or receives all
+//!   retained scope history.
 //!
 //! The spec is explicit that none of the three implies the others:
-//! `discoverability=public` does not imply `history_visibility=world_readable`
+//! `discoverability=public` does not imply `history_access=all_history_for_current_members`
 //! and does not imply `join_rule=public`. Any UI that surfaces a resource's
 //! access state must keep the three dimensions visible independently.
 //!
 //! This component is shared between `views/directory.rs`, `views/realm_admin.rs`,
 //! `views/kanban.rs`, and the rest of the UI.
 
-pub use arkret_sdk::{Discoverability, HistoryVisibility, JoinRule};
+pub use arkret_sdk::{Discoverability, HistoryAccess, JoinRule};
 use dioxus::prelude::*;
 
 pub trait DiscoverabilityUi {
@@ -95,40 +96,31 @@ fn join_rule_from_str_loose(value: &str) -> JoinRule {
     }
 }
 
-pub trait HistoryVisibilityUi {
+pub trait HistoryAccessUi {
     fn label(&self) -> &'static str;
     fn class_name(&self) -> &'static str;
 }
 
-impl HistoryVisibilityUi for HistoryVisibility {
+impl HistoryAccessUi for HistoryAccess {
     fn label(&self) -> &'static str {
         match self {
-            Self::WorldReadable => "world_readable",
-            Self::Shared => "shared",
-            Self::Invited => "invited",
-            Self::Joined => "joined",
-            Self::Restricted => "restricted",
+            Self::AllHistoryForCurrentMembers => "all_history_for_current_members",
+            Self::SinceJoin => "since_join",
         }
     }
 
     fn class_name(&self) -> &'static str {
         match self {
-            Self::WorldReadable => "badge green",
-            Self::Shared => "badge blue",
-            Self::Invited => "badge amber",
-            Self::Joined => "badge",
-            Self::Restricted => "badge red",
+            Self::AllHistoryForCurrentMembers => "badge blue",
+            Self::SinceJoin => "badge",
         }
     }
 }
 
-fn history_visibility_from_str_loose(value: &str) -> HistoryVisibility {
+fn history_access_from_str_loose(value: &str) -> HistoryAccess {
     match value {
-        "world_readable" => HistoryVisibility::WorldReadable,
-        "shared" | "shared_history" => HistoryVisibility::Shared,
-        "invited" => HistoryVisibility::Invited,
-        "restricted" => HistoryVisibility::Restricted,
-        _ => HistoryVisibility::Joined,
+        "all_history_for_current_members" => HistoryAccess::AllHistoryForCurrentMembers,
+        _ => HistoryAccess::SinceJoin,
     }
 }
 
@@ -139,7 +131,7 @@ pub fn VisibilityPill(prefix: String, value: String, kind: String) -> Element {
     let class = match kind.as_str() {
         "discoverability" => discoverability_from_str_loose(&value).class_name(),
         "join_rule" => join_rule_from_str_loose(&value).class_name(),
-        "history" | "history_visibility" => history_visibility_from_str_loose(&value).class_name(),
+        "history" | "history_access" => history_access_from_str_loose(&value).class_name(),
         _ => "badge",
     };
     let testid = format!("permission-pill-{kind}");
@@ -159,11 +151,11 @@ pub fn VisibilityPill(prefix: String, value: String, kind: String) -> Element {
 pub fn VisibilityPillRow(
     discoverability: Option<String>,
     join_rule: Option<String>,
-    history_visibility: Option<String>,
+    history_access: Option<String>,
 ) -> Element {
     let disc = discoverability.unwrap_or_else(|| "—".to_owned());
     let join = join_rule.unwrap_or_else(|| "—".to_owned());
-    let hist = history_visibility.unwrap_or_else(|| "—".to_owned());
+    let hist = history_access.unwrap_or_else(|| "—".to_owned());
     rsx! {
         div { class: "actions", "data-testid": "permission-pill-row",
             VisibilityPill { prefix: "disc".to_owned(), value: disc, kind: "discoverability".to_owned() }
@@ -194,18 +186,14 @@ mod tests {
     }
 
     #[test]
-    fn history_visibility_default_is_joined() {
+    fn history_access_default_is_since_join() {
         assert_eq!(
-            history_visibility_from_str_loose("garbage"),
-            HistoryVisibility::Joined
+            history_access_from_str_loose("garbage"),
+            HistoryAccess::SinceJoin
         );
         assert_eq!(
-            history_visibility_from_str_loose("world_readable"),
-            HistoryVisibility::WorldReadable
-        );
-        assert_eq!(
-            history_visibility_from_str_loose("shared"),
-            HistoryVisibility::Shared
+            history_access_from_str_loose("all_history_for_current_members"),
+            HistoryAccess::AllHistoryForCurrentMembers
         );
     }
 }

@@ -114,39 +114,6 @@ impl EventProofContext {
     }
 }
 
-/// Resolve a digest suite from a hash authenticated by trusted Realm state.
-pub fn digest_suite_from_trusted_hash(
-    hash: &arkret_sdk::Hash,
-) -> Result<arkret_sdk::canonical::DigestSuite, EventSignerError> {
-    digest_suite_from_qualified_digest(hash.as_str(), "trusted hash")
-}
-
-/// Resolve a digest suite from an accepted content-addressed Seal id.
-pub fn digest_suite_from_trusted_seal_id(
-    seal_id: &arkret_sdk::SealId,
-) -> Result<arkret_sdk::canonical::DigestSuite, EventSignerError> {
-    let qualified = seal_id
-        .as_str()
-        .strip_prefix("ak:seal:")
-        .ok_or_else(|| EventSignerError::Encoding("trusted Seal id is malformed".to_owned()))?;
-    digest_suite_from_qualified_digest(qualified, "trusted Seal id")
-}
-
-fn digest_suite_from_qualified_digest(
-    qualified: &str,
-    source: &str,
-) -> Result<arkret_sdk::canonical::DigestSuite, EventSignerError> {
-    let suite_name = qualified
-        .split_once(':')
-        .map(|(suite, _)| suite)
-        .ok_or_else(|| EventSignerError::Encoding(format!("{source} has no suite prefix")))?;
-    arkret_sdk::canonical::digest_suite(suite_name).map_err(|error| {
-        EventSignerError::Encoding(format!(
-            "{source} carries unsupported digest suite {suite_name:?}: {error}"
-        ))
-    })
-}
-
 /// Opaque handle wrapping an SDK [`SdkEventSigner`] trait object plus
 /// the metadata inkson's UI / submit guard care about.
 pub struct InksonEventSigner {
@@ -445,6 +412,8 @@ impl InksonEventSigner {
                 domain: context.domain,
                 audience: proof_audience,
                 created_at: Some(crate::clock::now_utc()),
+                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_digest: None,
             },
         )
         .map_err(|error| EventSignerError::Backend(error.to_string()))?;
@@ -481,7 +450,7 @@ impl InksonEventSigner {
             authorize,
             hlc,
             &signer,
-            &crate::operation::cell_write_projector,
+            &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
         )
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
@@ -515,7 +484,7 @@ impl InksonEventSigner {
             predecessor,
             hlc,
             &signer,
-            &crate::operation::cell_write_projector,
+            &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
         )
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
@@ -547,7 +516,7 @@ impl InksonEventSigner {
             predecessor,
             hlc,
             &signer,
-            &crate::operation::cell_write_projector,
+            &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
         )
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
@@ -578,7 +547,7 @@ impl InksonEventSigner {
             predecessor,
             hlc,
             &signer,
-            &crate::operation::cell_write_projector,
+            &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
         )
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
@@ -1505,7 +1474,10 @@ mod tests {
         let proof = producer_proof(&event);
         assert_eq!(
             proof.event_digest.as_str(),
-            event.event_digest().unwrap().as_str()
+            event
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap()
+                .as_str()
         );
         // The binding transcript is the SDK's authoritative `canonical_binding_bytes`
         // (folds in the `context = "ak.event-proof-v1"` domain tag), matching the
@@ -1565,7 +1537,10 @@ mod tests {
 
         assert_eq!(
             proof.event_digest.as_str(),
-            event.event_digest().unwrap().as_str()
+            event
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap()
+                .as_str()
         );
         // Binding transcript via the SDK's authoritative `canonical_binding_bytes`
         // (context tag + domain + audience folded in), matching the production signer.

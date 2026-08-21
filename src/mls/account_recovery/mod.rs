@@ -66,10 +66,8 @@ pub use selection::{
     select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 pub use upload::{
-    fetch_mls_history_tail_for_realm, fetch_mls_private_plaintext_backup_body,
-    upload_mls_account_secret_backup_with_passphrase,
+    fetch_mls_private_plaintext_backup_body, upload_mls_account_secret_backup_with_passphrase,
     upload_mls_account_secret_backup_with_recovery_key,
-    upload_mls_account_secret_backup_with_recovery_public_key,
-    upload_mls_history_backup_with_previous, upload_mls_private_plaintext_backup,
+    upload_mls_account_secret_backup_with_recovery_public_key, upload_mls_private_plaintext_backup,
     upload_mls_private_plaintext_backup_with_previous,
 };

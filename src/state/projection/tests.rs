@@ -138,8 +138,7 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
                     "message_id": message,
                     "decryption_state": "decryption_failed",
                     "late_recovery": {
-                        "receiver_visible_at_t0": true,
-                        "source_rechecked_current_share_policy": false
+                        "receiver_visible_at_t0": false
                     },
                     "content": {"encrypted_content": true}
                 }]
@@ -157,7 +156,7 @@ fn projection_late_recovery_rejection_blocks_sidecar_plaintext() {
     assert!(rejected.failed);
     assert_eq!(
         rejected.error.as_deref(),
-        Some(arkret_sdk::ReasonCode::LATE_RECOVERY_SHARE_NOT_AUTHORIZED)
+        Some(arkret_sdk::ReasonCode::LATE_RECOVERY_REJECTED_MEMBERSHIP)
     );
 }
 
@@ -170,12 +169,11 @@ fn projection_audit_policy_access_late_recovery_marker_is_guarded() {
             "summary": {"summary": "Demo"},
             "timeline": {
                 "events": [{
-                    "kind": crate::late_recovery::INKSON_POLICY_ACCESS_AUDIT_KIND,
+                    "kind": arkret_wire::event_kind_str::AUDIT_ACCESSED,
                     "event_id": "ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk",
                     "original_received_at": "2026-05-20T00:00:00.000Z",
                     "late_recovery": {
-                        "receiver_visible_at_t0": true,
-                        "source_rechecked_current_share_policy": true
+                        "receiver_visible_at_t0": true
                     },
                     "payload": {
                         "realm_id": realm,

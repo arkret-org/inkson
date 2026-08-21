@@ -50,6 +50,27 @@ pub(crate) fn try_local_mls_decrypt_core_for_scope(
     payload_value: &Value,
     effective_scope: &arkret_sdk::ScopeRef,
 ) -> Option<Vec<u8>> {
+    try_local_mls_decrypt_core_for_scope_from_verified_sender(
+        state_store,
+        realm_id,
+        actor_id,
+        device_id,
+        payload_value,
+        effective_scope,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_local_mls_decrypt_core_for_scope_from_verified_sender(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    payload_value: &Value,
+    effective_scope: &arkret_sdk::ScopeRef,
+    verified_sender_domain: Option<&[u8]>,
+) -> Option<Vec<u8>> {
     // Network Events must use the canonical EncryptedEnvelope. Falling back to
     // a raw EncryptedPayload would turn a missing/invalid scope_digest into an
     // authentication bypass, so malformed or pre-contract envelopes stay
@@ -59,13 +80,27 @@ pub(crate) fn try_local_mls_decrypt_core_for_scope(
     envelope.validate_for_scope(effective_scope).ok()?;
     let payload = arkret_sdk::mls::encrypted_envelope_to_payload(&envelope).ok()?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    crate::mls::runtime::decrypt_application_payload_for_scope(
-        state_store,
-        secure_store.as_ref(),
-        realm_id,
-        actor_id,
-        device_id,
-        &payload,
-        effective_scope,
-    )
+    match verified_sender_domain {
+        Some(sender) => {
+            crate::mls::runtime::decrypt_application_payload_for_scope_from_verified_sender(
+                state_store,
+                secure_store.as_ref(),
+                realm_id,
+                actor_id,
+                device_id,
+                &payload,
+                effective_scope,
+                sender,
+            )
+        }
+        None => crate::mls::runtime::decrypt_application_payload_for_scope(
+            state_store,
+            secure_store.as_ref(),
+            realm_id,
+            actor_id,
+            device_id,
+            &payload,
+            effective_scope,
+        ),
+    }
 }

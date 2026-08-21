@@ -10,7 +10,7 @@
 //! facade's base-url / credential / sync-token state.
 
 use arkret_wire::CapabilityActionId;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::event_builders::{
     build_capability_relinquish_control_intent, build_member_state_transition_event,
@@ -18,9 +18,8 @@ use crate::event_builders::{
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
     build_realm_authority_basis_update_control_intent, build_realm_authority_reset_control_intent,
     build_realm_bootstrap_steps, build_realm_destroy_event,
-    build_realm_history_sharing_policy_event, build_realm_owner_transfer_control_intent,
-    build_realm_state_event, build_space_create_event, build_space_lifecycle_event,
-    parse_realm_bootstrap_members, recommended_history_sharing_policy_for_visibility,
+    build_realm_owner_transfer_control_intent, build_realm_state_event, build_space_create_event,
+    build_space_lifecycle_event, parse_realm_bootstrap_members,
     recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
@@ -52,11 +51,10 @@ pub async fn create_realm(
     summary: Option<&str>,
     discoverability: &str,
     join_rule: &str,
-    history_visibility: &str,
+    history_access: &str,
     encryption_profile: &str,
     security_class: &str,
     federation_policy: &str,
-    notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
     invitees: Vec<String>,
@@ -77,6 +75,7 @@ pub async fn create_realm(
 
     let join_rule = validate_join_rule_v1(join_rule)?;
     let notary_did = submitter.service_full_id().await?;
+    let notary = submitter.current_service_notary().await?;
     let notary_service_origin = submitter.http().base_url().origin().ascii_serialization();
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
     if resolved_invitees
@@ -97,16 +96,16 @@ pub async fn create_realm(
         genesis_salt,
         actor_id,
         &notary_did,
+        notary,
         &notary_service_origin,
         title,
         summary,
         discoverability,
         join_rule,
-        history_visibility,
+        history_access,
         encryption_profile,
         security_class,
         federation_policy,
-        notary_profile,
         digest_algorithm,
         trust_domain,
         &invitees,
@@ -257,6 +256,7 @@ pub async fn update_realm_metadata(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
     patch: Value,
 ) -> anyhow::Result<SubmitEventResult> {
     let fields = patch
@@ -281,7 +281,10 @@ pub async fn update_realm_metadata(
             .map(arkret_sdk::BlobRef::new)
             .transpose()?;
     let event = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
-        realm_id, actor_id, profile,
+        realm_id,
+        actor_id,
+        digest_suite,
+        profile,
     )?
     // The bootstrap builder uses a null-head guard. A later replacement is
     // authorized against the current Realm Seal frontier instead, which the
@@ -396,14 +399,15 @@ pub async fn update_space_metadata(
     submitter.submit_sdk_event(&event).await
 }
 
-/// Set Realm join_rule + history_visibility policy, optionally also
-/// emitting `ak.realm.policy_bundle` for Join Policy gates.
+/// Set Realm join_rule, optionally tighten history_access, and optionally emit
+/// `ak.realm.policy_bundle` for Join Policy gates.
 pub async fn set_realm_policy_events(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
     join_rule: &str,
-    history_visibility: &str,
+    tighten_history_access: bool,
     join_policy: Option<Value>,
     preserve_recommended_encryption_floor: bool,
 ) -> anyhow::Result<RealmPolicyResult> {
@@ -413,33 +417,27 @@ pub async fn set_realm_policy_events(
             "actor_id is required for canonical Realm policy events"
         ));
     }
-    if history_visibility.trim() == "restricted" {
-        return Err(anyhow::anyhow!(
-            "restricted history_visibility requires ak.realm.history_sharing_policy; use build_realm_history_sharing_policy_event before emitting the visibility change"
-        ));
-    }
     let join_rule = validate_join_rule_v1(join_rule)?;
-    let mut events = vec![
-        build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
+    let mut events = vec![build_realm_state_event::<
+        arkret_sdk::event_spec::RealmJoinRule,
+    >(
+        realm_id,
+        actor_id,
+        digest_suite,
+        arkret_sdk::StatePayload {
+            value: Some(serde_json::to_value(join_rule)?),
+            state: None,
+            reason: None,
+        },
+    )?];
+    if tighten_history_access {
+        events.push(build_realm_state_event::<
+            arkret_sdk::event_spec::RealmHistoryAccess,
+        >(
             realm_id,
             actor_id,
-            arkret_sdk::StatePayload {
-                value: Some(serde_json::to_value(join_rule)?),
-                state: None,
-                reason: None,
-            },
-        )?,
-        build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryVisibility>(
-            realm_id,
-            actor_id,
-            arkret_sdk::HistoryVisibilityPayload::new(serde_json::from_value(json!(
-                history_visibility
-            ))?),
-        )?,
-    ];
-    if let Some(policy) = recommended_history_sharing_policy_for_visibility(history_visibility) {
-        events.push(build_realm_history_sharing_policy_event(
-            realm_id, actor_id, policy,
+            digest_suite,
+            arkret_sdk::HistoryAccessPayload::tighten(),
         )?);
     }
     if let Some(join_policy) = join_policy {
@@ -467,7 +465,7 @@ pub async fn set_realm_policy_events(
         );
         events.push(build_realm_state_event::<
             arkret_sdk::event_spec::RealmPolicyBundle,
-        >(realm_id, actor_id, policy_bundle)?);
+        >(realm_id, actor_id, digest_suite, policy_bundle)?);
     }
     for event in events {
         submitter.submit_sdk_event(&event).await?;
@@ -476,7 +474,7 @@ pub async fn set_realm_policy_events(
         ok: true,
         realm_id: realm_id.to_owned(),
         join_rule: join_rule.to_owned(),
-        history_visibility: history_visibility.to_owned(),
+        history_access_tightened: tighten_history_access,
     })
 }
 
@@ -500,6 +498,7 @@ pub async fn set_realm_durability_policy(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
     policy: &arkret_models_collaboration::objects::realm::DurabilityPolicy,
     policy_revision: u64,
 ) -> anyhow::Result<()> {
@@ -519,6 +518,7 @@ pub async fn set_realm_durability_policy(
     let event = build_realm_state_event::<arkret_sdk::event_spec::RealmPolicyBundle>(
         realm_id,
         actor_id,
+        digest_suite,
         policy_bundle,
     )?;
     submitter.submit_sdk_event(&event).await?;
@@ -584,304 +584,25 @@ pub async fn leave_realm(
     .await
 }
 
-/// Exact-pair Direct Conversation repair. The only authored carrier is this
-/// subject's own `leave -> join` membership Event; the reducer's repair profile
-/// rejects first joins, third participants and on-behalf-of joins.
-pub async fn repair_direct_conversation_self_rejoin(
+/// Rejoin the caller to the same Direct Conversation Realm through the narrow
+/// `ak.member.rejoin.own` authority profile. MLS recovery then uses the normal
+/// same-group Add/Welcome path; there is no dedicated repair carrier.
+pub async fn rejoin_direct_conversation(
     submitter: &EventSubmitter,
     realm_id: &arkret_sdk::RealmId,
     actor_id: &arkret_sdk::DidFullId,
 ) -> anyhow::Result<SubmitEventResult> {
-    // This low-level helper performs only the durable membership half;
-    // `dispatch_direct_conversation_repair` additionally freezes the
-    // resolver-provided whole-value digest and exact KeyPackage.
-    // Resolve the fixed profile baseline up front. Repair must not manufacture
-    // a policy Event and must not release old generation keys.
-    crate::transport::account::direct_conversation_history_sharing_policy()?;
-    let event = build_member_state_transition_event(
+    let actor_id = arkret_sdk::project_full_id_to_core_id(actor_id)?;
+    transition_member_state(
+        submitter,
         realm_id.as_str(),
         actor_id.as_str(),
         actor_id.as_str(),
         Some("leave"),
         "join",
         "direct_conversation_self_rejoin",
-    )?;
-    // The repair profile has an exact one-action authority surface. Leaving
-    // this unset lets normal Realm authority resolution select an unrelated
-    // participant/root source, which cannot authorize `ak.member.rejoin.own`.
-    // The reducer derives that action from the self `leave -> join` payload
-    // and verifies the immutable exact-pair binding; the client must select
-    // the registered source before the Event proof is authored.
-    let event = event.with_authorization_ref(
-        arkret_sdk::AuthorizationRef::new(
-            arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
-        )
-        .map_err(anyhow::Error::msg)?,
-    );
-    submitter.submit_sdk_event(&event).await
-}
-
-/// Run the requester side of replacement repair through durable target
-/// enqueue. The accepted self-rejoin Event and the resolver's current
-/// whole-value digest author the exact request; every ambiguous retry reuses
-/// the Garth-retained canonical bytes. No remote endpoint or resolution record
-/// is persisted by the client.
-// Spec-required Direct Conversation repair dispatch whose caller has not
-// landed yet: wiring is blocked on resolving the peer's `target_service_id`
-// from the delivery binding (see arkret-work task
-// 2026-08-18-0515-dead-code-clusters-in-soland-and-inkson, adjudication (b)
-// keep). Deleting this would orphan the already-live Welcome-consumption half.
-#[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
-pub async fn dispatch_direct_conversation_repair(
-    submitter: &EventSubmitter,
-    http: &arkret_sdk::http_client::Client,
-    state_store: &mut crate::state::LocalStateStore,
-    resolve: &arkret_sdk::DirectConversationResolveOutcome,
-    requester_principal_id: arkret_sdk::DidCoreId,
-    requester_full_id: &arkret_sdk::DidFullId,
-    requester_device_id: arkret_sdk::DeviceId,
-    source_service_id: arkret_sdk::DidCoreId,
-    target_service_id: arkret_sdk::DidCoreId,
-    target_keypackage_ref: arkret_sdk::NonEmptyString,
-) -> anyhow::Result<String> {
-    let requester_full = arkret_sdk::DidFullId::new(requester_full_id.as_str().to_owned())?;
-    if arkret_sdk::project_full_id_to_core_id(&requester_full)? != requester_principal_id {
-        anyhow::bail!("repair requester full_id does not project to requester principal core_id");
-    }
-    let coordinates = resolve.coordinates().cloned().ok_or_else(|| {
-        anyhow::anyhow!("Direct Conversation repair requires resolved coordinates")
-    })?;
-    if coordinates.binding_event_ref.is_none() {
-        anyhow::bail!("Direct Conversation repair requires an accepted binding coordinate");
-    }
-    let active_value_digest =
-        crate::transport::account::direct_conversation_current_generation_value_digest(resolve)?;
-    crate::transport::account::direct_conversation_history_sharing_policy()?;
-
-    let rejoin = build_member_state_transition_event(
-        coordinates.realm_id.as_str(),
-        requester_principal_id.as_str(),
-        requester_principal_id.as_str(),
-        Some("leave"),
-        "join",
-        "direct_conversation_self_rejoin",
-    )?;
-    let rejoin = rejoin.with_authorization_ref(
-        arkret_sdk::AuthorizationRef::new(
-            arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
-        )
-        .map_err(anyhow::Error::msg)?,
-    );
-    // Resolve every fallible/remote signing prerequisite before authoring the
-    // self-rejoin. Once that Event is accepted, freezing and persisting the
-    // request is a synchronous local critical section with no network await.
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("Direct Conversation repair requires an active signer"))?;
-    if signer.device_id() != Some(requester_device_id.as_str()) {
-        anyhow::bail!("active signer is not bound to the repair requester device");
-    }
-    let verification_method = signer.verification_method_for_principal(requester_full_id)?;
-    let device_authorize_event_id =
-        crate::mls::admission::current_requester_device_authorize_event_id(
-            http,
-            requester_device_id.as_str(),
-        )
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let request_id = arkret_sdk::Base64UrlString::new(crate::random::base64url_token(
-        32,
-        "generate Direct Conversation repair request id",
-    )?)
-    .map_err(anyhow::Error::msg)?;
-    let accepted = submitter.submit_sdk_event(&rejoin).await?;
-    let rejoin_event_id = arkret_sdk::EventId::new(accepted.event_id)?;
-    let created_at = crate::clock::now_utc_canonical();
-    let acceptance = garth::SelfRejoinAcceptance {
-        realm_id: coordinates.realm_id.clone(),
-        requester_principal_id: requester_principal_id.clone(),
-        rejoin_event_id: rejoin_event_id.clone(),
-        accepted_at: created_at,
-    };
-    let content = arkret_sdk::MemberRepairRequestPayload {
-        realm_id: coordinates.realm_id.clone(),
-        requester_principal_id: requester_principal_id.clone(),
-        requester: arkret_sdk::MemberRepairRequester::Device {
-            requester_device_id: requester_device_id.clone(),
-        },
-        requester_keypackage_ref: target_keypackage_ref.clone(),
-        observed_active_generation_value_digest: active_value_digest,
-        rejoin_event_id,
-        created_at,
-    };
-    let route = garth::DirectConversationRepairRoute {
-        source_service_id,
-        target_service_id,
-        coordinates,
-        target_keypackage_ref,
-    };
-    let mut planner = garth::DirectConversationRepairPlanner::new(route)?;
-    planner.observe_self_rejoin_accepted(acceptance, content.clone())?;
-
-    let signed_at = crate::clock::now_utc_canonical();
-    let mut request = arkret_sdk::DirectConversationRepairDispatchRequest {
-        request_id,
-        content,
-        requester_authorization: arkret_sdk::DirectConversationRepairAuthorization::Device {
-            requester_device_id,
-            verification_method: verification_method.clone(),
-            device_authorize_event_id,
-            signed_at,
-            signature: arkret_sdk::ProtocolSignature {
-                verification_method: verification_method.clone(),
-                created_at: signed_at,
-                jws: arkret_sdk::Base64UrlString::new("AA").map_err(anyhow::Error::msg)?,
-            },
-        },
-    };
-    let signing_input = request.signing_input()?;
-    let signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
-        signer.sign_raw(&signing_input)?,
-    ))
-    .map_err(anyhow::Error::msg)?;
-    if let arkret_sdk::DirectConversationRepairAuthorization::Device {
-        signature: proof, ..
-    } = &mut request.requester_authorization
-    {
-        proof.jws = signature;
-    }
-    planner.freeze_signed_request(request.clone())?;
-    let request_id = state_store.save_direct_conversation_repair(&planner)?;
-    state_store.begin_durable_flush()?.wait().await?;
-
-    let outcome = match crate::transport::account::direct_conversation_repair_dispatch(
-        http, &request,
     )
     .await
-    {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            planner.record_dispatch_failure(error.to_string())?;
-            state_store.save_direct_conversation_repair(&planner)?;
-            state_store.begin_durable_flush()?.wait().await?;
-            return Err(error);
-        }
-    };
-    planner.record_enqueue_outcome(outcome)?;
-    state_store.save_direct_conversation_repair(&planner)?;
-    state_store.begin_durable_flush()?.wait().await?;
-    planner.confirm_enqueue_outcome_durable()?;
-    state_store.save_direct_conversation_repair(&planner)?;
-    state_store.begin_durable_flush()?.wait().await?;
-    Ok(request_id)
-}
-
-/// Resume a frozen dispatch after restart or an ambiguous transport failure.
-/// The request is loaded from durable state; callers cannot supply rebuilt
-/// fields, and the planner rechecks the retained canonical bytes before send.
-// Same pending wiring as `dispatch_direct_conversation_repair` above.
-#[allow(dead_code)]
-pub async fn retry_direct_conversation_repair_dispatch(
-    http: &arkret_sdk::http_client::Client,
-    state_store: &mut crate::state::LocalStateStore,
-    request_id: &str,
-) -> anyhow::Result<()> {
-    let mut planner = state_store
-        .direct_conversation_repair(request_id)?
-        .ok_or_else(|| anyhow::anyhow!("unknown Direct Conversation repair request"))?;
-    if !matches!(
-        planner.stage(),
-        garth::DirectConversationRepairStage::DispatchFrozen
-            | garth::DirectConversationRepairStage::DispatchRetryable
-    ) {
-        anyhow::bail!("Direct Conversation repair is not awaiting dispatch retry");
-    }
-    let request = planner
-        .snapshot()
-        .frozen_dispatch
-        .ok_or_else(|| anyhow::anyhow!("repair retry has no frozen dispatch"))?
-        .request;
-    planner.exact_retry_bytes(&request)?;
-    let outcome = match crate::transport::account::direct_conversation_repair_dispatch(
-        http, &request,
-    )
-    .await
-    {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            planner.record_dispatch_failure(error.to_string())?;
-            state_store.save_direct_conversation_repair(&planner)?;
-            state_store.begin_durable_flush()?.wait().await?;
-            return Err(error);
-        }
-    };
-    planner.record_enqueue_outcome(outcome)?;
-    state_store.save_direct_conversation_repair(&planner)?;
-    state_store.begin_durable_flush()?.wait().await?;
-    planner.confirm_enqueue_outcome_durable()?;
-    state_store.save_direct_conversation_repair(&planner)?;
-    state_store.begin_durable_flush()?.wait().await?;
-    Ok(())
-}
-
-/// Author replacement-generation activation only after the exact repair
-/// Welcome was consumed and durably recorded. The predecessor remains the
-/// resolver-provided whole current-cell value digest frozen in the request.
-// Same pending wiring as `dispatch_direct_conversation_repair` above.
-#[allow(dead_code)]
-pub async fn activate_direct_conversation_repair(
-    submitter: &EventSubmitter,
-    state_store: &mut crate::state::LocalStateStore,
-    request_id: &str,
-    actor_id: &arkret_sdk::DidCoreId,
-    payload: arkret_sdk::DirectConversationMlsGenerationActivatePayload,
-) -> anyhow::Result<SubmitEventResult> {
-    let planner = state_store
-        .direct_conversation_repair(request_id)?
-        .ok_or_else(|| anyhow::anyhow!("unknown Direct Conversation repair request"))?;
-    if planner.stage() != garth::DirectConversationRepairStage::WelcomeDurable {
-        anyhow::bail!("replacement generation cannot activate before exact Welcome consumption");
-    }
-    let snapshot = planner.snapshot();
-    if snapshot
-        .expected_content
-        .as_ref()
-        .is_none_or(|content| &content.requester_principal_id != actor_id)
-    {
-        anyhow::bail!("replacement activation actor differs from the frozen repair requester");
-    }
-    let expected = snapshot
-        .expected_content
-        .as_ref()
-        .map(|content| &content.observed_active_generation_value_digest);
-    if payload.pair_key != snapshot.route.coordinates.pair_key
-        || payload.main_strand_id != snapshot.route.coordinates.main_strand_id
-        || payload.predecessor_active_value_digest.as_ref() != expected
-    {
-        anyhow::bail!(
-            "replacement activation differs from frozen repair coordinates or CAS digest"
-        );
-    }
-    payload.validate()?;
-    let event =
-        build_realm_state_event::<arkret_sdk::event_spec::DirectConversationMlsGenerationActivate>(
-            snapshot.route.coordinates.realm_id.as_str(),
-            actor_id.as_str(),
-            payload,
-        )?;
-    let event = event.with_authorization_ref(
-        arkret_sdk::AuthorizationRef::new(
-            arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_REPAIR_V1.to_owned(),
-        )
-        .map_err(anyhow::Error::msg)?,
-    );
-    let result = submitter.submit_sdk_event(&event).await?;
-    state_store.record_direct_conversation_repair_activation(
-        request_id,
-        arkret_sdk::EventId::new(result.event_id.clone())?,
-    )?;
-    state_store.begin_durable_flush()?.wait().await?;
-    Ok(result)
 }
 
 /// Archive a Realm via the reversible `ak.realm.archive` lifecycle facet.
@@ -1291,6 +1012,7 @@ mod tests {
         let unrelated = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
             REALM_ID,
             ACTOR_ID,
+            arkret_sdk::DigestSuite::Sha256,
             arkret_sdk::RealmProfile::new("Engineering").unwrap(),
         )
         .unwrap();

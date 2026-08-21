@@ -212,6 +212,8 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.ends_with(".auth.session_grant.v1")
         || key.starts_with("inkson.device_hpke_x25519.private.")
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
+        || key.starts_with("arkret/history-candidate/v1/")
+        || key.starts_with("arkret/history-mailbox-capability/v1/")
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
 }
@@ -223,13 +225,13 @@ pub(crate) fn e2ee_plaintext_cache_store_key(account_did: &str) -> String {
     )
 }
 
-/// E2EE-at-rest T1 — SecureKeyStore key for a realm's aggregated MLS
-/// `history_secret`s. The realm id is base64-encoded (no pad) so the key is a
-/// stable, character-safe suffix under [`MLS_HISTORY_SECRET_KEY_PREFIX`].
-pub(crate) fn mls_history_secret_store_key(realm_id: &str) -> String {
+/// E2EE-at-rest T1 — SecureKeyStore key for one exact scope/group's aggregated
+/// MLS `history_secret`s. The canonical scope/group key is base64-encoded (no
+/// pad) so it is a stable, character-safe suffix.
+pub(crate) fn mls_history_secret_store_key(scope_group_key: &str) -> String {
     format!(
         "{MLS_HISTORY_SECRET_KEY_PREFIX}{}",
-        STANDARD_NO_PAD.encode(realm_id.trim().as_bytes())
+        STANDARD_NO_PAD.encode(scope_group_key.trim().as_bytes())
     )
 }
 
@@ -272,19 +274,19 @@ pub(crate) fn wasm_secure_store_ready() -> bool {
     WASM_INDEXEDDB_SECURE_KEY_STORE.get().is_some()
 }
 
-/// E2EE-at-rest T1 — load a realm's aggregated `history_secret`s from the
+/// E2EE-at-rest T1 — load an exact scope/group's aggregated `history_secret`s from the
 /// hardened SecureKeyStore. Returns `None` before IndexedDB initialization (fail
 /// closed) so callers fall back to any transitional inline copy; returns
 /// `Some(empty)` when upgraded but no secrets are stored for the realm.
-pub(crate) fn load_realm_history_secrets(
-    realm_id: &str,
+pub(crate) fn load_history_secrets(
+    scope_group_key: &str,
 ) -> Option<std::collections::BTreeMap<u64, Vec<u8>>> {
     #[cfg(target_arch = "wasm32")]
     if !wasm_secure_store_ready() {
         return None;
     }
     let store = default_secure_key_store("inkson");
-    let key = mls_history_secret_store_key(realm_id);
+    let key = mls_history_secret_store_key(scope_group_key);
     match store.get_secret(&key) {
         Ok(Some(json)) => Some(decode_history_secrets_json(&json)),
         Ok(None) => Some(std::collections::BTreeMap::new()),
@@ -295,12 +297,13 @@ pub(crate) fn load_realm_history_secrets(
     }
 }
 
-/// E2EE-at-rest T1 — durably persist a realm's aggregated `history_secret`s to
+/// E2EE-at-rest T1 — durably persist an exact scope/group's aggregated
+/// `history_secret`s to
 /// the hardened SecureKeyStore tier. Callers must not publish dependent state
 /// before this future succeeds.
-pub(crate) async fn persist_realm_history_secrets(
+pub(crate) async fn persist_history_secrets(
     store: &dyn SecureKeyStore,
-    realm_id: &str,
+    scope_group_key: &str,
     by_epoch: &std::collections::BTreeMap<u64, Vec<u8>>,
 ) -> Result<(), SecureKeyStoreError> {
     #[cfg(target_arch = "wasm32")]
@@ -309,7 +312,7 @@ pub(crate) async fn persist_realm_history_secrets(
             "history secrets require the initialized IndexedDB secure store",
         ));
     }
-    let key = mls_history_secret_store_key(realm_id);
+    let key = mls_history_secret_store_key(scope_group_key);
     store
         .store_secret_durable(&key, &encode_history_secrets_json(by_epoch))
         .await

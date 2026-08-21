@@ -1283,12 +1283,23 @@ fn spawn_provision_agent(
             last_op_status.set("Create failed: server allocation scope digest mismatch".to_owned());
             return;
         }
+        let agent_notary = match crate::event_builders::managed_agent_inception_notary(
+            &full_id,
+            &agent_inception.root_public_key_multibase,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: freeze Agent notary: {error}"));
+                return;
+            }
+        };
         // Freeze and sign the exact managed-Agent PCR create before authoring
         // the provision Event.  Its content-derived EventId is the only source
         // of the PCR Realm id carried by that provision declaration.
         let frozen_genesis = match with_event_submitter(&base, api_token.clone(), {
             let agent_id = agent_id.clone();
             let initial_resolution = initial_resolution.clone();
+            let agent_notary = agent_notary.clone();
             let controller_id = controller_id.clone();
             let controller_authorization_ref = controller_authorization_ref.clone();
             move |submitter| async move {
@@ -1296,6 +1307,7 @@ fn spawn_provision_agent(
                 let draft = crate::event_builders::build_managed_agent_pcr_create_event(
                     agent_id.as_str(),
                     initial_resolution,
+                    agent_notary,
                     controller_id.as_str(),
                     controller_authorization_ref.as_str(),
                     describe.trust_domain.as_str(),

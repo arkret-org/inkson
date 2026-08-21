@@ -14,19 +14,23 @@ struct CanonicalInput {
 #[derive(Debug, Deserialize)]
 struct MlsGovernanceProofInput {
     request: arkret_sdk::MlsGovernanceProofRequestBody,
-    events: Vec<arkret_sdk::Event>,
-    seals: Vec<arkret_sdk::Seal>,
+    target_checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
+    content_scheme: arkret_sdk::MlsContentScheme,
+    durability_policy: Option<arkret_sdk::MlsDurabilityPolicy>,
+    local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ControlProposalAckInput {
     request: arkret_wire::ControlProposalAckIssueRequest,
     device_id: String,
+    digest_suite: arkret_sdk::DigestSuite,
 }
 
 #[derive(Debug, Deserialize)]
 struct IngressReceiptsInput {
     submissions: Vec<arkret_wire::EventInitialSubmission>,
+    digest_suite: arkret_sdk::DigestSuite,
 }
 
 #[derive(Debug, Deserialize)]
@@ -249,70 +253,24 @@ fn sha256_canonical_json(input: Value) -> Result<Value> {
 fn mls_governance_proof(input: Value) -> Result<Value> {
     let input: MlsGovernanceProofInput =
         serde_json::from_value(input).context("parse MLS governance proof input")?;
-    let material = arkret_bootstrap::materialize_managed_agent_pcr_control(
-        &input.events,
-        &inkson::operation::cell_write_projector,
-    )
-    .map_err(|error| anyhow::anyhow!("materialize managed Agent PCR control: {error}"))?;
-    let accepted_seal = input
-        .seals
-        .last()
-        .context("managed Agent PCR proof has no accepted Seal")?;
-    if accepted_seal.realm_id != material.realm_id
-        || accepted_seal.state_root != material.state_root
-        || accepted_seal.covered_event_digests != material.covered_event_digests
-    {
-        bail!("accepted Seal does not match the managed Agent PCR control material");
-    }
-    let control_state = material
-        .joined
-        .iter()
-        .filter_map(|(cell, state)| match state {
-            arkret_sdk::CellState::Value(value) => {
-                Some(arkret_sdk::MlsGovernanceControlStateLeaf {
-                    cell: cell.clone(),
-                    state: arkret_sdk::MlsGovernanceControlStateValue {
-                        value: value.clone(),
-                    },
-                })
-            }
-            arkret_sdk::CellState::Bottom(_) => None,
-        })
-        .collect::<Vec<_>>();
-    let mut frontier_events = input
-        .events
-        .iter()
-        .filter(|event| event.kind == arkret_sdk::EventKind::RealmCreate)
-        .cloned()
-        .collect::<Vec<_>>();
-    frontier_events.sort_by(|left, right| left.event_id.as_str().cmp(right.event_id.as_str()));
-    if frontier_events.len() != 1 {
-        bail!("managed Agent PCR proof requires exactly one Realm genesis frontier Event");
-    }
-    let zero = arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32)))
-        .context("construct zero digest")?;
-    let materialized = arkret_sdk::MaterializedMlsGovernanceProofBundle {
-        bundle_version: arkret_sdk::MLS_GOVERNANCE_PROOF_BUNDLE_VERSION,
-        proof_request_digest: zero.clone(),
-        bundle_digest: zero,
-        materialization_profile: arkret_sdk::MLS_GOVERNANCE_COMPLETE_MATERIALIZATION_PROFILE
-            .to_owned(),
-        realm_id: input.request.realm_id.clone(),
-        effective_scope: input.request.effective_scope.clone(),
-        reducer_profile: input.request.reducer_profile.clone(),
-        trusted_anchor_seal_id: input.request.trusted_anchor_seal_id.clone(),
-        accepted_seal_id: accepted_seal.id.clone(),
-        seal_path: input.seals,
-        covered_event_digests: material.covered_event_digests,
-        control_state,
-        frontier_events,
+    let group_genesis_binding = arkret_sdk::MlsGroupGenesisBinding {
+        content_scheme: input.content_scheme,
+        durability_policy: input.durability_policy,
     };
-    let chunks = arkret_sdk::build_mls_governance_proof_chunks(&input.request, &materialized)
-        .map_err(|error| anyhow::anyhow!("build MLS governance proof chunks: {error}"))?;
-    let chunk = chunks
-        .get(input.request.chunk_index as usize)
-        .context("requested MLS governance proof chunk is out of range")?;
-    serde_json::to_value(chunk).context("serialize MLS governance proof chunk")
+    let bundle = arkret_sdk::materialize_mls_governance_frontier(
+        &input.request,
+        &input.target_checkpoint,
+        &group_genesis_binding,
+        &input.local_mls_leaves,
+        |_event, _digest_suite, _evidence, _dependencies| {
+            Err(arkret_sdk::WireError::Protocol(
+                "the inkson-wire fixture does not provide Native Agent historical authority"
+                    .to_owned(),
+            ))
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("materialize MLS governance frontier: {error}"))?;
+    serde_json::to_value(bundle).context("serialize MLS governance proof bundle")
 }
 
 fn control_proposal_ack(input: Value) -> Result<Value> {
@@ -332,10 +290,24 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
     let policy = arkret_wire::ControlProposalDecisionPolicy::default();
     let received_at = chrono::Utc::now();
     let proposal_digest =
-        arkret_sdk::Hash::new(event.event_digest()?).context("construct proposal Event digest")?;
+        arkret_sdk::Hash::new(event.event_digest_with_digest_suite(input.digest_suite)?)
+            .context("construct proposal Event digest")?;
+    let notary_public_key = [2_u8; 32];
     let authority_set_ref = arkret_sdk::Hash::new(
-        arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::single_did(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:server.local".to_owned())?,
+        arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::single_signer(
+            arkret_sdk::NotarySignerDescriptor {
+                actor_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.local".to_owned())?,
+                verification_method: arkret_sdk::DidUrl::new(
+                    "did:web:server.local#notary".to_owned(),
+                )
+                .map_err(anyhow::Error::msg)?,
+                key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+                jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+                frozen_public_key_b64u: arkret_sdk::base64url_encode(&notary_public_key),
+                frozen_public_key_digest: arkret_sdk::Hash::new(
+                    arkret_sdk::canonical::sha256_digest(notary_public_key),
+                )?,
+            },
         ))
         .context("digest proposal authority set")?,
     )
@@ -393,8 +365,12 @@ fn ingress_receipts(input: Value) -> Result<Value> {
             .authorization_lease
             .as_ref()
             .context("ingress receipt fixture requires a delayed authorization lease")?;
-        let event_digest = arkret_sdk::Hash::new(submission.event.event_digest()?)
-            .context("construct ingress Event digest")?;
+        let event_digest = arkret_sdk::Hash::new(
+            submission
+                .event
+                .event_digest_with_digest_suite(input.digest_suite)?,
+        )
+        .context("construct ingress Event digest")?;
         let received_at = authorization_lease.issued_at;
         let receipt_unix_ms = u64::try_from(received_at.timestamp_millis())
             .context("ingress receipt time predates the Unix epoch")?;

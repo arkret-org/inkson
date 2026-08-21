@@ -76,6 +76,8 @@ mod tests {
             7,
             7,
             root,
+            arkret_sdk::MlsContentScheme::MlsRfc9420,
+            None,
             arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
             arkret_sdk::CORE_REDUCER_PROFILE,
         )

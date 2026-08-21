@@ -23,7 +23,7 @@ const PCR_RECOVERY_PROJECTION_WAIT_ATTEMPTS: usize = 18;
 struct ManagedPcrBackupItem {
     snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
     state_bytes: Vec<u8>,
-    binding: Option<ManagedPrincipalBinding>,
+    binding: ManagedPrincipalBinding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -447,8 +447,14 @@ fn build_managed_pcr_backup_body(
                 secret_b64u: B64.encode(&item.state_bytes),
                 secret_generation: None,
                 realm_id: Some(arkret_sdk::RealmId::new(item.snapshot.realm_id.clone())?),
-                managed_principal_binding: item.binding.clone(),
+                managed_principal_binding: Some(item.binding.clone()),
                 mls_group_id: Some(item.snapshot.group_id.clone()),
+                effective_scope: None,
+                from_epoch: None,
+                to_epoch: None,
+                group_state_ref: None,
+                policy_digest: None,
+                membership_frontier_digest: None,
                 epoch: Some(item.snapshot.epoch),
                 first_event_id: None,
                 last_event_id: None,
@@ -653,15 +659,8 @@ async fn collect_current_managed_pcr_backup_items(
 ) -> anyhow::Result<Vec<ManagedPcrBackupItem>> {
     let controller_full_id = arkret_sdk::DidFullId::new(controller_id.to_owned())?;
     let controller_actor_id = arkret_sdk::project_full_id_to_core_id(&controller_full_id)?;
-    let current_binding = current
-        .binding
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("current Agent PCR backup item has no managed binding"))?;
+    let current_binding = &current.binding;
     let current_agent_id = current_binding.managed_principal_id.to_string();
-    let mut agent_realm_ids = BTreeSet::from([current_binding
-        .principal_control_realm_id
-        .as_str()
-        .to_owned()]);
     let mut items = std::collections::BTreeMap::from([(current_agent_id.clone(), current)]);
     let directory = http.agent_list().await?;
     if directory.has_more {
@@ -692,7 +691,6 @@ async fn collect_current_managed_pcr_backup_items(
                 agent.agent_id.as_str()
             );
         }
-        agent_realm_ids.insert(key_state.principal_control_realm_id.as_str().to_owned());
         if agent.lifecycle
             == arkret_models_collaboration::agent_operations::AgentLifecycleState::Deactivated
         {
@@ -778,43 +776,9 @@ async fn collect_current_managed_pcr_backup_items(
             ManagedPcrBackupItem {
                 snapshot,
                 state_bytes,
-                binding: Some(binding),
+                binding,
             },
         );
-    }
-
-    let ordinary_snapshots = state_store
-        .read()
-        .mls_snapshots()
-        .into_values()
-        .filter(|snapshot| !agent_realm_ids.contains(snapshot.realm_id.as_str()))
-        .collect::<Vec<_>>();
-    if !ordinary_snapshots.is_empty() {
-        let controller_secret = crate::mls::runtime::load_device_snapshot_secret(
-            secure_store,
-            controller_id,
-            device_id,
-        )
-        .map_err(|error| anyhow::anyhow!("load controller MLS snapshot secret: {error}"))?;
-        for snapshot in ordinary_snapshots {
-            let state_bytes =
-                crate::mls::persistence::decrypt_envelope(&snapshot, &controller_secret).map_err(
-                    |error| {
-                        anyhow::anyhow!(
-                            "open controller Realm {} MLS state for recovery: {error}",
-                            snapshot.realm_id
-                        )
-                    },
-                )?;
-            items.insert(
-                format!("realm:{}", snapshot.realm_id),
-                ManagedPcrBackupItem {
-                    snapshot: snapshot.clone(),
-                    state_bytes,
-                    binding: None,
-                },
-            );
-        }
     }
     Ok(items.into_values().collect())
 }
@@ -892,11 +856,11 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
         .backfill(realm_id)
         .await?
         .complete_events("managed Agent PCR Seal materialization")?;
-    let material = arkret_bootstrap::materialize_managed_agent_pcr_control(
-        &accepted_events,
-        &crate::operation::cell_write_projector,
-    )
-    .map_err(|error| anyhow::anyhow!("managed Agent PCR materialization failed: {error}"))?;
+    let material =
+        arkret_bootstrap::materialize_managed_agent_pcr_control(&accepted_events, &|event| {
+            crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
+        })
+        .map_err(|error| anyhow::anyhow!("managed Agent PCR materialization failed: {error}"))?;
 
     let submitted = match current {
         Ok((view, head)) => {
@@ -940,8 +904,12 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
                     "managed Agent PCR initial Seal requires exactly one accepted create Event"
                 );
             };
-            let submission =
-                crate::authorization_lease::standard_initial_submission(http, create).await?;
+            let submission = crate::authorization_lease::standard_initial_submission(
+                http,
+                create,
+                arkret_sdk::DigestSuite::Sha256,
+            )
+            .await?;
             http.events_submit(&submission).await?;
             submit_managed_agent_pcr_seal(
                 http,
@@ -1170,7 +1138,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
     let frontier = if let Some(event_id) = existing_genesis {
         state_store
             .write()
-            .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id);
+            .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id)
+            .map_err(anyhow::Error::msg)?;
         if state_store.read().mls_snapshot_for(realm_id).is_none() {
             anyhow::bail!(
                 "Agent PCR MLS genesis exists, but this controller device has no local private group state"
@@ -1242,10 +1211,14 @@ pub(crate) async fn bootstrap_provisioned_agent(
             .map_err(|error| anyhow::anyhow!(error.user_message()))?;
         match submitter.submit_sdk_event(&genesis).await {
             // The accepted id is the only one the encrypted writes may bind to.
-            Ok(accepted) => state_store.write().mark_mls_genesis_emitted_with_event(
-                realm_id.to_owned(),
-                &arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(anyhow::Error::msg)?,
-            ),
+            Ok(accepted) => state_store
+                .write()
+                .mark_mls_genesis_emitted_with_event(
+                    realm_id.to_owned(),
+                    &arkret_sdk::EventId::new(accepted.event_id.clone())
+                        .map_err(anyhow::Error::msg)?,
+                )
+                .map_err(anyhow::Error::msg)?,
             Err(error)
                 if crate::ephemeral::events_submit_rejected_for_reason(
                     &error,
@@ -1262,7 +1235,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
                     })?;
                 state_store
                     .write()
-                    .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id);
+                    .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id)
+                    .map_err(anyhow::Error::msg)?;
             }
             Err(error) => return Err(error),
         }
@@ -1407,7 +1381,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         ManagedPcrBackupItem {
             snapshot,
             state_bytes,
-            binding: Some(binding),
+            binding,
         },
     )
     .await?;
@@ -1865,12 +1839,12 @@ mod tests {
                 ManagedPcrBackupItem {
                     snapshot: snapshot.clone(),
                     state_bytes: b"real MLS state record bytes".to_vec(),
-                    binding: Some(binding.clone()),
+                    binding: binding.clone(),
                 },
                 ManagedPcrBackupItem {
                     snapshot: second_snapshot.clone(),
                     state_bytes: b"second real MLS state record".to_vec(),
-                    binding: Some(second_binding.clone()),
+                    binding: second_binding.clone(),
                 },
             ],
             &envelope_frontier,
@@ -1915,12 +1889,12 @@ mod tests {
                 ManagedPcrBackupItem {
                     snapshot,
                     state_bytes: b"real MLS state record bytes".to_vec(),
-                    binding: Some(binding),
+                    binding,
                 },
                 ManagedPcrBackupItem {
                     snapshot: second_snapshot,
                     state_bytes: b"second real MLS state record".to_vec(),
-                    binding: Some(second_binding),
+                    binding: second_binding,
                 },
             ],
             &envelope_frontier,
@@ -1956,25 +1930,13 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn recovery_key_restores_managed_and_controller_states_from_shared_tail() {
+    fn recovery_key_restores_only_managed_state_from_shared_tail() {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         let controller_id = "did:web:alice.example";
         let agent_id = "did:web:agent.example";
         let device_id = "ak:device:01964137-0000-7000-8000-000000000001";
-        let controller_realm = "ak:realm:ATG7Fk8hBMQ6qaWDHI0VKYaWkLN1UoOWA3Dg8A8Cvk9k";
         let agent_realm = "ak:realm:AWOXX4XSfA3Q3eldR3dS6QQYT7Ao6hia5pA4bLuXey0J";
-        let controller_identity = ArkretMlsIdentity::new_basic(
-            crate::mls_api_helpers::principal_core_id(controller_id).unwrap(),
-            DeviceId::new(device_id.to_owned()).unwrap(),
-        )
-        .unwrap();
-        let controller_record = controller_identity
-            .create_group(b"controller-realm")
-            .unwrap()
-            .export_state_record()
-            .unwrap();
-        let controller_bytes = serde_json::to_vec(&controller_record).unwrap();
         let agent_identity = ArkretMlsIdentity::new_basic(
             crate::mls_api_helpers::principal_core_id(agent_id).unwrap(),
             DeviceId::new(device_id.to_owned()).unwrap(),
@@ -1986,14 +1948,6 @@ mod tests {
             .export_state_record()
             .unwrap();
         let agent_bytes = serde_json::to_vec(&agent_record).unwrap();
-        let controller_snapshot = crate::mls::persistence::encrypt_state(
-            controller_realm,
-            &controller_record.group_id,
-            controller_record.epoch,
-            &controller_bytes,
-            "source controller secret",
-            b"controller-salt",
-        );
         let agent_snapshot = crate::mls::persistence::encrypt_state(
             agent_realm,
             &agent_record.group_id,
@@ -2024,18 +1978,11 @@ mod tests {
         let history_backup_id = "ak:backup:01964137-0000-7000-8000-000000000093";
         let history_series_id = "ak:backup_series:01964137-0000-7000-8000-000000000094";
         let history = build_managed_pcr_backup_body(
-            &[
-                ManagedPcrBackupItem {
-                    snapshot: agent_snapshot,
-                    state_bytes: agent_bytes.clone(),
-                    binding: Some(binding.clone()),
-                },
-                ManagedPcrBackupItem {
-                    snapshot: controller_snapshot,
-                    state_bytes: controller_bytes.clone(),
-                    binding: None,
-                },
-            ],
+            &[ManagedPcrBackupItem {
+                snapshot: agent_snapshot,
+                state_bytes: agent_bytes.clone(),
+                binding: binding.clone(),
+            }],
             &binding.managed_frontier_ref,
             controller_id,
             device_id,
@@ -2095,7 +2042,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(report.restored, 2);
+        assert_eq!(report.restored, 1);
         assert_eq!(report.failed, 0);
         let restored_agent = state.mls_snapshot_for(agent_realm).unwrap();
         let agent_core_id = crate::mls_api_helpers::principal_core_id(agent_id).unwrap();
@@ -2112,17 +2059,11 @@ mod tests {
             crate::mls::persistence::decrypt_envelope(&restored_agent, &agent_secret).unwrap(),
             agent_bytes
         );
-        let restored_controller = state.mls_snapshot_for(controller_realm).unwrap();
         let controller_secret =
             crate::mls::runtime::load_account_mls_secret(&secure_store, controller_id)
                 .unwrap()
                 .unwrap()
                 .secret;
         assert_eq!(controller_secret, "restored controller account secret");
-        assert_eq!(
-            crate::mls::persistence::decrypt_envelope(&restored_controller, &controller_secret)
-                .unwrap(),
-            controller_bytes
-        );
     }
 }

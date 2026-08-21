@@ -1,29 +1,14 @@
 use super::*;
 
 fn verified_bundle_covers_observed_head(
-    bundle: &serde_json::Value,
+    bundle: &arkret_sdk::MlsGovernanceProofBundle,
     accepted_heads: &BTreeSet<&str>,
 ) -> bool {
     bundle
-        .get("seal_path")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|seal_path| {
-            seal_path.iter().any(|seal| {
-                seal.get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|id| accepted_heads.contains(id))
-                    || seal
-                        .get("predecessor_refs")
-                        .and_then(serde_json::Value::as_array)
-                        .is_some_and(|predecessors| {
-                            predecessors.iter().any(|predecessor| {
-                                predecessor
-                                    .as_str()
-                                    .is_some_and(|id| accepted_heads.contains(id))
-                            })
-                        })
-            })
-        })
+        .proof_material
+        .seal_descriptors
+        .iter()
+        .any(|descriptor| accepted_heads.contains(descriptor.seal_ref.as_str()))
 }
 
 impl LocalStateStore {
@@ -392,8 +377,13 @@ impl LocalStateStore {
             .map(String::as_str)
             .collect::<BTreeSet<_>>();
         self.cached.mls_governance_proofs.retain(|_, entry| {
-            entry.request.realm_id.as_str() != realm_id
-                || accepted_heads.contains(entry.accepted_seal_id.as_str())
+            entry.request.effective_scope.realm_id_opt().map(|id| id.as_str())
+                != Some(realm_id.as_str())
+                || entry
+                    .proof_target_basis
+                    .leaves
+                    .iter()
+                    .all(|seal| accepted_heads.contains(seal.as_str()))
                 // Sync and proof acquisition race independently. A lagging
                 // frontier may still be an authenticated predecessor of the
                 // freshly verified accepted Seal and must not evict its proof.
@@ -441,12 +431,43 @@ mod tests {
 
     #[test]
     fn verified_bundle_recognizes_an_observed_predecessor_head() {
-        let bundle = serde_json::json!({
-            "seal_path": [{
-                "id": "ak:seal:sha256:accepted",
-                "predecessor_refs": ["ak:seal:sha256:previous"]
-            }]
-        });
+        let bundle = arkret_sdk::MlsGovernanceProofBundle {
+            query: serde_json::from_value(serde_json::json!({
+                "profile": "group_security_frontier",
+                "effective_scope": {
+                    "kind": "realm",
+                    "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+                },
+                "mls_group_id": "QXJrcmV0Rml4dHVyZUdyb3Vw",
+                "proof_base_basis": {"leaves": ["ak:seal:sha256:base"]},
+                "proof_target_basis": {"leaves": ["ak:seal:sha256:previous"]},
+                "byte_limit": 1048576,
+                "frontier_purpose": "group_binding",
+                "base_group_state_ref": "ak:event:AZ6GqZWWvnQ2KFwbBD-MenomzWNz-31MUAuKzBXIP0zv",
+                "previous_epoch": 1,
+                "next_epoch": 2,
+                "binding_profile": "ak.security_frontier.v1"
+            }))
+            .unwrap(),
+            frontier_projection: arkret_sdk::MlsGovernanceFrontierProjection {
+                frontier_registry_digest: arkret_sdk::Hash::new(format!(
+                    "sha256:{}",
+                    "11".repeat(32)
+                ))
+                .unwrap(),
+                branches: Vec::new(),
+            },
+            proof_material: arkret_sdk::MlsGovernanceTypedProofMaterial {
+                seal_descriptors: vec![arkret_sdk::MlsGovernanceSealDescriptor {
+                    seal_ref: arkret_sdk::SealId::new("ak:seal:sha256:previous").unwrap(),
+                    seal_digest: arkret_sdk::Hash::new(format!("sha256:{}", "22".repeat(32)))
+                        .unwrap(),
+                }],
+                seal_predecessor_edges: Vec::new(),
+                event_descriptors: Vec::new(),
+            },
+            page_digest: arkret_sdk::Hash::new(format!("sha256:{}", "33".repeat(32))).unwrap(),
+        };
         let previous = BTreeSet::from(["ak:seal:sha256:previous"]);
         let unrelated = BTreeSet::from(["ak:seal:sha256:unrelated"]);
 

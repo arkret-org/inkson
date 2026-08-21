@@ -675,9 +675,13 @@ pub(super) fn dispatch_card_detail_update(
             .await;
             match genesis_result {
                 Ok(event_id) => {
-                    state_store
+                    if let Err(error) = state_store
                         .write()
-                        .mark_mls_genesis_emitted_with_event(realm_id.clone(), &event_id);
+                        .mark_mls_genesis_emitted_with_event(realm_id.clone(), &event_id)
+                    {
+                        board_status.set(format!("MLS genesis reference persist failed: {error}"));
+                        return;
+                    }
                     accepted_genesis_event_id = Some(event_id);
                 }
                 Err(err) => {
@@ -770,23 +774,14 @@ pub(super) fn dispatch_card_detail_update(
                                     .set(format!("MLS commit reference persist failed: {error}"));
                                 return;
                             }
-                            state_store
+                            if let Err(error) = state_store
                                 .write()
-                                .save_mls_snapshot_for_scope(effective_scope, snapshot);
-                        }
-                        // §7.10 continuous backup: the accepted commit advanced
-                        // the epoch, so re-upload this Realm's mls_history
-                        // series tail (debounced; no-op until the 24-word
-                        // Recovery Key exists).
-                        if sidecar_effective_scope.is_none() {
-                            crate::components::schedule_mls_history_backup_after_commit(
-                                base_for_backup_trigger.clone(),
-                                api_token.clone(),
-                                actor_for_backup_trigger.clone(),
-                                device_for_sidecar_backup.clone(),
-                                realm_id.clone(),
-                                state_store,
-                            );
+                                .save_mls_snapshot_for_scope(effective_scope, snapshot)
+                            {
+                                board_status
+                                    .set(format!("MLS commit snapshot persist failed: {error}"));
+                                return;
+                            }
                         }
                     }
                     if let Some(commit_operation_id) = mls_commit_operation_id {

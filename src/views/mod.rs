@@ -24,7 +24,7 @@
 //
 // Shared rules:
 // 1. Any write UI must explicitly label the canonical event kind it emits.
-// 2. discoverability / join_rule / history_visibility are independent and must be displayed
+// 2. discoverability / join_rule / history_access are independent and must be displayed
 //    independently — none implies the other.
 // 3. Cross-Space references default to lazy_link — never expand title / members / counts on the
 //    consumer side.

@@ -75,11 +75,17 @@ mod seal_view;
 pub use seal_view::*;
 
 mod mls_sidecar;
-pub(crate) use mls_sidecar::{PendingHistorySecrets, mls_scope_snapshot_key};
+pub(crate) use mls_sidecar::{
+    PendingHistorySecrets, mls_scope_snapshot_key, mls_scope_snapshot_key_for_group,
+};
+
+mod history_candidates;
+mod history_runtime;
+mod identity_links;
+pub(crate) use history_runtime::{InksonHistoryRuntimeStore, history_runtime};
 
 mod agent_evidence;
 mod did_bindings;
-mod direct_conversation_repair;
 mod mls_governance;
 
 mod e2ee_secure_cache;
@@ -1060,6 +1066,7 @@ fn e2ee_safe_persist_state_with_policy(
     stripped.history_secrets.clear();
     stripped.mls_private_plaintext.clear();
     stripped.mls_decrypted_plaintext.clear();
+    stripped.authenticated_identity_links.clear();
     stripped
 }
 

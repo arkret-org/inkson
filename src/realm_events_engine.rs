@@ -89,16 +89,19 @@ pub struct RealmEventsEngineContext {
 struct RealmIngestProjector {
     state_store: crate::runtime::input::StateStoreHandle,
     realm_id: String,
+    digest_suite: arkret_sdk::DigestSuite,
     realm_live_epoch: crate::runtime::input::ValueCell<u64>,
     message_stream_hub: crate::views::message_streams::MessageStreamHub,
 }
 
 impl ClientProjector for RealmIngestProjector {
     async fn project(&self, batch: Vec<ClientEvent>) -> garth::Result<()> {
+        let (batch, digest_suite) =
+            expand_delivery_events(batch, &self.realm_id, self.digest_suite)?;
         if !batch.is_empty() {
             let finals = batch
                 .iter()
-                .filter_map(accepted_direct_message_final)
+                .filter_map(|event| accepted_direct_message_final(event, digest_suite))
                 .collect::<Vec<_>>();
             let changed = self.state_store.write(|store| {
                 crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
@@ -130,12 +133,27 @@ impl ClientProjector for RealmIngestProjector {
     }
 }
 
-fn expand_delivery_events(events: Vec<ClientEvent>) -> garth::Result<Vec<ClientEvent>> {
+fn expand_delivery_events(
+    events: Vec<ClientEvent>,
+    expected_realm_id: &str,
+    fallback_digest_suite: arkret_sdk::DigestSuite,
+) -> garth::Result<(Vec<ClientEvent>, arkret_sdk::DigestSuite)> {
     let decoder = garth::InboundDecoder::new();
     let mut expanded = Vec::new();
+    let mut carried_digest_suite = None;
     for event in events {
         match event {
-            ClientEvent::Backfill { outcome, .. } => {
+            ClientEvent::Backfill {
+                realm_id,
+                digest_suite,
+                outcome,
+            } => {
+                validate_carried_realm_suite(
+                    expected_realm_id,
+                    &realm_id,
+                    digest_suite,
+                    &mut carried_digest_suite,
+                )?;
                 for (index, row) in outcome.events.into_iter().enumerate() {
                     let event = row.into_event().ok_or_else(|| {
                         garth::Error::Protocol(format!(
@@ -148,10 +166,49 @@ fn expand_delivery_events(events: Vec<ClientEvent>) -> garth::Result<Vec<ClientE
                     });
                 }
             }
+            ClientEvent::RealmAccepted {
+                realm_id,
+                digest_suite,
+                event,
+            } => {
+                validate_carried_realm_suite(
+                    expected_realm_id,
+                    &realm_id,
+                    digest_suite,
+                    &mut carried_digest_suite,
+                )?;
+                expanded.push(match decoder.decode_event(event) {
+                    garth::DecodedInbound::Message(message) => ClientEvent::Message(*message),
+                    garth::DecodedInbound::Event(event) => ClientEvent::Event(*event),
+                });
+            }
             event => expanded.push(event),
         }
     }
-    Ok(expanded)
+    Ok((
+        expanded,
+        carried_digest_suite.unwrap_or(fallback_digest_suite),
+    ))
+}
+
+fn validate_carried_realm_suite(
+    expected_realm_id: &str,
+    realm_id: &arkret_sdk::RealmId,
+    digest_suite: arkret_sdk::DigestSuite,
+    carried_digest_suite: &mut Option<arkret_sdk::DigestSuite>,
+) -> garth::Result<()> {
+    if realm_id.as_str() != expected_realm_id {
+        return Err(garth::Error::Protocol(
+            "durable Realm delivery crossed Realm scope".to_owned(),
+        ));
+    }
+    if carried_digest_suite.is_some_and(|existing| existing != digest_suite) {
+        return Err(garth::Error::Protocol(
+            "durable Realm delivery mixed digest suites".to_owned(),
+        ));
+    }
+    *carried_digest_suite = Some(digest_suite);
+    Ok(())
 }
 
 async fn deliver_realm_inbox(
@@ -186,10 +243,7 @@ async fn deliver_realm_inbox(
                 continue;
             }
             handled = true;
-            let result = match expand_delivery_events(delivery.events) {
-                Ok(events) => projector.project(events).await,
-                Err(error) => Err(error),
-            };
+            let result = projector.project(delivery.events).await;
             match result {
                 Ok(()) => match inbox.ack(delivery.id).await {
                     Ok(true) => {}
@@ -239,6 +293,7 @@ async fn deliver_realm_inbox(
 /// that already-admitted device identity to Garth's §7.5 binder.
 fn accepted_direct_message_final(
     client_event: &ClientEvent,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> Option<(&arkret_sdk::Event, arkret_sdk::DeviceId)> {
     let ClientEvent::Message(message) = client_event else {
         return None;
@@ -246,7 +301,9 @@ fn accepted_direct_message_final(
     let event = &message.event;
     if event.kind != arkret_sdk::EventKind::MessageCreate
         || event.executed_by.is_some()
-        || event.validate_principal_server_admission_binding().is_err()
+        || event
+            .validate_principal_server_admission_binding(digest_suite)
+            .is_err()
     {
         return None;
     }
@@ -291,14 +348,27 @@ pub async fn run_realm_events_engine(
         start_profile_id,
         realm_id: realm_id.clone(),
     };
-    let projector = RealmIngestProjector {
-        state_store: ctx.state_store.clone(),
-        realm_id,
-        realm_live_epoch: ctx.realm_live_epoch.clone(),
-        message_stream_hub: ctx.message_stream_hub,
-    };
     let mut restart_backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     while provider.is_active() {
+        let Some(checkpoint) = ctx
+            .state_store
+            .read(|store| store.trusted_mls_governance_checkpoint(realm_id_typed.as_str()))
+        else {
+            tracing::warn!(
+                realm_id = %realm_id_typed,
+                "Realm Event subscription is waiting for a verified governance checkpoint"
+            );
+            crate::runtime_helpers::sleep_for(BACKOFF_FLOOR).await;
+            continue;
+        };
+        let digest_suite = checkpoint.live_digest_suite;
+        let projector = RealmIngestProjector {
+            state_store: ctx.state_store.clone(),
+            realm_id: realm_id.clone(),
+            digest_suite,
+            realm_live_epoch: ctx.realm_live_epoch.clone(),
+            message_stream_hub: ctx.message_stream_hub,
+        };
         // `events/subscribe` without `after` is a live tail, not a history
         // endpoint. Bootstrap durable history through events.query.scan and let
         // the shared client core checkpoint only after the projector commits it.
@@ -330,6 +400,7 @@ pub async fn run_realm_events_engine(
                 .bootstrap_realm_history_to_inbox(
                     &bootstrap_transport,
                     realm_id_typed.clone(),
+                    digest_suite,
                     ScanCatchupOptions::default(),
                 )
                 .await
@@ -355,6 +426,7 @@ pub async fn run_realm_events_engine(
         let runner = client.run_realm_to_inbox(
             &provider,
             realm_id_typed.clone(),
+            digest_suite,
             &control,
             RunOptions {
                 beat: Duration::from_millis(250),
@@ -465,7 +537,12 @@ mod tests {
             }),
         )
         .unwrap();
-        let event_digest = arkret_sdk::Hash::new(event.event_digest().unwrap()).unwrap();
+        let event_digest = arkret_sdk::Hash::new(
+            event
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap(),
+        )
+        .unwrap();
         event.proofs.push(
             arkret_sdk::Proof {
                 kind: "detached_jws".to_owned(),
@@ -474,6 +551,8 @@ mod tests {
                 ))
                 .unwrap(),
                 event_digest,
+                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_digest: None,
                 created_at: event.created_at,
                 domain: None,
                 audience: None,
@@ -497,6 +576,16 @@ mod tests {
                 producer_verification_method: producer.verification_method.clone(),
                 producer_signing_key: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
                     .unwrap(),
+                signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
+                    "ak:signer_evidence:sha256:{}",
+                    "11".repeat(32)
+                ))
+                .unwrap(),
+                signer_resolution_evidence_digest: arkret_sdk::Hash::new(format!(
+                    "sha256:{}",
+                    "11".repeat(32)
+                ))
+                .unwrap(),
                 accepted_at: event.created_at,
                 jws: "header..admission".to_owned(),
             }
@@ -515,7 +604,8 @@ mod tests {
     fn final_binding_extracts_only_the_exact_accepted_actor_device_proof() {
         let event = direct_message_event();
         let (final_event, device_id) =
-            accepted_direct_message_final(&event).expect("direct final is bindable");
+            accepted_direct_message_final(&event, arkret_sdk::DigestSuite::Sha256)
+                .expect("direct final is bindable");
         assert_eq!(final_event.actor_id.as_str(), ACTOR_ID);
         assert_eq!(device_id.as_str(), DEVICE_ID);
     }
@@ -528,13 +618,17 @@ mod tests {
         };
         message.event.executed_by =
             Some(arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap());
-        assert!(accepted_direct_message_final(&delegated).is_none());
+        assert!(
+            accepted_direct_message_final(&delegated, arkret_sdk::DigestSuite::Sha256).is_none()
+        );
 
         let mut ambiguous = direct_message_event();
         let ClientEvent::Message(message) = &mut ambiguous else {
             unreachable!();
         };
         message.event.proofs.push(message.event.proofs[0].clone());
-        assert!(accepted_direct_message_final(&ambiguous).is_none());
+        assert!(
+            accepted_direct_message_final(&ambiguous, arkret_sdk::DigestSuite::Sha256).is_none()
+        );
     }
 }

@@ -1,21 +1,21 @@
 //! Creator-side MLS bootstrap for an encrypted Realm, made replayable.
 //!
 //! A Realm creator never receives a Welcome — the epoch-0 group is created
-//! locally, its `ak.mls.genesis` is submitted by the creator, and the trusted
-//! Seal anchor is pinned only after a governance proof bundle passes the full
+//! locally, its `ak.mls.genesis` is submitted by the creator, and a durable
+//! replay checkpoint is pinned only after the accepted Seal closure passes the full
 //! `encryption-and-audit.md` §2.5.1.1 verification order. Until this module
 //! existed, that whole sequence lived inline in the Realm-create wizard's
 //! `spawn`, so a component unmount (the user clicking straight into the new
 //! Realm), a transient network failure or a closed tab left the Realm with no
-//! pinned anchor, no local snapshot and no genesis — and nothing ever retried.
+//! pinned checkpoint, no local snapshot and no genesis — and nothing ever retried.
 //! Every later encrypted write then failed forever with
-//! `MLS governance proof requires a locally trusted Seal anchor`.
+//! `MLS governance proof requires a locally verified replay checkpoint`.
 //!
-//! Spec position: `encryption-and-audit.md` §2.5.4 T1 defines when a Seal may
-//! become the local anchor — the candidate must be the genesis Seal of the
+//! Spec position: `encryption-and-audit.md` §2.5.4 T1 defines when a Seal cut may
+//! become the local checkpoint — the candidate must include the genesis Seal of the
 //! `ak.realm.create` Event that `realm_id` retypes to, signed by the notary that
 //! create payload names. This module does not decide any of that; it calls
-//! [`ensure_governance_anchor`](crate::mls::governance_proof::ensure_governance_anchor),
+//! [`ensure_governance_checkpoint`](crate::mls::governance_proof::ensure_governance_checkpoint),
 //! which runs the SDK admission test. Nothing here requires the sequence to
 //! complete in one attempt, and replaying it is safe.
 
@@ -23,22 +23,13 @@ use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 
 use crate::state::LocalStateStore;
 
-/// What a bootstrap attempt actually did. Empty when the Realm was already
-/// fully bootstrapped (the common re-entry case).
-#[derive(Default)]
-pub(crate) struct CreatorMlsBootstrapOutcome {
-    /// The epoch-0 snapshot, when this call created it. The Realm-create
-    /// wizard uses it to seed the first `mls_history` backup series.
-    pub(crate) fresh_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
-}
-
 /// Whether this client is the creator of an encrypted `realm_id` whose MLS
 /// bootstrap is still incomplete.
 ///
 /// Cheap and synchronous so UI effects can gate on it without spawning. The
 /// creator check is what keeps the trust source inside §2.5.1.1's enumeration:
-/// only the actor that created the Realm may treat its genesis Seal as an
-/// already-trusted anchor. It mirrors the gate in
+/// only the actor that created the Realm may establish the initial replay
+/// checkpoint from its genesis. It mirrors the gate in
 /// `group_events::ensure_creator_mls_snapshot_for_encrypted_scope`.
 pub(crate) fn creator_mls_bootstrap_pending(
     store: &LocalStateStore,
@@ -87,13 +78,20 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-) -> Result<CreatorMlsBootstrapOutcome, String> {
+) -> Result<(), String> {
     let realm_id = realm_id.trim();
     if realm_id.is_empty() {
         return Err("realm_id is required for creator MLS bootstrap".to_owned());
     }
     if !creator_mls_bootstrap_pending(&state_store.read(), realm_id, actor_id) {
-        return Ok(CreatorMlsBootstrapOutcome::default());
+        return Ok(());
+    }
+    if state_store.read().mls_genesis_emitted_for(realm_id)
+        && state_store.read().mls_snapshot_for(realm_id).is_none()
+    {
+        return Err(format!(
+            "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
+        ));
     }
 
     let submitter = api
@@ -101,7 +99,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         .map_err(|error| format!("MLS governance proof frontier client: {error}"))?;
     // A freshly accepted Realm may not be sealed yet, so wait for the Seal view
     // before asking for anything Seal-bound. The view is a liveness signal only
-    // — the anchor below is established by verification, not by this read.
+    // — the checkpoint below is established by verification, not by this read.
     let seal_view = wait_for_realm_seal_view(&submitter, realm_id)
         .await
         .map_err(|error| {
@@ -116,18 +114,18 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     }
 
     // encryption-and-audit.md 2.5.4 T1. This is what makes the module comment
-    // above true: the creator's trust in the anchor comes from the create Event
+    // above true: the creator's trust in the checkpoint comes from the create Event
     // it authored itself, recognised through realm_id, not from whichever head
     // the service happens to serve.
-    crate::mls::governance_proof::ensure_governance_anchor(api, state_store, realm_id)
+    crate::mls::governance_proof::ensure_governance_checkpoint(api, state_store, realm_id)
         .await
-        .map_err(|error| format!("establishing the MLS governance trust anchor failed: {error}"))?;
+        .map_err(|error| format!("establishing the MLS governance checkpoint failed: {error}"))?;
 
     let request = crate::mls::governance_proof::proof_request(
         &state_store.read(),
         realm_id,
         None,
-        arkret_sdk::base64url_encode(realm_id.as_bytes()),
+        crate::mls::runtime::mls_group_id_for_realm(realm_id)?,
         0,
         0,
     )
@@ -161,9 +159,6 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         )
         .map_err(|error| format!("MLS initial group setup failed: {}", error.user_message()))?
     };
-    let fresh_snapshot = fresh_summary
-        .as_ref()
-        .and_then(|_| state_store.read().mls_snapshot_for(realm_id));
     // The interesting recovery case is "snapshot persisted, genesis never
     // accepted": `ensure_creator_mls_snapshot` short-circuits to `None` there,
     // and the genesis builder refuses to emit without epoch-0 material. Restore
@@ -242,10 +237,10 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             Ok(accepted_event_id) => {
                 state_store
                     .write()
-                    .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &accepted_event_id);
+                    .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &accepted_event_id)?;
             }
             Err(error) => {
-                // The local snapshot and pinned anchor stay persisted, but the
+                // The local snapshot and pinned checkpoint stay persisted, but the
                 // bootstrap is not complete until genesis is accepted and its
                 // exact Event id is recorded. Propagate the failure so the
                 // background effect clears its dedup key and retries; returning
@@ -260,7 +255,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         }
     }
 
-    Ok(CreatorMlsBootstrapOutcome { fresh_snapshot })
+    Ok(())
 }
 
 /// Poll `ak.self.events.read.frontier` until the Realm has an accepted Seal.

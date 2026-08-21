@@ -116,8 +116,9 @@ pub(crate) fn upload_recovery_key_account_backup(
             )
             .await?;
             let secure = crate::secure_key_store::default_secure_key_store("inkson");
-            crate::mls::runtime::load_or_create_account_mls_secret(secure.as_ref(), &actor)
-                .map_err(|err| anyhow::anyhow!("ensure account MLS secret before backup: {err}"))?;
+            crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &actor)
+                .map_err(|err| anyhow::anyhow!("load account MLS secret before backup: {err}"))?
+                .ok_or_else(|| anyhow::anyhow!("account MLS secret recovery is required"))?;
             let account_backup_id = Some(
                 crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                     &api,

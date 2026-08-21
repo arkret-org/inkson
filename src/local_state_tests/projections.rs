@@ -73,7 +73,7 @@ fn mls_encrypted_projection_reads_canonical_realm_create_state_event() {
                 "kind": "ak.realm.create",
                 "payload": {"object": {
                     "encryption_profile": "mls_rfc9420",
-                    "history_visibility": "shared"
+                    "history_access": "all_history_for_current_members"
                 }}
             }]}
         }),

@@ -126,16 +126,16 @@ pub fn build_realm_bootstrap_steps(
     genesis_salt: arkret_sdk::GenesisSalt,
     actor_id: &str,
     notary_did: &str,
+    notary: arkret_sdk::NotaryValue,
     notary_service_origin: &str,
     title: &str,
     summary: Option<&str>,
     discoverability: &str,
     join_rule: &str,
-    history_visibility: &str,
+    history_access: &str,
     encryption_profile: &str,
     security_class: &str,
     federation_policy: &str,
-    notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
     invitees: &[String],
@@ -145,7 +145,7 @@ pub fn build_realm_bootstrap_steps(
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     validate_realm_history_content_scheme_for_profile(
         encryption_profile,
-        history_visibility,
+        history_access,
         content_scheme,
     )?;
     // Validate seed invitees here, but do not include their membership
@@ -156,16 +156,15 @@ pub fn build_realm_bootstrap_steps(
     let create_event = build_realm_create_event(
         genesis_salt,
         actor_id,
-        notary_did,
+        notary,
         title,
         summary,
         discoverability,
         join_rule,
-        history_visibility,
+        history_access,
         encryption_profile,
         security_class,
         federation_policy,
-        notary_profile,
         digest_algorithm,
         trust_domain,
         content_scheme,
@@ -179,7 +178,7 @@ pub fn build_realm_bootstrap_steps(
         summary: summary.map(ToOwned::to_owned),
         discoverability: discoverability.to_owned(),
         join_rule: join_rule.to_owned(),
-        history_visibility: history_visibility.to_owned(),
+        history_access: history_access.to_owned(),
         encryption_profile: encryption_profile.to_owned(),
         federation_policy: federation_policy.to_owned(),
         alias: alias.map(ToOwned::to_owned),
@@ -194,7 +193,11 @@ pub fn build_realm_bootstrap_steps(
         let create = authored
             .first()
             .ok_or_else(|| anyhow::anyhow!("Realm bootstrap follow-ups need the create Event"))?;
-        build_realm_bootstrap_facet_intents(&facets, create.realm_id.as_str())
+        build_realm_bootstrap_facet_intents(
+            &facets,
+            create.realm_id.as_str(),
+            create.digest_suite(),
+        )
     });
     let membership_step: crate::event_submit::EventUnitStep = Box::new(move |authored| {
         let create = authored
@@ -228,7 +231,7 @@ pub struct RealmBootstrapFacets {
     pub summary: Option<String>,
     pub discoverability: String,
     pub join_rule: String,
-    pub history_visibility: String,
+    pub history_access: String,
     pub encryption_profile: String,
     pub federation_policy: String,
     pub alias: Option<String>,
@@ -240,11 +243,15 @@ pub struct RealmBootstrapFacets {
 pub fn build_realm_bootstrap_facet_intents(
     facets: &RealmBootstrapFacets,
     realm_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<Vec<crate::operation::EventIntent>> {
     let actor_id = facets.actor_id.as_str();
     let encryption_profile = facets.encryption_profile.as_str();
     let content_scheme = facets.content_scheme.as_deref();
-    let history_visibility = facets.history_visibility.as_str();
+    let history_access = parse_wire_enum::<arkret_sdk::HistoryAccess>(
+        "history_access",
+        facets.history_access.as_str(),
+    )?;
     let mut events: Vec<crate::operation::EventIntent> = Vec::new();
 
     let mut profile = arkret_sdk::RealmProfile::new(facets.title.trim())?;
@@ -256,7 +263,10 @@ pub fn build_realm_bootstrap_facet_intents(
         .map(ToOwned::to_owned);
     events.push(
         build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
-            realm_id, actor_id, profile,
+            realm_id,
+            actor_id,
+            digest_suite,
+            profile,
         )?
         .into_intent(),
     );
@@ -279,6 +289,7 @@ pub fn build_realm_bootstrap_facet_intents(
         build_realm_state_event::<arkret_sdk::event_spec::RealmPolicyBundle>(
             realm_id,
             actor_id,
+            digest_suite,
             policy_bundle,
         )?
         .into_intent(),
@@ -287,6 +298,7 @@ pub fn build_realm_bootstrap_facet_intents(
         build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
             realm_id,
             actor_id,
+            digest_suite,
             arkret_sdk::StatePayload {
                 value: Some(serde_json::to_value(parse_wire_enum::<
                     arkret_sdk::RealmJoinRuleValue,
@@ -299,39 +311,20 @@ pub fn build_realm_bootstrap_facet_intents(
         )?
         .into_intent(),
     );
-    let history_sharing_policy =
-        recommended_history_sharing_policy_for_profile(encryption_profile, history_visibility);
-    let history_visibility_payload = if history_visibility.trim() == "restricted" {
-        let policy = history_sharing_policy.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "restricted history_visibility requires a history sharing policy in the bootstrap unit"
-            )
-        })?;
-        let digest = crate::canonical::canonical_sha256(policy)?;
-        arkret_sdk::HistoryVisibilityPayload::restricted(digest)
-    } else {
-        arkret_sdk::HistoryVisibilityPayload::new(parse_wire_enum(
-            "history_visibility",
-            history_visibility,
-        )?)
-    };
     events.push(
-        build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryVisibility>(
+        build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryAccess>(
             realm_id,
             actor_id,
-            history_visibility_payload,
+            digest_suite,
+            arkret_sdk::HistoryAccessPayload::initialize(history_access),
         )?
         .into_intent(),
     );
-    if let Some(policy) = history_sharing_policy {
-        events.push(
-            build_realm_history_sharing_policy_event(realm_id, actor_id, policy)?.into_intent(),
-        );
-    }
     events.push(
         build_realm_state_event::<arkret_sdk::event_spec::RealmDiscovery>(
             realm_id,
             actor_id,
+            digest_suite,
             arkret_sdk::StatePayload {
                 value: Some(serde_json::to_value(parse_wire_enum::<
                     arkret_sdk::RealmDiscoveryValue,
@@ -380,6 +373,7 @@ pub fn build_realm_bootstrap_facet_intents(
         build_realm_state_event::<arkret_sdk::event_spec::RealmDeliveryBindingPolicy>(
             realm_id,
             actor_id,
+            digest_suite,
             delivery_binding_policy,
         )?
         .into_intent(),
@@ -470,84 +464,32 @@ fn build_realm_bootstrap_membership_intent(
     .into_intent())
 }
 
-fn recommended_history_sharing_policy_for_profile(
-    _encryption_profile: &str,
-    history_visibility: &str,
-) -> Option<arkret_sdk::HistorySharingPolicyPayloadValue> {
-    if history_visibility.trim() == "restricted" {
-        use arkret_sdk::{
-            HistoryKeyShareDefault, HistoryKeySource, HistorySharingPolicyPayloadValue,
-            HistorySharingPolicyPayloadValueAudit, HistorySharingRange,
-            HistorySharingReceiverClass, HistorySharingRestrictedRule,
-            HistorySharingRestrictedRuleHistoryScope, HistorySharingScopeKind, HistoryVisibility,
-        };
-        return Some(HistorySharingPolicyPayloadValue {
-            version: 1,
-            default_key_share: HistoryKeyShareDefault::Deny,
-            pre_join_history: None,
-            post_removal_recovery: None,
-            allowed_key_sources: vec![HistoryKeySource::VerifiedMemberDevice],
-            allowed_receiver_states: Some(vec![HistorySharingReceiverClass::ActiveMember]),
-            audit: HistorySharingPolicyPayloadValueAudit {
-                share_audit_event_required: true,
-                access_audit_required: true,
-            },
-            restricted_rules: Some(vec![HistorySharingRestrictedRule {
-                rule_id: "bootstrap_active_member_history".to_owned(),
-                history_scope: Some(HistorySharingRestrictedRuleHistoryScope {
-                    kind: HistorySharingScopeKind::Realm,
-                    circle_id: None,
-                }),
-                receiver_classes: vec![HistorySharingReceiverClass::ActiveMember],
-                allowed_history_visibility_values: vec![HistoryVisibility::Restricted],
-                range: HistorySharingRange::SinceJoin,
-                max_epoch_span: None,
-                key_sources: vec![HistoryKeySource::VerifiedMemberDevice],
-                audit_required: Some(true),
-            }]),
-        });
-    }
-    None
-}
-
-/// Recommended `history_sharing_policy_payload.value` for a pre-join-visible
-/// Realm, authored through the SDK strong type so every member is a declared
-/// property of the closed `history_sharing_policy_payload` schema.
-pub(crate) fn recommended_history_sharing_policy_for_visibility(
-    history_visibility: &str,
-) -> Option<arkret_sdk::HistorySharingPolicyPayloadValue> {
-    use arkret_sdk::{
-        HistoryKeyShareDefault, HistoryKeySource, HistorySharingPolicyPayloadValue,
-        HistorySharingPolicyPayloadValueAudit, HistorySharingPreJoinPolicy,
-        HistorySharingReceiverClass,
-    };
-    let pre_join_visible = matches!(
-        history_visibility.trim().to_ascii_lowercase().as_str(),
-        "world_readable" | "shared" | "invited"
-    );
-    if !pre_join_visible {
-        return None;
-    }
-    Some(HistorySharingPolicyPayloadValue {
-        version: 1,
-        default_key_share: HistoryKeyShareDefault::EventTimeVisibility,
-        pre_join_history: Some(HistorySharingPreJoinPolicy::AllowIfVisibilityAllows),
-        post_removal_recovery: None,
-        allowed_key_sources: vec![HistoryKeySource::VerifiedMemberDevice],
-        allowed_receiver_states: Some(vec![HistorySharingReceiverClass::ActiveMember]),
-        audit: HistorySharingPolicyPayloadValueAudit {
-            share_audit_event_required: false,
-            access_audit_required: false,
-        },
-        restricted_rules: None,
-    })
-}
-
 /// Parse a wire enum token through its SDK strong type, so an unregistered
 /// value fails here instead of on the receiver's schema gate.
 fn parse_wire_enum<T: serde::de::DeserializeOwned>(field: &str, value: &str) -> anyhow::Result<T> {
     serde_json::from_value(Value::String(value.trim().to_owned()))
         .map_err(|err| anyhow::anyhow!("invalid {field} {value:?}: {err}"))
+}
+
+#[cfg(test)]
+pub(crate) fn test_single_signer_notary(
+    signer_did: &str,
+) -> anyhow::Result<arkret_sdk::NotaryValue> {
+    let full_id = arkret_sdk::DidFullId::new(signer_did.to_owned())?;
+    let actor_id = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&full_id)?);
+    let public_key = [7_u8; 32];
+    let descriptor = arkret_sdk::NotarySignerDescriptor {
+        actor_id,
+        verification_method: arkret_sdk::DidUrl::new(format!("{signer_did}#notary"))
+            .map_err(anyhow::Error::msg)?,
+        key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+        jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+        frozen_public_key_b64u: arkret_sdk::base64url_encode(&public_key),
+        frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            public_key,
+        ))?,
+    };
+    Ok(arkret_sdk::NotaryValue::single_signer(descriptor))
 }
 
 /// Build the closed `ak.schema.realm_genesis.v1` object as the SDK strong type.
@@ -561,25 +503,24 @@ fn parse_wire_enum<T: serde::de::DeserializeOwned>(field: &str, value: &str) -> 
 fn build_realm_genesis_object(
     genesis_salt: arkret_sdk::GenesisSalt,
     _actor_id: &str,
-    notary_did: &str,
+    notary: arkret_sdk::NotaryValue,
     _title: &str,
     _summary: Option<&str>,
     _discoverability: &str,
     _join_rule: &str,
-    _history_visibility: &str,
+    _history_access: &str,
     encryption_profile: &str,
     security_class: &str,
     _federation_policy: &str,
-    notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
     _content_scheme: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::RealmGenesis> {
     let trust_domain_typed = arkret_sdk::TrustDomainId::new(trust_domain.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid trust_domain for realm.create: {err:?}"))?;
-    let notary_profile_typed: arkret_sdk::NotaryProfile =
-        parse_wire_enum("notary_profile", notary_profile)?;
-    let notary = realm_genesis_notary(notary_profile_typed, notary_did)?;
+    notary
+        .validate()
+        .map_err(|error| anyhow::anyhow!("invalid frozen Realm notary configuration: {error}"))?;
     // realm-and-space.md §2.5: the create-locked registry digest is the basis
     // the Realm's authority-root cell is seeded with, so the owner ceiling is
     // pinned to the snapshot this client actually authored against.
@@ -601,7 +542,6 @@ fn build_realm_genesis_object(
         digest_algorithm,
         parse_wire_enum("security_class", security_class)?,
         parse_wire_enum("encryption_profile", encryption_profile)?,
-        notary_profile_typed,
         notary,
         capability_action_registry_digest,
     )
@@ -645,16 +585,15 @@ fn build_realm_create_event_from_object(
 pub fn build_realm_create_event(
     genesis_salt: arkret_sdk::GenesisSalt,
     actor_id: &str,
-    notary_did: &str,
+    notary: arkret_sdk::NotaryValue,
     title: &str,
     summary: Option<&str>,
     discoverability: &str,
     join_rule: &str,
-    history_visibility: &str,
+    history_access: &str,
     encryption_profile: &str,
     security_class: &str,
     federation_policy: &str,
-    notary_profile: &str,
     digest_algorithm: &str,
     trust_domain: &str,
     content_scheme: Option<&str>,
@@ -662,16 +601,15 @@ pub fn build_realm_create_event(
     let object = build_realm_genesis_object(
         genesis_salt,
         actor_id,
-        notary_did,
+        notary,
         title,
         summary,
         discoverability,
         join_rule,
-        history_visibility,
+        history_access,
         encryption_profile,
         security_class,
         federation_policy,
-        notary_profile,
         digest_algorithm,
         trust_domain,
         content_scheme,
@@ -683,9 +621,35 @@ pub fn build_realm_create_event(
 /// Native Personal Agent. The control facts belong to `agent_id`; the active
 /// controller only executes the Event under the DID delegation returned by
 /// provisioning.
+pub fn managed_agent_inception_notary(
+    agent_full_id: &arkret_sdk::DidFullId,
+    root_public_key_multibase: &str,
+) -> anyhow::Result<arkret_sdk::NotaryValue> {
+    let actor_id = arkret_sdk::project_full_id_to_core_id(agent_full_id)?;
+    let public_key = arkret_sdk::decode_ed25519_multibase(root_public_key_multibase)?;
+    let descriptor = arkret_sdk::NotarySignerDescriptor {
+        actor_id,
+        verification_method: arkret_sdk::DidUrl::new(format!(
+            "{}#{}",
+            agent_full_id, root_public_key_multibase
+        ))
+        .map_err(anyhow::Error::msg)?,
+        key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+        jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+        frozen_public_key_b64u: arkret_sdk::base64url_encode(&public_key),
+        frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            public_key,
+        ))?,
+    };
+    let notary = arkret_sdk::NotaryValue::single_signer(descriptor);
+    notary.validate()?;
+    Ok(notary)
+}
+
 pub fn build_managed_agent_pcr_create_event(
     agent_id: &str,
     initial_resolution: arkret_sdk::ResolutionCommitment,
+    notary: arkret_sdk::NotaryValue,
     controller_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
@@ -696,6 +660,7 @@ pub fn build_managed_agent_pcr_create_event(
             agent_id: crate::mls_api_helpers::principal_core_id(agent_id)?,
             initial_resolution,
             controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
+            notary,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
             trust_domain: arkret_sdk::TrustDomainId::new(trust_domain.to_owned())?,
             capability_action_registry_digest:
@@ -726,6 +691,7 @@ pub fn build_managed_agent_pcr_create_event(
 pub fn build_managed_agent_pcr_bootstrap_steps(
     agent_id: &str,
     initial_resolution: arkret_sdk::ResolutionCommitment,
+    notary: arkret_sdk::NotaryValue,
     controller_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
@@ -733,6 +699,7 @@ pub fn build_managed_agent_pcr_bootstrap_steps(
     let create = build_managed_agent_pcr_create_event(
         agent_id,
         initial_resolution,
+        notary,
         controller_id,
         controller_authorization_ref,
         trust_domain,
@@ -754,6 +721,7 @@ pub fn build_managed_agent_pcr_bootstrap_steps(
 pub fn build_direct_conversation_founding_steps(
     founder_id: &arkret_sdk::DidFullId,
     peer_id: &arkret_sdk::DidFullId,
+    notary: arkret_sdk::NotaryValue,
     trust_domain: arkret_sdk::TrustDomainId,
     _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
@@ -764,8 +732,7 @@ pub fn build_direct_conversation_founding_steps(
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
-        arkret_sdk::NotaryProfile::SingleDid,
-        arkret_sdk::NotaryValue::single_did(founder_actor.clone()),
+        notary,
         arkret_sdk::current_capability_action_registry_digest()?,
         created_at,
     )?;
@@ -909,15 +876,21 @@ pub fn resolve_realm_content_scheme(content_scheme: Option<&str>) -> &'static st
 
 pub fn validate_realm_history_content_scheme_for_profile(
     encryption_profile: &str,
-    history_visibility: &str,
+    history_access: &str,
     content_scheme: Option<&str>,
 ) -> anyhow::Result<()> {
-    if encryption_profile_uses_recommended_floor(encryption_profile) {
-        arkret_sdk::validate_history_visibility_content_scheme_values(
-            history_visibility,
-            Some(resolve_realm_content_scheme(content_scheme)),
-        )
-        .map_err(|reason| anyhow::anyhow!("{reason}"))?;
+    if !encryption_profile_uses_recommended_floor(encryption_profile) {
+        return Ok(());
+    }
+    let history_access =
+        parse_wire_enum::<arkret_sdk::HistoryAccess>("history_access", history_access)?;
+    if resolve_realm_content_scheme(content_scheme) == "mls_rfc9420"
+        && history_access != arkret_sdk::HistoryAccess::SinceJoin
+    {
+        anyhow::bail!(
+            "{}: mls_rfc9420 requires history_access=since_join",
+            arkret_sdk::error::ReasonCode::HISTORY_ACCESS_REQUIRES_HISTORY_CAPABLE_SCHEME
+        );
     }
     Ok(())
 }
@@ -985,113 +958,6 @@ pub fn recommended_realm_policy_bundle_for_profile(
 ) -> Option<arkret_sdk::RealmPolicyBundlePayload> {
     encryption_profile_uses_recommended_floor(profile)
         .then(|| recommended_realm_policy_bundle_value(content_scheme))
-}
-
-/// Build the genesis notary cell value as the SDK-authoritative
-/// [`arkret_sdk::NotaryValue`] (no hand-rolled JSON — zero schema drift).
-fn realm_genesis_notary(
-    notary_profile: arkret_sdk::NotaryProfile,
-    notary_did: &str,
-) -> anyhow::Result<arkret_sdk::NotaryValue> {
-    use arkret_sdk::NotaryProfile;
-    let notary_did = arkret_sdk::DidFullId::new(notary_did.to_owned())
-        .map_err(|e| anyhow::anyhow!("Realm notary DID `{notary_did}` invalid: {e}"))?;
-    let notary_core_id = crate::mls_api_helpers::principal_core_id(notary_did.as_str())?;
-    // Exhaustive over the profile enum: `Realm::validate_kind_invariants`
-    // rejects a `notary_profile` that disagrees with `notary.kind`, so the
-    // mapping must not have a catch-all arm that silently lands on single_did.
-    let notary = match notary_profile {
-        NotaryProfile::Threshold => {
-            // Single-operator genesis committee: 1-of-1. `2*1 > 1` so the
-            // forensic-attribution mode is `quorum_intersection`.
-            arkret_sdk::NotaryValue::Threshold {
-                threshold: 1,
-                members: vec![notary_core_id.clone()],
-                forensic_attribution: arkret_sdk::ForensicAttribution::QuorumIntersection,
-            }
-        }
-        NotaryProfile::OpenSet => arkret_sdk::NotaryValue::OpenSet {
-            members: vec![notary_core_id],
-        },
-        NotaryProfile::Mixed => arkret_sdk::NotaryValue::Mixed {
-            actor_id: notary_core_id.clone(),
-            recovery_members: vec![parse_derived_did(&derived_recovery_member_did(
-                notary_did.as_str(),
-            ))?],
-        },
-        NotaryProfile::SingleDid => {
-            // `controller_organization` / `recovery_controller_organizations`
-            // are required only when an authoritative organization DID can be
-            // derived from the actor DID (the `did:web` no-history service
-            // profile, where the host *is* the org authority). For the default
-            // `did:webvh` actor the org's webvh DID carries its own SCID that is
-            // unknowable client-side, so we omit the org-scoped fields and emit
-            // the orgless `{kind, actor_id}` single_did genesis (realm.schema.json
-            // single_did allOf; decisions/0003 §7 — personal Realms fall back to
-            // per-user recovery) rather than fabricate a malformed
-            // `did:webvh:<host>` (no SCID) identifier.
-            match inferred_controller_organization_did(notary_did.as_str()) {
-                Some(controller) => arkret_sdk::NotaryValue::single_did_with_org(
-                    notary_core_id.clone(),
-                    vec![parse_derived_did(&derived_recovery_member_did(
-                        &controller,
-                    ))?],
-                    parse_derived_did(&controller)?,
-                    vec![parse_derived_did(
-                        &derived_recovery_controller_organization_did(&controller),
-                    )?],
-                ),
-                None => arkret_sdk::NotaryValue::single_did(notary_core_id),
-            }
-        }
-    };
-    notary
-        .validate()
-        .map_err(|e| anyhow::anyhow!("realm genesis notary invalid: {e}"))?;
-    Ok(notary)
-}
-
-/// Parse a client-derived notary DID string into the SDK [`arkret_sdk::DidFullId`].
-fn parse_derived_did(did: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    crate::mls_api_helpers::principal_core_id(did)
-        .map_err(|e| anyhow::anyhow!("derived notary DID `{did}` invalid: {e}"))
-}
-
-/// Infer the controlling organization (principal-server) DID for a member's
-/// actor DID, returning `None` when no authoritative org DID can be derived.
-///
-/// Only the explicit no-history `did:web:<host>[:<path>…]` service profile lets
-/// us reduce the actor to a valid org DID (`did:web:<host>`). v1 core defaults
-/// principal/service to `did:webvh`, whose org DID is
-/// `did:webvh:<org-scid>:<host>…` — the org's SCID is not derivable from the
-/// member DID, so we MUST NOT fabricate one (a bare `strip_prefix("did:web:")`
-/// silently missed every `did:webvh` actor and fell back to the whole actor DID
-/// as the organization, poisoning recovery-notary / controller-org derivation).
-fn inferred_controller_organization_did(actor_id: &str) -> Option<String> {
-    let actor_id = actor_id.trim();
-    // Default `did:webvh` actors: org webvh DID requires the org's own SCID,
-    // which is not knowable client-side — fail closed.
-    if let Ok(did) = arkret_sdk::DidFullId::new(actor_id.to_owned())
-        && arkret_sdk::identity::did_webvh_parts(&did).is_some()
-    {
-        return None;
-    }
-    // Explicit `did:web:<host>[:<path>…]` no-history service profile.
-    if let Some(web_specific_id) = actor_id.strip_prefix("did:web:")
-        && let Some(host) = web_specific_id.split(':').next()
-        && !host.is_empty()
-    {
-        return Some(format!("did:web:{host}"));
-    }
-    None
-}
-
-fn derived_recovery_controller_organization_did(controller: &str) -> String {
-    format!("{}:recovery", controller.trim())
-}
-
-fn derived_recovery_member_did(controller_or_actor: &str) -> String {
-    format!("{}:recovery:notary", controller_or_actor.trim())
 }
 
 /// Build a `ak.space.create` event per spec realm-and-space.md §3.2.
@@ -1246,10 +1112,11 @@ pub fn build_space_lifecycle_event(
 }
 
 /// Build a Realm facet state event (`ak.realm.join_rule`,
-/// `ak.realm.history_visibility`, `ak.realm.discovery`, ...).
+/// `ak.realm.history_access`, `ak.realm.discovery`, ...).
 pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
     realm_id: &str,
     actor_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
     payload: K::Payload,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let realm_id = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?;
@@ -1270,7 +1137,7 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
     let (kind, cell) = {
         let intent = builder.intent()?;
         let kind = intent.kind().as_str().to_owned();
-        let writes = crate::operation::pre_authoring_cell_writes(intent)
+        let writes = crate::operation::pre_authoring_cell_writes(intent, digest_suite)
             .map_err(|error| anyhow::anyhow!("{kind} cell-write projection failed: {error}"))?;
         let [write] = writes.as_slice() else {
             anyhow::bail!(
@@ -1490,22 +1357,6 @@ fn build_realm_alias_payload_event(
         .preconditions(vec![head_eq_precondition(&cell, expected_head)?])
         .created_at(created_at)
         .build_sdk_event("inkson")
-}
-
-/// Emit `ak.realm.history_sharing_policy` from an already-typed policy value.
-///
-/// The marker fixes the Event kind and the SDK payload wrapper keeps the
-/// policy value inseparable from that kind.
-pub fn build_realm_history_sharing_policy_event(
-    realm_id: &str,
-    actor_id: &str,
-    policy: arkret_sdk::HistorySharingPolicyPayloadValue,
-) -> anyhow::Result<crate::operation::LocalOperation> {
-    build_realm_state_event::<arkret_sdk::event_spec::RealmHistorySharingPolicy>(
-        realm_id,
-        actor_id,
-        arkret_sdk::HistorySharingPolicyPayload::new(policy),
-    )
 }
 
 /// Build a `ak.realm.plaintext_visible_services` event when the caller
@@ -1878,11 +1729,18 @@ mod notary_derivation_tests {
         }
     }
 
+    fn agent_notary() -> arkret_sdk::NotaryValue {
+        let full_id = arkret_sdk::DidFullId::new("did:web:agent.example").unwrap();
+        let root = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
+        managed_agent_inception_notary(&full_id, &root).unwrap()
+    }
+
     #[test]
     fn managed_agent_pcr_prepare_freezes_an_exact_create_draft() {
         let event = build_managed_agent_pcr_create_event(
             "did:web:agent.example",
             agent_resolution(),
+            agent_notary(),
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
@@ -1898,6 +1756,7 @@ mod notary_derivation_tests {
             build_managed_agent_pcr_bootstrap_steps(
                 "did:web:agent.example",
                 agent_resolution(),
+                agent_notary(),
                 "did:web:alice.example",
                 "did:web:agent.example#managed-controller",
                 "ak:trust_domain:did.web.example",
@@ -1909,71 +1768,6 @@ mod notary_derivation_tests {
         assert!(events[0].refs.is_empty());
     }
 
-    #[test]
-    fn web_no_history_actor_derives_org_and_recovery_fields() {
-        assert_eq!(
-            inferred_controller_organization_did("did:web:alice.example"),
-            Some("did:web:alice.example".to_owned())
-        );
-        // Multi-segment did:web path still reduces to the host authority.
-        assert_eq!(
-            inferred_controller_organization_did("did:web:alice.example:users:bob"),
-            Some("did:web:alice.example".to_owned())
-        );
-        let notary = serde_json::to_value(
-            realm_genesis_notary(
-                arkret_sdk::NotaryProfile::SingleDid,
-                "did:web:alice.example",
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(notary["kind"], "single_did");
-        assert_eq!(notary["actor_id"], "ak:did_core:web:alice.example");
-        assert_eq!(
-            notary["controller_organization"],
-            "ak:did_core:web:alice.example"
-        );
-        assert_eq!(
-            notary["recovery_members"][0],
-            "ak:did_core:web:alice.example:recovery:notary"
-        );
-        assert_eq!(
-            notary["recovery_controller_organizations"][0],
-            "ak:did_core:web:alice.example:recovery"
-        );
-    }
-
-    #[test]
-    fn webvh_actor_fails_closed_without_fabricating_org_did() {
-        // The org's webvh DID carries its own SCID, unknowable client-side —
-        // so no controller_organization is derivable and none is fabricated.
-        assert_eq!(
-            inferred_controller_organization_did(
-                "did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example"
-            ),
-            None
-        );
-        let actor = "did:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn:bob.example";
-        let notary = serde_json::to_value(
-            realm_genesis_notary(arkret_sdk::NotaryProfile::SingleDid, actor).unwrap(),
-        )
-        .unwrap();
-        // Orgless personal Realm emits the minimal `{kind, actor_id}` single_did
-        // genesis (relaxed realm.schema.json single_did allOf); the notary
-        // recovery path / org-scoped fields are omitted (personal Realms fall
-        // back to per-user recovery, decisions/0003 §7) rather than fabricated
-        // into a malformed did:webvh:<host>.
-        assert_eq!(notary["kind"], "single_did");
-        assert_eq!(
-            notary["actor_id"],
-            "ak:did_core:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn"
-        );
-        assert!(notary.get("recovery_members").is_none());
-        assert!(notary.get("controller_organization").is_none());
-        assert!(notary.get("recovery_controller_organizations").is_none());
-    }
-
     /// Mirror of the Principal Server's `ak.realm.create` candidate gate
     /// (`validate_realm_proposal_policy` — soland
     /// `routing/events/operations/semantics.rs`): the authored
@@ -1982,7 +1776,7 @@ mod notary_derivation_tests {
     /// the closed schema does not declare is rejected with
     /// `Realm genesis object violates ak.schema.realm_genesis.v1`, so authoring
     /// MUST NOT double-write facet state (`plaintext_visible_services`,
-    /// `history_sharing_policy`, …) into the Realm object.
+    /// `history_access`, …) into the Realm object.
     fn assert_realm_candidate_matches_closed_schema(event: &arkret_sdk::Event) {
         let mut candidate = event
             .payload
@@ -2009,16 +1803,16 @@ mod notary_derivation_tests {
                     .unwrap(),
                 "did:web:alice.example",
                 "did:web:alice.example",
+                test_single_signer_notary("did:web:alice.example").unwrap(),
                 "https://alice.example",
                 "Ordinary Realm",
                 Some("summary"),
                 "invite_only",
                 "invite",
-                "shared",
+                "since_join",
                 "mls_rfc9420",
                 "standard",
                 "closed",
-                "single_did",
                 "sha256",
                 "ak:trust_domain:did.web.example",
                 &[],
@@ -2060,7 +1854,11 @@ mod notary_derivation_tests {
             serde_json::from_value(serde_json::to_value(&bundle.payload).unwrap()).unwrap();
         assert_eq!(typed.policy_revision, 1);
         assert!(!bundle.payload.contains_key("value"));
-        let writes = crate::operation::project_registered_cell_writes(bundle.event()).unwrap();
+        let writes = crate::operation::project_registered_cell_writes(
+            bundle.event(),
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap();
         assert_eq!(writes.len(), 1);
         assert_eq!(
             writes[0].cell.as_str(),
@@ -2080,6 +1878,7 @@ mod notary_derivation_tests {
         let event = build_managed_agent_pcr_create_event(
             "did:web:agent.example",
             agent_resolution(),
+            agent_notary(),
             "did:web:alice.example",
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",

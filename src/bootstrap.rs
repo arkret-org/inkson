@@ -585,19 +585,18 @@ pub(crate) async fn ensure_local_mls_key_package_published(
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MlsWelcomeBootstrapOutcome {
     pub(crate) applied: usize,
-    pub(crate) backup_id: Option<String>,
 }
 
 fn should_ack_mls_welcome_batch(
     can_ack_welcome_batch: bool,
     welcome_outcome: &crate::mls::runtime::WelcomeApplyOutcome,
-    backup_uploaded: bool,
+    durable_snapshot_present: bool,
     persist_error: Option<&str>,
 ) -> bool {
     can_ack_welcome_batch
         && welcome_outcome.failed == 0
         && (welcome_outcome.applied > 0 || welcome_outcome.skipped_stale > 0)
-        && backup_uploaded
+        && durable_snapshot_present
         && persist_error.is_none()
 }
 
@@ -762,7 +761,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         // Welcome deliberately carries no anchor: a carried one would be a second,
         // weaker trust source. Knowing realm_id is enough, and the Welcome gives
         // that much.
-        crate::mls::governance_proof::ensure_governance_anchor(
+        crate::mls::governance_proof::ensure_governance_checkpoint(
             &api,
             state_store,
             preview.binding.realm_id().as_str(),
@@ -790,11 +789,12 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         // the joined group snapshot rides the durable account-state writer.
         // Land the secret durably before joining so a page unload cannot leave
         // a snapshot no local secret can open.
-        crate::mls::runtime::ensure_account_mls_secret_durable(secure_store.as_ref(), &actor_id)
-            .await
-            .map_err(|error| {
-                format!("durably persisting the account MLS secret failed: {error}")
-            })?;
+        crate::mls::runtime::ensure_existing_account_mls_secret_durable(
+            secure_store.as_ref(),
+            &actor_id,
+        )
+        .await
+        .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
     }
     let welcome_outcome = {
         let mut store = state_store.write();
@@ -809,14 +809,10 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     }
     .map_err(|error| error.user_message())?;
 
-    // Persist the welcome envelopes into the local to-device inbox so the
-    // pre-join history flow can recognise the admitting member (alice) as a
-    // history-key provider. The welcome is fetched + acked on this bootstrap
-    // path WITHOUT going through the sync engine, so without this ingest the
-    // inbox stays empty and `provider_candidates_from_inbox` finds nobody to
-    // request `ak.realm_key.share` from. Each envelope already carries
-    // `sender_principal_id` + `sender_device_id`, which is exactly the
-    // (principal, device) tuple the request planner needs.
+    // Persist Welcome envelopes in the local to-device inbox as well. This
+    // bootstrap path fetches and acknowledges them without passing through the
+    // normal sync engine, so the explicit ingest preserves the same durable
+    // device-message accounting as an ordinary sync delivery.
     if !messages.messages.is_empty() {
         let ingested = state_store
             .write()
@@ -893,28 +889,6 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 key_package_id, consume.failures
             ));
         }
-        if let Some(target_keypackage_ref) = candidate.repair_target_keypackage_ref.as_deref() {
-            let advanced = state_store
-                .write()
-                .record_consumed_direct_conversation_repair_welcome(
-                    &candidate.realm_id,
-                    target_keypackage_ref,
-                    candidate.welcome_digest.clone(),
-                )
-                .map_err(|error| format!("persist consumed repair Welcome: {error}"))?;
-            if advanced.is_some() {
-                // The replacement-generation activation gate opens only after
-                // both the local MLS snapshot and this exact consume result
-                // have crossed the durable account-state boundary.
-                state_store
-                    .read()
-                    .begin_durable_flush()
-                    .map_err(|error| format!("begin durable repair Welcome persist: {error}"))?
-                    .wait()
-                    .await
-                    .map_err(|error| format!("persist repair Welcome state: {error}"))?;
-            }
-        }
     }
 
     if applied > 0
@@ -934,34 +908,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await;
     }
 
-    let Some(snapshot) = state_store.read().mls_snapshot_for(&realm_id) else {
+    let Some(_snapshot) = state_store.read().mls_snapshot_for(&realm_id) else {
         return Err("MLS Welcome batch had no durable local MLS snapshot".to_owned());
     };
-    let base_for_backup = base_url.clone();
-    let actor_for_backup = actor_id.clone();
-    let device_for_backup = device_id.clone();
-    let realm_for_backup = realm_id.clone();
-    let backup_id = crate::transport::auth::with_authed_api(
-        &base_url,
-        session_credential.clone(),
-        |api| async move {
-            // §7.10: applying a Welcome lands a fresh epoch — chain the upload
-            // onto the Realm's existing mls_history series (successor
-            // envelope) instead of minting a new genesis series per Welcome.
-            crate::components::upload_mls_history_backup_now(
-                &api,
-                &base_for_backup,
-                &actor_for_backup,
-                &device_for_backup,
-                &realm_for_backup,
-                &snapshot,
-            )
-            .await
-        },
-    )
-    .await
-    .map_err(|error| error.display())?;
-
     if applied > 0 || welcome_outcome.skipped_stale > 0 {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let base_scope = server_key(&base_url);
@@ -999,10 +948,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         tracing::debug!(?error, "failed to ack durable MLS welcome device messages");
     }
 
-    Ok(MlsWelcomeBootstrapOutcome {
-        applied,
-        backup_id: Some(backup_id),
-    })
+    Ok(MlsWelcomeBootstrapOutcome { applied })
 }
 
 fn terminal_welcome_apply_error(
@@ -1034,7 +980,7 @@ mod tests {
             "sent_at": "2099-01-01T00:00:00.000Z",
             "expires_at": "2100-01-01T00:00:00.000Z",
             "content": {
-                "mls_group_id": crate::mls::runtime::mls_group_id_for_realm(realm_id),
+                "mls_group_id": crate::mls::runtime::mls_group_id_for_realm(realm_id).unwrap(),
                 "ciphertext": "welcome-ciphertext"
             }
         })

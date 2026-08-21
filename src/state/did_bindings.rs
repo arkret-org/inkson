@@ -11,7 +11,7 @@
 //! 3. plain `state/storage_util` blobs — non-account, non-sensitive.
 //!
 //! Accepted DID bindings go in layer 2, following the *existing* accepted-anchor
-//! precedent `mls_governance_trust_anchors` (`state/mls_governance.rs`), for
+//! precedent `mls_governance_checkpoints` (`state/mls_governance.rs`), for
 //! three reasons:
 //!
 //! - **They are not secrets.** A binding pins a DID document, i.e. public key material plus the

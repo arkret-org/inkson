@@ -691,7 +691,9 @@ pub fn encrypt_signal_payload_with_store(
     )
     .carry_epoch_started_at(&snapshot)
     .with_app_messages_observed(snapshot.app_messages_observed);
-    state_store.save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle_id, updated);
+    state_store
+        .save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle_id, updated)
+        .map_err(anyhow::Error::msg)?;
     Ok(sealed.encrypted_payload)
 }
 

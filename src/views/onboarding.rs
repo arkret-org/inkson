@@ -717,7 +717,8 @@ async fn stage_device_setup_pairing(
         full_id.as_str(),
         target_device.as_str(),
         transcript_digest,
-    )?;
+    )
+    .await?;
     let token =
         device_pairing_handoff_token(&stage.device_pairing_request_id, &stage.pairing_code)?;
     let deep_link = device_pairing_deep_link(
@@ -2088,11 +2089,12 @@ async fn create_and_bind_identity(
         let device_public_key = format!("did:key:{device_public_key_multibase}");
         let hpke_key = {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair(
+            let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair_durable(
                 secure_store.as_ref(),
                 &checkpoint.did,
                 device,
-            )?;
+            )
+            .await?;
             crate::identity::did_key::encode_x25519_multibase(&public_key)
         };
         let (dpop, dpop_record) = crate::identity::account_auth::grant_dpop::prepare_pending_device_key_with_secure_store_durable(

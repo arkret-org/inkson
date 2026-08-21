@@ -14,22 +14,6 @@ use serde_json::Value;
 use crate::operation::trim_realm_id;
 use crate::state::LocalStateStore;
 
-/// Restrict a state/seal ref to the canonical `sha256:` digest grammar used
-/// by this MLS surface (`arkret_sdk::Hash::new` also accepts blake3, which is
-/// not a state/seal ref here). Single source — the secure-send path re-exports
-/// this instead of forking the digest grammar.
-pub(crate) fn mls_sha256_hash_from_ref(value: &str) -> Option<String> {
-    if value.starts_with("sha256:") && arkret_sdk::Hash::new(value).is_ok() {
-        return Some(value.to_owned());
-    }
-    for prefix in ["ak:seal:", "ak:state:"] {
-        if let Some(rest) = value.strip_prefix(prefix) {
-            return mls_sha256_hash_from_ref(rest);
-        }
-    }
-    None
-}
-
 pub(crate) fn mls_base_epoch_ref_for_scope(
     state_store: &LocalStateStore,
     realm_id: &str,
@@ -91,6 +75,11 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
     if state_store.mls_snapshot_for(realm_id).is_some() {
         return Ok(None);
     }
+    if state_store.mls_genesis_emitted_for(realm_id) {
+        return Err(format!(
+            "accepted MLS genesis exists for {realm_id}, but the local epoch-0 snapshot is missing; restore the device snapshot before sending"
+        ));
+    }
     let state = state_store.load();
     let Some(projection) = crate::security_state::security_projection_for_scope_id(
         &state.realm_tree_projections,
@@ -128,7 +117,7 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
     // the trust anchor (accepted Seal view refresh → proof fetch → full
     // verification → pin). Creating the epoch-0 group here without that pin
     // would fail deep inside the governance binding with the bare
-    // "requires a locally trusted Seal anchor" error; fail early with an
+    // "requires a locally verified replay checkpoint" error; fail early with an
     // actionable message instead, and let the background bootstrap (which
     // retries with backoff) finish the prelude.
     if let Some(pending) = creator_scope_bootstrap_blocker(state_store, realm_id) {
@@ -153,7 +142,7 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
 }
 
 /// Why the encrypted-scope path must not create the creator group yet, or
-/// `None` when the §2.5.1.1 prelude has completed (governance anchor pinned).
+/// `None` when the §2.5.1.1 prelude has pinned a verified replay checkpoint.
 ///
 /// Single precondition point for every inline creator-group creation; the
 /// prelude itself is owned exclusively by
@@ -163,13 +152,13 @@ pub(crate) fn creator_scope_bootstrap_blocker(
     realm_id: &str,
 ) -> Option<String> {
     if state_store
-        .trusted_mls_governance_anchor(realm_id)
+        .trusted_mls_governance_checkpoint(realm_id)
         .is_some()
     {
         return None;
     }
     Some(format!(
-        "the Realm's governance anchor is not verified on this device yet \
+        "the Realm's governance checkpoint is not verified on this device yet \
          (creator MLS bootstrap for {realm_id} is still running in the background); \
          retry in a few seconds"
     ))
@@ -568,11 +557,11 @@ mod tests {
     /// Regression lock (2026-08-01): the encrypted-scope path engaged the
     /// creator group creation without the §2.5.1.1 anchor prelude and died
     /// deep inside the governance binding with the bare "requires a locally
-    /// trusted Seal anchor" error. The scope path MUST fail early with an
+    /// verified replay checkpoint" error. The scope path MUST fail early with an
     /// actionable message and MUST NOT attempt group creation until
-    /// `mls::creator_bootstrap` has pinned the anchor.
+    /// `mls::creator_bootstrap` has pinned a verified replay checkpoint.
     #[test]
-    fn creator_scope_bootstrap_is_blocked_until_the_governance_anchor_is_pinned() {
+    fn creator_scope_bootstrap_is_blocked_until_a_governance_checkpoint_is_pinned() {
         let mut store = temp_store("anchor-gate");
         store.save_realm_tree_projection(REALM, creator_realm_projection());
         assert!(creator_scope_bootstrap_blocker(&store, REALM).is_some());
@@ -586,26 +575,22 @@ mod tests {
             "ak:device:01904100-0000-7000-8000-000000000042",
         )
         .expect_err("group creation must not run before the anchor prelude");
-        assert!(error.contains("governance anchor"), "{error}");
-        assert!(
-            !error.contains("locally trusted Seal anchor"),
-            "raw deep governance-binding error resurfaced: {error}"
-        );
+        assert!(error.contains("governance checkpoint"), "{error}");
         assert!(store.mls_snapshot_for(REALM).is_none());
     }
 
     #[test]
-    fn creator_scope_bootstrap_blocker_clears_once_the_anchor_is_pinned() {
+    fn creator_scope_bootstrap_blocker_clears_once_a_verified_checkpoint_is_pinned() {
         let mut store = temp_store("anchor-pinned");
         store.save_realm_tree_projection(REALM, creator_realm_projection());
-        let anchor = arkret_sdk::SealId::new(
-            "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                .to_owned(),
-        )
-        .expect("seal id");
-        store
-            .pin_mls_governance_anchor(REALM, &anchor)
-            .expect("pin anchor");
+        crate::mls::governance_proof::seed_test_governance_proof(
+            &mut store,
+            REALM,
+            None,
+            arkret_sdk::base64url_encode(REALM.as_bytes()),
+            0,
+            0,
+        );
         assert!(creator_scope_bootstrap_blocker(&store, REALM).is_none());
     }
 }

@@ -139,18 +139,13 @@ fn account_secret_rotation_rewraps_backups_old_secret_cannot_decrypt() {
         .rewrapped_snapshots
         .get(realm)
         .expect("rewrapped snapshot");
-    let (_backup_id, body) =
-        build_mls_history_backup_body_with_secret(rotated, actor, device, &rotation.new_secret)
-            .unwrap();
-    let decoded = decode_mls_history_backup_envelope(&body, &rotation.new_secret).unwrap();
     assert!(
-        crate::mls::persistence::decrypt_envelope(&decoded, old_secret).is_err(),
-        "revoked device's old account secret must not decrypt the new backup"
+        crate::mls::persistence::decrypt_envelope(rotated, old_secret).is_err(),
+        "revoked device's old account secret must not decrypt the rewrapped local snapshot"
     );
     let recovered =
-        crate::mls::persistence::decrypt_envelope(&decoded, &rotation.new_secret).unwrap();
+        crate::mls::persistence::decrypt_envelope(rotated, &rotation.new_secret).unwrap();
     assert_eq!(recovered, plaintext);
-
     let mut state = temp_state_store("rotate-commit");
     commit_account_mls_secret_rotation(&mut state, &store, actor, &rotation).unwrap();
     assert_eq!(

@@ -171,6 +171,7 @@ fn lease_covers_event_kind(action: &str, event_kind: &str) -> bool {
 pub async fn acquire_for_events(
     http: &arkret_sdk::http_client::Client,
     events: &[arkret_sdk::Event],
+    digest_suites: &[arkret_sdk::DigestSuite],
 ) -> anyhow::Result<Vec<AuthorizationLease>> {
     if events.is_empty() {
         anyhow::bail!("authorization lease issuance requires at least one Event");
@@ -192,6 +193,7 @@ pub async fn acquire_for_events(
     let outcome = http
         .issue_authorization_leases(
             &request,
+            digest_suites,
             &arkret_sdk::http_client::ClientRequestOptions::new()
                 .request_id(idempotency_key.clone())
                 .idempotency_key(idempotency_key),
@@ -226,6 +228,7 @@ pub async fn acquire_for_events(
 pub async fn acquire_for_intent(
     http: &arkret_sdk::http_client::Client,
     intent: arkret_wire::AuthorizationLeaseIssueIntent,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<AuthorizationLease> {
     let request = arkret_wire::AuthorizationLeaseIssueRequestBody {
         events: Vec::new(),
@@ -235,6 +238,7 @@ pub async fn acquire_for_intent(
     let outcome = http
         .issue_authorization_leases(
             &request,
+            &[digest_suite],
             &arkret_sdk::http_client::ClientRequestOptions::new()
                 .request_id(idempotency_key.clone())
                 .idempotency_key(idempotency_key),
@@ -261,6 +265,7 @@ pub async fn acquire_for_intent(
 pub async fn ensure_for_events(
     http: &arkret_sdk::http_client::Client,
     events: &[arkret_sdk::Event],
+    digest_suites: &[arkret_sdk::DigestSuite],
 ) -> anyhow::Result<()> {
     if events.is_empty() {
         anyhow::bail!("authorization lease issuance requires at least one Event");
@@ -269,7 +274,7 @@ pub async fn ensure_for_events(
         .iter()
         .any(|event| event.seal_ref.is_none() && event.seal_basis.is_none())
     {
-        acquire_for_events(http, events).await?;
+        acquire_for_events(http, events, digest_suites).await?;
         return Ok(());
     }
     let now = crate::clock::now_utc();
@@ -279,7 +284,7 @@ pub async fn ensure_for_events(
     {
         return Ok(());
     }
-    acquire_for_events(http, events).await?;
+    acquire_for_events(http, events, digest_suites).await?;
     Ok(())
 }
 
@@ -312,6 +317,7 @@ pub fn initial_submission(
 pub async fn standard_initial_submission(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
     let managed_genesis = is_managed_agent_pcr_genesis(event);
@@ -322,7 +328,7 @@ pub async fn standard_initial_submission(
                 let signer = crate::event_signer::active_signer().ok_or_else(|| {
                     anyhow::anyhow!("PCR Control Proposal Ack requires an active device signer")
                 })?;
-                Some(local.issue_authority_ack(event, &signer)?)
+                Some(local.issue_authority_ack(event, digest_suite, &signer)?)
             }
             ProposalAuthorityRoute::PrincipalServerAdmission => None,
         };
@@ -335,11 +341,14 @@ pub async fn standard_initial_submission(
         }
     }
     submission
-        .validate_structural_in_context(if managed_genesis {
-            arkret_wire::EventSubmitContext::AnchorUnit
-        } else {
-            arkret_wire::EventSubmitContext::Standard
-        })
+        .validate_structural_in_context(
+            if managed_genesis {
+                arkret_wire::EventSubmitContext::AnchorUnit
+            } else {
+                arkret_wire::EventSubmitContext::Standard
+            },
+            digest_suite,
+        )
         .map_err(anyhow::Error::from)?;
     Ok(submission)
 }
@@ -356,6 +365,7 @@ pub async fn standard_initial_submission(
 pub async fn delayed_initial_submission(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
+    digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
     let managed_genesis = is_managed_agent_pcr_genesis(event);
@@ -366,17 +376,20 @@ pub async fn delayed_initial_submission(
                 let signer = crate::event_signer::active_signer().ok_or_else(|| {
                     anyhow::anyhow!("PCR Control Proposal Ack requires an active device signer")
                 })?;
-                Some(local.issue_authority_ack(event, &signer)?)
+                Some(local.issue_authority_ack(event, digest_suite, &signer)?)
             }
             ProposalAuthorityRoute::PrincipalServerAdmission => Some(
-                http.issue_control_proposal_ack(&arkret_wire::ControlProposalAckIssueRequest {
-                    event: event.clone(),
-                    authorization_lease: submission
-                        .authorization_lease
-                        .clone()
-                        .expect("delayed submission was constructed with a lease"),
-                    cba_proof_bundles: submission.cba_proof_bundles.clone(),
-                })
+                http.issue_control_proposal_ack(
+                    &arkret_wire::ControlProposalAckIssueRequest {
+                        event: event.clone(),
+                        authorization_lease: submission
+                            .authorization_lease
+                            .clone()
+                            .expect("delayed submission was constructed with a lease"),
+                        cba_proof_bundles: submission.cba_proof_bundles.clone(),
+                    },
+                    digest_suite,
+                )
                 .await
                 .map_err(anyhow::Error::from)?
                 .authority_ack,
@@ -391,11 +404,14 @@ pub async fn delayed_initial_submission(
         }
     }
     submission
-        .validate_structural_in_context(if managed_genesis {
-            arkret_wire::EventSubmitContext::AnchorUnit
-        } else {
-            arkret_wire::EventSubmitContext::Standard
-        })
+        .validate_structural_in_context(
+            if managed_genesis {
+                arkret_wire::EventSubmitContext::AnchorUnit
+            } else {
+                arkret_wire::EventSubmitContext::Standard
+            },
+            digest_suite,
+        )
         .map_err(anyhow::Error::from)?;
     Ok(submission)
 }
@@ -433,6 +449,7 @@ impl LocalPrincipalAuthority {
     pub(crate) fn issue_authority_ack(
         &self,
         event: &arkret_sdk::Event,
+        digest_suite: arkret_sdk::DigestSuite,
         signer: &crate::event_signer::InksonEventSigner,
     ) -> anyhow::Result<ControlProposalAuthorityAck> {
         let signer_principal = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
@@ -440,7 +457,8 @@ impl LocalPrincipalAuthority {
             anyhow::bail!("active signer does not project to the proposal authority actor");
         }
         let verification_method = signer.verification_method_for_principal(&signer_principal)?;
-        let proposal_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+        let proposal_digest =
+            arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
         let cache_key = (
             proposal_digest.to_string(),
             self.authority_set_ref.to_string(),
@@ -579,7 +597,12 @@ async fn resolve_proposal_authority_route(
             let authority_set_ref = if is_managed_agent_pcr_genesis(event) {
                 arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_delegated_create(
                     event,
-                    &crate::operation::cell_write_projector,
+                    &|event| {
+                        crate::operation::cell_write_projector(
+                            event,
+                            arkret_sdk::DigestSuite::Sha256,
+                        )
+                    },
                 )
                 .map(|authority| authority.authority_set_ref().clone())
                 .map_err(|error| {
@@ -649,10 +672,10 @@ fn self_principal_pcr_authority_set_ref_from_events(
     if payload.object.purpose != arkret_sdk::RealmPurpose::PrincipalControl {
         anyhow::bail!("Event is not in a principal-control Realm");
     }
-    let arkret_sdk::NotaryValue::SingleDid { actor_id, .. } = &payload.object.notary else {
-        anyhow::bail!("self principal PCR genesis does not use a single-DID notary");
+    let arkret_sdk::NotaryValue::SingleSigner { signer, .. } = &payload.object.notary else {
+        anyhow::bail!("self principal PCR genesis does not use a single-signer notary");
     };
-    if actor_id != &event.actor_id {
+    if signer.actor_id != event.actor_id {
         anyhow::bail!("self principal PCR notary does not match the provision Event actor");
     }
     arkret_sdk::Hash::new(crate::canonical::canonical_sha256(&payload.object.notary)?)
@@ -680,10 +703,9 @@ fn managed_agent_pcr_authority_set_ref_from_events(
     // type accepts only the accepted create, so a later transition that needs
     // frozen pre-state (for example `ak.agent.key.revoke`) can never be dragged
     // into an authoring query.
-    arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_accepted_create(
-        create,
-        &crate::operation::cell_write_projector,
-    )
+    arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_accepted_create(create, &|event| {
+        crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
+    })
     .map(|authority| authority.authority_set_ref().clone())
     .map_err(|error| anyhow::anyhow!("managed Agent PCR genesis authority is unavailable: {error}"))
 }
@@ -982,6 +1004,11 @@ mod tests {
                     method_history_head: format!("sha256:{}", "8".repeat(64)),
                     version_id: "1-Qmfixture".to_owned(),
                 },
+                crate::event_builders::managed_agent_inception_notary(
+                    &arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+                    &arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]),
+                )
+                .unwrap(),
                 "did:web:alice.example",
                 "did:web:agent.example#managed-controller",
                 "ak:trust_domain:did.web.example",

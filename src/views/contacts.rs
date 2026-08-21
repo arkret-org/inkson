@@ -488,15 +488,15 @@ fn ContactRow(
                                                                     &base,
                                                                     api_token.clone(),
                                                                     |api| async move {
-                                                                        crate::transport::realm_write::repair_direct_conversation_self_rejoin(
+                                                                        crate::transport::realm_write::rejoin_direct_conversation(
                                                                             &api.event_submitter()?,
                                                                             &realm_id,
                                                                             &actor,
                                                                         ).await
                                                                     },
                                                                 ).await {
-                                                                    Ok(_) => row_status.set("Direct Conversation self-rejoin accepted. Replacement repair is paused because the resolver does not expose the active-generation cell digest required by ak.member.repair.request.".to_owned()),
-                                                                    Err(error) => row_status.set(format!("Direct Conversation repair unavailable: {}", error.display())),
+                                                                    Ok(_) => row_status.set("Direct Conversation self-rejoin accepted; normal MLS Add/Welcome reconciliation is pending.".to_owned()),
+                                                                    Err(error) => row_status.set(format!("Direct Conversation self-rejoin unavailable: {}", error.display())),
                                                                 },
                                                                 None => row_status.set(tr("contacts.dm.not_ready")),
                                                             }

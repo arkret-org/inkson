@@ -95,6 +95,16 @@ fn build_standard_authorize_url(
             scope_tokens.push(scope.to_owned());
         }
     }
+    if !discovery.scopes_supported.is_empty()
+        && scope_tokens.iter().any(|requested| {
+            !discovery
+                .scopes_supported
+                .iter()
+                .any(|supported| supported == requested)
+        })
+    {
+        anyhow::bail!("OIDC issuer does not advertise every requested scope");
+    }
     let scope = scope_tokens.join(" ");
     let pkce_method = preferred_pkce_method(&discovery.code_challenge_methods_supported)
         .ok_or_else(|| anyhow::anyhow!("OIDC issuer must support PKCE S256"))?;

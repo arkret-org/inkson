@@ -80,7 +80,7 @@ pub fn production_release_workflows() -> Vec<ClientWorkflow> {
             name: "Create space",
             stage: WorkflowStage::ClientReady,
             client_surface: "New Space setup (`views/setup.rs` → `api.create_space`)",
-            server_dependency: "F-SPACE-LIFECYCLE-1 (2026-05-19): create-space form wired through views/setup.rs:605 (`api.create_space(actor, title, summary, discoverability, join_rule, history_visibility, invitees, plaintext_services)`). Server still owns policy template + retention rule defaults, but the client-side bootstrap path is complete and round-trips through `state_store.save_realm_tree_projection` on success.",
+            server_dependency: "F-SPACE-LIFECYCLE-1 (2026-05-19): the create-space form is wired through the typed Realm/Space bootstrap path, including history_access and plaintext-service policy. The server still owns policy-template and retention defaults, while the client round-trips the optimistic projection through `state_store.save_realm_tree_projection`.",
         },
         ClientWorkflow {
             id: "realm.membership",

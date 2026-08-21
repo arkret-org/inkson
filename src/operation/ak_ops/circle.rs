@@ -9,7 +9,7 @@ use super::{TypedOperationBuilder, circle_id_value, did_id, realm_id_value, trim
 
 /// Everything the create surface lets a user choose about a new Circle.
 ///
-/// Reducer-owned fields are absent by construction: `mls_group_ref` is derived
+/// Reducer-owned fields are absent by construction: `mls_group_id` is derived
 /// when the MLS group is bound, and the object id comes from the create Event.
 #[derive(Clone, Debug)]
 pub struct CircleCreateOptions<'a> {
@@ -18,7 +18,7 @@ pub struct CircleCreateOptions<'a> {
     pub display: arkret_sdk::CircleDisplay,
     pub directory_visibility: arkret_sdk::CircleDirectoryVisibility,
     pub join_rule: arkret_sdk::CircleJoinRule,
-    pub history_visibility: arkret_sdk::HistoryVisibility,
+    pub history_access: arkret_sdk::HistoryAccess,
     pub encryption_profile: arkret_sdk::EncryptionProfile,
 }
 
@@ -148,7 +148,7 @@ pub fn circle_create(
         .map(ToOwned::to_owned);
     circle.directory_visibility = options.directory_visibility;
     circle.join_rule = options.join_rule;
-    circle.history_visibility = options.history_visibility;
+    circle.history_access = options.history_access;
     circle.encryption_profile = options.encryption_profile;
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::CircleCreate,

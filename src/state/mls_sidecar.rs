@@ -126,16 +126,11 @@ fn projection_mls_genesis_event_ids(
 /// the secret observable through `LocalStateStore` prematurely.
 #[derive(Clone, Debug)]
 pub(crate) struct PendingHistorySecrets {
-    realm_id: String,
+    scope_group_key: String,
     by_epoch: BTreeMap<u64, Vec<u8>>,
-    new_secret_count: usize,
 }
 
 impl PendingHistorySecrets {
-    pub(crate) fn new_secret_count(&self) -> usize {
-        self.new_secret_count
-    }
-
     pub(crate) async fn persist(
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -149,16 +144,16 @@ impl PendingHistorySecrets {
             .get_or_init(|| tokio::sync::Mutex::new(()))
             .lock()
             .await;
-        let key = crate::secure_key_store::mls_history_secret_store_key(&self.realm_id);
+        let key = crate::secure_key_store::mls_history_secret_store_key(&self.scope_group_key);
         let mut merged = secure_store
             .get_secret(&key)?
             .as_deref()
             .map(crate::secure_key_store::decode_history_secrets_json)
             .unwrap_or_default();
         merged.extend(self.by_epoch.clone());
-        crate::secure_key_store::persist_realm_history_secrets(
+        crate::secure_key_store::persist_history_secrets(
             secure_store,
-            &self.realm_id,
+            &self.scope_group_key,
             &merged,
         )
         .await
@@ -177,8 +172,8 @@ impl LocalStateStore {
         &mut self,
         realm_id: impl Into<String>,
         envelope: crate::mls::persistence::MlsSnapshotEnvelope,
-    ) {
-        self.save_mls_snapshot_for_effective_scope(realm_id, None, envelope);
+    ) -> Result<(), String> {
+        self.save_mls_snapshot_for_effective_scope(realm_id, None, envelope)
     }
 
     pub fn save_mls_snapshot_for_effective_scope(
@@ -186,26 +181,27 @@ impl LocalStateStore {
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
         envelope: crate::mls::persistence::MlsSnapshotEnvelope,
-    ) {
+    ) -> Result<(), String> {
         let realm_id = realm_id.into();
-        let Ok(scope) = mls_realm_or_circle_scope(&realm_id, circle_id) else {
-            return;
-        };
-        self.save_mls_snapshot_for_scope(&scope, envelope);
+        let scope = mls_realm_or_circle_scope(&realm_id, circle_id)?;
+        self.save_mls_snapshot_for_scope(&scope, envelope)
     }
 
     pub fn save_mls_snapshot_for_scope(
         &mut self,
         effective_scope: &arkret_sdk::ScopeRef,
         mut envelope: crate::mls::persistence::MlsSnapshotEnvelope,
-    ) {
+    ) -> Result<(), String> {
         // YOU-02-004: order this write after any decrypt write-backs so the
         // overlay can never shadow it (overlay snapshots always derive from
         // the state this caller just read via `mls_snapshot_for`).
         self.absorb_mls_receive_overlay();
-        let Ok(key) = mls_scope_snapshot_key_for_group(effective_scope, &envelope.group_id) else {
-            return;
-        };
+        let key = mls_scope_snapshot_key_for_group(effective_scope, &envelope.group_id)?;
+        if let Some(current) = self.cached.mls_snapshots.get(&key)
+            && current.group_id == envelope.group_id
+        {
+            envelope.admission_epoch = current.admission_epoch;
+        }
         if let Some(record) = self.cached.mls_group_state_refs.get(&key)
             && record.group_id == envelope.group_id
             && record.epoch == envelope.epoch
@@ -225,6 +221,7 @@ impl LocalStateStore {
         prune_historical_mls_author_states(&mut self.cached);
         let _ = self.flush();
         self.persist_e2ee_plaintext_cache_if_ready();
+        Ok(())
     }
 
     /// Look up the latest MLS snapshot envelope for a Realm, if any.
@@ -285,7 +282,7 @@ impl LocalStateStore {
         group_id: &str,
         epoch: u64,
     ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
-        let scope_key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let scope_key = mls_effective_scope_snapshot_key(realm_id, circle_id).ok()?;
         let history_key = historical_mls_state_key(&scope_key, group_id, epoch);
         self.load()
             .mls_historical_snapshots
@@ -293,7 +290,7 @@ impl LocalStateStore {
             .cloned()
     }
 
-    // ── MLS history-secret persistence (history sharing) ────────────
+    // ── Local-authoritative MLS history-secret persistence ─────────
 
     /// Assemble an aggregated update without publishing it. The caller must
     /// await [`PendingHistorySecrets::persist`] and only then call
@@ -301,17 +298,19 @@ impl LocalStateStore {
     pub(crate) fn prepare_history_secrets(
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-        realm_id: impl Into<String>,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
         secrets: impl IntoIterator<Item = (u64, Vec<u8>)>,
     ) -> Result<Option<PendingHistorySecrets>, crate::secure_key_store::SecureKeyStoreError> {
-        let realm_id = realm_id.into();
-        let key = crate::secure_key_store::mls_history_secret_store_key(&realm_id);
+        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id)
+            .map_err(crate::secure_key_store::SecureKeyStoreError::Backend)?;
+        let key = crate::secure_key_store::mls_history_secret_store_key(&scope_group_key);
         let mut by_epoch = secure_store
             .get_secret(&key)?
             .as_deref()
             .map(crate::secure_key_store::decode_history_secrets_json)
             .unwrap_or_default();
-        if let Some(inline) = self.cached.history_secrets.get(&realm_id) {
+        if let Some(inline) = self.cached.history_secrets.get(&scope_group_key) {
             by_epoch.extend(
                 inline
                     .iter()
@@ -326,9 +325,8 @@ impl LocalStateStore {
             }
         }
         Ok((new_secret_count > 0).then_some(PendingHistorySecrets {
-            realm_id,
+            scope_group_key,
             by_epoch,
-            new_secret_count,
         }))
     }
 
@@ -336,19 +334,27 @@ impl LocalStateStore {
     pub(crate) fn publish_history_secrets(&mut self, pending: PendingHistorySecrets) {
         self.cached
             .history_secrets
-            .entry(pending.realm_id)
+            .entry(pending.scope_group_key)
             .or_default()
             .extend(pending.by_epoch);
     }
 
-    /// All installed `history_secret`s for `realm_id`, as `(epoch, secret)`
+    /// All local-authoritative `history_secret`s for an exact scope/group, as
+    /// `(epoch, secret)`
     /// pairs ordered by epoch. Used by the tier-3 history decrypt retry to
     /// try every granted epoch key against a pre-join ciphertext.
-    pub fn history_secrets_for(&self, realm_id: &str) -> Vec<(u64, Vec<u8>)> {
-        let realm_id = realm_id.trim();
+    pub fn history_secrets_for(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+    ) -> Vec<(u64, Vec<u8>)> {
+        let Ok(scope_group_key) = mls_scope_snapshot_key_for_group(effective_scope, group_id)
+        else {
+            return Vec::new();
+        };
         let mut merged: BTreeMap<u64, Vec<u8>> =
-            crate::secure_key_store::load_realm_history_secrets(realm_id).unwrap_or_default();
-        if let Some(inline) = self.load().history_secrets.get(realm_id) {
+            crate::secure_key_store::load_history_secrets(&scope_group_key).unwrap_or_default();
+        if let Some(inline) = self.load().history_secrets.get(&scope_group_key) {
             for (epoch, secret) in inline {
                 // The in-process copy is the value most recently accepted by
                 // this client. It must override a stale durable value when the
@@ -360,9 +366,15 @@ impl LocalStateStore {
         merged.into_iter().collect()
     }
 
-    /// The installed `history_secret` for an exact `(realm, epoch)`, if any.
-    pub fn history_secret_for(&self, realm_id: &str, epoch: u64) -> Option<Vec<u8>> {
-        let realm_id = realm_id.trim();
+    /// The local-authoritative `history_secret` for an exact
+    /// `(effective_scope, group_id, epoch)`, if any.
+    pub fn history_secret_for(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+    ) -> Option<Vec<u8>> {
+        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
         // The in-process copy is newer than any durable value read after a
         // failed secure-store update, so consult it first. It is never written
         // into account-state JSON; the hardened store remains the restart
@@ -370,12 +382,12 @@ impl LocalStateStore {
         if let Some(secret) = self
             .load()
             .history_secrets
-            .get(realm_id)
+            .get(&scope_group_key)
             .and_then(|by_epoch| by_epoch.get(&epoch))
         {
             return Some(secret.clone());
         }
-        if let Some(by_epoch) = crate::secure_key_store::load_realm_history_secrets(realm_id)
+        if let Some(by_epoch) = crate::secure_key_store::load_history_secrets(&scope_group_key)
             && let Some(secret) = by_epoch.get(&epoch)
         {
             return Some(secret.clone());
@@ -593,6 +605,26 @@ impl LocalStateStore {
         self.persist_e2ee_plaintext_cache_if_ready();
     }
 
+    /// Persist plaintext opened by an Event-local external history candidate.
+    /// No MLS receive state advances on this path; the immutable candidate
+    /// outcome is committed separately before this cache becomes visible.
+    pub fn cache_external_history_plaintext(
+        &self,
+        realm_id: &str,
+        payload_digest: &str,
+        plaintext: &[u8],
+    ) {
+        use base64::Engine as _;
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext);
+        self.lock_mls_receive_overlay()
+            .plaintexts
+            .entry(realm_id.to_owned())
+            .or_default()
+            .insert(payload_digest.to_owned(), encoded);
+        let _ = self.flush();
+        self.persist_e2ee_plaintext_cache_if_ready();
+    }
+
     /// True once a `ak.mls.genesis` event has been submitted for this Realm.
     pub fn mls_genesis_emitted_for(&self, realm_id: &str) -> bool {
         self.mls_genesis_emitted_for_effective_scope(realm_id, None)
@@ -627,8 +659,8 @@ impl LocalStateStore {
 
     /// Record that a `ak.mls.genesis` event has been submitted for this
     /// Realm so it is never re-emitted (idempotent).
-    pub fn mark_mls_genesis_emitted(&mut self, realm_id: impl Into<String>) {
-        self.mark_mls_genesis_emitted_for_effective_scope(realm_id, None);
+    pub fn mark_mls_genesis_emitted(&mut self, realm_id: impl Into<String>) -> Result<(), String> {
+        self.mark_mls_genesis_emitted_for_effective_scope(realm_id, None)
     }
 
     /// Record a successfully accepted `ak.mls.genesis` event and seed the
@@ -639,25 +671,26 @@ impl LocalStateStore {
         &mut self,
         realm_id: impl Into<String>,
         genesis_event_id: &arkret_sdk::EventId,
-    ) {
+    ) -> Result<(), String> {
         self.mark_mls_genesis_emitted_for_effective_scope_with_event(
             realm_id,
             None,
             genesis_event_id,
-        );
+        )
     }
 
     pub fn mark_mls_genesis_emitted_for_effective_scope(
         &mut self,
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
-    ) {
+    ) -> Result<(), String> {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id)?;
         if self.cached.mls_genesis_emitted.insert(key) {
             let _ = self.flush();
         }
+        Ok(())
     }
 
     pub fn mark_mls_genesis_emitted_for_effective_scope_with_event(
@@ -665,23 +698,19 @@ impl LocalStateStore {
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
         genesis_event_id: &arkret_sdk::EventId,
-    ) {
+    ) -> Result<(), String> {
         let realm_id = realm_id.into();
-        let Ok(scope) = mls_realm_or_circle_scope(&realm_id, circle_id) else {
-            return;
-        };
-        self.mark_mls_genesis_emitted_for_scope_with_event(&scope, genesis_event_id);
+        let scope = mls_realm_or_circle_scope(&realm_id, circle_id)?;
+        self.mark_mls_genesis_emitted_for_scope_with_event(&scope, genesis_event_id)
     }
 
     pub fn mark_mls_genesis_emitted_for_scope_with_event(
         &mut self,
         effective_scope: &arkret_sdk::ScopeRef,
         genesis_event_id: &arkret_sdk::EventId,
-    ) {
+    ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        let Ok(scope_key) = mls_scope_snapshot_key(effective_scope) else {
-            return;
-        };
+        let scope_key = mls_scope_snapshot_key(effective_scope)?;
         // A Sidecar scope keys its state per group, and the accepted genesis
         // names the group whose snapshot this device already holds.
         let scoped_key = match effective_scope {
@@ -696,9 +725,9 @@ impl LocalStateStore {
             }
             _ => Some(scope_key.clone()),
         };
-        let Some(scoped_key) = scoped_key else {
-            return;
-        };
+        let scoped_key = scoped_key.ok_or_else(|| {
+            "Sidecar MLS genesis persistence requires an existing group snapshot".to_owned()
+        })?;
         let mut changed = self.cached.mls_genesis_emitted.insert(scoped_key.clone());
         if let Some(snapshot) = self.cached.mls_snapshots.get(&scoped_key) {
             let record = MlsGroupStateRefRecord {
@@ -717,6 +746,7 @@ impl LocalStateStore {
         if changed {
             let _ = self.flush();
         }
+        Ok(())
     }
 
     /// Resolve the only valid MLS group-state reference for an exact local
@@ -823,7 +853,7 @@ impl LocalStateStore {
         circle_id: Option<&str>,
     ) -> Result<bool, String> {
         self.ensure_cached_loaded();
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id)?;
         let Some(snapshot) = self.cached.mls_snapshots.get(&key).cloned() else {
             return Ok(false);
         };
@@ -1119,7 +1149,7 @@ impl LocalStateStore {
         realm_id: &str,
         circle_id: Option<&str>,
     ) -> Option<String> {
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id).ok()?;
         self.load()
             .mls_coverage_stale
             .get(&key)
@@ -1146,13 +1176,13 @@ impl LocalStateStore {
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
         reason: &str,
-    ) {
+    ) -> Result<(), String> {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
         let circle_id = circle_id
             .map(str::trim)
             .filter(|circle_id| !circle_id.is_empty());
-        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id);
+        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id)?;
         self.cached.mls_coverage_stale.insert(
             key,
             crate::state::types::MlsCoverageStale {
@@ -1162,6 +1192,7 @@ impl LocalStateStore {
             },
         );
         let _ = self.flush();
+        Ok(())
     }
 
     /// Clear the coverage refusal after an `ak.mls.commit` carrying a freshly
@@ -1172,40 +1203,34 @@ impl LocalStateStore {
     /// enough, the next send is refused again and re-arms the
     /// flag with the receiver's new message — the repair never silently
     /// declares itself finished.
-    pub fn clear_mls_coverage_stale(&mut self, realm_id: &str, circle_id: Option<&str>) {
+    pub fn clear_mls_coverage_stale(
+        &mut self,
+        realm_id: &str,
+        circle_id: Option<&str>,
+    ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id);
+        let key = mls_effective_scope_snapshot_key(realm_id, circle_id)?;
         if self.cached.mls_coverage_stale.remove(&key).is_some() {
             let _ = self.flush();
         }
+        Ok(())
     }
 }
 
-pub(crate) fn mls_effective_scope_snapshot_key(realm_id: &str, circle_id: Option<&str>) -> String {
-    match circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty())
-    {
-        Some(circle_id) => circle_id.to_owned(),
-        None => realm_id.to_owned(),
-    }
+pub(crate) fn mls_effective_scope_snapshot_key(
+    realm_id: &str,
+    circle_id: Option<&str>,
+) -> Result<String, String> {
+    mls_realm_or_circle_scope(realm_id, circle_id).and_then(|scope| mls_scope_snapshot_key(&scope))
 }
 
 pub(crate) fn mls_scope_snapshot_key(
     effective_scope: &arkret_sdk::ScopeRef,
 ) -> Result<String, String> {
-    match effective_scope {
-        arkret_sdk::ScopeRef::Realm { realm_id } => Ok(realm_id.to_string()),
-        arkret_sdk::ScopeRef::Circle { circle_id, .. } => Ok(circle_id.to_string()),
-        arkret_sdk::ScopeRef::Sidecar {
-            realm_id,
-            sidecar_id,
-        } => Ok(format!("{}\u{1f}{}", realm_id, sidecar_id)),
-        arkret_sdk::ScopeRef::RealmGenesis => {
-            Err("RealmGenesis is not an executable MLS effective scope".to_owned())
-        }
-        _ => Err("unsupported MLS effective scope".to_owned()),
-    }
+    let bytes = effective_scope
+        .canonical_effective_scope_key_bytes()
+        .map_err(|error| error.to_string())?;
+    String::from_utf8(bytes).map_err(|error| format!("MLS scope key is not UTF-8: {error}"))
 }
 
 pub(crate) fn mls_scope_snapshot_key_for_group(
@@ -1263,6 +1288,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 1,
+            admission_epoch: 0,
             group_state_event_id: Some(event_id.clone()),
             salt_hex: "00".repeat(16),
             ciphertext_hex: "11".repeat(32),
@@ -1273,7 +1299,9 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
 
-        LocalStateStore::with_path(&path).save_mls_snapshot(realm_id, snapshot);
+        LocalStateStore::with_path(&path)
+            .save_mls_snapshot(realm_id, snapshot)
+            .unwrap();
         let restored = LocalStateStore::with_path(&path);
 
         assert_eq!(
@@ -1301,6 +1329,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 0,
+            admission_epoch: 0,
             group_state_event_id: None,
             salt_hex: "00".repeat(16),
             ciphertext_hex: "11".repeat(32),
@@ -1311,7 +1340,7 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
         let mut store = LocalStateStore::with_path(&path);
-        store.save_mls_snapshot(realm_id, snapshot);
+        store.save_mls_snapshot(realm_id, snapshot).unwrap();
         store.save_realm_tree_projection(
             realm_id,
             json!({
@@ -1377,6 +1406,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 0,
+            admission_epoch: 0,
             group_state_event_id: None,
             salt_hex: "00".repeat(16),
             ciphertext_hex: "11".repeat(32),
@@ -1387,7 +1417,7 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
         let mut store = LocalStateStore::with_path(&path);
-        store.save_mls_snapshot(realm_id, snapshot);
+        store.save_mls_snapshot(realm_id, snapshot).unwrap();
         store
             .record_mls_group_state_ref_for_effective_scope(
                 realm_id,
@@ -1473,6 +1503,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 0,
+            admission_epoch: 0,
             group_state_event_id: None,
             salt_hex: "00".repeat(16),
             ciphertext_hex: "11".repeat(32),
@@ -1483,7 +1514,7 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
         let mut store = LocalStateStore::with_path(&path);
-        store.save_mls_snapshot(realm_id, snapshot);
+        store.save_mls_snapshot(realm_id, snapshot).unwrap();
         store
             .record_mls_group_state_ref_for_effective_scope(
                 realm_id,
@@ -1534,6 +1565,7 @@ mod tests {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 0,
+            admission_epoch: 0,
             group_state_event_id: None,
             salt_hex: "00".repeat(16),
             ciphertext_hex: "11".repeat(32),
@@ -1544,7 +1576,7 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
         let mut store = LocalStateStore::with_path(&path);
-        store.save_mls_snapshot(realm_id, snapshot);
+        store.save_mls_snapshot(realm_id, snapshot).unwrap();
         store.save_realm_tree_projection(
             realm_id,
             json!({

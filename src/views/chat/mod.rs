@@ -90,7 +90,10 @@ use effects::ChatEffects;
 #[cfg(test)]
 pub(crate) use model::message_operations_from_events;
 use model::*;
-pub(crate) use model::{confirmed_sidecar_publish_message_operation, default_discussion_strand_id};
+pub(crate) use model::{
+    confirmed_sidecar_publish_message_operation, default_discussion_strand_id,
+    verified_chat_sender_domain_for_realm,
+};
 use timeline::*;
 use timeline_surface::{ChatTimeline, ChatTimelineContext};
 
@@ -585,6 +588,7 @@ fn accepted_native_sidecar_id(
 
 fn sign_prepared_sidecar_event(
     draft: &arkret_sdk::sidecar_operations::SidecarPreparedEventDraft,
+    digest_suite: arkret_sdk::DigestSuite,
     expected_kind: &str,
     controller_id: &arkret_sdk::DidFullId,
     device_id: &str,
@@ -619,7 +623,7 @@ fn sign_prepared_sidecar_event(
     object.insert("proofs".to_owned(), Value::Array(Vec::new()));
     let event: arkret_sdk::Event = serde_json::from_value(digest_payload)
         .map_err(|error| anyhow::anyhow!("invalid prepared Sidecar Event: {error}"))?;
-    let digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if event.event_id != draft.event_id
         || event.kind != draft.kind
         || event.realm_id != *source_realm_id
@@ -634,7 +638,8 @@ fn sign_prepared_sidecar_event(
     // Authoring finished on the preparing side. Proving that here is what makes
     // the reservation binding meaningful: signing must not be able to move the
     // identity the server reserved.
-    let mut event = arkret_sdk::AuthoredEvent::from_verified(event)?;
+    let mut event =
+        arkret_sdk::AuthoredEvent::from_verified_with_digest_suite(event, digest_suite)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Sidecar commit"))?;
     let expected_verification_method =
@@ -649,7 +654,7 @@ fn sign_prepared_sidecar_event(
         &mut event,
         crate::event_signer::EventProofContext::default(),
     )?;
-    let signed_digest = arkret_sdk::Hash::new(event.event_digest()?)?;
+    let signed_digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if signed_digest != draft.event_digest
         || event.proofs.is_empty()
         || event.proofs.iter().any(|proof| {
@@ -681,6 +686,13 @@ async fn ensure_owned_agent_sidecar(
     let controller_full_id = arkret_sdk::DidFullId::new(controller_id.to_owned())?;
     let controller = crate::mls_api_helpers::principal_core_id(controller_id)?;
     let source_realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+    let source_digest_suite = state_store
+        .read()
+        .trusted_mls_governance_checkpoint(source_realm.as_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!("native Sidecar source Realm has no verified governance checkpoint")
+        })?
+        .live_digest_suite;
     let source_strand = arkret_sdk::StrandId::new(strand_id.to_owned())?;
     let mut addressed = addressed_agent_ids
         .iter()
@@ -787,6 +799,7 @@ async fn ensure_owned_agent_sidecar(
                             }
                             let create_event = sign_prepared_sidecar_event(
                                 &create_event_draft,
+                                source_digest_suite,
                                 arkret_sdk::EventKind::SidecarCreate.as_str(),
                                 &ceremony_controller_full_id,
                                 &ceremony_device,
@@ -794,6 +807,7 @@ async fn ensure_owned_agent_sidecar(
                             )?;
                             let context_attach_event = sign_prepared_sidecar_event(
                                 &context_attach_event_draft,
+                                source_digest_suite,
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
                                 &ceremony_controller_full_id,
                                 &ceremony_device,
@@ -859,6 +873,7 @@ async fn ensure_owned_agent_sidecar(
                             }
                             let context_attach_event = sign_prepared_sidecar_event(
                                 &context_attach_event_draft,
+                                source_digest_suite,
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
                                 &ceremony_controller_full_id,
                                 &ceremony_device,
@@ -1144,10 +1159,6 @@ async fn submit_source_routed_sidecar_message(
         state_store,
         build,
         source_realm_id,
-        device_id,
-        base_url.to_owned(),
-        api_token,
-        controller_id.to_owned(),
         None,
         Vec::new(),
     )
@@ -3206,11 +3217,8 @@ pub fn ChatPanel(
                 // `checked: true`). The first two are now wired to the
                 // same actor-private account_data that /settings already
                 // edits, so a change here mirrors immediately into the
-                // global view. "Shared history" is a Realm-scoped policy
-                // event (`ak.realm.history_visibility`) — it's not a
-                // client-`ak.realm.history_visibilityso the third row
-                // shows an explanatory hint instead of pretending to be
-                // a checkbox.
+                // global view. Realm history access is governance state, so
+                // the third row is explanatory rather than a local checkbox.
                 let realm_id_for_mute = selected_realm_id.clone();
                 let strand_id_for_rr = selected_channel_value.clone();
                 let muted_realms_now = state_store.read().muted_realms();

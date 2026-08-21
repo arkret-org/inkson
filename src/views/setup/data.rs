@@ -62,31 +62,16 @@ pub(super) const JOIN_RULE_OPTIONS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-pub(super) const HISTORY_VISIBILITY_OPTIONS: [(&str, &str, &str); 5] = [
+pub(super) const HISTORY_ACCESS_OPTIONS: [(&str, &str, &str); 2] = [
     (
-        "world_readable",
-        "setup.opt.history_visibility.world_readable",
-        "setup.opt.history_visibility.world_readable.hint",
+        "since_join",
+        "setup.opt.history_access.since_join",
+        "setup.opt.history_access.since_join.hint",
     ),
     (
-        "shared",
-        "setup.opt.history_visibility.shared",
-        "setup.opt.history_visibility.shared.hint",
-    ),
-    (
-        "invited",
-        "setup.opt.history_visibility.invited",
-        "setup.opt.history_visibility.invited.hint",
-    ),
-    (
-        "joined",
-        "setup.opt.history_visibility.joined",
-        "setup.opt.history_visibility.joined.hint",
-    ),
-    (
-        "restricted",
-        "setup.opt.history_visibility.restricted",
-        "setup.opt.history_visibility.restricted.hint",
+        "all_history_for_current_members",
+        "setup.opt.history_access.all_history_for_current_members",
+        "setup.opt.history_access.all_history_for_current_members.hint",
     ),
 ];
 
@@ -107,7 +92,7 @@ pub(super) const ENCRYPTION_PROFILE_OPTIONS: [(&str, &str, &str); 2] = [
 ];
 
 // encryption-and-audit.md §2.10 — Realm `content_scheme` (the capability axis,
-// orthogonal to `history_visibility` which is the runtime delivery toggle).
+// orthogonal to `history_access`, the scope-level delivery policy).
 // `mls_exporter_aead_v1` makes every epoch's content structurally shareable to
 // late joiners (forward secrecy degrades to per-epoch, §2.10.5);
 // `mls_rfc9420` keeps per-message forward secrecy and makes pre-join history
@@ -164,32 +149,6 @@ pub(super) const FEDERATION_POLICY_OPTIONS: [(&str, &str, &str); 4] = [
         "quarantine",
         "setup.opt.federation_policy.quarantine",
         "setup.opt.federation_policy.quarantine.hint",
-    ),
-];
-
-// Spec realm-and-space.md §2.3 — `notary_profile`. Create-locked.
-// `single_did` is the dev / single-operator default; the others are
-// for production deployments with multiple notary principals.
-pub(super) const ANCHOR_PROFILE_OPTIONS: [(&str, &str, &str); 4] = [
-    (
-        "single_did",
-        "setup.opt.anchor_profile.single_did",
-        "setup.opt.anchor_profile.single_did.hint",
-    ),
-    (
-        "threshold",
-        "setup.opt.anchor_profile.threshold",
-        "setup.opt.anchor_profile.threshold.hint",
-    ),
-    (
-        "open_set",
-        "setup.opt.anchor_profile.open_set",
-        "setup.opt.anchor_profile.open_set.hint",
-    ),
-    (
-        "mixed",
-        "setup.opt.anchor_profile.mixed",
-        "setup.opt.anchor_profile.mixed.hint",
     ),
 ];
 

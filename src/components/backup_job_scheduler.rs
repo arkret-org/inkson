@@ -1,7 +1,7 @@
 //! Generic single-flight, debounced, backoff-retried backup-job scheduler.
 //!
-//! D3: `mls_history_backup` and `mls_backup_prompt` each hand-rolled the same
-//! job machinery — a process-global `BTreeMap<key, Job>` behind a `Mutex`, a
+//! The private-plaintext backup uploader uses a process-global
+//! `BTreeMap<key, Job>` behind a `Mutex`, a
 //! `scheduled` / `in_flight` single-flight pair, digest-based dedupe
 //! (`last_uploaded_digest == latest_digest`), a debounce window, and a
 //! three-state (idle / success / failure) finish transition. This module owns
@@ -11,11 +11,8 @@
 //!   * the digest it dedupes on; and
 //!   * the actual network upload.
 //!
-//! Two families with slightly different retry policy share the same core:
-//!   * the per-Realm `mls_history` job debounces, honours a min-interval between successful
-//!     uploads, and retries failures with exponential backoff up to a park threshold; and
-//!   * the per-account private-plaintext sidecar job debounces only and does not retry a failed
-//!     upload (it re-arms solely when strictly newer material arrives).
+//! The per-account private-plaintext sidecar job debounces only and does not
+//! retry a failed upload; strictly newer material re-arms it.
 //!
 //! Backoff note: `garth::Backoff` is a *stateful* ladder that advances on each
 //! `next_delay()` call. This scheduler instead recomputes the wait each loop
@@ -169,6 +166,7 @@ impl<T: Clone + Default + 'static> BackupJobScheduler<T> {
     }
 
     /// Read-only visit of the job table (status snapshots).
+    #[cfg(test)]
     pub(crate) fn with_jobs<R>(
         &self,
         f: impl FnOnce(&BTreeMap<String, BackupJob<T>>) -> R,
@@ -176,8 +174,7 @@ impl<T: Clone + Default + 'static> BackupJobScheduler<T> {
         self.lock().map(|jobs| f(&jobs))
     }
 
-    /// Mutable visit of the job table — used by call sites that must run the
-    /// pure [`upsert_backup_job`] (or seed test state) under the lock.
+    #[cfg(test)]
     pub(crate) fn with_jobs_mut<R>(
         &self,
         f: impl FnOnce(&mut BTreeMap<String, BackupJob<T>>) -> R,
@@ -214,12 +211,12 @@ impl<T: Clone + Default + 'static> BackupJobScheduler<T> {
     }
 
     /// Clear `in_flight` and re-arm only if the newest material is still
-    /// unsent. Used by the retrying (`mls_history`) family for both the
-    /// already-uploaded idle path and the post-success path (after
+    /// unsent. Used by scheduler state-machine tests after
     /// [`record_success`] has advanced `last_uploaded_digest`). Returns `true`
     /// iff the loop should keep going.
     ///
     /// [`record_success`]: Self::record_success
+    #[cfg(test)]
     pub(crate) fn finish_and_rearm_if_pending(&self, key: &str) -> bool {
         let Some(mut jobs) = self.lock() else {
             return false;
@@ -242,6 +239,7 @@ impl<T: Clone + Default + 'static> BackupJobScheduler<T> {
     /// calls [`finish_and_rearm_if_pending`] to advance.
     ///
     /// [`finish_and_rearm_if_pending`]: Self::finish_and_rearm_if_pending
+    #[cfg(test)]
     pub(crate) fn record_success(
         &self,
         key: &str,
@@ -262,6 +260,7 @@ impl<T: Clone + Default + 'static> BackupJobScheduler<T> {
     /// `on_failure` (e.g. drop a stale cached predecessor), clear `in_flight`,
     /// and re-arm unless the park threshold is reached. Returns `true` iff the
     /// loop should keep going (retry the same digest after a backoff wait).
+    #[cfg(test)]
     pub(crate) fn finish_failure(
         &self,
         key: &str,

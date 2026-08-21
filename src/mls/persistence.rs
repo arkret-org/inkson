@@ -1,4 +1,4 @@
-//! MLS group state persistence + cross-device restore.
+//! Device-local MLS group-state persistence.
 //!
 //! Inkson needs MLS group state to survive process restarts: without
 //! persistence the next message must refetch a Welcome and rejoin from
@@ -23,14 +23,13 @@
 //! can round-trip it via `serde_json::from_value` and feed it into
 //! [`arkret_sdk::ArkretMlsGroup::join_from_welcome`].
 //!
-//! 2. **Persist via key_backup.** [`MlsSnapshotEnvelope::to_key_backup_body`] produces the
-//!    `ak.schema.key_backup.v1` request body used by `PUT /_arkret/self/keys/backups/{backup_id}`.
-//!    The blob is opaque to soland; device-secret-derived encryption keeps the server
-//!    zero-knowledge of group keys.
+//! 2. **Persist locally.** The active group snapshot is endpoint-bound state. Human portable
+//!    recovery must use scope-bound `history_secret_segment` material and never exports this
+//!    snapshot through `key_backup`.
 //!
-//! 3. **Restore on boot or pair-in.** [`restore_envelope`] decrypts the envelope with this device's
-//!    MLS snapshot secret and reconstructs the group via the SDK call. Two failure modes are pinned
-//!    in tests: [`EnvelopeError::SecretMismatch`] (wrong device secret or tampered envelope) and
+//! 3. **Restore on boot.** [`restore_envelope`] decrypts the envelope with this device's MLS
+//!    snapshot secret and reconstructs the group via the SDK call. Two failure modes are pinned in
+//!    tests: [`EnvelopeError::SecretMismatch`] (wrong device secret or tampered envelope) and
 //!    [`EnvelopeError::OutdatedSnapshot`] (the envelope's recorded epoch is older than the current
 //!    Seal view — a paired-in device must NOT bind to a stale epoch since that would silently fork
 //!    the group).
@@ -73,10 +72,8 @@ pub const MLS_ENVELOPE_MAGIC: &[u8] = b"inkson-mls-snap-v1";
 /// `(salt, epoch, recorded_at, magic)` bound into the AAD.
 pub const AEAD_VERSION_CHACHA20_POLY1305: u8 = 1;
 
-/// Typed envelope wrapping an encrypted MLS group state
-/// record. Persisted via `LocalStateStore` and (for cross-device
-/// restore) shipped as the `ciphertext` body of a
-/// `PUT /_arkret/self/keys/backups/{backup_id}` call. The fields here are
+/// Typed envelope wrapping an encrypted MLS group state record. Persisted only
+/// via `LocalStateStore` for same-endpoint restart recovery. The fields here are
 /// the minimum required for tamper detection + outdated-snapshot
 /// detection; everything else (signing key set / openmls provider
 /// storage entries) lives inside the key-backup `ciphertext`.
@@ -93,6 +90,10 @@ pub struct MlsSnapshotEnvelope {
     /// outdated-snapshot detection — a peer that paired in a fresher
     /// device sees the larger epoch on the server's seal view.
     pub epoch: u64,
+    /// Immutable epoch at which this device joined the group. Request planning
+    /// uses this boundary; the mutable current epoch must never stand in for it.
+    #[serde(default)]
+    pub admission_epoch: u64,
     /// Accepted `ak.mls.genesis` or `ak.mls.commit` Event that materialized
     /// this exact `(group_id, epoch)` state. The reference is public metadata,
     /// but keeping it inside the encrypted backup envelope lets a fresh device
@@ -161,6 +162,7 @@ impl From<garth::QueuedMlsSnapshot> for MlsSnapshotEnvelope {
             realm_id: snapshot.realm_id,
             group_id: snapshot.group_id,
             epoch: snapshot.epoch,
+            admission_epoch: snapshot.epoch,
             group_state_event_id: snapshot.group_state_event_id,
             salt_hex: snapshot.salt_hex,
             ciphertext_hex: snapshot.ciphertext_hex,
@@ -263,6 +265,7 @@ pub fn encrypt_state(
         realm_id: realm_id.to_owned(),
         group_id: group_id.to_owned(),
         epoch,
+        admission_epoch: epoch,
         group_state_event_id: None,
         salt_hex: hex_encode(salt),
         ciphertext_hex: hex_encode(&ciphertext),
@@ -364,215 +367,6 @@ pub fn decrypt_with_epoch_check(
 }
 
 impl MlsSnapshotEnvelope {
-    /// Build the typed key_backup PUT body for this envelope. The
-    /// `backup_id` is the protocol backup object id; `actor_id` and
-    /// `device_id` identify the device that minted the snapshot.
-    pub fn to_key_backup_body(
-        &self,
-        backup_id: &str,
-        actor_id: &str,
-        device_id: &str,
-        secret_storage_key: &[u8; 32],
-    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
-        self.to_key_backup_body_with_identity(
-            backup_id,
-            actor_id,
-            device_id,
-            secret_storage_key,
-            None,
-            None,
-            None,
-        )
-    }
-
-    /// Build a genesis envelope in a caller-selected series. Rotation uses
-    /// this to give every replacement history envelope the transaction's new
-    /// series id without rewriting encrypted output afterward.
-    pub fn to_key_backup_body_in_series(
-        &self,
-        backup_id: &str,
-        actor_id: &str,
-        device_id: &str,
-        secret_storage_key: &[u8; 32],
-        series_id: arkret_sdk::BackupSeriesId,
-    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
-        self.to_key_backup_body_with_identity(
-            backup_id,
-            actor_id,
-            device_id,
-            secret_storage_key,
-            Some(series_id),
-            None,
-            None,
-        )
-    }
-
-    /// Build an MLS-history successor only after the predecessor series link
-    /// and current controller frontier are known. All identity-bearing fields
-    /// are installed before the snapshot bytes are encrypted.
-    pub fn to_key_backup_successor_body(
-        &self,
-        backup_id: &str,
-        actor_id: &str,
-        device_id: &str,
-        secret_storage_key: &[u8; 32],
-        predecessor: &arkret_sdk::KeyBackup,
-        frontier_ref: arkret_sdk::KeyBackupFrontierRef,
-    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
-        self.to_key_backup_body_with_identity(
-            backup_id,
-            actor_id,
-            device_id,
-            secret_storage_key,
-            None,
-            Some(predecessor),
-            Some(frontier_ref),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn to_key_backup_body_with_identity(
-        &self,
-        backup_id: &str,
-        actor_id: &str,
-        device_id: &str,
-        secret_storage_key: &[u8; 32],
-        genesis_series_id: Option<arkret_sdk::BackupSeriesId>,
-        predecessor: Option<&arkret_sdk::KeyBackup>,
-        frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
-    ) -> anyhow::Result<arkret_sdk::KeyBackup> {
-        let envelope_bytes = serde_json::to_vec(self).unwrap_or_default();
-        let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
-        let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
-        let backup_kind = arkret_sdk::BackupKind::MlsHistory;
-        let backup_version = "kb_mls_snapshot_v1".to_owned();
-        let (series_id, series_seq, supersedes, supersedes_digest) =
-            if let Some(predecessor) = predecessor {
-                if predecessor.actor_id != actor_id
-                    || predecessor.device_id != device_id
-                    || predecessor.backup_kind != backup_kind
-                    || predecessor.encryption.recipient_method
-                        != arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey
-                {
-                    anyhow::bail!("MLS-history predecessor identity does not match successor");
-                }
-                if frontier_ref.is_none() {
-                    anyhow::bail!("MLS-history successor requires frontier_ref before encryption");
-                }
-                let predecessor_wire = serde_json::to_value(predecessor)?;
-                (
-                    predecessor.series_id.clone(),
-                    predecessor
-                        .series_seq
-                        .checked_add(1)
-                        .ok_or_else(|| anyhow::anyhow!("MLS-history series sequence overflow"))?,
-                    Some(predecessor.backup_id.clone()),
-                    Some(
-                        arkret_sdk::KeyBackup::signature_independent_digest_from_wire(
-                            &predecessor_wire,
-                        )
-                        .map_err(anyhow::Error::msg)?,
-                    ),
-                )
-            } else {
-                (
-                    genesis_series_id.unwrap_or(arkret_sdk::BackupSeriesId::new(format!(
-                        "ak:backup_series:{}",
-                        crate::operation::uuid_v7()
-                    ))?),
-                    0,
-                    None,
-                    None,
-                )
-            };
-        let contents = vec![arkret_sdk::KeyBackupContentItem {
-            item_kind: "mls_group_state".to_owned(),
-            realm_id: Some(arkret_sdk::RealmId::new(self.realm_id.clone())?),
-            mls_group_id: Some(self.group_id.clone()),
-            epoch: Some(self.epoch),
-            secret_id: Some("inkson_mls_snapshot".to_owned()),
-            last_event_id: self.group_state_event_id.clone(),
-            ..Default::default()
-        }];
-        let aead_aad = arkret_sdk::KeyBackupDomainSeparationAad {
-            schema: arkret_sdk::SchemaId::KEY_BACKUP_V1.to_owned(),
-            actor_id: actor_id.clone(),
-            device_id: device_id.as_ref().map(ToString::to_string),
-            backup_kind,
-            backup_version: backup_version.clone(),
-            created_at: self.recorded_at,
-            item_kinds: vec!["mls_group_state".to_owned()],
-            managed_principal_bindings: Vec::new(),
-            recipient_method: Some(arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey),
-            recipient_key_ref: Some("mls_group_secrets_backup_key".to_owned()),
-            extra: Default::default(),
-        };
-        let mut body = arkret_sdk::KeyBackup {
-            backup_id: arkret_sdk::BackupId::new(backup_id.to_owned())?,
-            actor_id,
-            device_id,
-            backup_kind,
-            mixed_secret_storage: false,
-            backup_version,
-            created_at: self.recorded_at,
-            updated_at: None,
-            expires_at: None,
-            encryption: arkret_sdk::KeyBackupEncryption {
-                recipient_method: arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey,
-                recipient_key_ref: Some("mls_group_secrets_backup_key".to_owned()),
-                kdf: None,
-                aead: arkret_sdk::KeyBackupAead {
-                    name: arkret_sdk::KeyBackupAeadName::Xchacha20Poly1305,
-                    aead_profile: Some(arkret_wire::AEAD_PROFILE_XCHACHA20_POLY1305_V1.to_owned()),
-                    nonce_salt: None,
-                    nonce: None,
-                    enc: None,
-                    extra: Default::default(),
-                },
-                key_commitment: None,
-                hpke_suite: None,
-                extra: Default::default(),
-            },
-            domain_separation: arkret_sdk::KeyBackupDomainSeparation {
-                hkdf_info: backup_kind.hkdf_info("mls_snapshot"),
-                subdomain: "mls_snapshot".to_owned(),
-                aead_aad: aead_aad.clone(),
-                extra: Default::default(),
-            },
-            contents,
-            ciphertext: String::new(),
-            ciphertext_digest: String::new(),
-            plaintext_commitment: None,
-            auth_data: None,
-            retention: None,
-            series_id,
-            series_seq,
-            supersedes,
-            supersedes_digest,
-            frontier_ref,
-            recovery_policy_ref: None,
-            extra: Default::default(),
-        };
-        let binding = arkret_crypto::backup::VaultBinding {
-            backup_id: body.backup_id.clone(),
-            subdomain: body.domain_separation.subdomain.clone(),
-            aead_aad,
-        };
-        let sealed = arkret_crypto::backup::encrypt_with_secret_storage_key(
-            secret_storage_key,
-            &binding,
-            &envelope_bytes,
-        )
-        .map_err(|error| anyhow::anyhow!("encrypt mls_history backup: {error}"))?;
-        body.encryption.aead.nonce =
-            Some(arkret_sdk::Base64UrlString::new(sealed.nonce_b64).map_err(anyhow::Error::msg)?);
-        body.ciphertext = sealed.ciphertext_b64;
-        body.ciphertext_digest = sealed.digest_sha256;
-        body.validate_envelope_fields()
-            .map_err(|error| anyhow::anyhow!("validate mls_history key backup: {error}"))?;
-        Ok(body)
-    }
-
     /// SEC-08 — carry the epoch-start clock forward from a prior snapshot when
     /// this re-snapshot did NOT advance the epoch.
     ///
@@ -656,40 +450,9 @@ use crate::canonical::{hex_decode, hex_encode};
 
 #[cfg(test)]
 mod tests {
-    use base64::Engine as _;
-    use ed25519_dalek::Signer as _;
     use serde_json::json;
 
     use super::*;
-
-    fn signed_key_backup_wire(mut body: arkret_sdk::KeyBackup) -> serde_json::Value {
-        body.auth_data = None;
-        let auth = arkret_sdk::UnsignedKeyBackupAuthData::new(
-            body.device_id.clone().unwrap(),
-            arkret_sdk::DidUrl::new("did:web:alice.example#test-device".to_owned()).unwrap(),
-            arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
-            arkret_sdk::EventId::new(
-                "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD".to_owned(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let unsigned = arkret_sdk::UnsignedKeyBackup::new(body, auth).unwrap();
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[42_u8; 32]);
-        let signature = signing_key.sign(&unsigned.signing_payload_bytes().unwrap());
-        serde_json::to_value(
-            unsigned
-                .attach_signature(
-                    arkret_sdk::Base64UrlString::new(
-                        base64::engine::general_purpose::URL_SAFE_NO_PAD
-                            .encode(signature.to_bytes()),
-                    )
-                    .unwrap(),
-                )
-                .unwrap(),
-        )
-        .unwrap()
-    }
 
     fn fixed_salt() -> Vec<u8> {
         // Deterministic salt for round-trip tests; production callers
@@ -814,78 +577,6 @@ mod tests {
         envelope.ciphertext_hex = "zzzz".to_owned(); // not hex
         let result = decrypt_envelope(&envelope, "p");
         assert!(matches!(result, Err(EnvelopeError::Malformed(_))));
-    }
-
-    #[test]
-    fn key_backup_body_carries_content_metadata_and_blob() {
-        // The typed MLS-history backup parses `realm_id` through the SDK
-        // identifier, so this fixture needs a canonical id rather than a label.
-        let envelope = encrypt_state(
-            "ak:realm:AaMEOXZMosCc7hvMzXuceDOBTDkSvFz1SpIwlCE_GMGd",
-            "aaaa",
-            42,
-            b"placeholder",
-            "passw",
-            &fixed_salt(),
-        );
-        let body = envelope
-            .to_key_backup_body(
-                "ak:backup:01964137-0000-7000-8000-000000000000",
-                "did:web:alice.example",
-                "ak:device:01964137-0000-7000-8000-000000000001",
-                &crate::mls::runtime::derive_mls_history_backup_key("passw").unwrap(),
-            )
-            .unwrap();
-        assert_eq!(
-            body.backup_id.as_str(),
-            "ak:backup:01964137-0000-7000-8000-000000000000"
-        );
-        assert_eq!(
-            body.device_id.as_ref().map(arkret_sdk::DeviceId::as_str),
-            Some("ak:device:01964137-0000-7000-8000-000000000001")
-        );
-        assert_eq!(body.backup_kind, arkret_sdk::BackupKind::MlsHistory);
-        assert_eq!(body.backup_version, "kb_mls_snapshot_v1");
-        assert!(body.series_id.as_str().starts_with("ak:backup_series:"));
-        assert_eq!(body.series_seq, 0);
-        assert_eq!(
-            body.encryption.recipient_method,
-            arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey
-        );
-        assert_eq!(
-            body.encryption.recipient_key_ref.as_deref(),
-            Some("mls_group_secrets_backup_key")
-        );
-        assert!(body.encryption.kdf.is_none());
-        assert_eq!(body.contents[0].item_kind, "mls_group_state");
-        assert_eq!(
-            body.contents[0]
-                .realm_id
-                .as_ref()
-                .map(arkret_sdk::RealmId::as_str),
-            Some("ak:realm:AaMEOXZMosCc7hvMzXuceDOBTDkSvFz1SpIwlCE_GMGd")
-        );
-        assert_eq!(body.contents[0].mls_group_id.as_deref(), Some("aaaa"));
-        assert_eq!(body.contents[0].epoch, Some(42));
-        assert_eq!(
-            body.domain_separation.hkdf_info,
-            "arkret-key-backup/mls_history/mls_snapshot/v1"
-        );
-        body.validate_envelope_fields()
-            .expect("MLS history backup envelope should validate");
-        let body = signed_key_backup_wire(body);
-        assert!(body.get("envelope_meta").is_none());
-        // The outer key-backup ciphertext is authenticated encryption, and the
-        // runtime owner can open it back to the original snapshot envelope.
-        let typed = crate::mls::runtime::parse_mls_history_backup(&body)
-            .expect("MLS history backup should parse to the SDK type");
-        let parsed = crate::mls::runtime::decode_mls_history_backup_envelope(&typed, "passw")
-            .expect("MLS history backup should decrypt");
-        assert_eq!(
-            parsed.realm_id,
-            "ak:realm:AaMEOXZMosCc7hvMzXuceDOBTDkSvFz1SpIwlCE_GMGd"
-        );
-        assert_eq!(parsed.epoch, 42);
     }
 
     #[test]

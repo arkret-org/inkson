@@ -605,10 +605,6 @@ pub(crate) async fn submit_secure_send(
     mut state_store: SyncSignal<LocalStateStore>,
     build: SecureSendBuild,
     realm_id: &str,
-    device_id: &str,
-    base_url: String,
-    api_token: String,
-    actor: String,
     circle_id: Option<String>,
     mention_digests: Vec<String>,
 ) -> SecureSendOutcome {
@@ -622,7 +618,6 @@ pub(crate) async fn submit_secure_send(
         mention_routing_key: _,
         effective_scope,
     } = build;
-    let realm_default_scope = matches!(&effective_scope, arkret_sdk::ScopeRef::Realm { .. });
     let sidecar_scope = matches!(&effective_scope, arkret_sdk::ScopeRef::Sidecar { .. });
     if let Some(pending) = pending_history_secrets {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -677,21 +672,13 @@ pub(crate) async fn submit_secure_send(
                             message: format!("persist accepted MLS group-state reference: {error}"),
                         };
                     }
-                    state_store
+                    if let Err(error) = state_store
                         .write()
-                        .save_mls_snapshot_for_scope(&effective_scope, snapshot);
-                    // §7.10 continuous backup: the commit advanced the epoch,
-                    // so re-upload this Realm's mls_history series tail
-                    // (debounced; no-op until the 24-word Recovery Key exists).
-                    if realm_default_scope {
-                        crate::components::schedule_mls_history_backup_after_commit(
-                            base_url.clone(),
-                            api_token.clone(),
-                            actor.clone(),
-                            device_id.to_owned(),
-                            realm_id.to_owned(),
-                            state_store,
-                        );
+                        .save_mls_snapshot_for_scope(&effective_scope, snapshot)
+                    {
+                        return SecureSendOutcome::MessageFailed {
+                            message: format!("persist accepted MLS snapshot: {error}"),
+                        };
                     }
                 }
                 if let Some(commit_op_id) = commit_op_id {

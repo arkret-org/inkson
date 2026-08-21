@@ -1,166 +1,140 @@
 use super::*;
 
 const MLS_GOVERNANCE_PROOF_CACHE_MAX: usize = 16;
-const MLS_GOVERNANCE_ACQUISITION_CACHE_MAX: usize = 2;
 const MLS_GOVERNANCE_PROOF_CACHE_TTL_MINUTES: i64 = 5;
 
 fn proof_cache_key(request: &arkret_sdk::MlsGovernanceProofRequestBody) -> Result<String, String> {
     request
-        .proof_request_digest()
+        .query_digest()
         .map(|digest| digest.to_string())
         .map_err(|error| format!("hash MLS governance proof identity: {error}"))
 }
 
 impl LocalStateStore {
-    pub fn cached_mls_governance_acquisition(
-        &self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBody,
-    ) -> Result<Vec<arkret_sdk::MlsGovernanceProofBundle>, String> {
-        let key = proof_cache_key(request)?;
-        let state = self.load();
-        let Some(entry) = state.mls_governance_proof_acquisitions.get(&key) else {
-            return Ok(Vec::new());
-        };
-        let mut chunks = entry
-            .chunks
-            .iter()
-            .map(|(index, value)| {
-                serde_json::from_value::<arkret_sdk::MlsGovernanceProofBundle>(value.clone())
-                    .map(|chunk| (*index, chunk))
-                    .map_err(|error| format!("decode cached MLS governance proof chunk: {error}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        chunks.sort_by_key(|(index, _)| *index);
-        if chunks
-            .iter()
-            .enumerate()
-            .any(|(position, (index, _))| position as u32 != *index)
-        {
-            return Err("cached MLS governance acquisition has a chunk gap".to_owned());
-        }
-        Ok(chunks.into_iter().map(|(_, chunk)| chunk).collect())
-    }
-
-    pub fn persist_mls_governance_acquisition_chunk(
+    /// Installs a post-verification fixture for tests whose subject starts
+    /// after governance verification. Cryptographic proof tests must exercise
+    /// the SDK verifier and must not use this shortcut.
+    #[cfg(test)]
+    pub(crate) fn seed_test_verified_mls_governance_cache(
         &mut self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBody,
-        chunk: &arkret_sdk::MlsGovernanceProofBundle,
+        request: arkret_sdk::MlsGovernanceProofRequestBody,
+        governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+        bundle: arkret_sdk::MlsGovernanceProofBundle,
+        checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        let key = proof_cache_key(request)?;
-        let value = serde_json::to_value(chunk)
-            .map_err(|error| format!("serialize MLS governance proof chunk: {error}"))?;
-        let entry = self
-            .cached
-            .mls_governance_proof_acquisitions
-            .entry(key)
-            .or_insert_with(|| MlsGovernanceProofAcquisition {
-                proof_request_digest: chunk.proof_request_digest.clone(),
-                bundle_digest: chunk.bundle_digest.clone(),
-                chunks: BTreeMap::new(),
-                updated_at: Utc::now(),
-            });
-        if entry.proof_request_digest != chunk.proof_request_digest
-            || entry.bundle_digest != chunk.bundle_digest
-        {
-            entry.proof_request_digest = chunk.proof_request_digest.clone();
-            entry.bundle_digest = chunk.bundle_digest.clone();
-            entry.chunks.clear();
-        }
-        entry.chunks.insert(chunk.chunk.chunk_index(), value);
-        entry.updated_at = Utc::now();
-        while self.cached.mls_governance_proof_acquisitions.len()
-            > MLS_GOVERNANCE_ACQUISITION_CACHE_MAX
-        {
-            let Some(oldest) = self
-                .cached
-                .mls_governance_proof_acquisitions
-                .iter()
-                .min_by_key(|(_, entry)| entry.updated_at)
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            self.cached
-                .mls_governance_proof_acquisitions
-                .remove(&oldest);
-        }
+        let realm_id = request
+            .effective_scope
+            .realm_id_opt()
+            .ok_or_else(|| "test governance proof has no Realm scope".to_owned())?;
+        let key = proof_cache_key(&request)?;
+        self.cached
+            .mls_governance_checkpoints
+            .insert(realm_id.to_string(), checkpoint);
+        self.cached.mls_governance_proofs.insert(
+            key,
+            CachedMlsGovernanceProof {
+                proof_base_basis: request.proof_base_basis.clone(),
+                proof_target_basis: request.proof_target_basis.clone(),
+                request,
+                governance_binding,
+                bundle,
+                verified_at: Utc::now(),
+            },
+        );
         self.flush()
-            .map_err(|error| format!("persist MLS governance proof acquisition: {error}"))
+            .map_err(|error| format!("persist test MLS governance state: {error}"))
     }
 
-    pub fn clear_mls_governance_acquisition(
-        &mut self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBody,
-    ) -> Result<(), String> {
-        self.ensure_cached_loaded();
-        let key = proof_cache_key(request)?;
-        if self
-            .cached
-            .mls_governance_proof_acquisitions
-            .remove(&key)
-            .is_some()
-        {
-            self.flush()
-                .map_err(|error| format!("clear MLS governance proof acquisition: {error}"))?;
-        }
-        Ok(())
-    }
-
-    pub fn trusted_mls_governance_anchor(&self, realm_id: &str) -> Option<arkret_sdk::SealId> {
+    pub fn trusted_mls_governance_checkpoint(
+        &self,
+        realm_id: &str,
+    ) -> Option<arkret_sdk::MlsGovernanceVerificationCheckpoint> {
         self.load()
-            .mls_governance_trust_anchors
+            .mls_governance_checkpoints
             .get(realm_id)
             .cloned()
     }
 
-    pub fn pin_mls_governance_anchor(
+    pub fn pin_mls_governance_checkpoint(
         &mut self,
         realm_id: &str,
-        anchor: &arkret_sdk::SealId,
+        checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        if let Some(existing) = self.cached.mls_governance_trust_anchors.get(realm_id) {
-            if existing != anchor {
-                return Err(format!(
-                    "MLS governance trust anchor mismatch for {realm_id}: pinned {existing}, received {anchor}"
-                ));
-            }
+        if self
+            .cached
+            .mls_governance_checkpoints
+            .contains_key(realm_id)
+        {
             return Ok(());
         }
+        checkpoint
+            .validate_checkpoint()
+            .map_err(|error| format!("invalid MLS governance checkpoint: {error}"))?;
+        if checkpoint.realm_id.as_str() != realm_id {
+            return Err("MLS governance checkpoint belongs to another Realm".to_owned());
+        }
         self.cached
-            .mls_governance_trust_anchors
-            .insert(realm_id.to_owned(), anchor.clone());
+            .mls_governance_checkpoints
+            .insert(realm_id.to_owned(), checkpoint);
         self.flush()
-            .map_err(|error| format!("persist MLS governance trust anchor: {error}"))
+            .map_err(|error| format!("persist MLS governance checkpoint: {error}"))
     }
 
     pub fn cache_verified_mls_governance_proof(
         &mut self,
         request: arkret_sdk::MlsGovernanceProofRequestBody,
         governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
-        bundle: &arkret_sdk::MaterializedMlsGovernanceProofBundle,
+        bundle: &arkret_sdk::MlsGovernanceProofBundle,
+        target_checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
     ) -> Result<(), String> {
-        self.ensure_cached_loaded();
-        let pinned = self
+        request
+            .validate()
+            .map_err(|error| format!("invalid MLS governance proof request: {error}"))?;
+        bundle
+            .validate_for_request(&request)
+            .map_err(|error| format!("invalid MLS governance proof outcome: {error}"))?;
+        let realm_id = request
+            .effective_scope
+            .realm_id_opt()
+            .ok_or_else(|| "MLS governance proof has no Realm scope".to_owned())?
+            .to_string();
+        target_checkpoint
+            .validate_checkpoint()
+            .map_err(|error| format!("invalid verified MLS governance checkpoint: {error}"))?;
+        if target_checkpoint.realm_id.as_str() != realm_id
+            || target_checkpoint.basis != request.proof_target_basis
+        {
+            return Err("verified MLS governance checkpoint target mismatch".to_owned());
+        }
+        let Some(current_checkpoint) = self
             .cached
-            .mls_governance_trust_anchors
-            .get(request.realm_id.as_str())
-            .ok_or_else(|| "MLS governance trust anchor is not pinned".to_owned())?;
-        if pinned != &bundle.trusted_anchor_seal_id {
-            return Err("MLS governance proof trust anchor differs from the local pin".to_owned());
+            .mls_governance_checkpoints
+            .get(realm_id.as_str())
+        else {
+            return Err("MLS governance checkpoint is not pinned".to_owned());
+        };
+        if current_checkpoint.basis != request.proof_base_basis {
+            return Err("MLS governance proof base is not the currently pinned basis".to_owned());
         }
         let key = proof_cache_key(&request)?;
         let entry = CachedMlsGovernanceProof {
+            proof_base_basis: request.proof_base_basis.clone(),
+            proof_target_basis: request.proof_target_basis.clone(),
             request,
             governance_binding,
-            trusted_anchor_seal_id: bundle.trusted_anchor_seal_id.clone(),
-            accepted_seal_id: bundle.accepted_seal_id.clone(),
-            bundle: serde_json::to_value(bundle)
-                .map_err(|error| format!("serialize verified MLS governance proof: {error}"))?,
+            bundle: bundle.clone(),
             verified_at: Utc::now(),
         };
         self.cached.mls_governance_proofs.insert(key, entry);
+        // T3 pin-forward is part of the same local durable commit as the
+        // verified cache entry. A later proof starts from this complete target
+        // antichain, so the near-current 1 MiB proof never has to replay an
+        // ever-growing genesis-to-head closure.
+        self.cached
+            .mls_governance_checkpoints
+            .insert(realm_id, target_checkpoint);
         while self.cached.mls_governance_proofs.len() > MLS_GOVERNANCE_PROOF_CACHE_MAX {
             let Some(oldest_key) = self
                 .cached
@@ -181,13 +155,11 @@ impl LocalStateStore {
         &self,
         request: &arkret_sdk::MlsGovernanceProofRequestBody,
         now: DateTime<Utc>,
-    ) -> Result<Option<arkret_sdk::MaterializedMlsGovernanceProofBundle>, String> {
+    ) -> Result<Option<arkret_sdk::MlsGovernanceProofBundle>, String> {
         let Some(entry) = self.cached_mls_governance_proof_entry(request, now)? else {
             return Ok(None);
         };
-        serde_json::from_value(entry.bundle.clone())
-            .map(Some)
-            .map_err(|error| format!("decode cached MLS governance proof: {error}"))
+        Ok(Some(entry.bundle))
     }
 
     pub fn cached_mls_governance_proof_entry(
@@ -204,6 +176,12 @@ impl LocalStateStore {
             <= now
         {
             return Ok(None);
+        }
+        if entry.request != *request
+            || entry.proof_base_basis != request.proof_base_basis
+            || entry.proof_target_basis != request.proof_target_basis
+        {
+            return Err("cached MLS governance proof identity changed".to_owned());
         }
         Ok(Some(entry.clone()))
     }

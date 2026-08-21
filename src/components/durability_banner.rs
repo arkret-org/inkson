@@ -5,15 +5,14 @@
 //!
 //! When a Realm's effective `durability_policy.mode != none` (and it uses
 //! `content_scheme=mls_exporter_aead_v1`), members MUST be shown a persistent
-//! disclosure that the Realm's history is continuously sealed to a recovery
-//! holder who can decrypt **all** history, with the mode marked
-//! (`org_recovery_key` single / `threshold` k-of-n).
+//! disclosure of the configured recovery policy. Until the client has a
+//! verified coverage ledger, the banner must not claim that sealing or
+//! delivery has completed.
 //!
 //! Two hard rules from §2.10.8 are enforced here:
 //!
-//! 1. **MUST NOT** phrase the holder as "listening in real time" — the RRK is offline, not an MLS
-//!    member, receives no live fanout, and is only taken out on recovery. The copy says "持续封存"
-//!    (continuously sealed), never "实时旁听".
+//! 1. **MUST NOT** phrase the holder as listening in real time or imply that a configured policy
+//!    proves delivery.
 //! 2. The recovery holder identity is rendered only AFTER verifying it resolves to an active
 //!    `ArkretRealmHistoryRecoveryKey` service entry on the principal's DID Document (via the SDK
 //!    authority `resolve_realm_history_recovery_key`). An unverifiable recipient is shown as
@@ -36,8 +35,8 @@ enum RecipientVerification {
         controller_organization: Option<String>,
     },
     /// Could not resolve / verify the RRK service entry (fail-closed). Shown as
-    /// "无法验证" — the disclosure still warns the holder can decrypt history,
-    /// but does not assert an identity that was not proven.
+    /// The unverifiable state does not assert an identity or possession that
+    /// was not proven.
     Unverified {
         recipient_id: String,
         principal_did: String,
@@ -64,12 +63,6 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
     let Some(mode_label) = durability_mode_label(&policy) else {
         return rsx! {};
     };
-
-    // Threshold annotation (k-of-n) when present.
-    let threshold_label = policy
-        .threshold
-        .as_ref()
-        .map(|threshold| format!("{}-of-{}", threshold.k, threshold.n));
 
     // Asynchronously resolve + verify each recovery recipient's identity. The
     // resource re-runs when the recipient set changes. DID documents are public
@@ -109,8 +102,8 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
     });
 
     let mode_human = match mode_label {
-        "org_recovery_key" => "单一组织恢复密钥 (org_recovery_key)",
-        "threshold" => "门限恢复 (threshold)",
+        "org_recovery_key" => "组织恢复策略已配置",
+        "threshold" => "门限策略暂不支持",
         _ => mode_label,
     };
 
@@ -124,22 +117,15 @@ pub fn DurabilityDisclosureBanner(realm_id: String) -> Element {
             "data-testid": "durability-disclosure-banner",
             "data-durability-mode": "{mode_label}",
             div { class: "event-head",
-                span { "本 Realm 历史已持续封存给恢复方" }
+                span { "本 Realm 已配置历史恢复策略" }
                 span {
                     class: "badge amber",
                     "data-testid": "durability-mode-badge",
-                    if let Some(threshold_label) = threshold_label.clone() {
-                        "{mode_human} · {threshold_label}"
-                    } else {
-                        "{mode_human}"
-                    }
+                    "{mode_human} · 客户端能力待就绪"
                 }
             }
             div { class: "muted",
-                // §2.10.8: state the holder can decrypt ALL history; MUST NOT
-                // imply real-time listening — the RRK is offline and only taken
-                // out on recovery.
-                "该恢复方持有者可解密本 Realm 的全部历史。恢复方处于离线状态、不是群组成员、不接收实时消息，仅在需要恢复时取出密钥。"
+                "当前客户端尚不能验证历史密钥是否已完整封存或交付给恢复方；本机会保留可用的历史密钥材料，但不得据此认定恢复方已经持有全部历史。"
             }
             div {
                 class: "durability-recipient-list",

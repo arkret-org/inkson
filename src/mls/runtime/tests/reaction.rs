@@ -79,7 +79,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     // Backdate the persisted snapshot's epoch clock past the 1h cap.
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_snapshot(realm, overdue);
+    state.save_mls_snapshot(realm, overdue).unwrap();
     super::seed_next_governance_proof(&mut state, realm);
 
     let sealed =
@@ -112,7 +112,7 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_snapshot(realm, overdue);
+    state.save_mls_snapshot(realm, overdue).unwrap();
 
     assert!(!state.realm_projection_is_minimal_metadata(realm));
     let sealed =

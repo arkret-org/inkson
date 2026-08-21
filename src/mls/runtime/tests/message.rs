@@ -25,54 +25,6 @@ fn seed_complete_rfc9420_projection(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn seed_history_share_policy_projection(state: &mut crate::state::LocalStateStore, realm: &str) {
-    state.save_realm_tree_projection(
-        realm,
-        json!({
-            "state": {"events": [{
-                "event_id": "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
-                "kind": "ak.realm.history_sharing_policy",
-                "payload": {
-                    "allowed_key_sources": ["verified_member_device"],
-                    "allowed_receiver_states": ["active_member"]
-                }
-            }]}
-        }),
-    );
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-async fn commit_pending_history(
-    state: &mut crate::state::LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    pending_writes: Vec<crate::state::PendingHistorySecrets>,
-) -> usize {
-    let mut committed = 0;
-    for pending in pending_writes {
-        pending.persist(secure_store).await.unwrap();
-        committed += pending.new_secret_count();
-        state.publish_history_secrets(pending);
-    }
-    committed
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-struct ActiveSignerGuard {
-    _guard: crate::event_signer::ActiveSignerTestGuard,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl ActiveSignerGuard {
-    fn install(seed: [u8; 32], signer_did: &str) -> Self {
-        let signer =
-            std::sync::Arc::new(crate::event_signer::build_ed25519_signer(seed, signer_did));
-        Self {
-            _guard: crate::event_signer::ActiveSignerTestGuard::replace(Some(signer)),
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let mut state = temp_state_store("creator-bootstrap");
@@ -292,9 +244,8 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
 /// §2.10 history sharing: authoring `mls_exporter_aead_v1` content MUST retain
 /// the authoring epoch's `history_secret` locally. The author never decrypts
 /// its own ciphertext, so if the encrypt path does not retain here, the secret
-/// is lost once the epoch advances (forward secrecy) and
-/// `share_history_to_requester` has nothing to seal for a late joiner —
-/// permanently locking every pre-join card. See `encrypt_values_with_device_snapshot`.
+/// is lost once the epoch advances (forward secrecy). See
+/// `encrypt_values_with_device_snapshot`.
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn authoring_exporter_aead_content_retains_history_secret() {
@@ -302,19 +253,22 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    // history_secret persistence is a PROCESS-GLOBAL secure store keyed only by
-    // realm_id (see `prepare_history_secrets` → `PendingHistorySecrets::persist`), so
-    // this test MUST use a realm id no other test writes, or the `is_none()`
-    // precondition below would observe another test's retained secret.
+    // History-secret persistence is process-global secure storage keyed by the
+    // exact scope/group pair, so this test uses a unique Realm.
     let realm = "ak:realm:Ae6wQDaXscJ6lZGbcWqFv_CW7o0_w5CGmtuB6TvlwNh2";
-    let history_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
-    let _ = history_store.delete_secret(&history_key);
-
     super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
         .unwrap()
         .expect("creator snapshot");
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let group_id = state.mls_snapshot_for(realm).unwrap().group_id;
+    let scope_group_key =
+        crate::state::mls_scope_snapshot_key_for_group(&scope, &group_id).unwrap();
+    let history_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let history_key = crate::secure_key_store::mls_history_secret_store_key(&scope_group_key);
+    let _ = history_store.delete_secret(&history_key);
     // Use the same optimistic projection written immediately after Realm
     // creation. Account sync may not have delivered the authoritative
     // projection before the first content write, so this local shape must
@@ -329,7 +283,7 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
             discoverability: "restricted".to_owned(),
             encryption_profile: "mls_rfc9420".to_owned(),
             content_scheme: "mls_exporter_aead_v1".to_owned(),
-            history_visibility: "shared".to_owned(),
+            history_access: "all_history_for_current_members".to_owned(),
             plaintext_visible_services: Vec::new(),
             collaboration_role: None,
             encryption_floor: Some("e2ee_required".to_owned()),
@@ -348,9 +302,8 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     );
     state.retain_realm_tree_projections(|id| keep.contains(id));
     assert!(realm_content_scheme_is_exporter_aead(&state, realm));
-
     // No secret is retained before any content is authored.
-    assert!(state.history_secret_for(realm, 0).is_none());
+    assert!(state.history_secret_for(&scope, &group_id, 0).is_none());
 
     let encrypted = encrypt_values_with_device_snapshot(
         &mut state,
@@ -373,9 +326,9 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     state.publish_history_secrets(pending);
 
     // The epoch-0 history_secret is now retained and non-empty, so it can be
-    // sealed into a later ak.realm_key.share for a late joiner.
+    // retained locally for a later history-key response.
     let retained = state
-        .history_secret_for(realm, 0)
+        .history_secret_for(&scope, &group_id, 0)
         .expect("authoring exporter-aead content must retain the epoch history_secret");
     assert!(!retained.is_empty());
     let _ = history_store.delete_secret(&history_key);
@@ -424,7 +377,7 @@ fn two_member_group_with_bob_snapshot(
         &secret,
         &salt,
     );
-    state.save_mls_snapshot(realm.to_owned(), envelope);
+    state.save_mls_snapshot(realm.to_owned(), envelope).unwrap();
     alice_group
 }
 
@@ -490,7 +443,7 @@ fn historical_author_view_survives_epoch_rotation() {
             epoch_two_ref,
         )
         .unwrap();
-    state.save_mls_snapshot(realm, epoch_two_snapshot);
+    state.save_mls_snapshot(realm, epoch_two_snapshot).unwrap();
 
     let historical_view = minimal_metadata_author_view(
         &state,
@@ -613,11 +566,13 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let circle_snapshot = state.mls_snapshot_for(realm).unwrap();
     state.drop_mls_snapshot(realm);
-    state.save_mls_snapshot_for_effective_scope(
-        realm.to_owned(),
-        Some(circle),
-        circle_snapshot.clone(),
-    );
+    state
+        .save_mls_snapshot_for_effective_scope(
+            realm.to_owned(),
+            Some(circle),
+            circle_snapshot.clone(),
+        )
+        .expect("valid effective scope");
     let encrypted = alice_group
         .encrypt_payload("application/json", br#"{"body":"sidecar"}"#)
         .unwrap();
@@ -776,10 +731,12 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
         "other-device-secret",
         b"deterministic-salt",
     );
-    state.save_mls_snapshot(
-        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        envelope,
-    );
+    state
+        .save_mls_snapshot(
+            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            envelope,
+        )
+        .unwrap();
 
     let error = encrypt_values_with_device_snapshot(
         &mut state,
@@ -826,7 +783,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
         b"deterministic-salt",
     );
     let mut state = temp_state_store("ready-encrypt");
-    state.save_mls_snapshot(realm, envelope);
+    state.save_mls_snapshot(realm, envelope).unwrap();
     seed_complete_rfc9420_projection(&mut state, realm, actor);
 
     let (_schedule_hash, member_dids, encrypted_values, _commit, _new_envelope, _) =
@@ -885,7 +842,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
     let epoch_before = state.mls_snapshot_for(realm).unwrap().epoch;
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_snapshot(realm, overdue);
+    state.save_mls_snapshot(realm, overdue).unwrap();
     super::seed_next_governance_proof(&mut state, realm);
 
     // An overdue minimal-metadata epoch forces a post-commit envelope at
@@ -914,7 +871,9 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
 
     // The caller saving the returned envelope (simulating server-accept)
     // is what advances the persisted snapshot.
-    state.save_mls_snapshot(realm, post_commit_envelope.clone());
+    state
+        .save_mls_snapshot(realm, post_commit_envelope.clone())
+        .unwrap();
     assert_eq!(
         state.mls_snapshot_for(realm).unwrap().epoch,
         post_commit_envelope.epoch
@@ -946,6 +905,7 @@ fn empty_welcome_set_reports_no_work() {
 fn malformed_welcome_is_counted_not_swallowed() {
     let mut state = temp_state_store("malformed");
     let store = MemorySecureKeyStore::new();
+    store_account_mls_secret(&store, "did:web:alice.example", "snapshot-secret").unwrap();
     // A welcome entry whose content is not a valid MlsWelcomeEnvelope.
     let messages = json!({
         "messages": [
@@ -995,6 +955,7 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
         &bob_private_state,
     )
     .unwrap();
+    store_account_mls_secret(&store, bob_actor, "snapshot-secret").unwrap();
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
     let messages = json!({
@@ -1048,6 +1009,7 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
 fn durable_welcome_payload_without_claim_envelope_fails_closed() {
     let mut state = temp_state_store("welcome-claim-envelope");
     let store = MemorySecureKeyStore::new();
+    store_account_mls_secret(&store, "did:web:alice.example", "snapshot-secret").unwrap();
     let messages = json!({
         "messages": [
             {
@@ -1142,7 +1104,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
         json!({
             "kind": "ak.mls.welcome",
             "content": {
-                "group_id": mls_group_id_for_realm(realm),
+                "group_id": mls_group_id_for_realm(realm).unwrap(),
                 "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             },
             "unsigned": {
@@ -1152,14 +1114,14 @@ fn local_welcome_hint_filters_by_realm_group_id() {
         json!({
             "kind": "ak.mls.welcome",
             "content": {
-                "group_id": mls_group_id_for_realm(other_realm),
+                "group_id": mls_group_id_for_realm(other_realm).unwrap(),
                 "welcome_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             },
         }),
         json!({
             "kind": "ak.key.verification.request",
             "content": {
-                "group_id": mls_group_id_for_realm(realm),
+                "group_id": mls_group_id_for_realm(realm).unwrap(),
             },
         }),
     ];
@@ -1178,504 +1140,43 @@ fn local_welcome_hint_filters_by_realm_group_id() {
     );
 }
 
-// ── History sharing (encryption-and-audit.md): provider push +
-//    receiver ingest + tier-3 history decrypt ──────────────────────
-
-/// Build a `ak.realm_key.share` envelope sealing `secrets` to `recipient_pub`,
-/// as the provider's `build_realm_key_share_event` would emit it on the wire
-/// (the `content` is the `RealmKeySharePayload`).
-#[cfg(not(target_arch = "wasm32"))]
-fn realm_key_share_envelope(
-    realm: &str,
-    recipient_actor: &str,
-    recipient_device: &str,
-    sender_device: &str,
-    recipient_pub: &[u8],
-    secrets: &[(u64, Vec<u8>)],
-) -> serde_json::Value {
-    let _signer_guard =
-        ActiveSignerGuard::install([17u8; 32], "did:key:zRealmKeyShareRuntimeTestSigner");
-    let sealed =
-        arkret_crypto::secret_share::seal_history_secret_to_device_pubkey(recipient_pub, secrets)
-            .unwrap();
-    let (lo, hi) = secrets.iter().fold((u64::MAX, 0_u64), |(lo, hi), (e, _)| {
-        (lo.min(*e), hi.max(*e))
-    });
-    let event = crate::mls::admission::build_realm_key_share_event(
-        realm,
-        "did:web:alice.example",
-        sender_device,
-        recipient_actor,
-        recipient_device,
-        lo,
-        hi,
-        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-        sealed,
-        "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
-        "ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU",
-    )
-    .unwrap();
-    json!({
-        "kind": event.kind().as_str(),
-        "payload": event.payload(),
-    })
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn ingest_realm_key_share_installs_history_secrets() {
-    // A provider seals two epochs' history secrets to bob's device HPKE public
-    // key; bob ingests the share and both secrets land in local state.
-    let mut state = temp_state_store("history-share-ingest");
-    let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:AWLjsk0JkbLdfBfaY2GoxT61q1Ttw6HFu7sU-XGFywHc";
-    let bob_actor = "did:web:bob.example";
-    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e2";
-    let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-    seed_history_share_policy_projection(&mut state, realm);
-
-    let (_priv, bob_pub) =
-        load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
-    let secrets = vec![(3_u64, vec![3u8; 32]), (4_u64, vec![4u8; 32])];
-    let share = realm_key_share_envelope(
-        realm,
-        bob_actor,
-        bob_device,
-        alice_device,
-        &bob_pub,
-        &secrets,
-    );
-
-    // Routing filter accepts the share for this realm.
-    let matched = collect_realm_key_share_messages_for_realm(std::slice::from_ref(&share), realm);
-    assert_eq!(matched.len(), 1);
-
-    let pending =
-        ingest_realm_key_share(&state, &secure, realm, bob_actor, bob_device, &share).unwrap();
-    let installed = commit_pending_history(&mut state, &secure, pending).await;
-    assert_eq!(installed, 2);
-    assert_eq!(state.history_secret_for(realm, 3), Some(vec![3u8; 32]));
-    assert_eq!(state.history_secret_for(realm, 4), Some(vec![4u8; 32]));
-    assert_eq!(state.history_secrets_for(realm).len(), 2);
-
-    // A share addressed to a different device installs nothing.
-    let other = "ak:device:01904100-0000-7000-8000-0000000000ff";
-    let foreign =
-        realm_key_share_envelope(realm, bob_actor, other, alice_device, &bob_pub, &secrets);
-    assert_eq!(
-        ingest_realm_key_share(&state, &secure, realm, bob_actor, bob_device, &foreign)
-            .unwrap()
-            .len(),
-        0
-    );
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn ingest_realm_key_share_accepts_projected_payload_envelope() {
-    // soland projects durable ak.realm_key.share events into device_messages as
-    // `{ kind, realm_id, sender_principal_id, sender_device_id, payload }`. The receiver
-    // must parse the spec payload field or Bob never installs the shared
-    // history key.
-    let mut state = temp_state_store("history-share-projected-payload");
-    let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:AZV8TSjbB741nPG6kgQB9mWmkp150Bbwo0_akJK6PiSb";
-    let bob_actor = "did:web:bob.example";
-    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e9";
-    let alice_actor = "did:web:alice.example";
-    let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-    seed_history_share_policy_projection(&mut state, realm);
-
-    let (_priv, bob_pub) =
-        load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
-    let secrets = vec![(0_u64, vec![7u8; 32])];
-    let local = realm_key_share_envelope(
-        realm,
-        bob_actor,
-        bob_device,
-        alice_device,
-        &bob_pub,
-        &secrets,
-    );
-    let projected = json!({
-        "kind": "ak.realm_key.share",
-        "sender_principal_id": alice_actor,
-        "sender_device_id": alice_device,
-        "realm_id": realm,
-        "operation_id": "ak:event:AT4Mf1sJBtwy4lOrQHfsPt7KtsUYo1LogrjcZnl5oAco",
-        "payload": local.get("payload").unwrap().clone(),
-    });
-
-    assert_eq!(
-        realm_key_share_message_realm_id(&projected),
-        Some(realm.to_owned())
-    );
-    assert_eq!(
-        collect_realm_key_share_messages_for_realm(std::slice::from_ref(&projected), realm).len(),
-        1
-    );
-    assert_eq!(
-        realm_key_share_sender_device_pair(&projected),
-        Some((alice_actor.to_owned(), alice_device.to_owned()))
-    );
-    let mut legacy = projected.clone();
-    legacy
-        .as_object_mut()
-        .unwrap()
-        .remove("sender_principal_id");
-    legacy["sender"] = json!(alice_actor);
-    assert_eq!(realm_key_share_sender_device_pair(&legacy), None);
-    assert_eq!(
-        realm_key_share_message_operation_id(&projected).as_deref(),
-        Some("ak:event:AT4Mf1sJBtwy4lOrQHfsPt7KtsUYo1LogrjcZnl5oAco")
-    );
-    let mut ingestable = projected.clone();
-    ingestable
-        .as_object_mut()
-        .unwrap()
-        .remove("sender_principal_id");
-    let pending =
-        ingest_realm_key_share(&state, &secure, realm, bob_actor, bob_device, &ingestable).unwrap();
-    assert_eq!(
-        commit_pending_history(&mut state, &secure, pending).await,
-        1
-    );
-    assert_eq!(state.history_secret_for(realm, 0), Some(vec![7u8; 32]));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn ingest_realm_key_share_accepts_soland_content_payload_envelope() {
-    // The REAL soland wire shape (sync `to_device[]` and device-messages,
-    // projection/apply.rs) nests the spec payload one level deeper than the
-    // fixture above:
-    //   { kind, sender_principal_id, sender_device_id,
-    //     content: { operation_id, realm_id, payload: { key_scope, ... } } }
-    // The 2026-07-09 joint-full run proved the old parser silently dropped
-    // this shape: Bob's install loop never grouped the share by realm, so the
-    // pre-join history secret was never installed and the card stayed locked.
-    let mut state = temp_state_store("history-share-content-payload");
-    let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:AfIJFv2OZq7YFmfcgrysn4iCCeZnltKXmDNUzrSqwI4W";
-    let bob_actor = "did:web:bob.example";
-    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f1";
-    let alice_actor = "did:web:alice.example";
-    let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a2";
-    seed_history_share_policy_projection(&mut state, realm);
-
-    let (_priv, bob_pub) =
-        load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
-    let secrets = vec![(0_u64, vec![5u8; 32])];
-    let local = realm_key_share_envelope(
-        realm,
-        bob_actor,
-        bob_device,
-        alice_device,
-        &bob_pub,
-        &secrets,
-    );
-    let projected = json!({
-        "kind": "ak.realm_key.share",
-        "sender_principal_id": alice_actor,
-        "sender_device_id": alice_device,
-        "content": {
-            "operation_id": "ak:event:ATz4yMg8D3eSMJ7kiPNr0BF70hg3o_DBZklFZd5GZSuJ",
-            "realm_id": realm,
-            "payload": local.get("payload").unwrap().clone(),
-        },
-    });
-
-    assert_eq!(
-        realm_key_share_message_realm_id(&projected),
-        Some(realm.to_owned())
-    );
-    assert_eq!(
-        collect_realm_key_share_messages_for_realm(std::slice::from_ref(&projected), realm).len(),
-        1
-    );
-    assert_eq!(
-        realm_key_share_sender_device_pair(&projected),
-        Some((alice_actor.to_owned(), alice_device.to_owned()))
-    );
-    assert_eq!(
-        realm_key_share_message_operation_id(&projected).as_deref(),
-        Some("ak:event:ATz4yMg8D3eSMJ7kiPNr0BF70hg3o_DBZklFZd5GZSuJ")
-    );
-    let mut ingestable = projected.clone();
-    ingestable
-        .as_object_mut()
-        .unwrap()
-        .remove("sender_principal_id");
-    let pending =
-        ingest_realm_key_share(&state, &secure, realm, bob_actor, bob_device, &ingestable).unwrap();
-    assert_eq!(
-        commit_pending_history(&mut state, &secure, pending).await,
-        1
-    );
-    assert_eq!(state.history_secret_for(realm, 0), Some(vec![5u8; 32]));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn history_secrets_do_not_land_in_account_state_json() {
-    use base64::Engine as _;
-
-    let path = std::env::temp_dir().join(format!(
-        "inkson-test-history-secret-at-rest-{}.json",
-        crate::operation::uuid_v7()
-    ));
-    let realm = "ak:realm:AXvyUPOvo5Qk9949wzuDh-KUILfma63VBd9DGnUBfjE0";
-    let secret = vec![9u8; 32];
-    let store = crate::secure_key_store::default_secure_key_store("inkson");
-    let key = crate::secure_key_store::mls_history_secret_store_key(realm);
-    let _ = store.delete_secret(&key);
-    {
-        let mut state = crate::state::LocalStateStore::with_path(path.clone());
-        let pending = state
-            .prepare_history_secrets(store.as_ref(), realm.to_owned(), [(7, secret.clone())])
-            .unwrap()
-            .unwrap();
-        pending.persist(store.as_ref()).await.unwrap();
-        state.publish_history_secrets(pending);
-        assert_eq!(state.history_secret_for(realm, 7), Some(secret.clone()));
-    }
-
-    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap();
-    let mut combined_json = String::new();
-    for entry in std::fs::read_dir(parent).unwrap() {
-        let path = entry.unwrap().path();
-        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        if name.starts_with(stem)
-            && name.ends_with(".json")
-            && let Ok(raw) = std::fs::read_to_string(&path)
-        {
-            combined_json.push_str(&raw);
-        }
-    }
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);
-    assert!(!combined_json.contains("history_secrets"));
-    assert!(!combined_json.contains(&encoded));
-
-    let _ = store.delete_secret(&key);
-    let _ = std::fs::remove_file(path);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn tier3_history_decrypt_reads_provider_exporter_aead_content() {
-    // End-to-end tier-3: the provider (alice) encrypts content under the
-    // `mls_exporter_aead_v1` scheme and shares the epoch's `history_secret`;
-    // bob installs it and `decrypt_application_payload` opens the pre-join
-    // content the live receive ratchet cannot.
-    let mut state = temp_state_store("history-share-tier3");
-    let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:AUAf2-oZl31wupPqnQLO-zloaqgMoX5xk2tpVSbi8zjD";
-    let bob_actor = "did:web:bob.example";
-    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f2";
-    let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-    let history_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
-    let _ = history_store.delete_secret(&history_key);
-
-    // Bob holds a join-epoch snapshot (so `decrypt_application_payload` can
-    // instantiate a group), but cannot ratchet to alice's exporter-aead content.
-    let mut alice_group =
-        two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    seed_history_share_policy_projection(&mut state, realm);
-    // Advance past the epoch bob snapshotted. Without this the content epoch is
-    // bob's own, and exporter-aead's history_secret is an exporter output every
-    // member of that epoch can derive — so bob would read the content from his
-    // group state and the share below would prove nothing. The pre-share
-    // assertion only means something for an epoch bob does not hold.
-    alice_group.self_update_commit().unwrap();
-    let epoch = alice_group.epoch();
-
-    // Provider encrypts content via exporter-aead, binding the typed routing
-    // AAD, key reference and epoch in the immutable header, then exports the
-    // epoch's history secret.
-    let aad_scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-    };
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.strand.update").unwrap();
-    let key_ref = arkret_sdk::KeyRefObject::mls_exporter_aead(alice_group.group_id(), epoch);
-    let plaintext = br#"{"body":"pre-join history"}"#;
-    let payload = alice_group
-        .encrypt_payload_exporter_aead("application/json", realm, key_ref, aad, plaintext)
-        .unwrap();
-    let history_secret = alice_group
-        .export_history_secret_range(epoch, epoch)
-        .into_iter()
-        .find(|(e, _)| *e == epoch)
-        .map(|(_, secret)| secret)
-        .expect("retained history secret for the current epoch");
-
-    // Before the share: bob cannot decrypt (no history secret; live ratchet
-    // cannot open exporter-aead content).
-    assert!(
-        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
-            .is_none(),
-        "bob must not read pre-join content before the share lands"
-    );
-
-    // Provider seals + bob ingests the share.
-    let (_priv, bob_pub) =
-        load_or_create_device_hpke_keypair(&secure, bob_actor, bob_device).unwrap();
-    let share = realm_key_share_envelope(
-        realm,
-        bob_actor,
-        bob_device,
-        alice_device,
-        &bob_pub,
-        &[(epoch, history_secret.to_vec())],
-    );
-    let pending =
-        ingest_realm_key_share(&state, &secure, realm, bob_actor, bob_device, &share).unwrap();
-    assert_eq!(
-        commit_pending_history(&mut state, &secure, pending).await,
-        1
-    );
-
-    // After the share: tier-3 history decrypt reads the content.
-    let decrypted =
-        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
-            .expect("tier-3 history decrypt opens pre-join content");
-    assert_eq!(decrypted, plaintext);
-    let _ = history_store.delete_secret(&history_key);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn tier3_history_decrypt_works_without_local_snapshot() {
-    // Group-free tier-3: a member granted a `history_secret` but holding NO
-    // local MLS snapshot for the Realm (e.g. granted before processing its own
-    // Welcome) still reads pre-join exporter-aead content via the standalone
-    // SDK path. Regression guard for the "must have a snapshot first" relaxation.
-    let mut state = temp_state_store("history-share-no-snapshot");
-    let secure = MemorySecureKeyStore::new();
-    let realm = "ak:realm:AYd_8hAWkXg06E-2jKNuFJxTBlVdowhIf2VtLQ5ufh4q";
-    let bob_actor = "did:web:bob.example";
-    let bob_device = "ak:device:01904100-0000-7000-8000-0000000000f4";
-    let history_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let history_key = crate::secure_key_store::mls_history_secret_store_key(realm);
-    let _ = history_store.delete_secret(&history_key);
-
-    // Build alice's group WITHOUT persisting any snapshot into `state`.
-    let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
-        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
-            .unwrap(),
-    )
-    .unwrap();
-    let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
-    let epoch = alice_group.epoch();
-
-    let aad_scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-    };
-    let aad = arkret_sdk::EncryptedEnvelopeAad::hidden(&aad_scope, "ak.strand.update").unwrap();
-    let key_ref = arkret_sdk::KeyRefObject::mls_exporter_aead(alice_group.group_id(), epoch);
-    let plaintext = br#"{"body":"no-snapshot history"}"#;
-    let payload = alice_group
-        .encrypt_payload_exporter_aead("application/json", realm, key_ref, aad, plaintext)
-        .unwrap();
-    let history_secret = alice_group
-        .export_history_secret_range(epoch, epoch)
-        .into_iter()
-        .find(|(e, _)| *e == epoch)
-        .map(|(_, secret)| secret)
-        .expect("retained history secret for the current epoch");
-
-    // No snapshot for the realm: the live-ratchet path cannot even instantiate
-    // a group, but the granted history secret still opens the content.
-    assert!(state.mls_snapshot_for(realm).is_none());
-    assert!(
-        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
-            .is_none(),
-        "without the granted secret there is nothing to decrypt"
-    );
-
-    let pending = state
-        .prepare_history_secrets(
-            history_store.as_ref(),
-            realm.to_owned(),
-            [(epoch, history_secret.to_vec())],
-        )
-        .unwrap()
-        .unwrap();
-    pending.persist(history_store.as_ref()).await.unwrap();
-    state.publish_history_secrets(pending);
-    let decrypted =
-        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &payload)
-            .expect("group-free tier-3 decrypt opens content with no local snapshot");
-    assert_eq!(decrypted, plaintext);
-
-    let _ = history_store.delete_secret(&history_key);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn realm_key_share_sender_signature_round_trips() {
-    // Provider signs `sender_signing_input()` with the active Ed25519 device
-    // signer; the receiver verifies it. A tampered body, a wrong key, or a
-    // missing signature are each handled as specified (reject on bad signature,
-    // tolerate an absent one).
-    use ed25519_dalek::SigningKey;
+fn realm_welcome_filter_keeps_circle_scope_from_same_realm() {
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let circle = "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
+    let message = json!({
+        "kind": "ak.mls.welcome",
+        "content": {
+            "mls_group_id": arkret_sdk::ScopeRef::Circle {
+                realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+                circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
+            }.canonical_mls_group_id().unwrap(),
+            "governance_binding": {
+                "effective_scope": {
+                    "kind": "circle",
+                    "realm_id": realm,
+                    "circle_id": circle,
+                }
+            }
+        }
+    });
+    assert!(mls_welcome_message_matches_realm(&message, realm));
+}
 
-    let seed = [42u8; 32];
-    let verifying = SigningKey::from_bytes(&seed).verifying_key();
-    let did = crate::identity::did_key::did_key_from_verifying_key(&verifying);
-    let _signer_guard = ActiveSignerGuard::install(seed, &did);
+#[test]
+fn ordinary_exporter_sender_domain_requires_canonical_device_id() {
+    let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
+    assert!(verify_exporter_sender_domain_for_send(device, false, true).is_ok());
+    assert!(matches!(
+        verify_exporter_sender_domain_for_send("not-a-device", false, true),
+        Err(MlsRuntimeError::Identity(_))
+    ));
+}
 
-    let realm = "ak:realm:AVzY-77xn68hVvme76fUgb86dEYJni4MCLds2DwWxKZ4";
-    let recipient_actor = "did:web:bob.example";
-    let recipient_device = "ak:device:01904100-0000-7000-8000-0000000000f6";
-    let sender_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-
-    let event = crate::mls::admission::build_realm_key_share_event(
-        realm,
-        "did:web:alice.example",
-        sender_device,
-        recipient_actor,
-        recipient_device,
-        3,
-        4,
-        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-        "c2VhbGVk".to_owned(),
-        "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc",
-        "ak:grant:AYhEOew9OY47Elo3DUdM-vG441-UQbeQzZosnACQC6QU",
-    )
-    .unwrap();
-    let payload: arkret_sdk::RealmKeySharePayload =
-        serde_json::from_value(serde_json::to_value(&event.payload()).unwrap()).unwrap();
-
-    // A real signature object was attached, and it verifies.
-    assert!(
-        matches!(
-            &payload.sender_device_signature,
-            arkret_sdk::SignatureMaterial::Variant1(signature)
-                if signature
-                    .get("signature")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some()
-        ),
-        "an active signer must attach a real sender_device_signature"
-    );
-    // SEC-02: with no cached directory record (None sender principal → Miss),
-    // verification falls back to the self-asserted embedded key.
-    assert!(verify_realm_key_share_sender_signature(&payload, None));
-
-    // Tamper with the covered body → signature must no longer verify.
-    let mut tampered = payload.clone();
-    tampered.material = arkret_sdk::RealmKeyShareMaterial::Ciphertext {
-        ciphertext: arkret_sdk::NonEmptyString::new("dGFtcGVyZWQ").unwrap(),
-    };
-    assert!(!verify_realm_key_share_sender_signature(&tampered, None));
-
-    // An empty signature object is tolerated on the Miss path (HPKE seal gates).
-    let mut unsigned = payload.clone();
-    unsigned.sender_device_signature = arkret_sdk::SignatureMaterial::Variant1(Default::default());
-    assert!(verify_realm_key_share_sender_signature(&unsigned, None));
+#[test]
+fn minimal_exporter_sender_domain_is_unavailable_before_leaf_identity_closes() {
+    let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
+    let error = verify_exporter_sender_domain_for_send(device, true, true).unwrap_err();
+    assert!(matches!(error, MlsRuntimeError::Encrypt(_)));
+    assert!(error.user_message().contains("principal#device"));
 }

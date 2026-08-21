@@ -663,6 +663,15 @@ pub(super) fn dispatch_calendar_rsvp(
     let build_base = base_url.clone();
     let build_realm_id = realm_id.clone();
     let build_actor_id = actor_id.clone();
+    let Some(digest_suite) = state_store
+        .read()
+        .trusted_mls_governance_checkpoint(&realm_id)
+        .map(|checkpoint| checkpoint.live_digest_suite)
+    else {
+        board_status
+            .set("cannot build RSVP: Realm governance checkpoint is not verified".to_owned());
+        return;
+    };
     spawn(async move {
         let built = with_authed_api(&build_base, api_token, |api| async move {
             let rows = api
@@ -674,7 +683,8 @@ pub(super) fn dispatch_calendar_rsvp(
                 &rows,
                 "calendar RSVP schedule projection",
             )?;
-            let schedule_heads = calendar_schedule_revision_heads(&events, &strand_id)?;
+            let schedule_heads =
+                calendar_schedule_revision_heads(&events, &strand_id, digest_suite)?;
             // The actor frontier and HLC belong to the authoring boundary; the
             // builder only states what the user chose.
             calendar_rsvp_operation(

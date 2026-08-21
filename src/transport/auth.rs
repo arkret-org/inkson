@@ -276,7 +276,10 @@ where
     Fut: std::future::Future<Output = anyhow::Result<T>>,
 {
     with_authed_sdk_client(base_url, session_credential, |http| async move {
-        f(crate::event_submit::EventSubmitter::new(http)).await
+        f(crate::event_submit::EventSubmitter::from_current_session(
+            http,
+        ))
+        .await
     })
     .await
 }
