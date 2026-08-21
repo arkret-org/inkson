@@ -558,9 +558,6 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: TEST_REALM_ID,
-        actor_id: "did:web:alice.example",
-        device_id: "ak:device:0196419b-0000-7000-8000-000000000001",
-        circle_id: None,
     };
 
     let projected = overlay_card_projection_with_operations_and_decrypt(

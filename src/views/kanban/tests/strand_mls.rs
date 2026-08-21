@@ -96,9 +96,6 @@ fn private_strand_display_text_blanks_undecryptable_envelope() {
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        actor_id: "did:web:alice.example",
-        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
-        circle_id: None,
     };
     // Envelope + ctx but no local snapshot → soft failure → blank.
     assert_eq!(private_strand_display_text(Some(&ctx), Some(&envelope)), "");
@@ -123,9 +120,6 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
-        actor_id: "did:web:alice.example",
-        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
-        circle_id: None,
     };
     // Even when the projection value is an un-decryptable envelope, the
     // sidecar wins (tier 1) with zero decryption.
@@ -165,9 +159,6 @@ fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
-        actor_id: "did:web:alice.example",
-        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
-        circle_id: None,
     };
     let envelope = json!({
         "scheme": "mls_rfc9420",
@@ -218,9 +209,6 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: realm,
-        actor_id: "did:web:alice.example",
-        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
-        circle_id: None,
     };
     let strand_view = crate::state::projection_views::StrandProjectionView {
         strand_id: strand.to_owned(),
@@ -305,9 +293,6 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
     let locked_ctx = MlsDecryptCtx {
         state_store: &locked_store,
         realm_id: realm,
-        actor_id: "did:web:alice.example",
-        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
-        circle_id: None,
     };
     let locked = card_from_strand_projection(&strand_view(realm, strand), Some(&locked_ctx));
     assert_eq!(locked.synthesis, "");
@@ -331,9 +316,6 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
     let unlocked_ctx = MlsDecryptCtx {
         state_store: &unlocked_store,
         realm_id: realm,
-        actor_id: "did:web:alice.example",
-        device_id: "ak:device:01904100-0000-7000-8000-000000000001",
-        circle_id: None,
     };
     let unlocked = card_from_strand_projection(&strand_view(realm, strand), Some(&unlocked_ctx));
     assert_eq!(unlocked.synthesis, "unlocked synthesis");

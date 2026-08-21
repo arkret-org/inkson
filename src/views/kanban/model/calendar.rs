@@ -915,9 +915,6 @@ fn calendar_location_display_value(
         {
             return (calendar_location_plaintext_label(&parsed), false);
         }
-        if let Some(parsed) = decrypt_ctx.and_then(|ctx| decrypt_private_strand_value(ctx, value)) {
-            return (calendar_location_plaintext_label(&parsed), false);
-        }
         return (String::new(), true);
     }
     (calendar_location_plaintext_label(value), false)

@@ -1,18 +1,13 @@
 use super::*;
 
 /// Borrowed decrypt context threaded into the pure card builders so an
-/// encrypted realm's private patch values (`encrypted_content` and the
-/// encryptable `metadata.fields` leaves) can be decrypted on read. All fields are cheap borrows
-/// captured from `KanbanPanel` (`state_store.read()`, `account_did`,
-/// `device_id`, and the Realm id). `None` (the common, unencrypted
-/// case, and every test) means "render plaintext values as-is".
+/// encrypted realm's author-side plaintext cache can be read without cloning
+/// the local store. Projected ciphertext stays opaque until its verified outer
+/// Event context is threaded through the projection.
 #[derive(Clone, Copy)]
 pub(crate) struct MlsDecryptCtx<'a> {
     pub(crate) state_store: &'a LocalStateStore,
     pub(crate) realm_id: &'a str,
-    pub(crate) actor_id: &'a str,
-    pub(crate) device_id: &'a str,
-    pub(crate) circle_id: Option<&'a str>,
 }
 
 /// Build a render-time decrypt context only when entering the MLS runtime is
@@ -27,8 +22,6 @@ pub(crate) fn mls_decrypt_ctx_if_ready<'a>(
     state_store: &'a LocalStateStore,
     realm_id: &'a str,
     actor_id: &'a str,
-    device_id: &'a str,
-    circle_id: Option<&'a str>,
 ) -> Option<MlsDecryptCtx<'a>> {
     let snapshot_requires_account_secret = state_store.mls_snapshot_for(realm_id).is_some();
     if snapshot_requires_account_secret {
@@ -47,9 +40,6 @@ pub(crate) fn mls_decrypt_ctx_if_ready<'a>(
     Some(MlsDecryptCtx {
         state_store,
         realm_id,
-        actor_id,
-        device_id,
-        circle_id,
     })
 }
 
@@ -102,52 +92,20 @@ pub(crate) fn value_is_mls_envelope(value: &Value) -> bool {
     mls_envelope_value(value).is_some()
 }
 
-/// Decrypt a single private strand patch value if (and only if) it is an MLS
-/// envelope. Returns the decrypted plaintext patch value parsed as JSON
-/// (e.g. a string `"…body text…"` or an object `{"body":"…"}`), or `None`
-/// when `value` is not an envelope or the decrypt softly fails (no
-/// snapshot / wrong device secret / payload that doesn't decrypt). On
-/// `None` the caller keeps the original value (plaintext realms) or falls
-/// back to a blank field (encrypted-but-locked).
-pub(crate) fn decrypt_private_strand_value(
-    ctx: &MlsDecryptCtx<'_>,
-    value: &Value,
-) -> Option<Value> {
-    let envelope = mls_envelope_value(value)?;
-    let plaintext = crate::state::projection::try_local_mls_decrypt_core_for_effective_scope(
-        ctx.state_store,
-        ctx.realm_id,
-        ctx.actor_id,
-        ctx.device_id,
-        envelope,
-        ctx.circle_id,
-    )?;
-    serde_json::from_slice::<Value>(&plaintext).ok()
-}
-
 /// Render `value` as display text, transparently decrypting it first when
-/// it is an MLS envelope and a decrypt context is available. When the
-/// value is an envelope but decryption is not possible (no `ctx`, no
-/// snapshot, wrong key), the field renders blank rather than leaking the
-/// raw envelope JSON through `strand_body_display_text`.
+/// it is plaintext. Projected encrypted values stay opaque because they do
+/// not carry the verified outer Event context required to reconstruct the
+/// authenticated header. The author-side plaintext cache is handled by
+/// [`private_strand_field_text`].
 pub(crate) fn private_strand_display_text(
-    ctx: Option<&MlsDecryptCtx<'_>>,
+    _ctx: Option<&MlsDecryptCtx<'_>>,
     value: Option<&Value>,
 ) -> String {
     let Some(value) = value else {
         return String::new();
     };
     if value_is_mls_envelope(value) {
-        return match ctx.and_then(|ctx| decrypt_private_strand_value(ctx, value)) {
-            Some(plaintext) => strand_body_display_text(Some(&plaintext)),
-            // Encrypted but un-decryptable: return BLANK (never the raw
-            // envelope, never crash). The locked state is surfaced
-            // separately via `private_strand_field_locked` so the placeholder
-            // text never contaminates `card.synthesis` / the editable draft
-            // (which would let an edit overwrite the real ciphertext). See
-            // X10.2.
-            None => String::new(),
-        };
+        return String::new();
     }
     strand_body_display_text(Some(value))
 }
@@ -189,16 +147,8 @@ pub(crate) fn private_strand_field_locked(
     {
         return false;
     }
-    // Decryptable non-empty content (another member's ciphertext) → not
-    // locked. Empty decrypted text is treated like a missing plaintext for an
-    // encrypted `set`, so the UI does not collapse unreadable private content
-    // into a misleading empty state.
-    if let Some(plaintext) = ctx.and_then(|ctx| decrypt_private_strand_value(ctx, value))
-        && !strand_body_display_text(Some(&plaintext)).trim().is_empty()
-    {
-        return false;
-    }
-    // Envelope, no sidecar, can't decrypt → locked.
+    // Envelope with no author-side plaintext is locked until its verified
+    // outer Event context is available to the projection.
     true
 }
 
@@ -210,9 +160,8 @@ pub(crate) fn private_strand_field_locked(
 ///    author's own ciphertext). Stored as the JSON-serialized patch value, so we parse it back and
 ///    run it through `strand_body_display_text` exactly as the decrypt tier would, keeping
 ///    write+read symmetric.
-/// 2. **Decrypt** (`private_strand_display_text`) — for ciphertext written by *other* members /
-///    other leaves synced in, which we *can* decrypt.
-/// 3. **Blank** — encrypted-but-unreadable; never leaks the raw envelope.
+/// 2. **Blank** — encrypted content without its verified outer Event context; never leaks the raw
+///    envelope.
 ///
 /// `field_path` MUST match the token the writer stored under — the ENCRYPTED
 /// patch key (`kanban_encrypted_patch_path`): `"encrypted_content"` for the
@@ -235,7 +184,7 @@ pub(crate) fn private_strand_field_text(
             return text;
         }
     }
-    // Tiers 2 + 3: decrypt another member's ciphertext, else blank.
+    // Tier 2: encrypted content remains opaque without verified Event context.
     private_strand_display_text(ctx, value)
 }
 

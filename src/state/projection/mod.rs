@@ -12,7 +12,6 @@ mod sync;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use decrypt::try_local_mls_decrypt_core_for_effective_scope;
 pub use model::ProjectionEvent;
 pub use sync::projection_events_from_sync_realms;
 
