@@ -54,7 +54,7 @@ async fn external_candidate_material_is_bounded_and_durable() {
     for seed in 1..=9 {
         let (key, secret, attribution) = candidate(seed, observed_at);
         store
-            .receive_history_candidate(&secrets, key.clone(), &secret, attribution, observed_at)
+            .receive_history_candidate(&secrets, &secret, attribution, observed_at)
             .await
             .unwrap();
         keys.push(key);

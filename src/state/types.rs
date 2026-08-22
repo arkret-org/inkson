@@ -1212,7 +1212,7 @@ pub struct ClientLocalState {
     /// Garth-owned bounded external candidate ledger. Secret bytes remain in
     /// the hardened secure store and never enter this metadata snapshot.
     #[serde(default)]
-    pub(crate) history_candidate_state: garth::HistoryCandidateStoreSnapshot,
+    pub(crate) history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger,
     /// Crash-safe history request/response-stream/retry state owned by Garth. The
     /// revision participates in compare-and-swap updates across concurrent UI
     /// tasks so ACK high-water and exact retries cannot be rolled back.
@@ -1532,7 +1532,7 @@ impl Default for ClientLocalState {
             authenticated_identity_links: BTreeMap::new(),
             history_secrets: BTreeMap::new(),
             history_epoch_cipher_suites: BTreeMap::new(),
-            history_candidate_state: garth::HistoryCandidateStoreSnapshot::default(),
+            history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger::default(),
             history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),

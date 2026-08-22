@@ -541,13 +541,7 @@ where
                         )
                         .map_err(anyhow::Error::msg)?;
                     state
-                        .receive_history_candidate(
-                            secure_store,
-                            material_key,
-                            &secret,
-                            attribution,
-                            now,
-                        )
+                        .receive_history_candidate(secure_store, &secret, attribution, now)
                         .await?;
                 }
             }

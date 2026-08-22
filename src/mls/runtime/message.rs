@@ -883,7 +883,13 @@ pub(crate) fn decrypt_external_history_candidates_for_event(
             "external history candidate Event binding is inconsistent".to_owned(),
         ));
     }
-    let verified_sender_domain = event_binding_key.verified_sender_domain.as_bytes();
+    let cipher_suite = state_store
+        .history_epoch_cipher_suite(effective_scope, &payload.group_id, payload.epoch)
+        .ok_or_else(|| {
+            MlsRuntimeError::Decrypt("verified history epoch ciphersuite is unavailable".to_owned())
+        })?;
+    let ciphertext = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
+        .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
     let candidates = state_store
         .history_candidates_for(
             secure_store,
@@ -893,56 +899,22 @@ pub(crate) fn decrypt_external_history_candidates_for_event(
         )
         .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
     for candidate in candidates {
-        let secret = arkret_sdk::base64url_decode(candidate.secret_b64u.as_bytes())
-            .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
-        let cipher_suite = state_store
-            .history_epoch_cipher_suite(effective_scope, &payload.group_id, payload.epoch)
-            .ok_or_else(|| {
-                MlsRuntimeError::Decrypt(
-                    "verified history epoch ciphersuite is unavailable".to_owned(),
-                )
-            })?;
-        let ciphertext = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
-            .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
-        let plaintext = arkret_sdk::mls::decrypt_content_exporter_aead_standalone(
-            &secret,
-            verified_sender_domain,
+        // The AEAD attempt and the Event->candidate binding it establishes are
+        // one SDK operation; this client only decides what to persist.
+        let attempt = arkret_sdk::mls::bind_event_candidate(
+            &candidate,
+            &event_binding_key,
             &payload.pre_encryption_header,
             &cipher_suite,
             &ciphertext,
+            now,
         )
-        .ok();
-        let existing = state_store.history_candidate_binding(
-            &event_binding_key,
-            &candidate.material_key.candidate_digest,
-        );
-        if let Some(existing) = existing {
-            if (plaintext.is_some())
-                != (existing.outcome == arkret_sdk::EventCandidateBindingOutcome::Success)
-            {
-                return Err(MlsRuntimeError::Decrypt(
-                    "durable external history candidate binding contradicts AEAD outcome"
-                        .to_owned(),
-                ));
-            }
-        } else {
-            let binding = arkret_sdk::EventCandidateBinding {
-                event_binding_key: event_binding_key.clone(),
-                candidate_digest: candidate.material_key.candidate_digest.clone(),
-                outcome: if plaintext.is_some() {
-                    arkret_sdk::EventCandidateBindingOutcome::Success
-                } else {
-                    arkret_sdk::EventCandidateBindingOutcome::Failure
-                },
-                first_observed_at: now,
-                expires_at: now + chrono::Duration::days(30),
-            };
-            state_store
-                .record_history_candidate_binding(binding, now)
-                .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
-        }
-        if plaintext.is_some() {
-            return Ok(plaintext);
+        .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
+        state_store
+            .record_history_candidate_binding(attempt.binding, now)
+            .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
+        if attempt.plaintext.is_some() {
+            return Ok(attempt.plaintext);
         }
     }
     Ok(None)
