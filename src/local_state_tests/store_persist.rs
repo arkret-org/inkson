@@ -985,10 +985,11 @@ fn same_principal_core_on_different_servers_uses_distinct_local_state() {
     let principal = "ak:did_core:webvh:zSamePrincipal";
     let authority_a = test_authority_at_server(principal, "ak:did_core:webvh:zServerA");
     let authority_b = test_authority_at_server(principal, "ak:did_core:webvh:zServerB");
-    let profile_a = test_profile_id(&authority_a);
-    let profile_b = test_profile_id(&authority_b);
 
-    let full_id = arkret_sdk::DidFullId::new("did:webvh:zSamePrincipal".to_owned()).unwrap();
+    let full_id = arkret_sdk::DidFullId::new(
+        "did:webvh:zSamePrincipal:principal.example:users:alice".to_owned(),
+    )
+    .unwrap();
     let account_a = super::test_account_context_for_authority(&full_id, authority_a.clone());
     let account_b = super::test_account_context_for_authority(&full_id, authority_b.clone());
     assert!(store.switch_active_account(&account_a).unwrap());
@@ -998,7 +999,7 @@ fn same_principal_core_on_different_servers_uses_distinct_local_state() {
     assert!(store.load().sync_cursor.is_none());
     store.save_sync_cursor("sx:authority-b");
 
-    assert!(!store.switch_active_account(&account_a).unwrap());
+    assert!(store.switch_active_account(&account_a).unwrap());
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:authority-a"));
 }
 
