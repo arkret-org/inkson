@@ -181,7 +181,7 @@ fn put_body_has_expected_item_identifiers() {
     assert!(is_mls_account_secret_backup(&body));
     assert_eq!(
         body["contents"][0]["item_kind"].as_str(),
-        Some(MLS_ACCOUNT_SECRET_ITEM_KIND)
+        Some(MLS_ACCOUNT_SECRET_ITEM_KIND.as_str())
     );
     assert_eq!(
         body["contents"][0]["secret_id"].as_str(),
@@ -189,7 +189,7 @@ fn put_body_has_expected_item_identifiers() {
     );
     assert_eq!(body["backup_kind"], "secret_storage");
     // item_kind must be one both validators' allowlists accept.
-    assert_eq!(MLS_ACCOUNT_SECRET_ITEM_KIND, "mls_account_secret");
+    assert_eq!(MLS_ACCOUNT_SECRET_ITEM_KIND.as_str(), "mls_account_secret");
     assert_eq!(
         mls_account_secret_backup_version(&body),
         crate::mls::runtime::ACCOUNT_MLS_SECRET_CURRENT_VERSION
@@ -756,14 +756,17 @@ fn sidecar_backup_has_expected_identifiers_and_no_plaintext_leak() {
     assert!(is_mls_private_plaintext_backup(&body));
     assert_eq!(
         body["contents"][0]["item_kind"].as_str(),
-        Some(MLS_PRIVATE_PLAINTEXT_ITEM_KIND)
+        Some(MLS_PRIVATE_PLAINTEXT_ITEM_KIND.as_str())
     );
     assert_eq!(
         body["contents"][0]["secret_id"].as_str(),
         Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID)
     );
     assert_eq!(body["backup_kind"], "secret_storage");
-    assert_eq!(MLS_PRIVATE_PLAINTEXT_ITEM_KIND, "mls_private_plaintext");
+    assert_eq!(
+        MLS_PRIVATE_PLAINTEXT_ITEM_KIND.as_str(),
+        "mls_private_plaintext"
+    );
     let serialized = serde_json::to_string(&body).unwrap();
     assert!(!serialized.contains("author body"));
     assert!(!serialized.contains("author synthesis"));

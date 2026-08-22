@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use arkret_models_collaboration::agent_operations::{
     AgentDeactivateRequestBody, AgentLifecycleState, AgentPairingMode, AgentPauseRequestBody,
-    AgentPcrRecoveryState, AgentProvisionOutcome, AgentProvisionRequestBody,
-    AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState, AgentView, KeyState,
+    AgentProvisionOutcome, AgentProvisionRequestBody, AgentRenewPairingOutcome,
+    AgentResumeRequestBody, AgentRuntimeState, AgentView, KeyState,
 };
 use arkret_models_collaboration::events_payloads::agent::AgentKeyScope;
 use dioxus::prelude::*;
@@ -38,8 +38,12 @@ fn normalize_agent_slug(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-pub(super) fn should_offer_pairing_renewal(pcr_recovery_ready: bool, runtime_state: &str) -> bool {
-    pcr_recovery_ready && matches!(runtime_state, "pending_runtime_key" | "pairing_expired")
+/// Pairing renewal is offered for a controller-bound Agent whose runtime key is
+/// still missing or whose handle expired. key-management.md §7.5.6: pairing
+/// admission verifies current controller/Agent authority, proof-of-possession
+/// and the accepted control frontier only — never a backup-readiness gate.
+pub(super) fn should_offer_pairing_renewal(has_pcr_binding: bool, runtime_state: &str) -> bool {
+    has_pcr_binding && matches!(runtime_state, "pending_runtime_key" | "pairing_expired")
 }
 
 fn should_offer_security_refresh(has_key_state: bool, lifecycle_state: &str) -> bool {
@@ -136,10 +140,6 @@ fn requested_scope_matches_service_preset(
         .actions()
         .iter()
         .all(|action| scope.actions.iter().any(|candidate| candidate == action))
-}
-
-fn pairing_material_can_be_exposed(pcr_recovery: Option<&AgentPcrRecoveryState>) -> bool {
-    pcr_recovery.is_some_and(AgentPcrRecoveryState::is_ready)
 }
 
 fn agent_view_runtime_state(agent: &AgentView) -> AgentRuntimeState {
@@ -321,14 +321,6 @@ mod directory_refresh_tests {
     }
 
     #[test]
-    fn pending_agent_pcr_does_not_expose_runtime_pairing_material() {
-        assert!(!pairing_material_can_be_exposed(Some(
-            &AgentPcrRecoveryState::Pending
-        )));
-        assert!(!pairing_material_can_be_exposed(None));
-    }
-
-    #[test]
     fn live_pairing_detail_overrides_lossy_directory_runtime_summary() {
         let mut row = test_pairing_view(
             AgentLifecycleState::Active,
@@ -386,7 +378,8 @@ mod directory_refresh_tests {
                     "did:web:agents.example:summary#managed-controller",
                 )
                 .unwrap(),
-                pcr_recovery: AgentPcrRecoveryState::Pending,
+                pcr_recovery:
+                    arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Pending,
                 requested_scope: scope,
                 requested_scope_digest: scope_digest,
                 pairing_request_id: matches!(
@@ -435,7 +428,7 @@ mod directory_refresh_tests {
             principal_control_realm_id: key_state.principal_control_realm_id,
             controller_authorization_ref: key_state.controller_authorization_ref,
             requested_scope_digest: key_state.requested_scope_digest,
-            pcr_recovery: AgentPcrRecoveryState::Ready {
+            pcr_recovery: arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Ready {
                 backup_id: arkret_sdk::BackupId::new(
                     "ak:backup:01964137-0000-7000-8000-000000000002".to_owned(),
                 )
@@ -541,9 +534,6 @@ fn apply_renewed_pairing(
 ) -> Result<(), &'static str> {
     if outcome.agent_id.as_str() != renewed_agent_id {
         return Err("renewed pairing response identifies a different Agent");
-    }
-    if !outcome.pcr_recovery.is_ready() {
-        return Err("renewed pairing did not preserve ready Agent recovery coverage");
     }
     if outcome.pairing_request_id.trim().is_empty() {
         return Err("renewed pairing response omitted the pairing request id");
@@ -1649,7 +1639,6 @@ fn spawn_provision_agent(
                 &bootstrap_outcome.agent_id,
                 &bootstrap_outcome.principal_control_realm_id,
                 &bootstrap_outcome.controller_authorization_ref,
-                None,
             )
             .await
         })
@@ -1864,9 +1853,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
         .as_ref()
         .map(|agent| agent.agent.lifecycle)
         .unwrap_or_default();
-    let selected_pcr_recovery_ready = pairing_material_can_be_exposed(
-        selected_key_state.map(|key_state| &key_state.pcr_recovery),
-    );
+    let selected_has_pcr_binding = selected_key_state.is_some();
     let selected_pcr_bootstrap_target = selected_agent.as_ref().and_then(|agent| {
         let key_state = agent.key_state.as_ref()?;
         let agent_id = agent.agent.agent_id.clone();
@@ -1912,8 +1899,8 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
     let selected_can_replace_runtime = selected_runtime_state == "ready";
     let selected_is_replacement_pairing = selected_runtime_state == "replacing";
     let selected_can_renew_pairing =
-        should_offer_pairing_renewal(selected_pcr_recovery_ready, &selected_runtime_state)
-            || (selected_is_replacement_pairing && selected_pcr_recovery_ready);
+        should_offer_pairing_renewal(selected_has_pcr_binding, &selected_runtime_state)
+            || (selected_is_replacement_pairing && selected_has_pcr_binding);
     let selected_should_show_pairing_card = should_show_pairing_card(
         &selected_runtime_state,
         selected_has_pairing_handle,
@@ -2287,14 +2274,14 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                     build_agent_pairing_deep_link(&base_url, &pairing_token)
                                 };
                                 let pairing_qr_svg = render_agent_pairing_qr_svg(&deep_link);
-                                let pairing_badge = if !selected_pcr_recovery_ready {
+                                let pairing_badge = if !selected_has_pcr_binding {
                                     "badge amber"
                                 } else if selected_pairing_is_expired {
                                     "badge red"
                                 } else {
                                     "badge amber"
                                 };
-                                let pairing_label = if !selected_pcr_recovery_ready {
+                                let pairing_label = if !selected_has_pcr_binding {
                                     "Setup incomplete"
                                 } else if selected_pairing_is_expired {
                                     "Expired"
@@ -2319,7 +2306,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                 span { class: "{pairing_badge}", "{pairing_label}" }
                                             }
                                         }
-                                        if !selected_pcr_recovery_ready {
+                                        if !selected_has_pcr_binding {
                                             div {
                                                 class: "agent-admin-status",
                                                 "data-testid": "agent-admin-pcr-recovery-pending",
@@ -2367,7 +2354,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                             &bootstrap_agent_id,
                                                                             &realm_id,
                                                                             &authorization_ref,
-                                                                            None,
                                                                         )
                                                                         .await
                                                                     },
@@ -2483,14 +2469,14 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                 }
                                             }
                                         }
-                                        if selected_pcr_recovery_ready && selected_pairing_is_expired {
+                                        if selected_has_pcr_binding && selected_pairing_is_expired {
                                             div {
                                                 class: "agent-admin-status error",
                                                 "data-testid": "agent-admin-pairing-expired-message",
                                                 "This pairing request expired. The expired code and link can never be used again; pair again to issue a fresh code and QR for this agent."
                                             }
                                         }
-                                        if selected_pcr_recovery_ready && !selected_pairing_is_expired {
+                                        if selected_has_pcr_binding && !selected_pairing_is_expired {
                                             QrSharePanel {
                                                 qr_svg: pairing_qr_svg,
                                                 url: deep_link,
@@ -2757,7 +2743,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                     spawn(async move {
                                                         let repaired_agent_id = agent_id.clone();
                                                         let result = with_authed_api(&base, api_token, move |api| async move {
-                                                            let seal = super::bootstrap::seal_managed_agent_pcr_current(
+                                                            let _seal = super::bootstrap::seal_managed_agent_pcr_current(
                                                                 &api,
                                                                 state_store,
                                                                 &realm_id,
@@ -2769,7 +2755,6 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                 &agent_id,
                                                                 &realm_id,
                                                                 authorization_ref.as_str(),
-                                                                Some(seal.id.as_str()),
                                                             )
                                                             .await
                                                             .err()

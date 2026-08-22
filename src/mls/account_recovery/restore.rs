@@ -23,14 +23,6 @@ use super::selection::{
 };
 use super::series::verify_series_chain;
 
-fn is_managed_agent_pcr_history_backup(body: &Value) -> bool {
-    body.pointer("/domain_separation/subdomain")
-        .and_then(Value::as_str)
-        == Some("managed_agent_pcr")
-        && mls_history_recipient_method(body)
-            == Some(arkret_sdk::KeyBackupRecipientMethod::RecoveryPublicKey)
-}
-
 fn mls_history_recipient_method(body: &Value) -> Option<arkret_sdk::KeyBackupRecipientMethod> {
     serde_json::from_value::<arkret_sdk::KeyBackupSummaryEncryption>(
         body.get("encryption")?.clone(),
@@ -56,135 +48,7 @@ fn select_local_secret_mls_history_backups(list_payload: &Value) -> Vec<Value> {
         .collect()
 }
 
-fn restore_managed_agent_pcr_history_with_recovery_key(
-    list_payload: &Value,
-    state_store: &mut crate::state::LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    actor_id: &str,
-    recovery_private_key: &[u8],
-    expected_recovery_policy_ref: (&str, u64),
-) -> Result<usize> {
-    let actor_core_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
-    let Some(body) = select_mls_history_backups(list_payload)
-        .into_iter()
-        .filter(is_managed_agent_pcr_history_backup)
-        .max_by_key(|body| {
-            body.get("series_seq")
-                .and_then(Value::as_u64)
-                .unwrap_or_default()
-        })
-    else {
-        return Ok(0);
-    };
-    let policy = body
-        .get("recovery_policy_ref")
-        .ok_or_else(|| anyhow!("managed Agent PCR backup has no recovery_policy_ref"))?;
-    if policy.get("policy_id").and_then(Value::as_str) != Some(expected_recovery_policy_ref.0)
-        || policy.get("policy_version").and_then(Value::as_u64)
-            != Some(expected_recovery_policy_ref.1)
-    {
-        return Err(anyhow!("managed Agent PCR backup recovery policy mismatch"));
-    }
-    let typed_plaintext =
-        crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, &body)?;
-    let typed_envelope = serde_json::from_value::<arkret_sdk::KeyBackup>(body.clone())?;
-    typed_plaintext.validate_for_envelope(&typed_envelope)?;
-
-    struct RestoredState {
-        realm_id: String,
-        group_id: String,
-        epoch: u64,
-        owner_id: String,
-        state_bytes: Vec<u8>,
-        salt: [u8; 16],
-    }
-    let mut decoded = Vec::new();
-    for item in &typed_plaintext.items {
-        if item.item_kind != "mls_group_state" {
-            continue;
-        }
-        let realm_id = item
-            .realm_id
-            .as_ref()
-            .ok_or_else(|| anyhow!("managed recovery MLS item has no realm_id"))?
-            .to_string();
-        let group_id = item
-            .mls_group_id
-            .as_ref()
-            .ok_or_else(|| anyhow!("managed recovery MLS item has no mls_group_id"))?
-            .clone();
-        let epoch = item
-            .epoch
-            .ok_or_else(|| anyhow!("managed recovery MLS item has no epoch"))?;
-        let state_bytes = B64
-            .decode(item.secret_b64u.as_bytes())
-            .map_err(|error| anyhow!("decode managed recovery MLS state: {error}"))?;
-        let record =
-            crate::mls::persistence::MlsSnapshotEnvelope::restore_state_record(&state_bytes)
-                .map_err(|error| anyhow!("validate managed recovery MLS state record: {error}"))?;
-        if record.group_id != group_id || record.epoch != epoch {
-            return Err(anyhow!(
-                "managed recovery MLS state record metadata does not match its keybag item"
-            ));
-        }
-        let binding = item.managed_principal_binding.as_ref().ok_or_else(|| {
-            anyhow!("managed Agent PCR recovery item has no managed_principal_binding")
-        })?;
-        if binding.controller_id != actor_core_id
-            || binding.principal_control_realm_id.as_str() != realm_id
-        {
-            return Err(anyhow!(
-                "managed recovery binding does not match controller or PCR"
-            ));
-        }
-        let owner_id = binding.managed_principal_id.to_string();
-        let epoch_floor = crate::mls::runtime::mls_restore_epoch_floor(state_store, &realm_id);
-        if epoch < epoch_floor {
-            return Err(anyhow!(
-                "managed recovery MLS epoch {epoch} is below local floor {epoch_floor} for {realm_id}"
-            ));
-        }
-        let mut salt = [0_u8; 16];
-        getrandom::fill(&mut salt)
-            .map_err(|error| anyhow!("generate managed recovery snapshot salt: {error}"))?;
-        decoded.push(RestoredState {
-            realm_id,
-            group_id,
-            epoch,
-            owner_id,
-            state_bytes,
-            salt,
-        });
-    }
-    if decoded.is_empty() {
-        return Err(anyhow!(
-            "managed Agent PCR recovery keybag contains no MLS group state"
-        ));
-    }
-    for state in &decoded {
-        let secret =
-            crate::mls::runtime::load_or_create_account_mls_secret(secure_store, &state.owner_id)
-                .map_err(|error| anyhow!("prepare restored MLS snapshot secret: {error}"))?;
-        if state.owner_id != actor_id {
-            crate::mls::runtime::mark_account_mls_secret_verified(secure_store, &state.owner_id)
-                .map_err(|error| anyhow!("mark restored managed MLS secret verified: {error}"))?;
-        }
-        let snapshot = crate::mls::persistence::encrypt_state(
-            &state.realm_id,
-            &state.group_id,
-            state.epoch,
-            &state.state_bytes,
-            &secret,
-            &state.salt,
-        );
-        state_store
-            .save_mls_snapshot(state.realm_id.clone(), snapshot)
-            .map_err(anyhow::Error::msg)?;
-    }
-    Ok(decoded.len())
-}
-
-const PORTABLE_HISTORY_PENDING: &str = "portable MLS history restore is not ready: history_secret_segment authorization requires complete accepted activation views";
+const PORTABLE_HISTORY_PENDING: &str = "portable MLS history restore is not ready: history_secret_ranges authorization requires complete accepted activation views";
 
 /// Decide whether the app should ask the user for their Recovery Key to unlock
 /// MLS history.
@@ -1108,14 +972,6 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
     crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
         .map_err(|err| anyhow!("mark restored account MLS secret verified: {err}"))?;
     report.account_secret_imported = true;
-    report.restored += restore_managed_agent_pcr_history_with_recovery_key(
-        list_payload,
-        state_store,
-        secure_store,
-        actor_id,
-        recovery_private_key,
-        expected_recovery_policy_ref,
-    )?;
 
     restore_history_and_sidecar(
         list_payload,

@@ -1,4 +1,6 @@
-use arkret_models_crypto::{KeyBackup, KeyBackupContentItem};
+use arkret_models_crypto::{
+    KeyBackup, KeyBackupContentItem, KeyBackupKeybag, SecretStorageContentIndex, SecretStorageItem,
+};
 use arkret_wire::HPKE_SUITE_X25519_CHACHA20POLY1305_V1;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -8,53 +10,34 @@ use super::BackupKind;
 use crate::recovery_crypto::VaultKek;
 
 fn plaintext_item(
-    item: &KeyBackupContentItem,
+    item: &SecretStorageContentIndex,
     secret: &[u8],
-) -> anyhow::Result<arkret_sdk::PlaintextItem> {
+) -> anyhow::Result<SecretStorageItem> {
     let secret_id = item
         .secret_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("key backup content item requires secret_id"))?;
-    Ok(arkret_sdk::PlaintextItem {
-        item_kind: item.item_kind.clone(),
+    Ok(SecretStorageItem {
+        item_kind: item.item_kind,
         secret_id,
         secret_b64u: B64.encode(secret),
         secret_generation: item.secret_version.map(u64::from),
-        realm_id: item.realm_id.clone(),
-        managed_principal_binding: item.managed_principal_binding.clone(),
-        mls_group_id: item.mls_group_id.clone(),
-        effective_scope: item.effective_scope.clone(),
-        from_epoch: item.from_epoch,
-        to_epoch: item.to_epoch,
-        group_state_ref: item.group_state_ref.clone(),
-        policy_digest: item.policy_digest.clone(),
-        membership_frontier_digest: item.membership_frontier_digest.clone(),
-        epoch: item.epoch,
-        first_event_id: item.first_event_id.clone(),
-        last_event_id: item.last_event_id.clone(),
         extra: Default::default(),
     })
 }
 
-fn public_content_item(item: &arkret_sdk::PlaintextItem) -> anyhow::Result<KeyBackupContentItem> {
-    Ok(KeyBackupContentItem {
-        item_kind: item.item_kind.clone(),
-        realm_id: item.realm_id.clone(),
-        managed_principal_binding: item.managed_principal_binding.clone(),
-        mls_group_id: item.mls_group_id.clone(),
-        effective_scope: item.effective_scope.clone(),
-        from_epoch: item.from_epoch,
-        to_epoch: item.to_epoch,
-        group_state_ref: item.group_state_ref.clone(),
-        policy_digest: item.policy_digest.clone(),
-        membership_frontier_digest: item.membership_frontier_digest.clone(),
-        epoch: item.epoch,
-        first_event_id: item.first_event_id.clone(),
-        last_event_id: item.last_event_id.clone(),
-        secret_id: Some(item.secret_id.clone()),
-        secret_version: item.secret_version()?,
-        extra: Default::default(),
-    })
+fn public_content_item(item: &SecretStorageItem) -> anyhow::Result<KeyBackupContentItem> {
+    Ok(KeyBackupContentItem::SecretStorage(
+        SecretStorageContentIndex {
+            item_kind: item.item_kind,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
+            secret_id: Some(item.secret_id.clone()),
+            secret_version: item.secret_version()?,
+            extra: Default::default(),
+        },
+    ))
 }
 
 /// Spec §7.5 builder: assemble a `passphrase_kdf` backup envelope and seal
@@ -73,7 +56,7 @@ pub fn build_passphrase_kdf_backup_body(
     secret: &[u8],
     class: BackupKind,
     subdomain: &str,
-    item: &KeyBackupContentItem,
+    item: &SecretStorageContentIndex,
 ) -> anyhow::Result<KeyBackup> {
     let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
         .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?;
@@ -107,7 +90,7 @@ pub fn build_passphrase_kdf_backup_successor_body(
     predecessor: &KeyBackup,
     root: &VaultKek,
     secret: &[u8],
-    item: &KeyBackupContentItem,
+    item: &SecretStorageContentIndex,
     frontier_digest: &arkret_sdk::Hash,
     device_generation_ref: u64,
 ) -> anyhow::Result<KeyBackup> {
@@ -170,19 +153,6 @@ fn recovery_public_key_info(body: &KeyBackup) -> anyhow::Result<Vec<u8>> {
     crate::canonical::canonical_json_bytes(&info)
 }
 
-fn canonical_managed_principal_bindings(
-    items: &[KeyBackupContentItem],
-) -> anyhow::Result<Vec<arkret_sdk::ManagedPrincipalBinding>> {
-    items
-        .iter()
-        .filter_map(|item| item.managed_principal_binding.clone())
-        .map(|binding| {
-            crate::canonical::canonical_json_bytes(&binding).map(|bytes| (bytes, binding))
-        })
-        .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()
-        .map(|bindings| bindings.into_values().collect())
-}
-
 /// Spec §7.5.2 builder: assemble a `recovery_public_key` backup envelope and
 /// HPKE-seal `plaintext` to `recovery_public_key`. ANY device (holding only the
 /// public key) can build this; only the recovery private key opens it — the
@@ -197,7 +167,7 @@ pub fn build_recovery_public_key_backup_body(
     recovery_key_ref: &str,
     class: BackupKind,
     subdomain: &str,
-    item: &KeyBackupContentItem,
+    item: &SecretStorageContentIndex,
     plaintext: &[u8],
     // Active recovery policy this recovery-public-key envelope binds. The
     // server cross-checks it against the actor's accepted policy.
@@ -232,7 +202,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
     recovery_key_ref: &str,
     class: BackupKind,
     subdomain: &str,
-    item: &KeyBackupContentItem,
+    item: &SecretStorageContentIndex,
     plaintext: &[u8],
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
@@ -266,7 +236,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     recovery_key_ref: &str,
     class: BackupKind,
     subdomain: &str,
-    plaintext_items: Vec<arkret_sdk::PlaintextItem>,
+    plaintext_items: Vec<SecretStorageItem>,
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
@@ -318,8 +288,10 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
                 backup_kind: class,
                 backup_version: "kb_1".to_owned(),
                 created_at,
-                item_kinds: items.iter().map(|item| item.item_kind.clone()).collect(),
-                managed_principal_bindings: canonical_managed_principal_bindings(&items)?,
+                item_kinds: items
+                    .iter()
+                    .map(|item| item.item_kind().to_owned())
+                    .collect(),
                 recipient_method: Some(arkret_sdk::KeyBackupRecipientMethod::RecoveryPublicKey),
                 recipient_key_ref: Some(recovery_key_ref.to_owned()),
                 extra: Default::default(),
@@ -372,10 +344,11 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     let plaintext = arkret_sdk::KeyBackupPlaintext {
         schema: arkret_sdk::KeyBackupPlaintext::SCHEMA.to_owned(),
         backup_id: body.backup_id.clone(),
-        backup_kind: body.backup_kind,
         series_id: body.series_id.clone(),
         series_seq: body.series_seq,
-        items: plaintext_items,
+        keybag: KeyBackupKeybag::SecretStorage {
+            items: plaintext_items,
+        },
         extra: Default::default(),
     };
     let plaintext_bytes = crate::canonical::canonical_json_bytes(&plaintext)?;

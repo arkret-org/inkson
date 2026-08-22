@@ -83,7 +83,7 @@ pub(crate) fn prepare_rotation_backup_material(
 
     if !rotation.rewrapped_snapshots.is_empty() {
         return Err(anyhow!(
-            "device security rotation is not ready for accounts with local MLS snapshots: portable history_secret_segment rotation requires complete accepted activation views"
+            "device security rotation is not ready for accounts with local MLS snapshots: portable history_secret_ranges rotation requires complete accepted activation views"
         ));
     }
 

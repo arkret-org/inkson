@@ -369,17 +369,6 @@ impl LocalStateStore {
         format!("{actor_id}\u{1f}{backup_kind}")
     }
 
-    pub(crate) fn key_backup_active_series_highest_seen(
-        &self,
-        actor_id: &str,
-        backup_kind: &str,
-    ) -> Option<u64> {
-        self.load()
-            .key_backup_active_series_highest_seen
-            .get(&Self::active_series_highest_seen_key(actor_id, backup_kind))
-            .copied()
-    }
-
     pub(crate) fn observe_key_backup_active_series_version(
         &mut self,
         actor_id: &str,

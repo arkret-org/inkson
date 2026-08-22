@@ -1,7 +1,7 @@
 //! MLS snapshot epoch floors.
 //!
 //! Same-endpoint active snapshots remain local device state. Portable human
-//! history uses authorized `history_secret_segment` material and is not
+//! history uses authorized `history_secret_ranges` material and is not
 //! implemented in this module.
 
 pub fn mls_restore_epoch_floor(state_store: &crate::state::LocalStateStore, realm_id: &str) -> u64 {

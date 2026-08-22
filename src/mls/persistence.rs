@@ -24,7 +24,7 @@
 //! [`arkret_sdk::ArkretMlsGroup::join_from_welcome`].
 //!
 //! 2. **Persist locally.** The active group snapshot is endpoint-bound state. Human portable
-//!    recovery must use scope-bound `history_secret_segment` material and never exports this
+//!    recovery must use scope-bound `history_secret_ranges` material and never exports this
 //!    snapshot through `key_backup`.
 //!
 //! 3. **Restore on boot.** [`restore_envelope`] decrypts the envelope with this device's MLS

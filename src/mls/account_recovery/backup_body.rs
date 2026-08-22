@@ -1,7 +1,7 @@
 //! Build, decrypt, and classify the on-wire account-recovery backup envelopes.
 
 use anyhow::{Result, anyhow};
-use arkret_models_crypto::{KeyBackup, KeyBackupContentItem};
+use arkret_models_crypto::{KeyBackup, SecretStorageContentIndex, SecretStorageItemKind};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::Value;
@@ -21,7 +21,8 @@ use crate::recovery_crypto::VaultKek;
 /// content type under the `secret_storage` class, so it is the primary
 /// discriminator for the recovery import path. `secret_id` is still carried
 /// for human-readable disambiguation.
-pub const MLS_ACCOUNT_SECRET_ITEM_KIND: &str = "mls_account_secret";
+pub const MLS_ACCOUNT_SECRET_ITEM_KIND: SecretStorageItemKind =
+    SecretStorageItemKind::MlsAccountSecret;
 /// `secret_id` carried by the account MLS snapshot secret backup. This is the
 /// stable discriminator the recovery import path matches against.
 pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "inkson_mls_account_secret";
@@ -38,7 +39,8 @@ pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "inkson_mls_account_secret";
 /// account secret first — can decrypt it with NO second passphrase prompt. Both
 /// soland's validator and the inkson client validator allowlist this content
 /// type under the `secret_storage` class.
-pub const MLS_PRIVATE_PLAINTEXT_ITEM_KIND: &str = "mls_private_plaintext";
+pub const MLS_PRIVATE_PLAINTEXT_ITEM_KIND: SecretStorageItemKind =
+    SecretStorageItemKind::MlsPrivatePlaintext;
 /// `secret_id` carried by the encrypted local-plaintext sidecar backup.
 pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "inkson_mls_private_plaintext";
 
@@ -97,11 +99,14 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
         account_secret.as_bytes(),
         BackupKind::SecretStorage,
         "recovery_vault",
-        &KeyBackupContentItem {
-            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND.to_owned(),
+        &SecretStorageContentIndex {
+            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
-            ..Default::default()
+            extra: Default::default(),
         },
     )
 }
@@ -123,11 +128,14 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
         predecessor,
         kek,
         account_secret.as_bytes(),
-        &KeyBackupContentItem {
-            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND.to_owned(),
+        &SecretStorageContentIndex {
+            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
-            ..Default::default()
+            extra: Default::default(),
         },
         frontier_digest,
         device_generation_ref,
@@ -152,7 +160,7 @@ pub fn is_mls_account_secret_backup(body: &Value) -> bool {
         .and_then(|c| c.first())
         .and_then(|item| item.get("item_kind"))
         .and_then(Value::as_str)
-        == Some(MLS_ACCOUNT_SECRET_ITEM_KIND)
+        == Some(MLS_ACCOUNT_SECRET_ITEM_KIND.as_str())
 }
 
 /// The `encryption.recipient_method` of a backup envelope.
@@ -205,10 +213,14 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
         sidecar_json,
         BackupKind::SecretStorage,
         "recovery_vault",
-        &KeyBackupContentItem {
-            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND.to_owned(),
+        &SecretStorageContentIndex {
+            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
-            ..Default::default()
+            secret_version: None,
+            extra: Default::default(),
         },
     )
 }
@@ -228,10 +240,14 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
         predecessor,
         kek,
         sidecar_json,
-        &KeyBackupContentItem {
-            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND.to_owned(),
+        &SecretStorageContentIndex {
+            item_kind: MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
             secret_id: Some(MLS_PRIVATE_PLAINTEXT_SECRET_ID.to_owned()),
-            ..Default::default()
+            secret_version: None,
+            extra: Default::default(),
         },
         frontier_digest,
         device_generation_ref,
@@ -255,7 +271,12 @@ pub fn decrypt_mls_private_plaintext_backup(
 
 fn opened_single_secret(unlock_key: &[u8], body: &Value) -> Result<Vec<u8>> {
     let plaintext = open_passphrase_kdf_backup_body(unlock_key, body)?;
-    let [item] = plaintext.items.as_slice() else {
+    let arkret_models_crypto::KeyBackupKeybag::SecretStorage { items } = &plaintext.keybag else {
+        return Err(anyhow!(
+            "single-secret key backup must decrypt to a secret_storage keybag"
+        ));
+    };
+    let [item] = items.as_slice() else {
         return Err(anyhow!(
             "single-secret key backup must decrypt to exactly one plaintext item"
         ));
@@ -272,7 +293,7 @@ pub fn is_mls_private_plaintext_backup(body: &Value) -> bool {
         .and_then(|c| c.first())
         .and_then(|item| item.get("item_kind"))
         .and_then(Value::as_str)
-        == Some(MLS_PRIVATE_PLAINTEXT_ITEM_KIND)
+        == Some(MLS_PRIVATE_PLAINTEXT_ITEM_KIND.as_str())
 }
 
 /// Build the HPKE `recovery_public_key` account-secret backup: the account
@@ -336,11 +357,14 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
         recovery_key_ref,
         crate::key_backup::BackupKind::SecretStorage,
         "recovery_vault",
-        &KeyBackupContentItem {
-            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND.to_owned(),
+        &SecretStorageContentIndex {
+            item_kind: MLS_ACCOUNT_SECRET_ITEM_KIND,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
             secret_id: Some(MLS_ACCOUNT_SECRET_SECRET_ID.to_owned()),
             secret_version: Some(account_secret_version),
-            ..Default::default()
+            extra: Default::default(),
         },
         account_secret.as_bytes(),
         Some(recovery_policy_ref),
@@ -395,7 +419,12 @@ pub fn open_mls_account_secret_recovery_public_key_backup(
     ensure_recovery_public_key_backup_policy_matches(body, expected_recovery_policy_ref)?;
     let plaintext =
         crate::key_backup::open_recovery_public_key_backup_body(recovery_private_key, body)?;
-    let [item] = plaintext.items.as_slice() else {
+    let arkret_models_crypto::KeyBackupKeybag::SecretStorage { items } = &plaintext.keybag else {
+        return Err(anyhow!(
+            "account-secret backup must decrypt to a secret_storage keybag"
+        ));
+    };
+    let [item] = items.as_slice() else {
         return Err(anyhow!(
             "account-secret backup must decrypt to exactly one plaintext item"
         ));

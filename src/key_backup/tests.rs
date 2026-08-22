@@ -1,6 +1,4 @@
-use arkret_models_crypto::{
-    KeyBackup, KeyBackupContentItem, ManagedFrontierRef, ManagedPrincipalBinding,
-};
+use arkret_models_crypto::{KeyBackup, SecretStorageContentIndex, SecretStorageItemKind};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::{Signer as _, SigningKey};
@@ -39,10 +37,14 @@ fn build_recovery_vault_backup_body(
         plaintext,
         BackupKind::SecretStorage,
         "recovery_vault",
-        &KeyBackupContentItem {
-            item_kind: "private_account_state".to_owned(),
+        &SecretStorageContentIndex {
+            item_kind: SecretStorageItemKind::PrivateAccountState,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
             secret_id: Some("inkson_recovery_vault_payload".to_owned()),
-            ..Default::default()
+            secret_version: None,
+            extra: Default::default(),
         },
     )
 }
@@ -52,8 +54,10 @@ fn wire(body: &KeyBackup) -> Value {
 }
 
 fn plaintext_secret(plaintext: &arkret_sdk::KeyBackupPlaintext) -> Vec<u8> {
-    B64.decode(plaintext.items[0].secret_b64u.as_bytes())
-        .unwrap()
+    let arkret_models_crypto::KeyBackupKeybag::SecretStorage { items } = &plaintext.keybag else {
+        panic!("secret_storage keybag expected");
+    };
+    B64.decode(items[0].secret_b64u.as_bytes()).unwrap()
 }
 
 fn validate_wire_envelope(body: &Value, expected_kind: BackupKind) -> Result<KeyBackup, String> {
@@ -91,59 +95,6 @@ fn sign_test_backup(
             arkret_sdk::Base64UrlString::new(B64.encode(signature.to_bytes())).unwrap(),
         )
         .unwrap()
-}
-
-#[test]
-fn managed_agent_pcr_binding_is_bound_into_hpke_aad() {
-    let controller = arkret_sdk::DidFullId::new(ACTOR).unwrap();
-    let binding = ManagedPrincipalBinding {
-        managed_principal_id: crate::mls_api_helpers::principal_core_id("did:web:agent.example")
-            .unwrap(),
-        controller_id: arkret_sdk::project_full_id_to_core_id(&controller).unwrap(),
-        principal_control_realm_id: arkret_sdk::RealmId::new(
-            "ak:realm:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5",
-        )
-        .unwrap(),
-        authorization_ref: "did:web:agent.example#managed-controller".to_owned(),
-        managed_frontier_ref: ManagedFrontierRef {
-            frontier_digest: arkret_sdk::Hash::new(
-                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            )
-            .unwrap(),
-            seal_ref: "ak:seal:01964137-0000-7000-8000-000000000098".to_owned(),
-            mls_epoch: 0,
-        },
-    };
-    let (_, recovery_public_key) = crate::hpke_backup::derive_recovery_keypair_from_entropy(
-        &[9_u8; crate::recovery_crypto::RECOVERY_KEY_BYTES],
-    )
-    .unwrap();
-    let body = build_recovery_public_key_backup_body(
-        BACKUP_ID,
-        ACTOR,
-        DEVICE,
-        &recovery_public_key,
-        "did:web:alice.example#recovery",
-        BackupKind::MlsHistory,
-        "managed_agent_pcr",
-        &KeyBackupContentItem {
-            item_kind: "mls_group_state".to_owned(),
-            secret_id: Some("inkson_managed_agent_pcr_snapshot".to_owned()),
-            realm_id: Some(binding.principal_control_realm_id.clone()),
-            managed_principal_binding: Some(binding.clone()),
-            mls_group_id: Some("YWdlbnQtcGNy".to_owned()),
-            epoch: Some(0),
-            ..Default::default()
-        },
-        b"encrypted local MLS snapshot",
-        Some(("ak:policy:01964137-0000-7000-8000-000000000077", 1)),
-    )
-    .unwrap();
-
-    assert_eq!(
-        body.domain_separation.aead_aad.managed_principal_bindings,
-        vec![binding]
-    );
 }
 
 #[test]
@@ -357,12 +308,29 @@ fn key_backup_validator_rejects_cross_domain_item_mix() {
     let root = test_root();
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     let mut body = wire(&body);
-    body["contents"][0]["item_kind"] = json!("mls_group_state");
+    body["contents"][0] = json!({
+        "item_kind": "history_secret_ranges",
+        "effective_scope": {"kind": "realm", "realm_id": REALM_ID},
+        "ranges": [{"from_epoch": 0, "to_epoch": 1}],
+    });
     attach_key_backup_domain_separation(&mut body, BackupKind::SecretStorage, "recovery_vault");
 
     let err = validate_wire_envelope(&body, BackupKind::SecretStorage)
-        .expect_err("secret_storage must not carry MLS history items");
-    assert!(err.contains("not allowed"));
+        .expect_err("secret_storage must not index history secret ranges");
+    assert!(err.contains("history secret ranges"), "{err}");
+}
+
+#[test]
+fn key_backup_validator_rejects_active_mls_state_item_kinds() {
+    let root = test_root();
+    let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
+    let mut body = wire(&body);
+    for forbidden in ["mls_group_state", "mls_epoch_secret", "pending_welcome"] {
+        body["contents"][0]["item_kind"] = json!(forbidden);
+        attach_key_backup_domain_separation(&mut body, BackupKind::SecretStorage, "recovery_vault");
+        validate_wire_envelope(&body, BackupKind::SecretStorage)
+            .expect_err("active MLS state item kinds are not on the wire");
+    }
 }
 
 #[test]
@@ -417,52 +385,39 @@ fn key_backup_validator_rejects_missing_series_fields() {
 }
 
 #[test]
-fn device_bound_mls_group_state_requires_managed_binding() {
+fn mls_history_requires_exactly_one_history_range_index() {
     let root = test_root();
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     let mut body = wire(&body);
     body["backup_kind"] = json!("mls_history");
-    body["contents"][0]["item_kind"] = json!("mls_group_state");
     attach_key_backup_domain_separation(&mut body, BackupKind::MlsHistory, "mls_snapshot");
 
     let err = validate_wire_envelope(&body, BackupKind::MlsHistory)
-        .expect_err("device-bound MLS state without managed binding must be rejected");
-    assert!(err.contains("managed_principal_binding"), "{err}");
+        .expect_err("an mls_history envelope may only index history secret ranges");
+    assert!(err.contains("history_secret_ranges"), "{err}");
 }
 
 #[test]
 fn recovery_public_key_backup_round_trips_and_validates() {
     let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
-    let binding = ManagedPrincipalBinding {
-        managed_principal_id: crate::mls_api_helpers::principal_core_id("did:web:agent.example")
-            .unwrap(),
-        controller_id: crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
-        principal_control_realm_id: arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap(),
-        authorization_ref: "did:web:agent.example#managed-controller".to_owned(),
-        managed_frontier_ref: ManagedFrontierRef {
-            frontier_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
-            seal_ref: "ak:seal:01964137-0000-7000-8000-000000000098".to_owned(),
-            mls_epoch: 0,
-        },
-    };
     let body = build_recovery_public_key_backup_body(
         BACKUP_ID,
         ACTOR,
         DEVICE,
         &pk,
         "did:web:alice.example#recovery",
-        BackupKind::MlsHistory,
-        "mls_snapshot",
-        &KeyBackupContentItem {
-            item_kind: "mls_group_state".to_owned(),
-            secret_id: Some("inkson_mls_snapshot".to_owned()),
-            realm_id: Some(binding.principal_control_realm_id.clone()),
-            managed_principal_binding: Some(binding),
-            mls_group_id: Some("managed-agent-pcr-group".to_owned()),
-            epoch: Some(0),
-            ..Default::default()
+        BackupKind::SecretStorage,
+        "recovery_vault",
+        &SecretStorageContentIndex {
+            item_kind: SecretStorageItemKind::MlsAccountSecret,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
+            secret_id: Some("inkson_mls_account_secret".to_owned()),
+            secret_version: Some(1),
+            extra: Default::default(),
         },
-        b"opaque mls snapshot bytes",
+        b"opaque account secret bytes",
         Some(("ak:policy:01964137-0000-7000-8000-000000000077", 1)),
     )
     .unwrap();
@@ -478,13 +433,13 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         Some("did:web:alice.example#recovery")
     );
     assert!(body.encryption.aead.nonce.is_none());
-    validate_wire_envelope(&wire_body, BackupKind::MlsHistory)
-        .expect("recovery_public_key mls_history envelope should validate");
+    validate_wire_envelope(&wire_body, BackupKind::SecretStorage)
+        .expect("recovery_public_key secret_storage envelope should validate");
 
     // The recovery private key opens it (the fresh-device restore path);
     // a different recovery key cannot.
     let opened = open_recovery_public_key_backup_body(&sk, &wire_body).unwrap();
-    assert_eq!(plaintext_secret(&opened), b"opaque mls snapshot bytes");
+    assert_eq!(plaintext_secret(&opened), b"opaque account secret bytes");
     let (other_sk, _other_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
     assert!(open_recovery_public_key_backup_body(&other_sk, &wire_body).is_err());
 }

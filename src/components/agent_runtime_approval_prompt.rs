@@ -347,19 +347,6 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                     let key_state = key_state.clone();
                                     let controller = controller.clone();
                                     async move {
-                                        let previous_seal_id = match &key_state.pcr_recovery {
-                                            arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Ready {
-                                                managed_frontier_ref,
-                                                ..
-                                            }
-                                            | arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Stale {
-                                                managed_frontier_ref,
-                                                ..
-                                            } => Some(managed_frontier_ref.seal_ref.clone()),
-                                            arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Pending => {
-                                                None
-                                            }
-                                        };
                                         let description = api.describe_cached().await?;
                                         let service_id = description.service_id.to_string();
                                         let service_full_id =
@@ -425,7 +412,6 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                             &agent_full_id,
                                             &key_state.principal_control_realm_id,
                                             key_state.controller_authorization_ref.as_str(),
-                                            previous_seal_id.as_deref(),
                                         )
                                         .await
                                         .err()
