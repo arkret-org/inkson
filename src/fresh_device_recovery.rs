@@ -5,7 +5,7 @@
 
 use arkret_models_crypto::{
     ClientStepAttestationArtifact, RecoveryBackupClassUnlocked, RecoveryProofSummary,
-    RecoveryReceiptOutcome, RecoveryWelcomeRealmSummary, TypedSecurityTransactionContinueRequest,
+    RecoveryReceiptOutcome, RecoveryWelcomeRealmSummary, SecurityTransactionContinueRequest,
     UnsignedRecoveryReceipt, UnsignedRecoveryReceiptBody,
 };
 use arkret_wire::{
@@ -86,7 +86,7 @@ pub fn sign_terminal_receipt_continue(
     resource: &SecurityTransaction,
     observation: RecoveryTerminalObservation,
     signer: &crate::event_signer::InksonEventSigner,
-) -> anyhow::Result<TypedSecurityTransactionContinueRequest> {
+) -> anyhow::Result<SecurityTransactionContinueRequest> {
     resource.validate_structural()?;
     if resource.state != SecurityTransactionState::AwaitingDeviceAttestation
         || resource.next_required_step != Some(SecurityTransactionStep::IssueTerminalReceipt)
@@ -173,7 +173,7 @@ pub fn sign_terminal_receipt_continue(
     .map_err(anyhow::Error::msg)?;
     let attestation = attestation.attach_signature(attestation_signature)?;
     attestation.validate_structural()?;
-    Ok(TypedSecurityTransactionContinueRequest {
+    Ok(SecurityTransactionContinueRequest {
         request_digest: resource.request_digest.clone(),
         prepared_plan_digest: resource.prepared_plan_digest.clone(),
         expected_next_step: SecurityTransactionStep::IssueTerminalReceipt,
@@ -230,7 +230,7 @@ where
         self.engine
             .continue_transaction(
                 &transaction.transaction_id,
-                &TypedSecurityTransactionContinueRequest {
+                &SecurityTransactionContinueRequest {
                     request_digest: transaction.request_digest.clone(),
                     prepared_plan_digest: transaction.prepared_plan_digest.clone(),
                     expected_next_step: step,
@@ -243,7 +243,7 @@ where
     pub async fn continue_with_signed_artifact(
         &self,
         transaction_id: &TransactionId,
-        request: &TypedSecurityTransactionContinueRequest,
+        request: &SecurityTransactionContinueRequest,
     ) -> garth::Result<SecurityTransaction> {
         self.engine
             .continue_transaction(transaction_id, request)
@@ -291,7 +291,7 @@ where
         let terminal_continue = local.accepted_terminal_continue.as_ref().ok_or_else(|| {
             anyhow::anyhow!("completed recovery omitted its durable terminal receipt")
         })?;
-        let terminal_request: TypedSecurityTransactionContinueRequest = serde_json::from_value(
+        let terminal_request: SecurityTransactionContinueRequest = serde_json::from_value(
             arkret_sdk::canonical::parse_canonical_json(terminal_continue)?,
         )?;
         let receipt = match terminal_request
@@ -482,7 +482,7 @@ where
         self.engine
             .continue_transaction(
                 &transaction.transaction_id,
-                &TypedSecurityTransactionContinueRequest {
+                &SecurityTransactionContinueRequest {
                     request_digest: transaction.request_digest.clone(),
                     prepared_plan_digest: transaction.prepared_plan_digest.clone(),
                     expected_next_step: step,
@@ -495,7 +495,7 @@ where
     pub async fn continue_with_signed_local_commit(
         &self,
         transaction_id: &TransactionId,
-        request: &TypedSecurityTransactionContinueRequest,
+        request: &SecurityTransactionContinueRequest,
     ) -> garth::Result<SecurityTransaction> {
         self.engine
             .continue_transaction(transaction_id, request)

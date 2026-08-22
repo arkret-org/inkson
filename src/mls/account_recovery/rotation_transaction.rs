@@ -522,7 +522,7 @@ async fn drive_security_rotation(
     let completed = workflow
         .continue_with_signed_local_commit(
             &transaction.transaction_id,
-            &arkret_models_crypto::TypedSecurityTransactionContinueRequest {
+            &arkret_models_crypto::SecurityTransactionContinueRequest {
                 request_digest: transaction.request_digest.clone(),
                 prepared_plan_digest: transaction.prepared_plan_digest.clone(),
                 expected_next_step: SecurityTransactionStep::LocalCommit,
