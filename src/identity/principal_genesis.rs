@@ -24,6 +24,14 @@ fn did_key_verification_method(public_key_multibase: &str) -> anyhow::Result<ark
     .map_err(anyhow::Error::msg)
 }
 
+fn decode_founding_device_public_key(device_public_key: &str) -> anyhow::Result<[u8; 32]> {
+    let public_key_multibase = device_public_key
+        .strip_prefix("did:key:")
+        .ok_or_else(|| anyhow::anyhow!("founding device public key must be a did:key"))?;
+    arkret_sdk::decode_ed25519_multibase(public_key_multibase)
+        .map_err(|error| anyhow::anyhow!("decode founding device public key: {error}"))
+}
+
 pub fn build_founding_authorize_payload(
     principal_id: arkret_sdk::DidFullId,
     device_id: arkret_sdk::DeviceId,
@@ -105,12 +113,8 @@ pub fn build_genesis_unit(
         )?,
     };
     descriptor.validate()?;
-    let founding_notary_public_key = URL_SAFE_NO_PAD
-        .decode(payload.device_public_key.as_str())
-        .map_err(|error| anyhow::anyhow!("decode founding device public key: {error}"))?;
-    if founding_notary_public_key.len() != 32 {
-        anyhow::bail!("founding device public key must contain 32 Ed25519 bytes");
-    }
+    let founding_notary_public_key =
+        decode_founding_device_public_key(payload.device_public_key.as_str())?;
     let founding_notary =
         arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
             actor_id: principal_core_id.clone(),
@@ -121,9 +125,9 @@ pub fn build_genesis_unit(
             .map_err(anyhow::Error::msg)?,
             key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
             jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-            frozen_public_key_b64u: payload.device_public_key.as_str().to_owned(),
+            frozen_public_key_b64u: arkret_sdk::base64url_encode(founding_notary_public_key),
             frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-                &founding_notary_public_key,
+                founding_notary_public_key,
             ))?,
         });
     founding_notary.validate()?;
@@ -220,6 +224,28 @@ mod tests {
         assert_eq!(
             did_key_verification_method(key).unwrap().as_str(),
             format!("did:key:{key}#{key}")
+        );
+    }
+
+    #[test]
+    fn founding_device_public_key_decodes_did_key_ed25519_material() {
+        let expected = [7_u8; 32];
+        let multibase = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&expected);
+
+        assert_eq!(
+            decode_founding_device_public_key(&format!("did:key:{multibase}")).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn founding_device_public_key_rejects_non_did_key_input() {
+        let error = decode_founding_device_public_key("not-a-did-key").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("founding device public key must be a did:key")
         );
     }
 }
