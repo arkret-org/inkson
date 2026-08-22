@@ -60,7 +60,7 @@ pub fn build_principal_signing_proof(
     Ok(arkret_sdk::RecoverySessionProof::PrincipalSigning(
         arkret_sdk::RecoveryPrincipalSigningProof {
             kind: arkret_sdk::RecoveryPrincipalSigningProofKind::PrincipalSigning,
-            challenge: challenge.to_owned(),
+            challenge: arkret_sdk::Challenge::new(challenge).map_err(anyhow::Error::msg)?,
             verification_method: arkret_sdk::DidUrl::new(verification_method.to_owned())
                 .map_err(anyhow::Error::msg)?,
             signature_algorithm: arkret_sdk::NonEmptyString::new("Ed25519")
