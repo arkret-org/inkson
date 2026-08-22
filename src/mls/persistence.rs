@@ -92,13 +92,11 @@ pub struct MlsSnapshotEnvelope {
     pub epoch: u64,
     /// Immutable epoch at which this device joined the group. Request planning
     /// uses this boundary; the mutable current epoch must never stand in for it.
-    #[serde(default)]
     pub admission_epoch: u64,
     /// Accepted `ak.mls.genesis` or `ak.mls.commit` Event that materialized
     /// this exact `(group_id, epoch)` state. The reference is public metadata,
     /// but keeping it inside the encrypted backup envelope lets a fresh device
     /// restore the authoring frontier together with the executable MLS state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_state_event_id: Option<arkret_sdk::EventId>,
     /// Per-envelope salt used during device-secret stretching.
     /// Hex-encoded so the JSON form is human-debuggable.
@@ -144,6 +142,7 @@ impl MlsSnapshotEnvelope {
             realm_id: self.realm_id,
             group_id: self.group_id,
             epoch: self.epoch,
+            admission_epoch: self.admission_epoch,
             group_state_event_id: self.group_state_event_id,
             salt_hex: self.salt_hex,
             ciphertext_hex: self.ciphertext_hex,
@@ -162,7 +161,7 @@ impl From<garth::QueuedMlsSnapshot> for MlsSnapshotEnvelope {
             realm_id: snapshot.realm_id,
             group_id: snapshot.group_id,
             epoch: snapshot.epoch,
-            admission_epoch: snapshot.epoch,
+            admission_epoch: snapshot.admission_epoch,
             group_state_event_id: snapshot.group_state_event_id,
             salt_hex: snapshot.salt_hex,
             ciphertext_hex: snapshot.ciphertext_hex,
