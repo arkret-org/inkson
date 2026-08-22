@@ -164,9 +164,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     if held_token.is_empty() && grant_present {
                         if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
                             &loaded_config,
-                            &base_url_for_secure_upgrade(),
-                            &principal_id_for_secure_upgrade(),
-                            &device_id_for_secure_upgrade(),
+                            active_account.peek().as_ref(),
                         ) {
                             tracing::debug!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
                             token_for_secure_upgrade.set(rehydrated);

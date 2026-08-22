@@ -751,21 +751,62 @@ fn rehydrated_session_credential_only_matches_active_config() {
     let config = ClientConfig::authenticated(account.clone(), "sx-live".to_owned());
 
     assert_eq!(
-        rehydrated_session_credential_for_active_config(
-            &config,
-            account.server_url.as_str(),
-            account.full_id().as_str(),
-            account.device_id.as_str(),
-        )
-        .as_deref(),
+        rehydrated_session_credential_for_active_config(&config, Some(&account)).as_deref(),
         Some("sx-live")
     );
-    for candidate in [
-        test_active_account(
-            "did:web:alice.example",
-            "https://other.local.host",
-            "ak:device:01964137-0000-7000-8000-000000000001",
+    let relocated = test_active_account(
+        "did:web:alice.example",
+        "https://other.local.host",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    );
+    assert_eq!(
+        rehydrated_session_credential_for_active_config(&config, Some(&relocated)).as_deref(),
+        Some("sx-live")
+    );
+
+    let other_authority = crate::config::ActiveAccountContext::new(
+        "ak:profile:019b0000-0000-7000-8000-000000000002".to_owned(),
+        arkret_sdk::PrincipalAuthorityKey::new(
+            account.authority.principal_id.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-principal.example".to_owned())
+                .unwrap(),
         ),
+        account.resolution.clone(),
+        account.device_id.clone(),
+        account.server_url.clone(),
+    )
+    .unwrap();
+    assert!(
+        rehydrated_session_credential_for_active_config(&config, Some(&other_authority)).is_none()
+    );
+
+    let predecessor = test_active_account(
+        "did:webvh:zAlice:old.example:users:alice",
+        "https://local.host",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    );
+    let predecessor_config =
+        ClientConfig::authenticated(predecessor.clone(), "sx-successor".to_owned());
+    let mut successor = predecessor.clone();
+    successor
+        .update_resolution(arkret_sdk::PrincipalResolutionProjection {
+            full_id: arkret_sdk::DidFullId::new(
+                "did:webvh:zAlice:new.example:people:alice".to_owned(),
+            )
+            .unwrap(),
+            method_history_head: "head-2".to_owned(),
+            version_id: "2".to_owned(),
+            resolution_event_ref: format!("ak:event:{}", "B".repeat(44)),
+            updated_at: chrono::Utc::now(),
+        })
+        .unwrap();
+    assert_eq!(
+        rehydrated_session_credential_for_active_config(&predecessor_config, Some(&successor))
+            .as_deref(),
+        Some("sx-successor")
+    );
+
+    for candidate in [
         test_active_account(
             "did:web:bob.example",
             "https://local.host",
@@ -778,15 +819,10 @@ fn rehydrated_session_credential_only_matches_active_config() {
         ),
     ] {
         assert!(
-            rehydrated_session_credential_for_active_config(
-                &config,
-                candidate.server_url.as_str(),
-                candidate.full_id().as_str(),
-                candidate.device_id.as_str(),
-            )
-            .is_none()
+            rehydrated_session_credential_for_active_config(&config, Some(&candidate)).is_none()
         );
     }
+    assert!(rehydrated_session_credential_for_active_config(&config, None).is_none());
 }
 
 #[test]

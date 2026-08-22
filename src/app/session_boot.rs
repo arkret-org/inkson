@@ -78,37 +78,25 @@ pub(super) fn session_boot_state_from_bootstrap_material(
 
 pub(super) fn rehydrated_session_credential_for_active_config(
     config: &ClientConfig,
-    base_url: &str,
-    principal_id: &str,
-    device_id: &str,
+    desired_account: Option<&crate::config::ActiveAccountContext>,
 ) -> Option<String> {
-    // Signed-out boot has no user scope to restore. A freshly generated
-    // anonymous device id is expected to differ from the last signed-in
-    // account's persisted device id; that is not a credential mismatch.
-    if principal_id.trim().is_empty() {
-        return None;
-    }
-    let Some(account) = config.active_account.as_ref() else {
+    let (Some(account), Some(desired_account)) = (config.active_account.as_ref(), desired_account)
+    else {
         return None;
     };
     let cred_empty = config.session_credential.trim().is_empty();
-    let server_mismatch =
-        normalize_server_url(account.server_url.as_str()) != normalize_server_url(base_url);
-    let account_mismatch = account.full_id().as_str() != principal_id.trim();
-    let device_mismatch = account.device_id.as_str() != device_id.trim();
-    if cred_empty || server_mismatch || account_mismatch || device_mismatch {
+    let authority_mismatch = account.authority != desired_account.authority;
+    let device_mismatch = account.device_id != desired_account.device_id;
+    if cred_empty || authority_mismatch || device_mismatch {
         tracing::debug!(
             target: "secure_store",
             cred_empty,
-            account_mismatch,
-            server_mismatch,
+            authority_mismatch,
             device_mismatch,
-            stored_server = %account.server_url,
-            want_server = %base_url,
-            stored_account = %account.full_id(),
-            want_account = %principal_id,
+            stored_authority = ?account.authority,
+            desired_authority = ?desired_account.authority,
             stored_device = %account.device_id,
-            want_device = %device_id,
+            desired_device = %desired_account.device_id,
             "rehydrate session credential: returning None (credential does not match active config)"
         );
         None

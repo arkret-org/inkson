@@ -216,12 +216,9 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         let mut session = token();
         if session.trim().is_empty() && secure_store_ready {
             let loaded = config_store.read().load();
-            if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
-                &loaded,
-                &base,
-                &principal_id(),
-                &device_id(),
-            ) {
+            if let Some(rehydrated) =
+                rehydrated_session_credential_for_active_config(&loaded, active.as_ref())
+            {
                 token.set(rehydrated.clone());
                 session = rehydrated;
             }
