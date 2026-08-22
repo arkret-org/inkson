@@ -485,7 +485,12 @@ mod tests {
             source_refs: Vec::new(),
             proofs: Vec::new(),
         };
-        let accepted = vec!["ak:did_core:web:issuer.acme.example".to_owned()];
+        let accepted = vec![arkret_sdk::identity::HandleIssuerPolicyEntry {
+            issuer: arkret_sdk::DidCoreId::new("ak:did_core:web:issuer.acme.example".to_owned())
+                .unwrap(),
+            authorized_handle_domains: vec!["acme.example".to_owned()],
+            issuer_class: arkret_sdk::identity::HandleIssuerAuthorityClass::DomainAuthority,
+        }];
         let rendered = render_actor_mention(
             "ak:did_core:web:acme.example:principals:alice",
             &[claim],

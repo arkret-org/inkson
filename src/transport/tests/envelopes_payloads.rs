@@ -622,22 +622,14 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
         realm_id,
         actor_id,
         arkret_sdk::DigestSuite::Sha256,
-        arkret_sdk::StatePayload {
-            value: Some(json!("knock_restricted")),
-            state: None,
-            reason: None,
-        },
+        arkret_sdk::RealmJoinRulePayload::new(arkret_sdk::RealmJoinRuleValue::KnockRestricted),
     )
     .unwrap();
     build_realm_state_event::<arkret_sdk::event_spec::RealmDiscovery>(
         realm_id,
         actor_id,
         arkret_sdk::DigestSuite::Sha256,
-        arkret_sdk::StatePayload {
-            value: Some(json!("invite_only")),
-            state: None,
-            reason: None,
-        },
+        arkret_sdk::RealmDiscoveryPayload::new(arkret_sdk::RealmDiscoverability::InviteOnly),
     )
     .unwrap();
 }
