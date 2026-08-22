@@ -214,7 +214,7 @@ impl LocalStateStore {
 
     /// Save a **non-sensitive** UI preference, XOR-obfuscated with the account
     /// key. This is obfuscation, not encryption (see
-    /// [`obfuscate_nonsensitive`]): `account_key` is the public account DID, so
+    /// [`obfuscate_nonsensitive`]): `account_key` is a public local storage locator, so
     /// this MUST NOT be used for secret material — only casual-plaintext-hiding
     /// of preferences.
     pub fn save_private_data(
@@ -277,9 +277,10 @@ fn schedule_deferred_session_grant_persist(grant: PersistedSessionGrant) {
             return;
         }
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let result = user_local_store_for_principal(&grant.principal_id).and_then(|user_store| {
-            store_session_grant_in_user_secure_store(&user_store, secure_store.as_ref(), &grant)
-        });
+        let result = user_local_store_for_account(grant.authority.clone(), grant.device_id.clone())
+            .and_then(|user_store| {
+                store_session_grant_in_user_secure_store(&user_store, secure_store.as_ref(), &grant)
+            });
         match result {
             Ok(()) => tracing::debug!(
                 target: "secure_store",

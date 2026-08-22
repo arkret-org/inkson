@@ -39,14 +39,14 @@ pub(crate) fn upsert_participant(
     participants: &mut Vec<SpaceParticipant>,
     did: &str,
     role: SpaceParticipantRole,
-    account_did: &str,
+    principal_id: &str,
     display_name: Option<(String, u8)>,
     handle_label: Option<String>,
 ) {
     let Some(did) = normalize_participant_id(did) else {
         return;
     };
-    let is_self = same_principal_core(&did, account_did);
+    let is_self = same_principal_core(&did, principal_id);
     if let Some(existing) = participants
         .iter_mut()
         .find(|candidate| same_principal_core(&candidate.did, &did))
@@ -176,23 +176,23 @@ pub(crate) fn space_participants(
     projection: Option<&Value>,
     state_store: &LocalStateStore,
     realm_id: &str,
-    account_did: &str,
+    principal_id: &str,
 ) -> Vec<SpaceParticipant> {
     let mut participants = Vec::new();
 
     for row in crate::views::member_display::realm_member_roster(projection) {
-        let is_self = same_principal_core(&row.actor_id, account_did)
+        let is_self = same_principal_core(&row.actor_id, principal_id)
             || row
                 .subject_id
                 .as_deref()
-                .is_some_and(|subject| same_principal_core(subject, account_did));
+                .is_some_and(|subject| same_principal_core(subject, principal_id));
         let display =
             crate::views::member_display::resolve_member_display(state_store, realm_id, &row);
         upsert_participant(
             &mut participants,
             &row.actor_id,
             SpaceParticipantRole::Member,
-            account_did,
+            principal_id,
             display.display_name.map(|name| (name, 1)),
             display.primary_handle,
         );
@@ -205,16 +205,17 @@ pub(crate) fn space_participants(
         }
     }
 
-    if !account_did.trim().is_empty() && !participants.iter().any(|participant| participant.is_self)
+    if !principal_id.trim().is_empty()
+        && !participants.iter().any(|participant| participant.is_self)
     {
         let account_handle = state_store
-            .primary_handle_for_did(account_did)
+            .primary_handle_for_did(principal_id)
             .and_then(|handle| mention_handle_label_from_value(&handle));
         upsert_participant(
             &mut participants,
-            account_did,
+            principal_id,
             SpaceParticipantRole::Member,
-            account_did,
+            principal_id,
             None,
             account_handle,
         );
@@ -248,13 +249,13 @@ pub(crate) fn display_label_for_actor(
         .unwrap_or_else(|| crate::views::helpers::actor_display_label(state_store, did))
 }
 
-pub(crate) fn is_own_message_sender(sender: &str, account_did: &str) -> bool {
+pub(crate) fn is_own_message_sender(sender: &str, principal_id: &str) -> bool {
     let sender = sender.trim();
     if sender.is_empty() {
         return false;
     }
-    let account_did = account_did.trim();
-    if sender == "inkson" || sender == account_did {
+    let principal_id = principal_id.trim();
+    if sender == "inkson" || sender == principal_id {
         return true;
     }
     // The synced envelope's `actor_id` and the account's `account.did` can
@@ -264,7 +265,7 @@ pub(crate) fn is_own_message_sender(sender: &str, account_did: &str) -> bool {
     // author's side instead of jumping to the incoming side.
     match (
         crate::mls_api_helpers::principal_core_id(sender),
-        crate::mls_api_helpers::principal_core_id(account_did),
+        crate::mls_api_helpers::principal_core_id(principal_id),
     ) {
         (Ok(sender_core), Ok(account_core)) => sender_core == account_core,
         _ => false,
@@ -314,7 +315,7 @@ pub(crate) fn agent_member_label(participant: &SpaceParticipant) -> String {
 
 pub(crate) fn sidecar_owned_agent_participants(
     participants: &[SpaceParticipant],
-    account_did: &str,
+    principal_id: &str,
 ) -> Vec<SpaceParticipant> {
     participants
         .iter()
@@ -323,7 +324,7 @@ pub(crate) fn sidecar_owned_agent_participants(
                 && participant
                     .agent_metadata
                     .as_ref()
-                    .is_some_and(|metadata| metadata.controller_id.trim() == account_did.trim())
+                    .is_some_and(|metadata| metadata.controller_id.trim() == principal_id.trim())
         })
         .cloned()
         .collect()
@@ -331,15 +332,15 @@ pub(crate) fn sidecar_owned_agent_participants(
 
 pub(crate) fn sidecar_presence_participants(
     participants: &[SpaceParticipant],
-    account_did: &str,
+    principal_id: &str,
 ) -> Vec<SpaceParticipant> {
     participants
         .iter()
         .filter(|participant| {
-            participant.did.trim() == account_did.trim()
+            participant.did.trim() == principal_id.trim()
                 || (participant.is_agent
                     && participant.agent_metadata.as_ref().is_some_and(|metadata| {
-                        metadata.controller_id.trim() == account_did.trim()
+                        metadata.controller_id.trim() == principal_id.trim()
                     }))
         })
         .cloned()
@@ -403,7 +404,7 @@ pub(crate) fn agent_selector_label(participant: &SpaceParticipant) -> Option<Str
 pub(crate) fn mention_candidate_for_participant(
     participant: &SpaceParticipant,
     participants: &[SpaceParticipant],
-    account_did: &str,
+    principal_id: &str,
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
     if participant.is_agent {
         let display_name = agent_display_label(participant);
@@ -411,7 +412,7 @@ pub(crate) fn mention_candidate_for_participant(
         let selector = metadata.and_then(|metadata| {
             if metadata.agent_slug.trim().is_empty() {
                 None
-            } else if same_principal_core(&metadata.controller_id, account_did) {
+            } else if same_principal_core(&metadata.controller_id, principal_id) {
                 Some(format!("me/{}", metadata.agent_slug.trim()))
             } else {
                 agent_selector_label(participant)
@@ -473,7 +474,7 @@ pub(crate) fn mention_candidate_for_participant(
 pub(crate) fn mention_candidate_for_explicit_target(
     participant: &SpaceParticipant,
     participants: &[SpaceParticipant],
-    account_did: &str,
+    principal_id: &str,
     public_agent_dids: &std::collections::BTreeSet<String>,
     requested_agent_slug: Option<&str>,
     own_controller_handle: Option<&str>,
@@ -482,14 +483,14 @@ pub(crate) fn mention_candidate_for_explicit_target(
         return owned_agent_mention_candidate(
             &participant.did,
             requested_agent_slug,
-            account_did,
+            principal_id,
             own_controller_handle,
         );
     }
-    if !agent_candidate_is_visible(participant, public_agent_dids, account_did) {
+    if !agent_candidate_is_visible(participant, public_agent_dids, principal_id) {
         return None;
     }
-    mention_candidate_for_participant(participant, participants, account_did).or_else(|| {
+    mention_candidate_for_participant(participant, participants, principal_id).or_else(|| {
         let fallback_label = participant_sender_label(participant)
             .unwrap_or_else(|| short_principal_label(&participant.did));
         Some(crate::messaging::mentions::MentionCandidate {
@@ -508,15 +509,15 @@ pub(crate) fn mention_candidate_for_explicit_target(
 pub(crate) fn owned_agent_mention_candidate(
     agent_id: &str,
     requested_agent_slug: Option<&str>,
-    account_did: &str,
+    principal_id: &str,
     own_controller_handle: Option<&str>,
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
     let agent_slug = requested_agent_slug
         .map(str::trim)
         .filter(|slug| arkret_models_identity::validate_agent_slug(slug).is_ok())?;
     let agent_id = agent_id.trim();
-    let account_did = account_did.trim();
-    if agent_id.is_empty() || account_did.is_empty() {
+    let principal_id = principal_id.trim();
+    if agent_id.is_empty() || principal_id.is_empty() {
         return None;
     }
     Some(crate::messaging::mentions::MentionCandidate {
@@ -525,7 +526,7 @@ pub(crate) fn owned_agent_mention_candidate(
         insert_label: format!("me/{agent_slug}"),
         subtitle: "Your agent".to_owned(),
         is_agent: true,
-        controller_subject_id: account_did.to_owned(),
+        controller_subject_id: principal_id.to_owned(),
         controller_handle_at_time: own_controller_handle
             .map(str::trim)
             .filter(|handle| !handle.is_empty())
@@ -538,7 +539,7 @@ pub(crate) fn owned_agent_mention_candidate(
 pub(crate) fn agent_candidate_is_visible(
     participant: &SpaceParticipant,
     public_agent_dids: &std::collections::BTreeSet<String>,
-    account_did: &str,
+    principal_id: &str,
 ) -> bool {
     if !participant.is_agent {
         return true;
@@ -547,14 +548,14 @@ pub(crate) fn agent_candidate_is_visible(
         || participant
             .agent_metadata
             .as_ref()
-            .is_some_and(|metadata| metadata.controller_id.trim() == account_did.trim())
+            .is_some_and(|metadata| metadata.controller_id.trim() == principal_id.trim())
 }
 
 pub(crate) fn readable_participation_agent_ids(
     participants: &[SpaceParticipant],
-    account_did: &str,
+    principal_id: &str,
 ) -> Vec<String> {
-    let account_did = account_did.trim();
+    let principal_id = principal_id.trim();
     let mut agent_ids = participants
         .iter()
         .filter(|participant| participant.is_agent)
@@ -562,7 +563,7 @@ pub(crate) fn readable_participation_agent_ids(
             participant
                 .agent_metadata
                 .as_ref()
-                .is_some_and(|metadata| metadata.controller_id.trim() == account_did)
+                .is_some_and(|metadata| metadata.controller_id.trim() == principal_id)
         })
         .map(|participant| participant.did.clone())
         .collect::<Vec<_>>();
@@ -573,17 +574,17 @@ pub(crate) fn readable_participation_agent_ids(
 
 pub(crate) fn sender_display_label(
     sender: &str,
-    account_did: &str,
+    principal_id: &str,
     account_display_name: &str,
     participants: &[SpaceParticipant],
 ) -> String {
-    if is_own_message_sender(sender, account_did) {
-        let account_did = account_did.trim();
+    if is_own_message_sender(sender, principal_id) {
+        let principal_id = principal_id.trim();
         let own_participant = participants
             .iter()
             .find(|participant| participant.is_self && !participant.is_agent);
         let account_display_name =
-            clean_participant_display_name(account_display_name, Some(account_did));
+            clean_participant_display_name(account_display_name, Some(principal_id));
         let participant_display_name =
             own_participant.and_then(|participant| participant.display_name.clone());
         return own_participant
@@ -591,10 +592,10 @@ pub(crate) fn sender_display_label(
             .or(account_display_name)
             .or(participant_display_name)
             .unwrap_or_else(|| {
-                if account_did.is_empty() {
+                if principal_id.is_empty() {
                     "inkson".to_owned()
                 } else {
-                    crate::views::helpers::short_protocol_id(account_did)
+                    crate::views::helpers::short_protocol_id(principal_id)
                 }
             });
     }

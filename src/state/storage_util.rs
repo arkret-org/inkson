@@ -116,7 +116,7 @@ pub(crate) fn app_data_dir() -> PathBuf {
 
 /// Reversible XOR obfuscation for **non-sensitive** client-side preferences.
 ///
-/// This is NOT encryption: the key is the public `account_did()` (recomputable
+/// This is NOT encryption: the key is a public local storage locator (recomputable
 /// by anyone holding the on-disk data) and XOR is trivially invertible. It only
 /// keeps UI preferences (theme, avatar ref, sidebar width, recovery-hint
 /// markers) from being casually readable as plaintext on disk. NEVER route
@@ -165,33 +165,20 @@ pub(crate) fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
 
 pub(super) fn active_user_local_store()
 -> Result<crate::secure_key_store::UserLocalStore, crate::secure_key_store::SecureKeyStoreError> {
-    let principal = crate::secure_key_store::active_device_seed_scope().ok_or_else(|| {
+    let scope = crate::secure_key_store::active_device_seed_scope().ok_or_else(|| {
         crate::secure_key_store::SecureKeyStoreError::Backend(
-            "user local store is unavailable before a principal core id is active".to_owned(),
+            "user local store is unavailable before an account authority/device is active"
+                .to_owned(),
         )
     })?;
-    user_local_store_for_principal(&principal)
+    crate::secure_key_store::UserLocalStore::new(scope.authority, scope.device_id)
 }
 
-pub(super) fn user_local_store_for_principal(
-    principal: &str,
+pub(super) fn user_local_store_for_account(
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    device_id: arkret_sdk::DeviceId,
 ) -> Result<crate::secure_key_store::UserLocalStore, crate::secure_key_store::SecureKeyStoreError> {
-    let core_id = match arkret_sdk::DidCoreId::new(principal.to_owned()) {
-        Ok(core_id) => core_id,
-        Err(_) => {
-            let full_id = arkret_sdk::DidFullId::new(principal.to_owned()).map_err(|error| {
-                crate::secure_key_store::SecureKeyStoreError::Backend(format!(
-                    "principal id is invalid: {error}"
-                ))
-            })?;
-            arkret_sdk::project_full_id_to_core_id(&full_id).map_err(|error| {
-                crate::secure_key_store::SecureKeyStoreError::Backend(format!(
-                    "principal cannot be projected to core id: {error}"
-                ))
-            })?
-        }
-    };
-    Ok(crate::secure_key_store::UserLocalStore::new(core_id))
+    crate::secure_key_store::UserLocalStore::new(authority, device_id)
 }
 
 pub(crate) fn load_identity_record_from_secure_store(

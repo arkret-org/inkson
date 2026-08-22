@@ -18,25 +18,28 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::views::helpers::short_protocol_id;
 
 #[component]
-pub fn NotificationsPanel(
-    account_did: String,
-    device_id: String,
-    token: Signal<String>,
-) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
+pub fn NotificationsPanel(token: Signal<String>) -> Element {
+    let session = crate::app::SessionContext::get();
+    let mut state_store = session.state_store;
+    let Some(active_account) = session.active_account() else {
+        return rsx! {};
+    };
+    let base_url = active_account.server_url.to_string();
+    let principal_id = active_account.principal_id().to_string();
+    let principal_full_id = active_account.full_id().to_string();
+    let authority = active_account.authority.clone();
+    let device_id = active_account.device_id.to_string();
     let (initial_state, initial_privacy_gate) = {
         let store = state_store.read();
         (
             store.load(),
-            crate::sidecar::SidecarPrivacyGate::from_store(&store, &account_did),
+            crate::sidecar::SidecarPrivacyGate::from_store(&store, &principal_id),
         )
     };
     let initial_notifications = hydrate_notifications_with_privacy_gate(
         initial_state.notification_projection.clone(),
         &initial_state,
-        &account_did,
+        &principal_id,
         None,
         initial_state.notification_dnd_settings.as_ref(),
         &initial_privacy_gate,
@@ -53,6 +56,8 @@ pub fn NotificationsPanel(
         refresh_notifications(
             base_url.clone(),
             token,
+            authority.clone(),
+            principal_id.clone(),
             state_store,
             notifications,
             status_msg,
@@ -141,13 +146,13 @@ pub fn NotificationsPanel(
                         "aria-label": crate::i18n::tr("notifications.tooltip.mark_all_read"),
                         onclick: {
                             let base_url = base_url.clone();
-                            let account_did = account_did.clone();
+                            let principal_full_id = principal_full_id.clone();
                             let device_id = device_id.clone();
                             move |_| {
                                 mark_all_notifications_read(
                                     base_url.clone(),
                                     token(),
-                                    account_did.clone(),
+                                    principal_full_id.clone(),
                                     device_id.clone(),
                                     state_store,
                                     notifications,
@@ -176,10 +181,14 @@ pub fn NotificationsPanel(
                         "aria-label": crate::i18n::tr("notifications.tooltip.refresh"),
                         onclick: {
                             let base_url = base_url.clone();
+                            let principal_id = principal_id.clone();
+                            let authority = authority.clone();
                             move |_| {
                                 refresh_notifications(
                                     base_url.clone(),
                                     token,
+                                    authority.clone(),
+                                    principal_id.clone(),
                                     state_store,
                                     notifications,
                                     status_msg,
@@ -254,14 +263,14 @@ pub fn NotificationsPanel(
                                 "aria-label": "Mark read",
                                 onclick: {
                                     let base_url = base_url.clone();
-                                    let account_did = account_did.clone();
+                                    let principal_full_id = principal_full_id.clone();
                                     let device_id = device_id.clone();
                                     let notification = notification.clone();
                                     move |_| {
                                         mark_notification_read_state(
                                             base_url.clone(),
                                             token(),
-                                            account_did.clone(),
+                                            principal_full_id.clone(),
                                             device_id.clone(),
                                             notification.clone(),
                                             true,
@@ -283,14 +292,14 @@ pub fn NotificationsPanel(
                                 "aria-label": "Mark unread",
                                 onclick: {
                                     let base_url = base_url.clone();
-                                    let account_did = account_did.clone();
+                                    let principal_full_id = principal_full_id.clone();
                                     let device_id = device_id.clone();
                                     let notification = notification.clone();
                                     move |_| {
                                         mark_notification_read_state(
                                             base_url.clone(),
                                             token(),
-                                            account_did.clone(),
+                                            principal_full_id.clone(),
                                             device_id.clone(),
                                             notification.clone(),
                                             false,
@@ -313,14 +322,16 @@ pub fn NotificationsPanel(
                                 "aria-label": "Archive",
                                 onclick: {
                                     let base_url = base_url.clone();
-                                    let account_did = account_did.clone();
+                                    let authority = authority.clone();
+                                    let principal_full_id = principal_full_id.clone();
                                     let device_id = device_id.clone();
                                     let notification_id = notification.id.clone();
                                     move |_| {
                                         set_notification_inbox_state(
                                             base_url.clone(),
                                             token(),
-                                            account_did.clone(),
+                                            authority.clone(),
+                                            principal_full_id.clone(),
                                             device_id.clone(),
                                             notification_id.clone(),
                                             arkret_sdk::NotificationInboxState::Archived,
@@ -361,6 +372,8 @@ pub fn NotificationsPanel(
                                 onclick: {
                                     let action_to_run = notification.action.clone();
                                     let base_url = base_url.clone();
+                                    let principal_id = principal_id.clone();
+                                    let authority = authority.clone();
                                     let notification_id = notification.id.clone();
                                     // Translate now (default titles are i18n keys).
                                     let title = crate::i18n::tr(&notification.title);
@@ -369,6 +382,8 @@ pub fn NotificationsPanel(
                                             run_notification_action(
                                                 base_url.clone(),
                                                 token,
+                                                authority.clone(),
+                                                principal_id.clone(),
                                                 state_store,
                                                 notifications,
                                                 status_msg,

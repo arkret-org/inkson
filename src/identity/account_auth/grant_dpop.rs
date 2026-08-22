@@ -642,6 +642,18 @@ mod tests {
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     use crate::state::isolated_store_for_tests as isolated_store;
 
+    fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+        arkret_sdk::PrincipalAuthorityKey::new(
+            crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        )
+    }
+
+    fn test_device_id() -> arkret_sdk::DeviceId {
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000099".to_owned())
+            .unwrap()
+    }
+
     #[test]
     fn ensure_device_key_is_idempotent() {
         let mut store = isolated_store("idempotent");
@@ -797,7 +809,9 @@ mod tests {
 
     #[test]
     fn secure_store_seed_round_trips_without_plaintext_state_seed() {
-        let _scope = DeviceSeedScopeTestGuard::replace(Some("did:web:secure.example"));
+        let authority = test_authority("did:web:secure.example");
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("secure");
         let secure = MemorySecureKeyStore::default();
         let first = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
@@ -842,13 +856,14 @@ mod tests {
         // the per-account device identity signing seed. `load_or_recover` recovers
         // the DPoP record from the grant-binding seed and ignores the signing seed.
         let actor = "did:web:alice.example";
-        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
+        let authority = test_authority(actor);
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("recover-secure-dpop-record");
         let secure = MemorySecureKeyStore::default();
         // A device identity seed exists for this account but MUST NOT drive DPoP.
         let identity_seed = [9_u8; 32];
-        crate::secure_key_store::store_signing_seed_scoped(&secure, Some(actor), &identity_seed)
-            .unwrap();
+        crate::secure_key_store::store_signing_seed(&secure, &identity_seed).unwrap();
         let grant_seed = [19_u8; 32];
         crate::secure_key_store::store_grant_binding_seed(&secure, &grant_seed).unwrap();
 
@@ -878,7 +893,9 @@ mod tests {
         // seed (the `cnf.jkt` credential), never from the device identity signing
         // seed. A present signing seed for the same account MUST be ignored.
         let actor = "did:web:bob.example";
-        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
+        let authority = test_authority(actor);
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("repair-stale-dpop-record");
         let secure = MemorySecureKeyStore::default();
         let old_seed = [3_u8; 32];
@@ -889,8 +906,7 @@ mod tests {
         store
             .set_dpop_device_key_with_secure_store(Some(old_record.clone()), &secure)
             .unwrap();
-        crate::secure_key_store::store_signing_seed_scoped(&secure, Some(actor), &identity_seed)
-            .unwrap();
+        crate::secure_key_store::store_signing_seed(&secure, &identity_seed).unwrap();
         crate::secure_key_store::store_grant_binding_seed(&secure, &grant_seed).unwrap();
 
         let repaired = load_or_recover_device_key_with_secure_store(&mut store, &secure)
@@ -917,13 +933,14 @@ mod tests {
         // 0004 §4.2: `ensure_device_key` mints/loads the DPoP key from the
         // grant-binding store, decoupled from the device identity signing seed.
         let actor = "did:web:returning.example";
-        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
+        let authority = test_authority(actor);
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("ensure-sources-grant-binding");
         let secure = MemorySecureKeyStore::default();
         let identity_seed = [13_u8; 32];
         let grant_seed = [29_u8; 32];
-        crate::secure_key_store::store_signing_seed_scoped(&secure, Some(actor), &identity_seed)
-            .unwrap();
+        crate::secure_key_store::store_signing_seed(&secure, &identity_seed).unwrap();
         crate::secure_key_store::store_grant_binding_seed(&secure, &grant_seed).unwrap();
 
         let handle = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();

@@ -68,14 +68,15 @@ pub fn merge_notification_inbox_values(
 /// overwritten — losing another device's state to a decode bug is worse than
 /// failing the write.
 pub fn merge_notification_inbox_account_data(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     account_data_key: &str,
     candidate: &NotificationInboxValue,
     current: Option<&arkret_sdk::AccountDataRow>,
 ) -> anyhow::Result<Value> {
     let remote = match current {
         Some(current) => {
-            let plaintext = super::decrypt_account_data_entry(actor_id, account_data_key, current)?;
+            let plaintext =
+                super::decrypt_account_data_entry(authority, account_data_key, current)?;
             Some(notification_inbox_value_from_plaintext(
                 account_data_key,
                 &plaintext,
@@ -84,7 +85,7 @@ pub fn merge_notification_inbox_account_data(
         None => None,
     };
     let winner = merge_notification_inbox_values(candidate.clone(), remote.as_ref())?;
-    super::encrypt_account_data_value(actor_id, account_data_key, &serde_json::to_value(&winner)?)
+    super::encrypt_account_data_value(authority, account_data_key, &serde_json::to_value(&winner)?)
 }
 
 /// Inbox states carried by the `ak.account_data.set` Events in a sync frame.
@@ -92,7 +93,7 @@ pub fn merge_notification_inbox_account_data(
 /// Entries that do not decrypt or do not bind their own key are skipped: a
 /// foreign or corrupt inbox record must never silently archive a notification.
 pub fn notification_inbox_states_from_account_data_events(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     events: &[arkret_sdk::Event],
 ) -> Vec<NotificationInboxValue> {
     events
@@ -101,7 +102,7 @@ pub fn notification_inbox_states_from_account_data_events(
             let account_data_key = event.payload.get("key")?.as_str()?;
             arkret_sdk::notification_inbox_account_data_key_notification_id(account_data_key)?;
             let plaintext =
-                super::decrypt_account_data_entry(actor_id, account_data_key, &event.payload)
+                super::decrypt_account_data_entry(authority, account_data_key, &event.payload)
                     .ok()?;
             notification_inbox_value_from_plaintext(account_data_key, &plaintext).ok()
         })

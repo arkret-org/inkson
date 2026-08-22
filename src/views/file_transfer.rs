@@ -10,11 +10,12 @@ use crate::file_transfer::{
 };
 
 #[component]
-pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: String) -> Element {
+pub fn FileTransferPanel(token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session = crate::app::SessionContext::get();
     let base_url = session.base_url.read().clone();
     let state_store = session.state_store;
+    let active_account = session.active_account;
     let mut items = use_signal(Vec::<FileTransferItem>::new);
     let mut status = use_signal(|| "Ready".to_owned());
     let refreshing = use_signal(|| false);
@@ -24,18 +25,18 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
 
     {
         let base_url = base_url.clone();
-        let account_did = account_did.clone();
-        let device_id = device_id.clone();
         use_effect(move || {
-            refresh_items(
-                base_url.clone(),
-                token(),
-                account_did.clone(),
-                device_id.clone(),
-                items,
-                status,
-                refreshing,
-            );
+            if let Some(account) = active_account() {
+                refresh_items(
+                    base_url.clone(),
+                    token(),
+                    account.authority.principal_id.to_string(),
+                    account.device_id.to_string(),
+                    items,
+                    status,
+                    refreshing,
+                );
+            }
         });
     }
 
@@ -70,8 +71,6 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
                         disabled: uploading(),
                         onchange: {
                             let base_url = base_url.clone();
-                            let account_did = account_did.clone();
-                            let device_id = device_id.clone();
                             move |evt: Event<FormData>| {
                                 let files = evt.files();
                                 if files.is_empty() {
@@ -80,8 +79,12 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
                                 }
                                 let api_token = token();
                                 let base_url = base_url.clone();
-                                let actor = account_did.clone();
-                                let device = device_id.clone();
+                                let Some(account) = active_account() else {
+                                    status.set("Upload failed: account is not connected".to_owned());
+                                    return;
+                                };
+                                let actor = account.authority.principal_id.to_string();
+                                let device = account.device_id.to_string();
                                 uploading.set(true);
                                 status.set("Uploading".to_owned());
                                 spawn(async move {
@@ -184,18 +187,18 @@ pub fn FileTransferPanel(token: Signal<String>, account_did: String, device_id: 
                         disabled: refreshing(),
                         onclick: {
                             let base_url = base_url.clone();
-                            let account_did = account_did.clone();
-                            let device_id = device_id.clone();
                             move |_| {
-                                refresh_items(
-                                    base_url.clone(),
-                                    token(),
-                                    account_did.clone(),
-                                    device_id.clone(),
-                                    items,
-                                    status,
-                                    refreshing,
-                                );
+                                if let Some(account) = active_account() {
+                                    refresh_items(
+                                        base_url.clone(),
+                                        token(),
+                                        account.authority.principal_id.to_string(),
+                                        account.device_id.to_string(),
+                                        items,
+                                        status,
+                                        refreshing,
+                                    );
+                                }
                             }
                         },
                         UiIcon { name: "refresh" }

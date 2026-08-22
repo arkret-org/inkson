@@ -20,6 +20,7 @@
 
 use std::sync::RwLock;
 
+use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD};
 
@@ -38,7 +39,7 @@ use super::{SecureKeyStore, SecureKeyStoreError, require_wasm_indexeddb_ed25519_
 /// overwritten by a fresh login.
 pub const SIGNING_SEED_KEY: &str = "device.ed25519.signing_seed.v1";
 
-/// Process-global active device-seed scope: the signed-in account DID whose
+/// Process-global active device-seed scope: the signed-in authority/device whose
 /// per-account seed the bare [`load_signing_seed`] / [`ensure_signing_seed`]
 /// helpers resolve. `None` selects the bootstrap scope. Set on login
 /// completion, on app boot / session restore for the persisted account, and temporarily reset for a
@@ -46,7 +47,13 @@ pub const SIGNING_SEED_KEY: &str = "device.ed25519.signing_seed.v1";
 /// is read at a few controlled points (signer activation at boot/login,
 /// recovery); per-event signing uses the already-activated in-memory signer, so
 /// this is not a hot path.
-static ACTIVE_DEVICE_SEED_SCOPE: RwLock<Option<String>> = RwLock::new(None);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveDeviceSeedScope {
+    pub authority: PrincipalAuthorityKey,
+    pub device_id: DeviceId,
+}
+
+static ACTIVE_DEVICE_SEED_SCOPE: RwLock<Option<ActiveDeviceSeedScope>> = RwLock::new(None);
 
 #[cfg(test)]
 static ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -62,8 +69,8 @@ static ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mu
 /// never takes this lock.
 #[cfg(test)]
 pub(crate) struct DeviceSeedScopeTestGuard {
-    previous_scope: Option<String>,
-    previous_pending: Option<String>,
+    previous_scope: Option<ActiveDeviceSeedScope>,
+    previous_pending: Option<DeviceId>,
     _lock: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -73,7 +80,7 @@ impl DeviceSeedScopeTestGuard {
     /// `scope` as the active device-seed scope (`None` selects the neutral
     /// bootstrap state). The guarded test may freely mutate both globals;
     /// drop restores the pre-guard values.
-    pub(crate) fn replace(scope: Option<&str>) -> Self {
+    pub(crate) fn replace(scope: Option<(&PrincipalAuthorityKey, &DeviceId)>) -> Self {
         let lock = ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -92,25 +99,29 @@ impl DeviceSeedScopeTestGuard {
 #[cfg(test)]
 impl Drop for DeviceSeedScopeTestGuard {
     fn drop(&mut self) {
-        set_active_device_seed_scope(self.previous_scope.as_deref());
-        set_pending_login_device_id(self.previous_pending.as_deref());
+        set_active_device_seed_scope(
+            self.previous_scope
+                .as_ref()
+                .map(|scope| (&scope.authority, &scope.device_id)),
+        );
+        set_pending_login_device_id(self.previous_pending.as_ref());
     }
 }
 
-/// Set the active per-account device-seed scope (the account DID), or `None`
+/// Set the active authority/device seed scope, or `None`
 /// for the bootstrap scope.
-pub fn set_active_device_seed_scope(scope: Option<&str>) {
-    let normalized = scope
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
+pub fn set_active_device_seed_scope(scope: Option<(&PrincipalAuthorityKey, &DeviceId)>) {
+    let normalized = scope.map(|(authority, device_id)| ActiveDeviceSeedScope {
+        authority: authority.clone(),
+        device_id: device_id.clone(),
+    });
     if let Ok(mut guard) = ACTIVE_DEVICE_SEED_SCOPE.write() {
         *guard = normalized;
     }
 }
 
 /// The current active per-account device-seed scope, if any.
-pub fn active_device_seed_scope() -> Option<String> {
+pub fn active_device_seed_scope() -> Option<ActiveDeviceSeedScope> {
     ACTIVE_DEVICE_SEED_SCOPE
         .read()
         .ok()
@@ -120,36 +131,37 @@ pub fn active_device_seed_scope() -> Option<String> {
 /// Process-global pending-login device id. During the pre-DID phase of an
 /// interactive sign-in the wrap_seed (and any pending secrets) live under the
 /// `pending.<device_id>` namespace; once the principal DID resolves, that
-/// material is transferred under the DID namespace. `None` outside an
+/// material is transferred under the accepted authority/device namespace. `None` outside an
 /// in-flight pending sign-in.
-static PENDING_LOGIN_DEVICE_ID: RwLock<Option<String>> = RwLock::new(None);
+static PENDING_LOGIN_DEVICE_ID: RwLock<Option<DeviceId>> = RwLock::new(None);
 
 /// Set (or clear with `None`) the pending-login device id used to namespace the
 /// pre-DID wrap_seed and pending secrets.
-pub fn set_pending_login_device_id(device_id: Option<&str>) {
-    let normalized = device_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
+pub fn set_pending_login_device_id(device_id: Option<&DeviceId>) {
+    let normalized = device_id.cloned();
     if let Ok(mut guard) = PENDING_LOGIN_DEVICE_ID.write() {
         *guard = normalized;
     }
 }
 
 /// The current pending-login device id, if a pre-DID sign-in is in flight.
-pub fn pending_login_device_id() -> Option<String> {
+pub fn pending_login_device_id() -> Option<DeviceId> {
     PENDING_LOGIN_DEVICE_ID
         .read()
         .ok()
         .and_then(|guard| guard.clone())
 }
 
-fn pending_login_scope() -> Option<String> {
-    pending_login_device_id().map(|device_id| format!("pending:{device_id}"))
+#[derive(Clone, Debug)]
+enum DeviceSeedScope {
+    Account(ActiveDeviceSeedScope),
+    Pending(DeviceId),
 }
 
-fn effective_device_seed_scope() -> Option<String> {
-    active_device_seed_scope().or_else(pending_login_scope)
+fn effective_device_seed_scope() -> Option<DeviceSeedScope> {
+    active_device_seed_scope()
+        .map(DeviceSeedScope::Account)
+        .or_else(|| pending_login_device_id().map(DeviceSeedScope::Pending))
 }
 
 /// Append the active per-account scope to a secure-store key `base`, for
@@ -158,8 +170,9 @@ fn effective_device_seed_scope() -> Option<String> {
 /// bytes and is what `ensure_device_key` consults first). Returns `base`
 /// unchanged in the bootstrap scope. The account segment uses the same
 /// URL-safe-base64 sanitisation as [`signing_seed_key_for`].
-pub fn account_scoped_device_key(base: &str) -> String {
-    account_scoped_device_key_for(base, effective_device_seed_scope().as_deref())
+pub fn account_scoped_device_key(base: &str) -> Result<String, SecureKeyStoreError> {
+    let scope = effective_device_seed_scope().ok_or_else(missing_identity_scope_error)?;
+    identity_storage_key(&scope, base)
 }
 
 /// Resolve an identity-owned device key for fallible runtime paths.
@@ -168,77 +181,40 @@ pub fn account_scoped_device_key(base: &str) -> String {
 /// with neither an active user nor a pending login. That state means there is
 /// no credential to load; it must become a handled error, never a wasm panic.
 fn try_account_scoped_device_key(base: &str) -> Result<String, SecureKeyStoreError> {
-    let scope = effective_device_seed_scope().ok_or_else(|| {
-        SecureKeyStoreError::Backend(
-            "identity-owned key is unavailable before a UserLocalStore or PendingLocalStore scope is active"
-                .to_owned(),
-        )
-    })?;
-    try_identity_storage_key(&scope, base)
+    account_scoped_device_key(base)
 }
 
-// The `expect` below asserts the scope invariant named in its message; this
-// helper returns a key string, not a Result, so the invariant cannot be
-// propagated.
-#[allow(clippy::expect_used)]
-pub(crate) fn account_scoped_device_key_for(base: &str, scope: Option<&str>) -> String {
-    let scope = scope
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(pending_login_scope)
-        .expect("identity-owned key requires UserLocalStore or PendingLocalStore scope");
-    identity_storage_key(&scope, base)
+fn missing_identity_scope_error() -> SecureKeyStoreError {
+    SecureKeyStoreError::Backend(
+        "identity-owned key is unavailable before an account authority/device or pending device scope is active"
+            .to_owned(),
+    )
 }
 
-// Callers only pass scopes already validated as a DidCoreId/DidFullId (or a
-// pending-login device scope); the `expect` documents that invariant.
-#[allow(clippy::expect_used)]
-fn identity_storage_key(scope: &str, logical_key: &str) -> String {
-    try_identity_storage_key(scope, logical_key)
-        .expect("identity-owned key scope is not a validated DidCoreId or DidFullId")
-}
-
-fn try_identity_storage_key(scope: &str, logical_key: &str) -> Result<String, SecureKeyStoreError> {
-    if let Some(device_id) = scope.strip_prefix("pending:") {
-        let device_scope = device_id.strip_prefix("ak:device:").unwrap_or(device_id);
-        return Ok(format!("inkson.pending.{device_scope}.{logical_key}"));
+fn identity_storage_key(
+    scope: &DeviceSeedScope,
+    logical_key: &str,
+) -> Result<String, SecureKeyStoreError> {
+    match scope {
+        DeviceSeedScope::Account(scope) => Ok(format!(
+            "inkson.authority.{}.device.{}.{logical_key}",
+            super::principal_authority_storage_digest(&scope.authority)?,
+            super::device_storage_digest(&scope.device_id)
+        )),
+        DeviceSeedScope::Pending(device_id) => Ok(format!(
+            "inkson.pending.{}.{logical_key}",
+            super::device_storage_digest(device_id)
+        )),
     }
-
-    let core_scope = if let Some(core_scope) = scope.strip_prefix("ak:did_core:") {
-        core_scope.to_owned()
-    } else if let Ok(full_id) = arkret_sdk::DidFullId::new(scope.to_owned())
-        && let Ok(core_id) = arkret_sdk::project_full_id_to_core_id(&full_id)
-    {
-        core_id
-            .as_str()
-            .strip_prefix("ak:did_core:")
-            .unwrap_or_else(|| core_id.as_str())
-            .to_owned()
-    } else {
-        return Err(SecureKeyStoreError::Backend(
-            "identity-owned key scope is not a validated DidCoreId or DidFullId".to_owned(),
-        ));
-    };
-    Ok(format!("inkson.{core_scope}.{logical_key}"))
 }
 
-/// Secure-store key for the signing seed under `scope` (the account DID), or
-/// the bootstrap key when `scope` is `None`/empty. The account segment is
-/// URL-safe-base64 encoded (the same sanitisation the MLS marker keys use) so
-/// DID characters are safe across every backend.
+/// Secure-store key for the signing seed under the active typed scope.
 // The `expect` below asserts the scope invariant named in its message; this
 // helper returns a key string, not a Result, so the invariant cannot be
 // propagated.
 #[allow(clippy::expect_used)]
-fn signing_seed_key_for(scope: Option<&str>) -> String {
-    let resolved_scope = scope
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(pending_login_scope)
-        .expect("signing-seed key requires UserLocalStore or PendingLocalStore scope");
-    identity_storage_key(&resolved_scope, SIGNING_SEED_KEY)
+fn signing_seed_key() -> Result<String, SecureKeyStoreError> {
+    account_scoped_device_key(SIGNING_SEED_KEY)
 }
 
 /// Decoded signing seed (32 bytes) plus the `did:key` the seed encodes.
@@ -290,15 +266,7 @@ impl SigningSeedMaterial {
 pub fn load_signing_seed(
     store: &dyn SecureKeyStore,
 ) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
-    load_signing_seed_scoped(store, active_device_seed_scope().as_deref())
-}
-
-/// [`load_signing_seed`] for an explicit account scope (`None` = bootstrap).
-pub(crate) fn load_signing_seed_scoped(
-    store: &dyn SecureKeyStore,
-    scope: Option<&str>,
-) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
-    load_signing_seed_at(store, &signing_seed_key_for(scope))
+    load_signing_seed_at(store, &signing_seed_key()?)
 }
 
 pub(super) fn load_signing_seed_at(
@@ -334,16 +302,7 @@ pub fn store_signing_seed(
     store: &dyn SecureKeyStore,
     seed: &[u8; 32],
 ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
-    store_signing_seed_scoped(store, active_device_seed_scope().as_deref(), seed)
-}
-
-/// [`store_signing_seed`] for an explicit account scope (`None` = bootstrap).
-pub(crate) fn store_signing_seed_scoped(
-    store: &dyn SecureKeyStore,
-    scope: Option<&str>,
-    seed: &[u8; 32],
-) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
-    store_signing_seed_at(store, &signing_seed_key_for(scope), seed)
+    store_signing_seed_at(store, &signing_seed_key()?, seed)
 }
 
 pub(super) fn store_signing_seed_at(
@@ -379,11 +338,8 @@ pub(super) async fn store_signing_seed_at_durable(
 
 /// Delete the signing seed for `scope` (`None` = bootstrap). Best-effort; a
 /// missing entry is not an error at the backend level.
-pub(super) fn delete_signing_seed_scoped(
-    store: &dyn SecureKeyStore,
-    scope: Option<&str>,
-) -> Result<(), SecureKeyStoreError> {
-    store.delete_secret(&signing_seed_key_for(scope))
+pub(super) fn delete_signing_seed(store: &dyn SecureKeyStore) -> Result<(), SecureKeyStoreError> {
+    store.delete_secret(&signing_seed_key()?)
 }
 
 /// Reset to the bootstrap scope for a fresh interactive sign-in, clear only
@@ -392,10 +348,12 @@ pub(super) fn delete_signing_seed_scoped(
 /// re-login can prove a fresh `cnf.jkt` without rotating the E2EE device.
 pub fn reset_device_seed_scope_for_signin(
     store: &dyn SecureKeyStore,
+    pending_device_id: &DeviceId,
 ) -> Result<(), SecureKeyStoreError> {
     set_active_device_seed_scope(None);
-    let _ = delete_device_id_scoped(store, None);
-    let _ = delete_signing_seed_scoped(store, None);
+    set_pending_login_device_id(Some(pending_device_id));
+    let _ = delete_device_id(store);
+    let _ = delete_signing_seed(store);
     rotate_grant_binding_seed(store).map(|_| ())
 }
 
@@ -404,15 +362,7 @@ pub fn reset_device_seed_scope_for_signin(
 pub fn ensure_signing_seed(
     store: &dyn SecureKeyStore,
 ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
-    ensure_signing_seed_scoped(store, active_device_seed_scope().as_deref())
-}
-
-/// [`ensure_signing_seed`] for an explicit account scope (`None` = bootstrap).
-pub(crate) fn ensure_signing_seed_scoped(
-    store: &dyn SecureKeyStore,
-    scope: Option<&str>,
-) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
-    ensure_signing_seed_at(store, &signing_seed_key_for(scope))
+    ensure_signing_seed_at(store, &signing_seed_key()?)
 }
 
 pub(super) fn ensure_signing_seed_at(
@@ -452,7 +402,7 @@ pub(super) async fn ensure_signing_seed_at_durable(
 // that signs events / KeyPackages / MLS. It is minted fresh on interactive
 // sign-in, cleared on hard logout, and preserved across grant rotation and soft
 // recovery. It is isolated by pending transaction before the principal is
-// known and by principal DID after adoption, so concurrent or sequential
+// known and by authority/device after adoption, so concurrent or sequential
 // account flows cannot overwrite one another's holder key.
 // ---------------------------------------------------------------------------
 
@@ -586,25 +536,17 @@ const DEVICE_ID_KEY: &str = "device.id.v1";
 #[cfg(target_arch = "wasm32")]
 const DEVICE_ID_LOCALSTORAGE_KEY: &str = "device_id.v1";
 
-/// Storage key for the `device_id` under `scope` (account DID), or the bootstrap
-/// key when `scope` is `None`/empty. The account segment is URL-safe-base64
-/// encoded, matching [`signing_seed_key_for`].
+/// Storage key for the `device_id` under the active typed scope.
 // The `expect` below asserts the scope invariant named in its message; this
 // helper returns a key string, not a Result, so the invariant cannot be
 // propagated.
 #[allow(clippy::expect_used)]
-fn device_id_key_for(scope: Option<&str>) -> String {
+fn device_id_key() -> Result<String, SecureKeyStoreError> {
     #[cfg(target_arch = "wasm32")]
     let base = DEVICE_ID_LOCALSTORAGE_KEY;
     #[cfg(not(target_arch = "wasm32"))]
     let base = DEVICE_ID_KEY;
-    let resolved_scope = scope
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(pending_login_scope)
-        .expect("device-id key requires UserLocalStore or PendingLocalStore scope");
-    identity_storage_key(&resolved_scope, base)
+    account_scoped_device_key(base)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -613,53 +555,42 @@ fn device_id_local_storage() -> Option<web_sys::Storage> {
 }
 
 /// Read the persisted stable `device_id` for the active account scope.
-pub fn load_device_id(store: &dyn SecureKeyStore) -> Result<Option<String>, SecureKeyStoreError> {
-    load_device_id_scoped(store, active_device_seed_scope().as_deref())
-}
-
-/// [`load_device_id`] for an explicit account scope (`None` = bootstrap).
-pub(crate) fn load_device_id_scoped(
-    store: &dyn SecureKeyStore,
-    scope: Option<&str>,
-) -> Result<Option<String>, SecureKeyStoreError> {
-    let key = device_id_key_for(scope);
+pub fn load_device_id(store: &dyn SecureKeyStore) -> Result<Option<DeviceId>, SecureKeyStoreError> {
+    let key = device_id_key()?;
     #[cfg(target_arch = "wasm32")]
     {
         let _ = store;
-        Ok(device_id_local_storage()
+        device_id_local_storage()
             .and_then(|storage| storage.get_item(&key).ok().flatten())
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty()))
+            .map(|value| DeviceId::new(value.trim().to_owned()))
+            .transpose()
+            .map_err(|error| {
+                SecureKeyStoreError::Backend(format!("stored device_id is invalid: {error}"))
+            })
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        Ok(store
+        store
             .get_secret(&key)?
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty()))
+            .map(|value| DeviceId::new(value.trim().to_owned()))
+            .transpose()
+            .map_err(|error| {
+                SecureKeyStoreError::Backend(format!("stored device_id is invalid: {error}"))
+            })
     }
 }
 
 /// Persist `device_id` for the active account scope. Overwrites silently.
 pub fn store_device_id(
     store: &dyn SecureKeyStore,
-    device_id: &str,
+    device_id: &DeviceId,
 ) -> Result<(), SecureKeyStoreError> {
-    store_device_id_scoped(store, active_device_seed_scope().as_deref(), device_id)
-}
-
-/// [`store_device_id`] for an explicit account scope (`None` = bootstrap).
-pub(crate) fn store_device_id_scoped(
-    store: &dyn SecureKeyStore,
-    scope: Option<&str>,
-    device_id: &str,
-) -> Result<(), SecureKeyStoreError> {
-    let key = device_id_key_for(scope);
+    let key = device_id_key()?;
     #[cfg(target_arch = "wasm32")]
     {
         let _ = store;
         if let Some(storage) = device_id_local_storage() {
-            storage.set_item(&key, device_id.trim()).map_err(|err| {
+            storage.set_item(&key, device_id.as_str()).map_err(|err| {
                 SecureKeyStoreError::Backend(format!("localStorage device_id set: {err:?}"))
             })?;
         }
@@ -667,16 +598,13 @@ pub(crate) fn store_device_id_scoped(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        store.store_secret(&key, device_id.trim())
+        store.store_secret(&key, device_id.as_str())
     }
 }
 
 /// Delete the `device_id` for `scope` (`None` = bootstrap). Best-effort.
-pub(super) fn delete_device_id_scoped(
-    store: &dyn SecureKeyStore,
-    scope: Option<&str>,
-) -> Result<(), SecureKeyStoreError> {
-    let key = device_id_key_for(scope);
+pub(super) fn delete_device_id(store: &dyn SecureKeyStore) -> Result<(), SecureKeyStoreError> {
+    let key = device_id_key()?;
     #[cfg(target_arch = "wasm32")]
     {
         let _ = store;
@@ -704,7 +632,13 @@ mod grant_binding_tests {
     use crate::secure_key_store::MemorySecureKeyStore;
 
     fn activate_test_user() -> DeviceSeedScopeTestGuard {
-        DeviceSeedScopeTestGuard::replace(Some("ak:did_core:web:alice.example"))
+        let authority = PrincipalAuthorityKey::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
+        );
+        let device_id =
+            DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned()).unwrap();
+        DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)))
     }
 
     #[test]
@@ -749,7 +683,7 @@ mod grant_binding_tests {
         assert!(
             error
                 .to_string()
-                .contains("before a UserLocalStore or PendingLocalStore scope is active")
+                .contains("before an account authority/device or pending device scope is active")
         );
     }
 
@@ -759,29 +693,31 @@ mod grant_binding_tests {
         // The two subjects use different store keys, so writing one never
         // perturbs the other — the core invariant of decision 0004.
         let store = MemorySecureKeyStore::default();
-        let device_identity =
-            ensure_signing_seed_scoped(&store, Some("ak:did_core:web:alice.example")).unwrap();
+        let device_identity = ensure_signing_seed(&store).unwrap();
         let grant_binding = ensure_grant_binding_seed(&store).unwrap();
         assert_ne!(device_identity.seed, grant_binding.seed);
         // Rotating the grant-binding key leaves the device identity seed intact.
         rotate_grant_binding_seed(&store).unwrap();
-        let identity_after =
-            load_signing_seed_scoped(&store, Some("ak:did_core:web:alice.example"))
-                .unwrap()
-                .expect("device identity seed survives grant-binding rotation");
+        let identity_after = load_signing_seed(&store)
+            .unwrap()
+            .expect("device identity seed survives grant-binding rotation");
         assert_eq!(identity_after.seed, device_identity.seed);
     }
 
     #[test]
     fn pending_accounts_use_distinct_device_and_grant_key_namespaces() {
         let _scope = DeviceSeedScopeTestGuard::replace(None);
-        set_pending_login_device_id(Some("ak:device:01964137-0000-7000-8000-000000000001"));
-        let first_device = device_id_key_for(None);
-        let first_grant = account_scoped_device_key(GRANT_BINDING_SEED_KEY);
+        let first_id =
+            DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned()).unwrap();
+        set_pending_login_device_id(Some(&first_id));
+        let first_device = device_id_key().unwrap();
+        let first_grant = account_scoped_device_key(GRANT_BINDING_SEED_KEY).unwrap();
 
-        set_pending_login_device_id(Some("ak:device:01964137-0000-7000-8000-000000000002"));
-        let second_device = device_id_key_for(None);
-        let second_grant = account_scoped_device_key(GRANT_BINDING_SEED_KEY);
+        let second_id =
+            DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned()).unwrap();
+        set_pending_login_device_id(Some(&second_id));
+        let second_device = device_id_key().unwrap();
+        let second_grant = account_scoped_device_key(GRANT_BINDING_SEED_KEY).unwrap();
 
         assert_ne!(first_device, second_device);
         assert_ne!(first_grant, second_grant);

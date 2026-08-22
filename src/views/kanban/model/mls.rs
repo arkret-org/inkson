@@ -21,13 +21,13 @@ pub(crate) struct MlsDecryptCtx<'a> {
 pub(crate) fn mls_decrypt_ctx_if_ready<'a>(
     state_store: &'a LocalStateStore,
     realm_id: &'a str,
-    actor_id: &'a str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
 ) -> Option<MlsDecryptCtx<'a>> {
     let snapshot_requires_account_secret = state_store.mls_snapshot_for(realm_id).is_some();
     if snapshot_requires_account_secret {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let account_secret_available = matches!(
-            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id),
+            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority),
             Ok(Some(_))
         );
         if !should_enter_mls_decrypt_runtime(

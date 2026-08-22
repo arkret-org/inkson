@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use arkret_sdk::DeviceId;
+use arkret_sdk::{
+    DeviceId, DidCoreId, DidFullId, PrincipalAuthorityKey, PrincipalResolutionProjection,
+    project_full_id_to_core_id,
+};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -14,7 +17,6 @@ const DEFAULT_SERVER_URL: &str = "https://local.host";
 const DEFAULT_PRINCIPAL_SERVERS: &[&str] = &[DEFAULT_SERVER_URL];
 const LOCAL_PROXY_SERVER_URL: &str = "https://local.host";
 const LOCAL_PROXY_SERVER_PORT: u16 = 8787;
-const DEFAULT_ACCOUNT_DID: &str = "";
 const DEVICE_ID_PREFIX: &str = "ak:device:";
 #[cfg(target_arch = "wasm32")]
 const CONFIG_STORAGE_KEY: &str = "inkson.config.v1";
@@ -23,23 +25,21 @@ const CONFIG_STORAGE_KEY: &str = "inkson.config.v1";
 #[cfg(target_arch = "wasm32")]
 const PROFILES_STORAGE_KEY: &str = "inkson.profiles.v1";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {
-    pub server_url: String,
     pub principal_servers: Vec<String>,
-    pub account_did: String,
-    pub device_id: String,
+    #[serde(default)]
+    pub active_account: Option<ActiveAccountContext>,
+    #[serde(default, skip_serializing)]
     pub session_credential: String,
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            server_url: DEFAULT_SERVER_URL.to_owned(),
             principal_servers: default_principal_servers(),
-            account_did: DEFAULT_ACCOUNT_DID.to_owned(),
-            device_id: new_device_id(),
+            active_account: None,
             session_credential: String::new(),
         }
     }
@@ -47,33 +47,28 @@ impl Default for ClientConfig {
 
 impl ClientConfig {
     pub fn from_fields(
-        server_url: impl Into<String>,
-        account_did: impl Into<String>,
-        device_id: impl Into<String>,
+        active_account: Option<ActiveAccountContext>,
         session_credential: impl Into<String>,
     ) -> Self {
         Self {
-            server_url: server_url.into(),
             principal_servers: default_principal_servers(),
-            account_did: account_did.into(),
-            device_id: device_id.into(),
+            active_account,
             session_credential: session_credential.into(),
         }
         .normalized()
     }
 
     fn normalized(mut self) -> Self {
-        self.server_url = normalize_server_url(&self.server_url);
         self.principal_servers = normalize_principal_server_presets(&self.principal_servers);
-        let current = self.device_id.trim().to_owned();
-        if is_valid_device_id(&current) {
-            self.device_id = current;
-            return self;
+        if self.active_account.is_none() {
+            self.session_credential.clear();
         }
-
-        self.device_id = new_device_id();
-        self.session_credential.clear();
         self
+    }
+
+    #[must_use]
+    pub fn active_account(&self) -> Option<&ActiveAccountContext> {
+        self.active_account.as_ref()
     }
 }
 
@@ -135,12 +130,9 @@ pub fn principal_server_options_for(
     options
 }
 
-/// AKP-0007 P3B.4 — multi-account profile primitive. A profile is the
-/// (server_url, account_did, device_id, session_credential) tuple that the
-/// existing single-profile `ClientConfig` already carries, plus a
-/// stable `profile_id` so the switcher UI can address profiles by a
-/// non-secret handle (account_did + device_id could rotate; profile_id
-/// stays put for the life of the profile).
+/// AKP-0007 P3B.4 — multi-account profile primitive. The stable authority
+/// identifies the account while resolution and route remain independently
+/// replaceable projections. `profile_id` is the installation-local UI key.
 ///
 /// The single-profile `ClientConfig` continues to exist as the *active*
 /// view onto the multi-profile store — every call site that reads
@@ -155,52 +147,101 @@ pub fn principal_server_options_for(
 /// [`MultiProfileConfig`] through a `Signal` so subsystems can pick
 /// up the rotation atomically without the previous per-subsystem
 /// peek pattern.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountProfile {
-    /// Stable, opaque id (UUIDv7 prefixed `ak:profile:`). NOT derived
-    /// from the account_did — DIDs can rotate via inception-upgrade,
-    /// but the profile id should stay put so the switcher UI doesn't
-    /// lose its row.
+    /// Stable, opaque id (UUIDv7 prefixed `ak:profile:`). It is never derived
+    /// from identity coordinates and remains stable across resolution or route
+    /// refreshes.
     pub profile_id: String,
     /// Optional human label (e.g. "Work", "Personal"). Falls back to
-    /// the account DID's last segment when empty.
+    /// the stable principal identifier's last segment when empty.
     #[serde(default)]
     pub label: String,
-    /// Same four fields as `ClientConfig`.
-    pub server_url: String,
-    pub account_did: String,
-    pub device_id: String,
+    pub authority: PrincipalAuthorityKey,
+    pub resolution: PrincipalResolutionProjection,
+    pub device_id: DeviceId,
+    pub server_url: Url,
+    /// Runtime-only credential; plaintext profile persistence never carries it.
+    #[serde(default, skip_serializing)]
     pub session_credential: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SerializedAccountProfile {
+    profile_id: String,
+    #[serde(default)]
+    label: String,
+    authority: PrincipalAuthorityKey,
+    resolution: PrincipalResolutionProjection,
+    device_id: DeviceId,
+    server_url: Url,
+}
+
+impl<'de> Deserialize<'de> for AccountProfile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = SerializedAccountProfile::deserialize(deserializer)?;
+        let profile = Self {
+            profile_id: value.profile_id,
+            label: value.label,
+            authority: value.authority,
+            resolution: value.resolution,
+            device_id: value.device_id,
+            server_url: value.server_url,
+            session_credential: String::new(),
+        };
+        profile.active_context().map_err(serde::de::Error::custom)?;
+        Ok(profile)
+    }
+}
+
 impl AccountProfile {
-    pub fn new(
-        server_url: impl Into<String>,
-        account_did: impl Into<String>,
-        device_id: impl Into<String>,
+    pub(crate) fn new(
+        authority: PrincipalAuthorityKey,
+        resolution: PrincipalResolutionProjection,
+        device_id: DeviceId,
+        server_url: Url,
         session_credential: impl Into<String>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ActiveAccountContextError> {
+        let profile = Self {
             profile_id: format!("ak:profile:{}", uuid_v7()),
             label: String::new(),
-            server_url: server_url.into(),
-            account_did: account_did.into(),
-            device_id: device_id.into(),
+            server_url,
+            authority,
+            resolution,
+            device_id,
             session_credential: session_credential.into(),
-        }
+        };
+        profile.active_context()?;
+        Ok(profile)
     }
 
-    /// Human label used by the avatar dropdown switcher. Falls back
-    /// to the DID's last `:` segment when no label is set.
+    /// Human label used by the avatar dropdown switcher. Falls back to the
+    /// stable principal identifier's last `:` segment when no label is set.
     pub fn display_label(&self) -> &str {
         if !self.label.is_empty() {
             return self.label.as_str();
         }
-        self.account_did
+        self.authority
+            .principal_id
+            .as_str()
             .rsplit(':')
             .next()
-            .unwrap_or(self.account_did.as_str())
+            .unwrap_or(self.authority.principal_id.as_str())
+    }
+
+    pub fn active_context(&self) -> Result<ActiveAccountContext, ActiveAccountContextError> {
+        ActiveAccountContext::new(
+            self.profile_id.clone(),
+            self.authority.clone(),
+            self.resolution.clone(),
+            self.device_id.clone(),
+            self.server_url.clone(),
+        )
     }
 }
 
@@ -224,15 +265,17 @@ impl MultiProfileConfig {
         self.profiles.iter().find(|p| p.profile_id == id)
     }
 
-    /// Add or replace a profile (matched by `account_did + server_url`)
+    /// Add or replace a profile (matched only by account authority)
     /// and mark it active. Returns the active profile id.
-    pub fn upsert_and_activate(&mut self, profile: AccountProfile) -> String {
-        let key = (profile.account_did.clone(), profile.server_url.clone());
-        if let Some(existing) = self
-            .profiles
-            .iter_mut()
-            .find(|p| (p.account_did.clone(), p.server_url.clone()) == key)
-        {
+    pub fn upsert_and_activate(
+        &mut self,
+        profile: AccountProfile,
+    ) -> Result<String, ActiveAccountContextError> {
+        profile.active_context()?;
+        let key = profile.authority.clone();
+        if let Some(existing) = self.profiles.iter_mut().find(|p| p.authority == key) {
+            existing.resolution = profile.resolution;
+            existing.server_url = profile.server_url;
             existing.device_id = profile.device_id;
             existing.session_credential = profile.session_credential;
             if !profile.label.is_empty() {
@@ -240,12 +283,12 @@ impl MultiProfileConfig {
             }
             let id = existing.profile_id.clone();
             self.active_profile_id = Some(id.clone());
-            return id;
+            return Ok(id);
         }
         let id = profile.profile_id.clone();
         self.profiles.push(profile);
         self.active_profile_id = Some(id.clone());
-        id
+        Ok(id)
     }
 
     /// Switch the active profile. Returns `false` if the requested
@@ -274,10 +317,9 @@ impl MultiProfileConfig {
     /// install).
     pub fn active_as_client_config(&self) -> Option<ClientConfig> {
         let active = self.active()?;
+        let active_account = active.active_context().ok()?;
         Some(ClientConfig::from_fields(
-            active.server_url.as_str(),
-            active.account_did.as_str(),
-            active.device_id.as_str(),
+            Some(active_account),
             active.session_credential.as_str(),
         ))
     }
@@ -313,17 +355,24 @@ pub struct ProfileSwitchEvent {
     /// `profile_id` that was active before the switch. `None` on the
     /// first activation after a fresh install.
     pub prior_profile_id: Option<String>,
-    /// Profile the shell is switching into. Carries the resolved
-    /// `(server_url, account_did, device_id, session_credential)` tuple so
-    /// reactors don't need a follow-up store read.
+    /// Profile the shell is switching into, including its typed authority,
+    /// accepted resolution, device and current route.
     pub next_profile: AccountProfile,
 }
 
-/// SecureKeyStore key for the current session credential of `account_did`.
-/// The namespace is per-DID — two profiles for the same DID on different
-/// servers share one slot, matching the existing single-active-profile model.
-fn session_credential_secret_key(account_did: &str) -> String {
-    format!("coauth.session_credential.{account_did}")
+/// SecureKeyStore key for a current session credential. Both the account
+/// authority pair and device participate in the namespace; resolution and
+/// route deliberately do not.
+fn session_credential_secret_key(
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+) -> anyhow::Result<String> {
+    let authority_digest = crate::secure_key_store::principal_authority_storage_digest(authority)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let device_digest = crate::secure_key_store::device_storage_digest(device_id);
+    Ok(format!(
+        "coauth.session_credential.{authority_digest}.{device_digest}"
+    ))
 }
 
 /// Process-wide secure store handle used to keep `session_credential` out
@@ -349,7 +398,8 @@ fn config_secure_store() -> std::sync::Arc<dyn crate::secure_key_store::SecureKe
 
 /// In-process read-through cache so the hot `LocalConfigStore::load()`
 /// path doesn't hit the OS keyring / localStorage AEAD unwrap on every
-/// call. `None` values negative-cache "no credential stored" for the DID.
+/// call. `None` values negative-cache "no credential stored" for the exact
+/// authority/device slot.
 fn session_credential_cache()
 -> &'static std::sync::Mutex<std::collections::HashMap<String, Option<String>>> {
     static CACHE: std::sync::OnceLock<
@@ -360,22 +410,23 @@ fn session_credential_cache()
 
 /// Move `session_credential` into the SecureKeyStore. Plaintext persistence is
 /// always redacted, including when the secure backend rejects the write.
-fn persist_session_credential_secret(account_did: &str, session_credential: &str) {
-    if account_did.is_empty() {
+fn persist_session_credential_secret(
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    session_credential: &str,
+) {
+    if session_credential.is_empty() {
         return;
     }
     let store = config_secure_store();
-    let key = session_credential_secret_key(account_did);
-    if session_credential.is_empty() {
-        // Empty config writes also happen during first-paint restore and
-        // profile/bootstrap churn. Do not treat them as logout; explicit
-        // session invalidation calls `clear_session_credential_secret`.
+    let Ok(key) = session_credential_secret_key(authority, device_id) else {
+        tracing::warn!("session credential scope canonicalization failed");
         return;
-    }
+    };
     match store.store_secret(&key, session_credential) {
         Ok(()) => {
             if let Ok(mut cache) = session_credential_cache().lock() {
-                cache.insert(account_did.to_owned(), Some(session_credential.to_owned()));
+                cache.insert(key, Some(session_credential.to_owned()));
             }
         }
         Err(error) => {
@@ -387,26 +438,28 @@ fn persist_session_credential_secret(account_did: &str, session_credential: &str
     }
 }
 
-pub(crate) fn clear_session_credential_secret(account_did: &str) {
-    if account_did.is_empty() {
+pub(crate) fn clear_session_credential_secret(
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+) {
+    let Ok(key) = session_credential_secret_key(authority, device_id) else {
         return;
-    }
+    };
     let store = config_secure_store();
-    let _ = store.delete_secret(&session_credential_secret_key(account_did));
+    let _ = store.delete_secret(&key);
     if let Ok(mut cache) = session_credential_cache().lock() {
-        cache.insert(account_did.to_owned(), None);
+        cache.insert(key, None);
     }
 }
 
-/// Companion read: the session credential for `account_did`, from the
+/// Companion read for one authority/device slot, from the
 /// in-process cache first, then the SecureKeyStore.
 fn restore_session_credential_secret_from_store(
-    account_did: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<String> {
-    if account_did.is_empty() {
-        return None;
-    }
+    let key = session_credential_secret_key(authority, device_id).ok()?;
     // The synchronous first-paint wasm store is intentionally forbidden from
     // reading session credentials. Wait for the IndexedDB/SubtleCrypto tier
     // instead of probing the forbidden localStorage path on every render and
@@ -416,11 +469,11 @@ fn restore_session_credential_secret_from_store(
         return None;
     }
     if let Ok(cache) = session_credential_cache().lock()
-        && let Some(entry) = cache.get(account_did)
+        && let Some(entry) = cache.get(&key)
     {
         return entry.clone();
     }
-    let result = match store.get_secret(&session_credential_secret_key(account_did)) {
+    let result = match store.get_secret(&key) {
         Ok(value) => value,
         Err(error) => {
             tracing::warn!(
@@ -432,14 +485,17 @@ fn restore_session_credential_secret_from_store(
         }
     };
     if let Ok(mut cache) = session_credential_cache().lock() {
-        cache.insert(account_did.to_owned(), result.clone());
+        cache.insert(key, result.clone());
     }
     result
 }
 
-fn restore_session_credential_secret(account_did: &str) -> Option<String> {
+fn restore_session_credential_secret(
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+) -> Option<String> {
     let store = config_secure_store();
-    restore_session_credential_secret_from_store(account_did, store.as_ref())
+    restore_session_credential_secret_from_store(authority, device_id, store.as_ref())
 }
 
 /// Build the copy of `config` that is allowed to touch the plaintext
@@ -447,7 +503,13 @@ fn restore_session_credential_secret(account_did: &str) -> Option<String> {
 /// SecureKeyStore and blanked.
 fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
     let mut redacted = config.clone();
-    persist_session_credential_secret(&redacted.account_did, &redacted.session_credential);
+    if let Some(active) = &redacted.active_account {
+        persist_session_credential_secret(
+            &active.authority,
+            &active.device_id,
+            &redacted.session_credential,
+        );
+    }
     redacted.session_credential.clear();
     redacted
 }
@@ -456,7 +518,11 @@ fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
 fn redact_profiles_for_disk(profiles: &MultiProfileConfig) -> MultiProfileConfig {
     let mut redacted = profiles.clone();
     for profile in &mut redacted.profiles {
-        persist_session_credential_secret(&profile.account_did, &profile.session_credential);
+        persist_session_credential_secret(
+            &profile.authority,
+            &profile.device_id,
+            &profile.session_credential,
+        );
         profile.session_credential.clear();
     }
     redacted
@@ -607,11 +673,12 @@ impl LocalConfigStore {
         store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> ClientConfig {
         config.session_credential.clear();
-        if config.account_did.is_empty() {
-            return config;
-        }
-        if let Some(token) =
-            restore_session_credential_secret_from_store(&config.account_did, store)
+        if let Some(active) = &config.active_account
+            && let Some(token) = restore_session_credential_secret_from_store(
+                &active.authority,
+                &active.device_id,
+                store,
+            )
         {
             config.session_credential = token;
         }
@@ -689,15 +756,11 @@ impl LocalConfigStore {
 
     pub fn save_fields(
         &mut self,
-        server_url: String,
-        account_did: String,
-        device_id: String,
+        active_account: Option<ActiveAccountContext>,
         session_credential: String,
     ) {
         self.save(ClientConfig::from_fields(
-            server_url,
-            account_did,
-            device_id,
+            active_account,
             session_credential,
         ));
     }
@@ -725,11 +788,10 @@ impl LocalConfigStore {
     /// each profile's credential from the SecureKeyStore.
     fn rehydrate_profiles(&self, mut profiles: MultiProfileConfig) -> MultiProfileConfig {
         for profile in &mut profiles.profiles {
-            if profile.account_did.is_empty() {
-                continue;
-            }
             profile.session_credential.clear();
-            if let Some(token) = restore_session_credential_secret(&profile.account_did) {
+            if let Some(token) =
+                restore_session_credential_secret(&profile.authority, &profile.device_id)
+            {
                 profile.session_credential = token;
             }
         }
@@ -852,445 +914,413 @@ fn app_data_dir() -> PathBuf {
         .join("inkson")
 }
 
+/// The verified identity, account-authority and current routing coordinates for
+/// the foreground account.
+///
+/// Equality is deliberately not implemented for the aggregate. Callers must
+/// choose either principal equality (`principal_id`) or account equality
+/// (`authority`) explicitly; route and resolution changes do not create a new
+/// account.
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActiveAccountContext {
+    pub profile_id: String,
+    pub authority: PrincipalAuthorityKey,
+    pub resolution: PrincipalResolutionProjection,
+    pub device_id: DeviceId,
+    pub server_url: Url,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SerializedActiveAccountContext {
+    profile_id: String,
+    authority: PrincipalAuthorityKey,
+    resolution: PrincipalResolutionProjection,
+    device_id: DeviceId,
+    server_url: Url,
+}
+
+impl<'de> Deserialize<'de> for ActiveAccountContext {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = SerializedActiveAccountContext::deserialize(deserializer)?;
+        Self::new(
+            value.profile_id,
+            value.authority,
+            value.resolution,
+            value.device_id,
+            value.server_url,
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ActiveAccountContextError {
+    #[error("profile_id must be non-empty")]
+    EmptyProfileId,
+    #[error("invalid principal authority: {0}")]
+    InvalidAuthority(String),
+    #[error("resolution full_id does not project to the authority principal_id")]
+    PrincipalResolutionMismatch,
+    #[error("route refresh service id does not match the account authority")]
+    PrincipalServerMismatch,
+    #[error("resolution update does not continue the active projection")]
+    ResolutionPredecessorMismatch,
+    #[error("invalid Principal Server route: {0}")]
+    InvalidServerUrl(String),
+}
+
+impl ActiveAccountContext {
+    pub(crate) fn new(
+        profile_id: String,
+        authority: PrincipalAuthorityKey,
+        resolution: PrincipalResolutionProjection,
+        device_id: DeviceId,
+        server_url: Url,
+    ) -> Result<Self, ActiveAccountContextError> {
+        if profile_id.trim().is_empty() {
+            return Err(ActiveAccountContextError::EmptyProfileId);
+        }
+        authority
+            .validate()
+            .map_err(|error| ActiveAccountContextError::InvalidAuthority(error.to_string()))?;
+        validate_resolution_binding(&authority, &resolution)?;
+        let server_url = validate_server_url(server_url.as_str())
+            .map_err(|error| ActiveAccountContextError::InvalidServerUrl(error.to_string()))?;
+        Ok(Self {
+            profile_id,
+            authority,
+            resolution,
+            device_id,
+            server_url,
+        })
+    }
+
+    #[must_use]
+    pub fn principal_id(&self) -> &DidCoreId {
+        &self.authority.principal_id
+    }
+
+    #[must_use]
+    pub fn full_id(&self) -> &DidFullId {
+        &self.resolution.full_id
+    }
+
+    #[must_use]
+    pub fn is_same_account(&self, authority: &PrincipalAuthorityKey) -> bool {
+        &self.authority == authority
+    }
+
+    /// Atomically replace the complete accepted resolution projection.
+    pub fn update_resolution(
+        &mut self,
+        resolution: PrincipalResolutionProjection,
+        previous_resolution_event_ref: &str,
+        previous_method_history_head: &str,
+    ) -> Result<(), ActiveAccountContextError> {
+        validate_resolution_binding(&self.authority, &resolution)?;
+        if previous_resolution_event_ref != self.resolution.resolution_event_ref
+            || previous_method_history_head != self.resolution.method_history_head
+            || resolution.updated_at < self.resolution.updated_at
+        {
+            return Err(ActiveAccountContextError::ResolutionPredecessorMismatch);
+        }
+        self.resolution = resolution;
+        Ok(())
+    }
+
+    /// Refresh only the HTTP route after the caller has verified the service
+    /// identity behind it.
+    pub fn update_server_route(
+        &mut self,
+        principal_server_id: &DidCoreId,
+        server_url: Url,
+    ) -> Result<(), ActiveAccountContextError> {
+        if &self.authority.principal_server_id != principal_server_id {
+            return Err(ActiveAccountContextError::PrincipalServerMismatch);
+        }
+        self.server_url = validate_server_url(server_url.as_str())
+            .map_err(|error| ActiveAccountContextError::InvalidServerUrl(error.to_string()))?;
+        Ok(())
+    }
+}
+
+fn validate_resolution_binding(
+    authority: &PrincipalAuthorityKey,
+    resolution: &PrincipalResolutionProjection,
+) -> Result<(), ActiveAccountContextError> {
+    let projected = project_full_id_to_core_id(&resolution.full_id)
+        .map_err(|_| ActiveAccountContextError::PrincipalResolutionMismatch)?;
+    if projected != authority.principal_id {
+        return Err(ActiveAccountContextError::PrincipalResolutionMismatch);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
-mod tests {
+mod active_account_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use chrono::{DateTime, Utc};
 
     use super::*;
 
-    #[test]
-    fn default_config_matches_dev_server_bootstrap() {
-        let config = ClientConfig::default();
-        assert_eq!(config.server_url, "https://local.host");
-        assert_eq!(config.principal_servers, vec!["https://local.host"]);
-        assert!(config.account_did.is_empty());
-        assert!(config.device_id.starts_with("ak:device:"));
-        assert!(is_valid_device_id(&config.device_id));
-        assert!(config.session_credential.is_empty());
+    fn projection(full_id: &str, coordinate: &str) -> PrincipalResolutionProjection {
+        PrincipalResolutionProjection {
+            full_id: DidFullId::new(full_id).expect("full DID"),
+            method_history_head: format!("head-{coordinate}"),
+            version_id: format!("version-{coordinate}"),
+            resolution_event_ref: format!("event-{coordinate}"),
+            updated_at: "2026-08-22T00:00:00Z"
+                .parse::<DateTime<Utc>>()
+                .expect("timestamp"),
+        }
     }
 
-    #[test]
-    fn validate_server_url_allows_https_and_loopback_http() {
-        assert_eq!(
-            validate_server_url("https://arkret.example")
-                .unwrap()
-                .as_str(),
-            "https://arkret.example/"
-        );
-        assert_eq!(
-            validate_server_url("http://127.0.0.1:8787")
-                .unwrap()
-                .as_str(),
-            "http://127.0.0.1:8787/"
-        );
-        assert_eq!(
-            validate_server_url("http://localhost:8787")
-                .unwrap()
-                .as_str(),
-            "http://localhost:8787/"
-        );
-    }
-
-    #[test]
-    fn validate_server_url_rejects_insecure_remote_http() {
-        let error = validate_server_url("http://arkret.example").unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("HTTPS is required for non-local servers")
-        );
-    }
-
-    #[test]
-    fn local_config_store_round_trips_latest_config() {
-        let path = temp_config_path("round_trip");
-        let mut store = LocalConfigStore::with_path(path);
-        store.save_fields(
-            "http://server.local".to_owned(),
-            "did:web:bob.example".to_owned(),
-            "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
-            "sx_token".to_owned(),
-        );
-
-        assert_eq!(
-            store.load(),
-            ClientConfig::from_fields(
-                "http://server.local",
-                "did:web:bob.example",
-                "ak:device:01964137-0000-7000-8000-000000000001",
-                "sx_token",
-            )
-        );
-    }
-
-    #[test]
-    fn local_config_store_persists_to_disk_between_instances() {
-        let path = temp_config_path("persisted");
-
-        let mut writer = LocalConfigStore::with_path(path.clone());
-        writer.save_fields(
-            "http://persisted.local".to_owned(),
-            "did:web:persisted.example".to_owned(),
-            "ak:device:01964137-0000-7000-8000-000000000002".to_owned(),
-            "sx_persisted".to_owned(),
-        );
-
-        let reader = LocalConfigStore::with_path(path);
-        assert_eq!(
-            reader.load(),
-            ClientConfig::from_fields(
-                "http://persisted.local",
-                "did:web:persisted.example",
-                "ak:device:01964137-0000-7000-8000-000000000002",
-                "sx_persisted",
-            )
-        );
-    }
-
-    #[test]
-    fn invalid_device_id_is_replaced_and_token_cleared() {
-        let config = ClientConfig::from_fields(
-            "https://local.host",
-            "did:web:alice.example",
-            "dev_inkson",
-            "old_token",
-        );
-
-        assert_eq!(config.server_url, "https://local.host");
-        assert_eq!(config.account_did, "did:web:alice.example");
-        assert!(is_valid_device_id(&config.device_id));
-        assert_ne!(config.device_id, "dev_inkson");
-        assert!(config.session_credential.is_empty());
-    }
-
-    #[test]
-    fn canonicalizes_known_local_proxy_aliases() {
-        assert_eq!(
-            normalize_server_url("https://local.host/"),
-            "https://local.host"
-        );
-        assert_eq!(
-            normalize_server_url("http://127.0.0.1:8787/"),
-            "https://local.host"
-        );
-        assert_eq!(
-            ClientConfig::from_fields("http://localhost:8787", "", new_device_id(), "").server_url,
-            "https://local.host"
-        );
-    }
-
-    #[test]
-    fn principal_server_options_merge_current_configured_and_default() {
-        let configured = vec![
-            "https://prod.example/".to_owned(),
-            "http://127.0.0.1:8787/".to_owned(),
-            "https://prod.example".to_owned(),
-        ];
-
-        assert_eq!(
-            principal_server_options_for("https://custom.example", &configured),
-            vec![
-                "https://custom.example".to_owned(),
-                "https://prod.example/".to_owned(),
-                "https://local.host".to_owned(),
-            ]
-        );
-    }
-
-    #[test]
-    fn runtime_config_save_preserves_configured_principal_servers() {
-        let path = temp_config_path("principal-server-presets");
-        let seeded = ClientConfig {
-            server_url: "https://local.host".to_owned(),
-            principal_servers: vec![
-                "https://prod.example".to_owned(),
-                "https://stage.example".to_owned(),
-            ],
-            account_did: String::new(),
-            device_id: "ak:device:01964137-0000-7000-8000-000000000004".to_owned(),
-            session_credential: String::new(),
-        };
-        let writer = LocalConfigStore::with_path(path.clone());
-        writer.write_config_blob(&seeded).expect("seed config");
-
-        let mut updater = LocalConfigStore::with_path(path.clone());
-        updater.save_fields(
-            "https://stage.example".to_owned(),
-            "did:web:stage.example:users:alice".to_owned(),
-            "ak:device:01964137-0000-7000-8000-000000000005".to_owned(),
-            String::new(),
-        );
-
-        let reader = LocalConfigStore::with_path(path);
-        assert_eq!(
-            reader.load().principal_servers,
-            vec![
-                "https://prod.example".to_owned(),
-                "https://stage.example".to_owned(),
-            ]
-        );
-    }
-
-    // --- P3B.4 multi-profile coverage ----------------------------------
-
-    #[test]
-    fn upsert_and_activate_replaces_matching_profile() {
-        let mut multi = MultiProfileConfig::default();
-        let first = AccountProfile::new(
-            "https://arkret.example",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000005",
-            "token-a",
-        );
-        let first_id = multi.upsert_and_activate(first);
-
-        // Same (server_url, account_did) — should overwrite rather
-        // than append a new row.
-        let updated = AccountProfile::new(
-            "https://arkret.example",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000006",
-            "token-b",
-        );
-        let updated_id = multi.upsert_and_activate(updated);
-
-        assert_eq!(multi.profiles.len(), 1);
-        assert_eq!(first_id, updated_id);
-        assert_eq!(multi.active().unwrap().session_credential, "token-b");
-    }
-
-    #[test]
-    fn activate_rejects_unknown_profile_id() {
-        let mut multi = MultiProfileConfig::default();
-        let profile = AccountProfile::new(
-            "https://arkret.example",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000007",
-            "token",
-        );
-        multi.upsert_and_activate(profile);
-        assert!(!multi.activate("ak:profile:nonexistent"));
-    }
-
-    #[test]
-    fn remove_resets_active_pointer_when_active_removed() {
-        let mut multi = MultiProfileConfig::default();
-        let first = AccountProfile::new(
-            "https://arkret.example",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000008",
-            "token-a",
-        );
-        let first_id = multi.upsert_and_activate(first);
-        let second = AccountProfile::new(
-            "https://arkret.example",
-            "did:web:bob.example",
-            "ak:device:01964137-0000-7000-8000-000000000009",
-            "token-b",
-        );
-        let second_id = multi.upsert_and_activate(second);
-
-        // Active is currently `second_id`. Removing it should bump
-        // active back to `first_id`.
-        multi.remove(&second_id);
-        assert_eq!(multi.active_profile_id.as_deref(), Some(first_id.as_str()));
-
-        // Now remove the only remaining profile.
-        multi.remove(&first_id);
-        assert!(multi.active_profile_id.is_none());
-        assert!(multi.profiles.is_empty());
-    }
-
-    #[test]
-    fn active_as_client_config_round_trips_active_profile() {
-        let mut multi = MultiProfileConfig::default();
-        let profile = AccountProfile::new(
-            "https://arkret.example",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-00000000000a",
-            "token",
-        );
-        multi.upsert_and_activate(profile);
-        let view = multi.active_as_client_config().expect("active config");
-        assert_eq!(view.account_did, "did:web:alice.example");
-        assert_eq!(view.session_credential, "token");
-    }
-
-    #[test]
-    fn store_round_trips_multi_profile_blob() {
-        let path = temp_config_path("multi-profile");
-        let mut store = LocalConfigStore::with_path(path.clone());
-
-        let mut multi = MultiProfileConfig::default();
-        multi.upsert_and_activate(AccountProfile::new(
-            "https://arkret.example",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-00000000000b",
-            "tok",
-        ));
-        store.save_profiles(&multi).expect("write profiles");
-
-        let reader = LocalConfigStore::with_path(path);
-        let loaded = reader.load_profiles();
-        assert_eq!(loaded.profiles.len(), 1);
-        assert_eq!(loaded.profiles[0].account_did, "did:web:alice.example");
-    }
-
-    // --- session_credential SecureKeyStore redaction --------------------------
-
-    #[test]
-    fn session_credential_is_redacted_from_disk_blob() {
-        let path = temp_config_path("redacted");
-        let mut store = LocalConfigStore::with_path(path.clone());
-        store.save_fields(
-            "https://redacted.example".to_owned(),
-            "did:web:redacted.example".to_owned(),
-            "ak:device:01964137-0000-7000-8000-00000000000c".to_owned(),
-            "sx_secret_credential".to_owned(),
-        );
-
-        // The plaintext blob MUST NOT contain the credential.
-        let raw = fs::read_to_string(&path).expect("config blob");
-        assert!(
-            !raw.contains("sx_secret_credential"),
-            "credential leaked into plaintext config blob: {raw}"
-        );
-
-        // A fresh store instance reattaches it from the secure store.
-        let reader = LocalConfigStore::with_path(path);
-        assert_eq!(reader.load().session_credential, "sx_secret_credential");
-    }
-
-    #[test]
-    fn load_with_secure_store_rehydrates_redacted_config_from_supplied_store() {
-        let path = temp_config_path("explicit-secure-store");
-        let account_did = "did:web:explicit-secure-store.example";
-        let redacted = ClientConfig::from_fields(
-            "https://explicit-secure-store.example",
-            account_did,
-            "ak:device:01964137-0000-7000-8000-0000000000aa",
-            "",
-        );
-        let writer = LocalConfigStore::with_path(path.clone());
-        writer
-            .write_config_blob(&redacted)
-            .expect("seed redacted config");
-
-        let secure_store = crate::secure_key_store::MemorySecureKeyStore::new();
-        crate::secure_key_store::SecureKeyStore::store_secret(
-            &secure_store,
-            &session_credential_secret_key(account_did),
-            "sx_from_supplied_store",
+    fn authority(full_id: &str, server_id: &str) -> PrincipalAuthorityKey {
+        let full_id = DidFullId::new(full_id).expect("full DID");
+        PrincipalAuthorityKey::new(
+            project_full_id_to_core_id(&full_id).expect("principal core"),
+            DidCoreId::new(server_id).expect("server core"),
         )
-        .expect("seed secure token");
+    }
 
-        let reader = LocalConfigStore::with_path(path);
+    fn device(suffix: &str) -> DeviceId {
+        DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{suffix:0>12}"))
+            .expect("device id")
+    }
+
+    fn context(
+        full_id: &str,
+        server_id: &str,
+        route: &str,
+        coordinate: &str,
+    ) -> ActiveAccountContext {
+        ActiveAccountContext::new(
+            format!("ak:profile:{coordinate}"),
+            authority(full_id, server_id),
+            projection(full_id, coordinate),
+            device(coordinate),
+            Url::parse(route).expect("route"),
+        )
+        .expect("active context")
+    }
+
+    #[test]
+    fn default_config_is_explicitly_signed_out() {
+        let config = ClientConfig::default();
+        assert!(config.active_account.is_none());
+        assert!(config.session_credential.is_empty());
+        assert_eq!(config.principal_servers, vec!["https://local.host"]);
+    }
+
+    #[test]
+    fn context_rejects_resolution_for_another_principal() {
+        let result = ActiveAccountContext::new(
+            "ak:profile:mismatch".to_owned(),
+            authority(
+                "did:webvh:z6mkalice:old.example:alice",
+                "ak:did_core:web:server.example",
+            ),
+            projection("did:webvh:z6mkbob:bob.example:bob", "mismatch"),
+            device("1"),
+            Url::parse("https://server.example").unwrap(),
+        );
         assert_eq!(
-            reader
-                .load_with_secure_store(&secure_store)
-                .session_credential,
-            "sx_from_supplied_store"
+            result.unwrap_err(),
+            ActiveAccountContextError::PrincipalResolutionMismatch
         );
     }
 
     #[test]
-    fn plaintext_config_credential_is_never_rehydrated() {
-        let path = temp_config_path("plaintext-credential-rejected");
-        let account_did = "did:web:plaintext-credential.example";
-        let plaintext = ClientConfig::from_fields(
-            "https://plaintext-credential.example",
-            account_did,
-            "ak:device:01964137-0000-7000-8000-0000000000ab",
-            "sx_plaintext_must_be_ignored",
+    fn same_core_resolution_update_replaces_projection_atomically() {
+        let mut active = context(
+            "did:webvh:z6mkalice:old.example:alice",
+            "ak:did_core:web:server.example",
+            "https://route-a.example",
+            "1",
         );
-        LocalConfigStore::with_path(path.clone())
-            .write_config_blob(&plaintext)
-            .expect("seed plaintext config");
+        let profile_id = active.profile_id.clone();
+        let authority = active.authority.clone();
+        let device_id = active.device_id.clone();
+        let route = active.server_url.clone();
+        let previous_event_ref = active.resolution.resolution_event_ref.clone();
+        let previous_history_head = active.resolution.method_history_head.clone();
+        let next = projection("did:webvh:z6mkalice:new.example:users:alice", "2");
 
-        let secure_store = crate::secure_key_store::MemorySecureKeyStore::new();
-        let loaded = LocalConfigStore::with_path(path).load_with_secure_store(&secure_store);
+        active
+            .update_resolution(next.clone(), &previous_event_ref, &previous_history_head)
+            .unwrap();
 
-        assert!(loaded.session_credential.is_empty());
-        assert!(
-            crate::secure_key_store::SecureKeyStore::get_secret(
-                &secure_store,
-                &session_credential_secret_key(account_did),
-            )
-            .expect("read secure store")
-            .is_none()
+        assert_eq!(active.resolution, next);
+        assert_eq!(active.profile_id, profile_id);
+        assert_eq!(active.authority, authority);
+        assert_eq!(active.device_id, device_id);
+        assert_eq!(active.server_url, route);
+    }
+
+    #[test]
+    fn resolution_update_rejects_a_stale_predecessor() {
+        let mut active = context(
+            "did:webvh:z6mkalice:old.example:alice",
+            "ak:did_core:web:server.example",
+            "https://route-a.example",
+            "1",
+        );
+        let next = projection("did:webvh:z6mkalice:new.example:users:alice", "2");
+
+        assert_eq!(
+            active
+                .update_resolution(next, "ak:event:stale", "sha256:stale")
+                .unwrap_err(),
+            ActiveAccountContextError::ResolutionPredecessorMismatch
         );
     }
 
     #[test]
-    fn profiles_blob_redacts_session_credentials() {
-        // Own subdirectory — `profiles_path()` derives `profiles.json`
-        // next to the config path, which would collide with other
-        // tests' blobs in the shared temp dir.
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("inkson-profiles-redacted-{stamp}"));
-        let path = dir.join("config.json");
-        let mut store = LocalConfigStore::with_path(path.clone());
+    fn route_refresh_requires_same_principal_server() {
+        let mut active = context(
+            "did:webvh:z6mkalice:old.example:alice",
+            "ak:did_core:web:server.example",
+            "https://route-a.example",
+            "1",
+        );
+        let other = DidCoreId::new("ak:did_core:web:other.example").unwrap();
+        assert_eq!(
+            active
+                .update_server_route(&other, Url::parse("https://route-b.example").unwrap())
+                .unwrap_err(),
+            ActiveAccountContextError::PrincipalServerMismatch
+        );
+        assert_eq!(active.server_url.as_str(), "https://route-a.example/");
 
-        let mut multi = MultiProfileConfig::default();
-        multi.upsert_and_activate(AccountProfile::new(
-            "https://arkret.example",
-            "did:web:profile-redacted.example",
-            "ak:device:01964137-0000-7000-8000-00000000000e",
-            "sx_profile_credential",
+        let server = active.authority.principal_server_id.clone();
+        active
+            .update_server_route(&server, Url::parse("https://route-b.example").unwrap())
+            .unwrap();
+        assert_eq!(active.server_url.as_str(), "https://route-b.example/");
+    }
+
+    #[test]
+    fn profile_upsert_uses_authority_not_resolution_or_route() {
+        let first_context = context(
+            "did:webvh:z6mkalice:old.example:alice",
+            "ak:did_core:web:server.example",
+            "https://route-a.example",
+            "1",
+        );
+        let mut first = AccountProfile {
+            profile_id: first_context.profile_id.clone(),
+            label: "Personal".to_owned(),
+            authority: first_context.authority.clone(),
+            resolution: first_context.resolution.clone(),
+            device_id: first_context.device_id.clone(),
+            server_url: first_context.server_url.clone(),
+            session_credential: "token-a".to_owned(),
+        };
+        let mut profiles = MultiProfileConfig::default();
+        let profile_id = profiles.upsert_and_activate(first.clone()).unwrap();
+
+        first.profile_id = "ak:profile:must-not-replace-stable-id".to_owned();
+        first.resolution = projection("did:webvh:z6mkalice:new.example:alice", "2");
+        first.server_url = Url::parse("https://route-b.example").unwrap();
+        first.device_id = device("2");
+        first.session_credential = "token-b".to_owned();
+        let refreshed_id = profiles.upsert_and_activate(first.clone()).unwrap();
+
+        assert_eq!(profiles.profiles.len(), 1);
+        assert_eq!(refreshed_id, profile_id);
+        let refreshed = profiles.active().unwrap();
+        assert_eq!(refreshed.profile_id, profile_id);
+        assert_eq!(refreshed.resolution, first.resolution);
+        assert_eq!(refreshed.server_url, first.server_url);
+        assert_eq!(refreshed.session_credential, "token-b");
+    }
+
+    #[test]
+    fn same_principal_on_different_servers_creates_distinct_profiles_and_secret_keys() {
+        let full_id = "did:webvh:z6mkalice:alice.example:alice";
+        let first = context(
+            full_id,
+            "ak:did_core:web:server-a.example",
+            "https://route.example",
+            "1",
+        );
+        let second = context(
+            full_id,
+            "ak:did_core:web:server-b.example",
+            "https://route.example",
+            "2",
+        );
+        assert_ne!(
+            session_credential_secret_key(&first.authority, &first.device_id).unwrap(),
+            session_credential_secret_key(&second.authority, &second.device_id).unwrap()
+        );
+
+        let mut profiles = MultiProfileConfig::default();
+        for active in [first, second] {
+            profiles
+                .upsert_and_activate(AccountProfile {
+                    profile_id: active.profile_id,
+                    label: String::new(),
+                    authority: active.authority,
+                    resolution: active.resolution,
+                    device_id: active.device_id,
+                    server_url: active.server_url,
+                    session_credential: String::new(),
+                })
+                .unwrap();
+        }
+        assert_eq!(profiles.profiles.len(), 2);
+    }
+
+    #[test]
+    fn persisted_config_redacts_and_rehydrates_authority_device_scoped_credential() {
+        let path = temp_config_path("typed-redaction");
+        let active = context(
+            "did:webvh:z6mkalice:alice.example:alice",
+            "ak:did_core:web:server.example",
+            "https://route.example",
+            "1",
+        );
+        let mut writer = LocalConfigStore::with_path(path.clone());
+        writer.save(ClientConfig::from_fields(
+            Some(active.clone()),
+            "sx_secret_credential",
         ));
-        store.save_profiles(&multi).expect("write profiles");
 
-        let profiles_raw =
-            fs::read_to_string(path.with_file_name("profiles.json")).expect("profiles blob");
-        assert!(
-            !profiles_raw.contains("sx_profile_credential"),
-            "credential leaked into plaintext profiles blob: {profiles_raw}"
-        );
-
-        // A fresh store reattaches the credential per profile.
-        let reader = LocalConfigStore::with_path(path);
-        let loaded = reader.load_profiles();
-        assert_eq!(loaded.profiles.len(), 1);
-        assert_eq!(
-            loaded.profiles[0].session_credential,
-            "sx_profile_credential"
-        );
-        assert_eq!(
-            loaded
-                .active_as_client_config()
-                .expect("active config")
-                .session_credential,
-            "sx_profile_credential"
-        );
+        let raw = fs::read_to_string(&path).expect("config blob");
+        assert!(!raw.contains("sx_secret_credential"));
+        let loaded = LocalConfigStore::with_path(path).load();
+        assert_eq!(loaded.session_credential, "sx_secret_credential");
+        let loaded_active = loaded.active_account.unwrap();
+        assert_eq!(loaded_active.authority, active.authority);
+        assert_eq!(loaded_active.resolution, active.resolution);
     }
 
     #[test]
-    fn persisted_client_config_rejects_unknown_security_fields() {
-        let mut value = serde_json::to_value(ClientConfig::from_fields(
-            "https://arkret.example",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-00000000000f",
-            "",
-        ))
-        .unwrap();
-        value.as_object_mut().unwrap().insert(
-            "session_token".to_owned(),
-            serde_json::json!("shadow-token"),
+    fn legacy_ambiguous_identity_fields_fail_closed() {
+        let mut value = serde_json::Map::new();
+        value.insert(
+            "principal_servers".to_owned(),
+            serde_json::json!(["https://route.example"]),
         );
-        assert!(serde_json::from_value::<ClientConfig>(value).is_err());
+        value.insert(
+            ["account_", "did"].concat(),
+            serde_json::json!("did:web:alice.example"),
+        );
+        assert!(serde_json::from_value::<ClientConfig>(serde_json::Value::Object(value)).is_err());
     }
 
     #[test]
-    fn persisted_profile_set_rejects_unknown_top_level_fields() {
-        let value = serde_json::json!({
-            "active_profile_id": null,
-            "profiles": [],
-            "active_account": "did:web:shadow.example"
-        });
-        assert!(serde_json::from_value::<MultiProfileConfig>(value).is_err());
+    fn validate_server_url_allows_https_and_loopback_only() {
+        assert!(validate_server_url("https://arkret.example").is_ok());
+        assert!(validate_server_url("http://127.0.0.1:8787").is_ok());
+        assert!(validate_server_url("http://arkret.example").is_err());
     }
 
     fn temp_config_path(name: &str) -> PathBuf {

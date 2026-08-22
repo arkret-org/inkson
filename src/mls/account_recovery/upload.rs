@@ -226,6 +226,7 @@ async fn fetch_active_series_tail(
 pub async fn upload_mls_account_secret_backup_with_passphrase(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
@@ -236,7 +237,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         ));
     }
 
-    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, authority)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
 
@@ -291,7 +292,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         )
         .await?;
     }
-    crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
+    crate::mls::runtime::mark_account_mls_secret_verified(secure_store, authority)
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
     Ok(account_backup_id)
@@ -302,6 +303,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
 pub async fn upload_mls_account_secret_backup_with_recovery_key(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     device_id: &str,
     recovery_key: &str,
@@ -312,6 +314,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
     upload_mls_account_secret_backup_with_recovery_public_key(
         api,
         secure_store,
+        authority,
         actor_id,
         device_id,
         &recovery_public_key,
@@ -326,6 +329,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
 pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     device_id: &str,
     recovery_public_key: &[u8],
@@ -333,7 +337,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     if recovery_public_key.is_empty() {
         return Err(anyhow!("recovery public key is required"));
     }
-    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, authority)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no local account MLS secret to back up"))?;
 
@@ -393,7 +397,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         )
         .await?;
     }
-    crate::mls::runtime::mark_account_mls_secret_verified(secure_store, actor_id)
+    crate::mls::runtime::mark_account_mls_secret_verified(secure_store, authority)
         .map_err(|err| anyhow!("mark uploaded account MLS secret verified: {err}"))?;
 
     Ok(account_backup_id)
@@ -412,6 +416,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
 pub async fn upload_mls_private_plaintext_backup(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     device_id: &str,
     sidecar_json: &[u8],
@@ -420,6 +425,7 @@ pub async fn upload_mls_private_plaintext_backup(
     let (backup_id, _) = upload_mls_private_plaintext_backup_with_previous(
         api,
         secure_store,
+        authority,
         actor_id,
         device_id,
         sidecar_json,
@@ -467,12 +473,13 @@ pub async fn fetch_mls_private_plaintext_backup_body(
 pub async fn upload_mls_private_plaintext_backup_with_previous(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     device_id: &str,
     sidecar_json: &[u8],
     _previous_backup: Option<&Value>,
 ) -> Result<(String, Value)> {
-    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, actor_id)
+    let stored = crate::mls::runtime::load_account_mls_secret(secure_store, authority)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
         .ok_or_else(|| anyhow!("no account secret; cannot back up private plaintext"))?;
 

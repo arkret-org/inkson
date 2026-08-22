@@ -84,8 +84,8 @@ pub struct SearchDestination {
 pub fn local_decrypted_index_search(
     realms: &std::collections::BTreeMap<String, Value>,
     store: &LocalStateStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     query: &str,
     realm_ids: &[String],
     object_kinds: Option<&[&str]>,
@@ -110,8 +110,9 @@ pub fn local_decrypted_index_search(
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
     let events =
-        projection_events_from_sync_realms(realms, Some(store), Some((actor_id, device_id)));
-    let sidecar_privacy = crate::sidecar::SidecarPrivacyGate::from_store(store, actor_id);
+        projection_events_from_sync_realms(realms, Some(store), Some((authority, device_id)));
+    let sidecar_privacy =
+        crate::sidecar::SidecarPrivacyGate::from_store(store, authority.principal_id.as_str());
     let mut results = Vec::new();
     for event in events {
         if results.len() >= limit {
@@ -238,13 +239,11 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
 use crate::realm_tree::string_field;
 
 #[component]
-pub fn GlobalSearchPanel(
-    account_did: Signal<String>,
-    device_id: Signal<String>,
-    initial_query: String,
-) -> Element {
+pub fn GlobalSearchPanel(initial_query: String) -> Element {
     // A4 — state_store from session context instead of a prop.
-    let state_store = crate::app::SessionContext::get().state_store;
+    let session = crate::app::SessionContext::get();
+    let state_store = session.state_store;
+    let active_account = session.active_account;
     let mut query = use_signal(|| initial_query.clone());
     let results = use_signal(ResultRows::new);
     let loading = use_signal(|| false);
@@ -258,16 +257,18 @@ pub fn GlobalSearchPanel(
     use_effect(move || {
         let q = initial_query_for_effect.clone();
         if !q.trim().is_empty() {
-            run_search(
-                q,
-                state_store,
-                account_did(),
-                device_id(),
-                results,
-                loading,
-                error_msg,
-                has_searched,
-            );
+            if let Some(account) = active_account() {
+                run_search(
+                    q,
+                    state_store,
+                    account.authority,
+                    account.device_id,
+                    results,
+                    loading,
+                    error_msg,
+                    has_searched,
+                );
+            }
         }
     });
 
@@ -283,16 +284,18 @@ pub fn GlobalSearchPanel(
                         evt.prevent_default();
                         let q = query();
                         if q.trim().is_empty() { return; }
-                        run_search(
-                            q,
-                            state_store,
-                            account_did(),
-                            device_id(),
-                            results,
-                            loading,
-                            error_msg,
-                            has_searched,
-                        );
+                        if let Some(account) = active_account() {
+                            run_search(
+                                q,
+                                state_store,
+                                account.authority,
+                                account.device_id,
+                                results,
+                                loading,
+                                error_msg,
+                                has_searched,
+                            );
+                        }
                     },
                     div { class: "actions", style: "gap: 8px;",
                         Input {
@@ -419,8 +422,8 @@ pub fn GlobalSearchPanel(
 fn run_search(
     q: String,
     state_store: SyncSignal<LocalStateStore>,
-    actor_id: String,
-    device_id: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    device_id: arkret_sdk::DeviceId,
     mut results: Signal<ResultRows>,
     mut loading: Signal<bool>,
     mut error_msg: Signal<String>,
@@ -439,7 +442,7 @@ fn run_search(
     let response = local_decrypted_index_search(
         &state.realm_tree_projections,
         &store,
-        &actor_id,
+        &authority,
         &device_id,
         &query_trimmed,
         &realm_ids,
@@ -455,6 +458,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+        arkret_sdk::PrincipalAuthorityKey {
+            principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+            principal_server_id: arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned())
+                .unwrap(),
+        }
+    }
+
+    fn device(value: &str) -> arkret_sdk::DeviceId {
+        arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
+    }
 
     #[test]
     fn cmd_f_triggers_search() {
@@ -550,8 +565,8 @@ mod tests {
         let response = local_decrypted_index_search(
             &realms,
             &store,
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-000000000904",
+            &authority("did:web:alice.example"),
+            &device("ak:device:01904100-0000-7000-8000-000000000904"),
             "LOCAL",
             &[],
             Some(&["message"]),
@@ -601,8 +616,8 @@ mod tests {
         let response = local_decrypted_index_search(
             &realms,
             &store,
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-000000000914",
+            &authority("did:web:alice.example"),
+            &device("ak:device:01904100-0000-7000-8000-000000000914"),
             "message",
             &[],
             Some(&["message"]),
@@ -667,8 +682,8 @@ mod tests {
         let response = local_decrypted_index_search(
             &realms,
             &store,
-            actor_id,
-            "ak:device:01904100-0000-7000-8000-000000000938",
+            &authority(actor_id),
+            &device("ak:device:01904100-0000-7000-8000-000000000938"),
             "sidecar-secret-search-needle",
             &[],
             Some(&["message"]),
@@ -715,8 +730,8 @@ mod tests {
         let not_messages = local_decrypted_index_search(
             &realms,
             &store,
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-000000000925",
+            &authority("did:web:alice.example"),
+            &device("ak:device:01904100-0000-7000-8000-000000000925"),
             "needle",
             &[],
             Some(&["realm"]),
@@ -727,8 +742,8 @@ mod tests {
         let filtered = local_decrypted_index_search(
             &realms,
             &store,
-            "did:web:alice.example",
-            "ak:device:01904100-0000-7000-8000-000000000925",
+            &authority("did:web:alice.example"),
+            &device("ak:device:01904100-0000-7000-8000-000000000925"),
             "needle",
             std::slice::from_ref(&second_realm_id),
             Some(&["message"]),

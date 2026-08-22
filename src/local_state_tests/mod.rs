@@ -31,6 +31,104 @@ mod sync_states;
 
 // ── Shared test helpers (used by multiple topic submodules) ─
 
+pub(super) fn test_authority(principal: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    test_authority_at_server(principal, "ak:did_core:web:test-server.example")
+}
+
+pub(super) fn test_authority_at_server(
+    principal: &str,
+    principal_server: &str,
+) -> arkret_sdk::PrincipalAuthorityKey {
+    let principal_id = arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap_or_else(|_| {
+        let full_id = arkret_sdk::DidFullId::new(principal.to_owned()).expect("full principal DID");
+        arkret_sdk::project_full_id_to_core_id(&full_id).expect("principal core projection")
+    });
+    arkret_sdk::PrincipalAuthorityKey::new(
+        principal_id,
+        arkret_sdk::DidCoreId::new(principal_server.to_owned()).unwrap(),
+    )
+}
+
+pub(super) fn test_profile_id(authority: &arkret_sdk::PrincipalAuthorityKey) -> String {
+    format!(
+        "ak:profile:{}",
+        crate::secure_key_store::principal_authority_storage_digest(authority).unwrap()
+    )
+}
+
+pub(super) fn test_device_id() -> arkret_sdk::DeviceId {
+    arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned()).unwrap()
+}
+
+pub(super) fn test_account_context(
+    full_id: &arkret_sdk::DidFullId,
+) -> crate::config::ActiveAccountContext {
+    let authority = test_authority(full_id.as_str());
+    crate::config::ActiveAccountContext::new(
+        test_profile_id(&authority),
+        authority,
+        arkret_sdk::PrincipalResolutionProjection {
+            full_id: full_id.clone(),
+            method_history_head: "test-head".to_owned(),
+            version_id: "test-version".to_owned(),
+            resolution_event_ref: "test-event".to_owned(),
+            updated_at: "2026-08-22T00:00:00Z".parse().unwrap(),
+        },
+        test_device_id(),
+        url::Url::parse("https://test-server.example").unwrap(),
+    )
+    .unwrap()
+}
+
+impl LocalStateStore {
+    pub(super) fn switch_test_account(&mut self, principal: &str) -> bool {
+        let authority = test_authority(principal);
+        self.switch_active_account(&test_profile_id(&authority), &authority)
+    }
+
+    pub(super) fn register_test_account(&mut self, principal: &str) {
+        let authority = test_authority(principal);
+        self.register_known_profile(&test_profile_id(&authority), &authority);
+    }
+
+    pub(super) fn active_test_principal_id(&self) -> Option<String> {
+        self.active_account_authority()
+            .map(|authority| authority.principal_id.to_string())
+    }
+
+    pub(super) fn last_selected_test_principal_id(&self) -> Option<String> {
+        let root = self.read_root();
+        root.active_profile_id
+            .as_deref()
+            .and_then(|profile_id| root.authority_for_profile(profile_id))
+            .map(|authority| authority.principal_id.to_string())
+    }
+
+    pub(super) fn known_test_principal_ids(&self) -> Vec<String> {
+        self.known_profile_refs()
+            .into_iter()
+            .map(|known| known.authority.principal_id.to_string())
+            .collect()
+    }
+
+    pub(super) fn primary_handle_for_test_principal(&self, principal: &str) -> Option<String> {
+        self.primary_handle_for_authority(&test_authority(principal))
+    }
+
+    pub(super) fn set_primary_handle_for_test_principal(&mut self, principal: &str, handle: &str) {
+        self.set_primary_handle_for_authority(&test_authority(principal), handle);
+    }
+
+    pub(super) fn begin_test_pending_login(&mut self, device_id: &str, dpop_jkt: Option<&str>) {
+        let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap();
+        self.begin_pending_login(&device_id, dpop_jkt);
+    }
+
+    pub(super) fn adopt_test_pending_login(&mut self, full_id: &arkret_sdk::DidFullId) -> bool {
+        self.adopt_pending_login(&test_account_context(full_id))
+    }
+}
+
 pub(super) fn temp_state_path(name: &str) -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

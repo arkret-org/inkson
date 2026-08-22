@@ -221,6 +221,16 @@ pub(super) fn save_card_detail_edit(
     state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
+    let Some(active_account) = crate::app::SessionContext::get()
+        .active_account
+        .read()
+        .clone()
+    else {
+        card_detail_edit_status.set("Active account is unavailable".to_owned());
+        return;
+    };
+    let authority = active_account.authority;
+    let account_device_id = active_account.device_id;
     card_detail_edit_status.set("Saving...".to_owned());
     let edit_scope = card_edit_scope();
     if sidecar_track_write.is_some() && edit_scope != CardEditScope::Synthesis {
@@ -247,7 +257,7 @@ pub(super) fn save_card_detail_edit(
             .security_encrypted
             .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
     if encrypted_realm_write
-        && !encrypted_realm_write_mls_ready(&state_store.read(), &realm_id, &actor_id)
+        && !encrypted_realm_write_mls_ready(&state_store.read(), &realm_id, &authority)
     {
         let session_credential = token();
         card_detail_edit_status.set("Restoring encrypted Realm state before saving...".to_owned());
@@ -257,7 +267,8 @@ pub(super) fn save_card_detail_edit(
                 &session_credential,
                 &realm_id,
                 &actor_id,
-                &device_id,
+                &authority,
+                &account_device_id,
                 state_store,
             )
             .await
@@ -343,7 +354,8 @@ async fn recover_mls_snapshot_for_encrypted_write(
     session_credential: &str,
     realm_id: &str,
     actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     mut state_store: SyncSignal<LocalStateStore>,
 ) -> Result<(), String> {
     // The account MLS secret is an IndexedDB-only key on wasm; before that
@@ -358,7 +370,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
             "IndexedDB secure store unavailable before encrypted write recovery"
         );
     }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
         return Ok(());
     }
 
@@ -367,7 +379,8 @@ async fn recover_mls_snapshot_for_encrypted_write(
         base_url.to_owned(),
         session_credential.to_owned(),
         actor_id.to_owned(),
-        device_id.to_owned(),
+        authority.clone(),
+        device_id.clone(),
         realm_id.to_owned(),
         state_store,
         None,
@@ -377,18 +390,18 @@ async fn recover_mls_snapshot_for_encrypted_write(
         Ok(_) => {}
         Err(error) => failures.push(format!("Welcome: {error}")),
     }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
         return Ok(());
     }
 
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let has_local_account_secret = matches!(
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id),
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority),
         Ok(Some(_))
     );
     if has_local_account_secret {
         let actor_for_fetch = actor_id.to_owned();
-        let device_for_fetch = device_id.to_owned();
+        let device_for_fetch = device_id.to_string();
         match with_authed_api(
             base_url,
             session_credential.to_owned(),
@@ -410,8 +423,9 @@ async fn recover_mls_snapshot_for_encrypted_write(
                         &payload,
                         &mut store,
                         secure_store.as_ref(),
+                        authority,
                         actor_id,
-                        device_id,
+                        device_id.as_str(),
                     )
                 };
                 if report.failed > 0 {
@@ -424,7 +438,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
             Err(error) => failures.push(format!("history backup: {}", error.display())),
         }
     }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
         return Ok(());
     }
 
@@ -440,7 +454,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
             &api,
             state_store,
             realm_id,
-            actor_id,
+            authority,
             device_id,
         )
         .await
@@ -448,7 +462,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
             failures.push(format!("creator bootstrap: {error}"));
         }
     }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, actor_id) {
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
         return Ok(());
     }
 
@@ -456,7 +470,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
     // pre-recovery reading above is stale by now; re-read before blaming the
     // device, and never let the generic banner swallow the concrete failures.
     let has_local_account_secret = matches!(
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id),
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority),
         Ok(Some(_))
     );
     const NO_SECRET_HINT: &str = "This device has no account MLS secret; unlock it with the Recovery Key or approve this device so it can receive a new Welcome.";
@@ -485,14 +499,14 @@ async fn recover_mls_snapshot_for_encrypted_write(
 fn encrypted_realm_write_mls_ready(
     state_store: &LocalStateStore,
     realm_id: &str,
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
 ) -> bool {
     if state_store.mls_snapshot_for(realm_id).is_none() {
         return false;
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     matches!(
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id),
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority),
         Ok(Some(_))
     )
 }

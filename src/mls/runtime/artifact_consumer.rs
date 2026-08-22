@@ -126,12 +126,12 @@ fn exact_next_commit(
 /// pending and unsendable instead of skipping ahead.
 pub(crate) async fn converge_accepted_mls_commits(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let snapshot_secret =
-        super::load_device_snapshot_secret(secure_store.as_ref(), actor_id, device_id)
+        super::load_device_snapshot_secret(secure_store.as_ref(), authority, device_id)
             .map_err(|error| format!("accepted Commit snapshot secret: {error}"))?;
     let mut applied = 0;
     loop {

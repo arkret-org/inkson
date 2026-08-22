@@ -127,9 +127,14 @@ fn parse_consent_rows(value: &arkret_sdk::ConsentCellList) -> Vec<ConsentRow> {
 }
 
 #[component]
-pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) -> Element {
+pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>) -> Element {
     // A4 — base_url from session context instead of a prop.
-    let base_url = crate::app::SessionContext::get().base_url;
+    let active_account = crate::app::SessionContext::get().active_account;
+    let base_url = use_signal(move || {
+        active_account()
+            .map(|account| account.server_url.to_string())
+            .unwrap_or_default()
+    });
     let mut rows = use_signal(Vec::<ConsentRow>::new);
     let mut load_error = use_signal(|| Option::<String>::None);
     let mut reload = use_signal(|| 0_u32);
@@ -189,7 +194,7 @@ pub fn ConsentSettingsPanel(account_did: Signal<String>, token: Signal<String>) 
         });
     }
 
-    let me = account_did();
+    let me = principal_id();
     let all_rows = rows.read().clone();
     let pending_rows: Vec<ConsentRow> = all_rows
         .iter()

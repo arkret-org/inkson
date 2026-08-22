@@ -988,14 +988,14 @@ fn member_group_matches(group: &MemberGroup, query: &str) -> bool {
 fn member_group_in_section(
     group: &MemberGroup,
     section: MemberRosterSection,
-    account_did: &str,
+    principal_id: &str,
 ) -> bool {
     match section {
         MemberRosterSection::Members => !group.controller.is_governance_principal(),
         MemberRosterSection::Owners => group.controller.is_owner,
         MemberRosterSection::Admins => group.controller.is_admin && !group.controller.is_owner,
         MemberRosterSection::MyAgents => {
-            same_principal_core(&group.controller.actor_id, account_did)
+            same_principal_core(&group.controller.actor_id, principal_id)
         }
         MemberRosterSection::PendingInvites => false,
     }
@@ -1038,7 +1038,7 @@ fn member_handles_line_label(all_handles: &[String], visible_handles: &[String])
 #[component]
 fn MemberRowActions(
     token: Signal<String>,
-    account_did: String,
+    principal_id: String,
     selected_realm_id: String,
     target_did: String,
     target_label: String,
@@ -1066,7 +1066,7 @@ fn MemberRowActions(
                     onclick: {
                         let base = base_url.clone();
                         let realm = selected_realm_id.clone();
-                        let actor_account_did = account_did.clone();
+                        let actor_principal_id = principal_id.clone();
                         let disabled_reason = leave_disabled_reason.clone();
                         move |_| {
                             if let Some(reason) = disabled_reason.clone() {
@@ -1076,7 +1076,7 @@ fn MemberRowActions(
                             let base = base.clone();
                             let realm = realm.clone();
                             let api_token = token();
-                            let actor_id = actor_account_did.trim().to_owned();
+                            let actor_id = actor_principal_id.trim().to_owned();
                             if actor_id.is_empty() {
                                 status_msg.set("Leave Realm failed: account is not connected".to_owned());
                                 return;
@@ -1117,14 +1117,14 @@ fn MemberRowActions(
                         let realm = selected_realm_id.clone();
                         let target = target_did.clone();
                         let target_label = target_label.clone();
-                        let actor_account_did = account_did.clone();
+                        let actor_principal_id = principal_id.clone();
                         move |_| {
                             let base = base.clone();
                             let realm = realm.clone();
                             let target = target.clone();
                             let target_label = target_label.clone();
                             let api_token = token();
-                            let actor_id = actor_account_did.clone();
+                            let actor_id = actor_principal_id.clone();
                             spawn(async move {
                                 let realm_for_api = realm.clone();
                                 match crate::transport::auth::with_event_submitter(
@@ -1187,14 +1187,14 @@ fn MemberRowActions(
                         let realm = selected_realm_id.clone();
                         let target = target_did.clone();
                         let target_label = target_label.clone();
-                        let actor_account_did = account_did.clone();
+                        let actor_principal_id = principal_id.clone();
                         move |_| {
                             let base = base.clone();
                             let realm = realm.clone();
                             let target = target.clone();
                             let target_label = target_label.clone();
                             let api_token = token();
-                            let actor_id = actor_account_did.clone();
+                            let actor_id = actor_principal_id.clone();
                             spawn(async move {
                                 let realm_for_api = realm.clone();
                                 match crate::transport::auth::with_event_submitter(
@@ -1281,7 +1281,7 @@ fn MemberRowActions(
                                     crate::views::settings::push_blocklist_account_data(
                                         base.clone(),
                                         token(),
-                                        account_did.clone(),
+                                        principal_id.clone(),
                                         state_store,
                                         entries,
                                     );
@@ -1308,7 +1308,7 @@ fn MemberRowActions(
 fn PendingInviteRow(
     profile: MemberProfile,
     token: Signal<String>,
-    account_did: String,
+    principal_id: String,
     selected_realm_id: String,
     can_cancel_invite: bool,
     can_revoke_invite: bool,
@@ -1435,7 +1435,7 @@ fn PendingInviteRow(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
                             let invite_id = invite_id.clone();
                             let member = member.clone();
                             let member_label = member_label.clone();
@@ -2379,7 +2379,7 @@ async fn ensure_mls_governance_proof_for_next_commit(
 #[component]
 pub fn RealmMembersPanel(
     active_service_id: String,
-    account_did: String,
+    principal_id: String,
     device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
@@ -2474,7 +2474,7 @@ pub fn RealmMembersPanel(
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
-        let fallback_controller_id = account_did.clone();
+        let fallback_controller_id = principal_id.clone();
         use_effect(move || {
             let api_token = token();
             if api_token.trim().is_empty() {
@@ -2502,7 +2502,7 @@ pub fn RealmMembersPanel(
 
     {
         let base = base_url.clone();
-        let actor = account_did.clone();
+        let actor = principal_id.clone();
         let realm = selected_realm_id.clone();
         use_effect(move || {
             let api_token = token();
@@ -2634,7 +2634,7 @@ pub fn RealmMembersPanel(
     let (active_members, pending_invite_rows) = split_member_profiles(all_members);
     let owned_agent_rows = owned_agents();
     let member_groups =
-        group_members_with_owned_agents(&active_members, &owned_agent_rows, &account_did);
+        group_members_with_owned_agents(&active_members, &owned_agent_rows, &principal_id);
     let selected_section = member_roster_section();
     let total_members = active_members.len();
     let total_pending_invites = pending_invite_rows.len();
@@ -2656,14 +2656,14 @@ pub fn RealmMembersPanel(
         .filter(|member| member.is_governance_principal())
         .count();
     let self_is_known_governance = active_members.iter().any(|member| {
-        same_principal_core(&member.actor_id, &account_did) && member.is_governance_principal()
+        same_principal_core(&member.actor_id, &principal_id) && member.is_governance_principal()
     });
     // Authority-root controller: `capabilities.md` §10.4 L858 — the root
     // controller's only exit is `ak.realm.owner.transfer`, regardless of how
     // many other admins exist, so this outranks the softer last-admin guard.
     let self_is_root_controller = active_members
         .iter()
-        .any(|member| same_principal_core(&member.actor_id, &account_did) && member.is_owner);
+        .any(|member| same_principal_core(&member.actor_id, &principal_id) && member.is_owner);
     let self_leave_disabled_reason = if self_is_root_controller {
         Some(
             "Transfer Realm ownership first (ak.realm.owner.transfer, Realm settings → Security \
@@ -2678,7 +2678,7 @@ pub fn RealmMembersPanel(
     let filter_query = member_filter().trim().to_lowercase();
     let section_groups: Vec<MemberGroup> = member_groups
         .into_iter()
-        .filter(|group| member_group_in_section(group, selected_section, &account_did))
+        .filter(|group| member_group_in_section(group, selected_section, &principal_id))
         .collect();
     let filtered_groups: Vec<MemberGroup> = if filter_query.is_empty() {
         section_groups
@@ -2713,7 +2713,7 @@ pub fn RealmMembersPanel(
         .iter()
         .filter(|agent| {
             let controller = agent.controller_id.trim();
-            controller.is_empty() || controller == account_did.trim()
+            controller.is_empty() || controller == principal_id.trim()
         })
         .cloned()
         .collect();
@@ -2830,7 +2830,7 @@ pub fn RealmMembersPanel(
                                                             let realm = selected_realm_id.clone();
                                                             let target = agent_id.clone();
                                                             let target_label = agent_title.clone();
-                                                            let actor_id = account_did.clone();
+                                                            let actor_id = principal_id.clone();
                                                             move |_| {
                                                                 let base = base.clone();
                                                                 let realm = realm.clone();
@@ -2976,7 +2976,7 @@ pub fn RealmMembersPanel(
                                                 disabled: selected_contacts.read().is_empty(),
                                                 onclick: {
                                                     let base = base_url.clone();
-                                                    let actor = account_did.clone();
+                                                    let actor = principal_id.clone();
                                                     let device = device_id.clone();
                                                     let realm = selected_realm_id.clone();
                                                     let state_store = state_store;
@@ -3155,7 +3155,7 @@ pub fn RealmMembersPanel(
                                     "data-testid": "send-invite-button",
                                     onclick: {
                                         let base = base_url.clone();
-                                        let actor = account_did.clone();
+                                        let actor = principal_id.clone();
                                         let device = device_id.clone();
                                         let realm = selected_realm_id.clone();
                                         let state_store = state_store;
@@ -3502,7 +3502,7 @@ pub fn RealmMembersPanel(
                                         PendingInviteRow {
                                             profile: invite.clone(),
                                             token,
-                                            account_did: account_did.clone(),
+                                            principal_id: principal_id.clone(),
                                             selected_realm_id: selected_realm_id.clone(),
                                             can_cancel_invite,
                                             can_revoke_invite,
@@ -3519,7 +3519,7 @@ pub fn RealmMembersPanel(
                             let member = member_profile.actor_id.clone();
                             let member_label = member_profile.primary_label();
                             let public_label = member_profile.public_label();
-                            let is_self = member.trim() == account_did.trim();
+                            let is_self = member.trim() == principal_id.trim();
                             let has_agents = !group.agents.is_empty();
                             let group_class = if has_agents {
                                 "member-group has-agents"
@@ -3657,7 +3657,7 @@ pub fn RealmMembersPanel(
                                         }
                                         MemberRowActions {
                                             token,
-                                            account_did: account_did.clone(),
+                                            principal_id: principal_id.clone(),
                                             selected_realm_id: selected_realm_id.clone(),
                                             target_did: member.clone(),
                                             target_label: member_label.clone(),
@@ -3741,13 +3741,13 @@ pub fn RealmMembersPanel(
                                                                                         let realm = selected_realm_id.clone();
                                                                                         let target = agent_id.clone();
                                                                                         let target_label = agent_title.clone();
-                                                                                        let actor_account_did = account_did.clone();
+                                                                                        let actor_principal_id = principal_id.clone();
                                                                                         move |_| {
                                                                                             let base = base.clone();
                                                                                             let realm = realm.clone();
                                                                                             let target = target.clone();
                                                                                             let target_label = target_label.clone();
-                                                                                            let actor_id = actor_account_did.clone();
+                                                                                            let actor_id = actor_principal_id.clone();
                                                                                             let api_token = token();
                                                                                             spawn(async move {
                                                                                                 let realm_for_api = realm.clone();

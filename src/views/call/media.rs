@@ -20,12 +20,12 @@ pub(super) async fn join_and_build_transport(
     base: &str,
     api_token: &str,
     join: &MediaJoinRequest,
-    actor: &str,
-    device: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device: &arkret_sdk::DeviceId,
     realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<(JoinedMediaSession, SharedTransport, Rc<PerSenderFrameKeys>), RtcClientError> {
     let (session, per_sender_keys) =
-        join_via_api(base, api_token, join, actor, device, realm_mls_snapshot).await?;
+        join_via_api(base, api_token, join, authority, device, realm_mls_snapshot).await?;
     let transport = new_transport(&session);
     Ok((
         session,
@@ -52,15 +52,15 @@ async fn join_via_api(
     base: &str,
     api_token: &str,
     join: &MediaJoinRequest,
-    actor: &str,
-    device: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device: &arkret_sdk::DeviceId,
     realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<(JoinedMediaSession, PerSenderFrameKeys), RtcClientError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
         realm_mls_snapshot,
         secure_store.as_ref(),
-        actor,
+        authority,
         device,
     )?;
     // Bind the SFrame frame key to the realm group's real MLS epoch instead

@@ -55,7 +55,6 @@ impl SpaceStatusStrings {
 #[component]
 pub(super) fn NewSpaceSection(
     token: Signal<String>,
-    account_did: Signal<String>,
     selected_realm_id: Signal<String>,
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     new_space_context_node: Signal<String>,
@@ -73,6 +72,7 @@ pub(super) fn NewSpaceSection(
     mut new_space_state: Signal<String>,
     mut new_space_created_id: Signal<String>,
 ) -> Element {
+    let active_account = crate::app::SessionContext::get().active_account;
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
@@ -413,7 +413,11 @@ pub(super) fn NewSpaceSection(
                                 let kind = new_space_kind();
                                 let parent_id = new_space_parent_id();
                                 let default_realm_id = new_space_default_realm_id();
-                                let actor = account_did();
+                                let Some(account) = active_account() else {
+                                    new_space_state.set("create blocked: account is not connected".to_owned());
+                                    return;
+                                };
+                                let actor = account.authority.principal_id.to_string();
                                 new_space_state.set(tr("setup.space.state.submitting_create"));
                                 spawn(async move {
                                     match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
@@ -563,7 +567,11 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let actor = account_did();
+                                        let Some(account) = active_account() else {
+                                            new_space_state.set("update blocked: account is not connected".to_owned());
+                                            return;
+                                        };
+                                        let actor = account.authority.principal_id.to_string();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_archive"));
@@ -602,7 +610,11 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let actor = account_did();
+                                        let Some(account) = active_account() else {
+                                            new_space_state.set("update blocked: account is not connected".to_owned());
+                                            return;
+                                        };
+                                        let actor = account.authority.principal_id.to_string();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_restore"));
@@ -641,7 +653,11 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let actor = account_did();
+                                        let Some(account) = active_account() else {
+                                            new_space_state.set("update blocked: account is not connected".to_owned());
+                                            return;
+                                        };
+                                        let actor = account.authority.principal_id.to_string();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_tombstone"));

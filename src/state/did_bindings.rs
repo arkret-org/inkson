@@ -17,12 +17,13 @@
 //! - **They are not secrets.** A binding pins a DID document, i.e. public key material plus the
 //!   verdict "this client accepted it at time T for purpose P". Its security requirement is
 //!   *integrity and correct scoping*, not confidentiality. The keyring backends are sized for small
-//!   secrets and, on desktop, each entry is a separate keyring item — a per-DID keyring entry per
-//!   accepted binding is the wrong shape.
+//!   secrets and, on desktop, each entry is a separate keyring item — an authority-scoped keyring
+//!   entry per accepted binding is the wrong shape.
 //! - **Principal scoping is structural here.** The `ClientLocalState` entry is already keyed by
-//!   account DID, so account B literally cannot read account A's bindings; that is the strongest
-//!   available answer to the cross-account trust-leak risk. The secure key store is keyed by a flat
-//!   string namespace where the same isolation would have to be re-implemented by convention.
+//!   account authority, so account B literally cannot read account A's bindings; that is the
+//!   strongest available answer to the cross-account trust-leak risk. The secure key store is keyed
+//!   by a flat string namespace where the same isolation would have to be re-implemented by
+//!   convention.
 //! - **It shares one atomic write with the rest of the account state**, so a binding accepted while
 //!   applying a sync response is persisted in the same flush as the projections that motivated it,
 //!   instead of racing a second durable writer.
@@ -206,6 +207,19 @@ mod tests {
         (LocalStateStore::with_path(&path), path)
     }
 
+    fn switch_test_account(store: &mut LocalStateStore, full_id: &str) -> bool {
+        let full_id = DidFullId::new(full_id.to_owned()).unwrap();
+        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:test-server.example".to_owned()).unwrap(),
+        );
+        let profile_id = format!(
+            "ak:profile:{}",
+            crate::secure_key_store::principal_authority_storage_digest(&authority).unwrap()
+        );
+        store.switch_active_account(&profile_id, &authority)
+    }
+
     fn document(did: &str) -> arkret_sdk::DidDocument {
         arkret_sdk::DidDocument {
             id: DidFullId::new(did.to_owned()).expect("valid did"),
@@ -297,11 +311,11 @@ mod tests {
         let bob = "did:web:bob.example";
         let peer = "did:web:peer.example";
 
-        store.switch_active_account(alice);
+        switch_test_account(&mut store, alice);
         store.store_accepted_did_bindings(vec![record(&scope, peer, DidBindingPurpose::Principal)]);
         assert_eq!(store.accepted_did_bindings().len(), 1);
 
-        store.switch_active_account(bob);
+        switch_test_account(&mut store, bob);
         assert!(
             store.accepted_did_bindings().is_empty(),
             "account B must not inherit account A's accepted DID bindings"
@@ -321,7 +335,7 @@ mod tests {
             "the same DID + trust domain must still miss under a different principal"
         );
 
-        store.switch_active_account(alice);
+        switch_test_account(&mut store, alice);
         assert_eq!(
             store.accepted_did_binding_dids(),
             vec![DidFullId::new(peer.to_owned()).expect("did")],
@@ -370,7 +384,7 @@ mod tests {
         let peer = "did:web:peer.example";
         let peer_did = DidFullId::new(peer.to_owned()).expect("did");
         let (mut first_boot, path) = temp_store("restart");
-        first_boot.switch_active_account("did:web:alice.example");
+        switch_test_account(&mut first_boot, "did:web:alice.example");
         first_boot.store_accepted_did_bindings(vec![record(
             &scope,
             peer,

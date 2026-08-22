@@ -197,6 +197,15 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     sidecar: Option<&SidecarTrackWriteContext>,
 ) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
+    let account_scope = crate::secure_key_store::active_device_seed_scope()
+        .ok_or_else(|| "active account authority is unavailable".to_owned())?;
+    if account_scope.authority.principal_id.as_str() != actor_id
+        || account_scope.device_id.as_str() != device_id
+    {
+        return Err("encrypted write identity does not match the active account".to_owned());
+    }
+    let authority = &account_scope.authority;
+    let account_device_id = &account_scope.device_id;
     if let Some(sidecar) = sidecar
         && (!sidecar.ready || sidecar.binding.is_none())
     {
@@ -235,15 +244,16 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             state_store,
             secure_store,
             realm_id,
+            authority,
             actor_id,
-            device_id,
+            account_device_id,
         )?;
         ensure_creator_mls_snapshot_for_encrypted_scope(
             state_store,
             secure_store,
             realm_id,
-            actor_id,
-            device_id,
+            authority,
+            account_device_id,
         )?
     } else {
         if state_store
@@ -272,8 +282,8 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             state_store,
             secure_store,
             realm_id,
-            actor_id,
-            device_id,
+            authority,
+            account_device_id,
         )
         .map_err(|error| error.user_message())?;
     }
@@ -309,8 +319,9 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
-        device_id,
+        account_device_id,
         KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         &plaintext_values,
         event_kind_str::STRAND_UPDATE,
@@ -403,8 +414,9 @@ fn apply_local_mls_welcomes_for_realm(
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
     if state_store.mls_snapshot_for(realm_id).is_some() {
         return Ok(());
@@ -419,6 +431,7 @@ fn apply_local_mls_welcomes_for_realm(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         &messages_value,

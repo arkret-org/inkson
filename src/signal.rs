@@ -595,8 +595,8 @@ pub fn restore_signal_mls_session(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     scope_ref: &arkret_sdk::ScopeRef,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     expected_epoch: u64,
 ) -> anyhow::Result<SignalMlsSession> {
     let realm_id = scope_ref.realm_id().as_str();
@@ -611,7 +611,7 @@ pub fn restore_signal_mls_session(
         );
     }
     let snapshot_secret =
-        crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id)
+        crate::mls::runtime::load_device_snapshot_secret(secure_store, authority, device_id)
             .map_err(|error| anyhow::anyhow!("load Signal MLS snapshot secret: {error}"))?;
     let group =
         crate::mls::persistence::restore_envelope(&snapshot, &snapshot_secret, snapshot.epoch)
@@ -627,6 +627,7 @@ pub fn restore_signal_mls_session(
 pub fn encrypt_signal_payload_with_store(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     header: &SignalHeader,
     material: &SignalKeyMaterial,
     plaintext: &[u8],
@@ -644,8 +645,8 @@ pub fn encrypt_signal_payload_with_store(
         state_store,
         secure_store,
         &header.scope_ref,
-        header.sender_actor_id.as_str(),
-        header.sender_device_id.as_str(),
+        authority,
+        &header.sender_device_id,
         material.epoch,
     )?;
     let key_ref = arkret_wire::SignalKeyRef {

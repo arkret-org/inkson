@@ -121,7 +121,7 @@ pub(super) struct ServerSelectionContext {
     pub(super) server_description: Signal<Option<ServiceDescribe>>,
     pub(super) server_probe_status: Signal<String>,
     pub(super) connection_status: Signal<String>,
-    pub(super) account_did: Signal<String>,
+    pub(super) principal_id: Signal<String>,
     pub(super) device_id: Signal<String>,
     pub(super) account_primary_handle: Signal<String>,
     pub(super) personal_handles: Signal<Vec<String>>,
@@ -204,7 +204,7 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
     persist_config(
         ctx.config_store,
         server_url,
-        (ctx.account_did)(),
+        (ctx.principal_id)(),
         (ctx.device_id)(),
         next_token,
     );

@@ -794,8 +794,8 @@ pub(crate) fn current_security_frontier_leaves(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
@@ -807,14 +807,14 @@ pub(crate) fn current_security_frontier_leaves(
         },
         None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
     };
-    current_security_frontier_leaves_for_scope(state_store, &effective_scope, actor_id, device_id)
+    current_security_frontier_leaves_for_scope(state_store, &effective_scope, authority, device_id)
 }
 
 pub(crate) fn current_security_frontier_leaves_for_scope(
     state_store: &crate::state::LocalStateStore,
     effective_scope: &arkret_sdk::ScopeRef,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     let snapshot = state_store
         .mls_snapshot_for_scope(effective_scope)
@@ -822,7 +822,7 @@ pub(crate) fn current_security_frontier_leaves_for_scope(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let secret = crate::mls::runtime::load_device_snapshot_secret(
         secure_store.as_ref(),
-        actor_id,
+        authority,
         device_id,
     )
     .map_err(|error| format!("load MLS snapshot secret for frontier: {error}"))?;

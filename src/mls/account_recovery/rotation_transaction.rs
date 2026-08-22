@@ -44,6 +44,7 @@ pub(crate) struct PreparedRotationBackupClass {
 
 pub(crate) fn prepare_rotation_backup_material(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     device_id: &str,
     recovery_words: &str,
@@ -54,9 +55,12 @@ pub(crate) fn prepare_rotation_backup_material(
 ) -> Result<PreparedRotationBackupMaterial> {
     let normalized = crate::recovery_crypto::normalize_recovery_key_input(recovery_words)
         .ok_or_else(|| anyhow!("a valid 24-word Recovery Key is required"))?;
-    let rotation =
-        crate::mls::runtime::prepare_account_mls_secret_rotation(secure_store, actor_id, snapshots)
-            .map_err(|error| anyhow!(error.user_message()))?;
+    let rotation = crate::mls::runtime::prepare_account_mls_secret_rotation(
+        secure_store,
+        authority,
+        snapshots,
+    )
+    .map_err(|error| anyhow!(error.user_message()))?;
     if !rotation.failed_realms.is_empty() {
         return Err(anyhow!(
             "security rotation cannot omit locally held MLS history Realms"
@@ -131,6 +135,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     state_store: SyncSignal<crate::state::LocalStateStore>,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
@@ -150,6 +155,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
             api,
             secure_store,
             state_store,
+            authority,
             actor_id,
             current_device_id,
             target_device_id,
@@ -167,6 +173,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         current_controller_backup_trust_anchor(&http, actor_id, current_device_id).await?;
     let prepared = prepare_rotation_backup_material(
         secure_store.as_ref(),
+        authority,
         actor_id,
         current_device_id,
         recovery_words,
@@ -306,6 +313,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         api,
         secure_store,
         state_store,
+        authority,
         actor_id,
         current_device_id,
         target_device_id,
@@ -318,6 +326,7 @@ async fn resume_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     state_store: SyncSignal<crate::state::LocalStateStore>,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
@@ -342,6 +351,7 @@ async fn resume_device_revoke_security_rotation(
         api,
         secure_store,
         state_store,
+        authority,
         actor_id,
         current_device_id,
         target_device_id,
@@ -354,6 +364,7 @@ async fn drive_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
@@ -373,7 +384,7 @@ async fn drive_security_rotation(
     if transaction.state == SecurityTransactionState::Completed {
         clear_pending_rotation(secure_store.as_ref(), target_device_id)?;
         let version =
-            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id)?
+            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority)?
                 .map(|secret| secret.version)
                 .ok_or_else(|| {
                     anyhow!("completed security rotation has no committed local MLS secret")
@@ -473,7 +484,7 @@ async fn drive_security_rotation(
     crate::mls::runtime::commit_account_mls_secret_rotation(
         &mut state_store.write(),
         secure_store.as_ref(),
-        actor_id,
+        authority,
         &rotation,
     )
     .map_err(|error| anyhow!(error.to_string()))?;

@@ -20,7 +20,7 @@ use crate::views::helpers::short_protocol_id;
 
 #[component]
 pub fn RealmAdminPanel(
-    account_did: String,
+    principal_id: String,
     device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
@@ -182,7 +182,7 @@ pub fn RealmAdminPanel(
     // Resolve the authority root from the locally replayed projection. Every
     // governance authoring path below binds these exact coordinates; no UI
     // state or Realm identifier is treated as an authority assertion.
-    let actor_core_id = crate::mls_api_helpers::principal_core_id(&account_did)
+    let actor_core_id = arkret_sdk::DidCoreId::new(principal_id.clone())
         .map(|id| id.as_str().to_owned())
         .unwrap_or_default();
     let (authority_root, is_root_controller) = {
@@ -747,13 +747,13 @@ pub fn RealmAdminPanel(
                                         onclick: {
                                             let base = base_url.clone();
                                             let realm = selected_realm_id.clone();
-                                            let actor_account_did = account_did.clone();
+                                            let actor_principal_id = principal_id.clone();
                                             let root = authority_root.clone();
                                             move |_| {
                                                 let base = base.clone();
                                                 let realm = realm.clone();
                                                 let api_token = token();
-                                                let actor_id = actor_account_did.trim().to_owned();
+                                                let actor_id = actor_principal_id.trim().to_owned();
                                                 let target = gov_transfer_target().trim().to_owned();
                                                 let acceptance = gov_transfer_acceptance().trim().to_owned();
                                                 if actor_id.is_empty() {
@@ -876,13 +876,13 @@ pub fn RealmAdminPanel(
                                         onclick: {
                                             let base = base_url.clone();
                                             let realm = selected_realm_id.clone();
-                                            let actor_account_did = account_did.clone();
+                                            let actor_principal_id = principal_id.clone();
                                             let root = authority_root.clone();
                                             move |_| {
                                                 let base = base.clone();
                                                 let realm = realm.clone();
                                                 let api_token = token();
-                                                let actor_id = actor_account_did.trim().to_owned();
+                                                let actor_id = actor_principal_id.trim().to_owned();
                                                 let typed_confirmation = gov_reset_confirm_text().trim().to_owned();
                                                 if actor_id.is_empty() {
                                                     status_msg.set("authority reset failed: account is not connected".to_owned());
@@ -1002,13 +1002,13 @@ pub fn RealmAdminPanel(
                                         onclick: {
                                             let base = base_url.clone();
                                             let realm = selected_realm_id.clone();
-                                            let actor_account_did = account_did.clone();
+                                            let actor_principal_id = principal_id.clone();
                                             let root = authority_root.clone();
                                             move |_| {
                                                 let base = base.clone();
                                                 let realm = realm.clone();
                                                 let api_token = token();
-                                                let actor_id = actor_account_did.trim().to_owned();
+                                                let actor_id = actor_principal_id.trim().to_owned();
                                                 if actor_id.is_empty() {
                                                     status_msg.set("basis update failed: account is not connected".to_owned());
                                                     return;
@@ -1129,7 +1129,7 @@ pub fn RealmAdminPanel(
                                     let subject_kind = metadata_subject.kind;
                                     let home_realm_id = metadata_subject.home_realm_id.clone();
                                     let stored_summary = metadata_subject.summary.trim().to_owned();
-                                    let actor_account_did = account_did.clone();
+                                    let actor_principal_id = principal_id.clone();
                                     move |_| {
                                         let base = base.clone();
                                         let subject_id = subject_id.clone();
@@ -1164,7 +1164,7 @@ pub fn RealmAdminPanel(
                                         // Realm/Space metadata events are authored by the
                                         // account/principal DID, not the device DID, or the server
                                         // rejects them with `actor_session_mismatch`.
-                                        let actor_id = actor_account_did.trim().to_owned();
+                                        let actor_id = actor_principal_id.trim().to_owned();
                                         if actor_id.is_empty() {
                                             status_msg.set(
                                                 "profile update failed: account is not connected".to_owned(),
@@ -1261,11 +1261,11 @@ pub fn RealmAdminPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let home_realm_id = metadata_subject.home_realm_id.clone();
-                                        let actor_account_did = account_did.clone();
+                                        let actor_principal_id = principal_id.clone();
                                         move |_| {
                                             let base = base.clone();
                                             let home_realm_id = home_realm_id.clone();
-                                            let actor_id = actor_account_did.trim().to_owned();
+                                            let actor_id = actor_principal_id.trim().to_owned();
                                             let api_token = token();
                                             if actor_id.is_empty() {
                                                 status_msg.set(
@@ -1394,7 +1394,7 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
@@ -1482,12 +1482,12 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor_account_did = account_did.clone();
+                            let actor_principal_id = principal_id.clone();
                             let device = device_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
-                                let actor_id = actor_account_did.trim().to_owned();
+                                let actor_id = actor_principal_id.trim().to_owned();
                                 let device = device.clone();
                                 let api_token = token();
                                 let mut state_store = state_store;
@@ -1701,7 +1701,7 @@ pub fn RealmAdminPanel(
                             onclick: {
                                 let base = base_url.clone();
                                 let realm = selected_realm_id.clone();
-                                let actor_account_did = account_did.clone();
+                                let actor_principal_id = principal_id.clone();
                                 let mut state_store = state_store;
                                 let mut sync_cursor = sync_cursor;
                                 move |_| {
@@ -1711,7 +1711,7 @@ pub fn RealmAdminPanel(
                                     // Membership events are authored by the account/principal DID
                                     // (the authenticated session actor), not the device DID, or the server
                                     // rejects them with `actor_session_mismatch`.
-                                    let actor_id = actor_account_did.trim().to_owned();
+                                    let actor_id = actor_principal_id.trim().to_owned();
                                     if actor_id.is_empty() {
                                         status_msg.set("Leave Realm failed: account is not connected".to_owned());
                                         return;
@@ -1854,7 +1854,7 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor_account_did = account_did.clone();
+                            let actor_principal_id = principal_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
@@ -1870,7 +1870,7 @@ pub fn RealmAdminPanel(
                                 // Capability events are authored by the account/principal DID,
                                 // not the device DID, or the server returns
                                 // `actor_session_mismatch`.
-                                let actor_id = actor_account_did.trim().to_owned();
+                                let actor_id = actor_principal_id.trim().to_owned();
                                 if actor_id.is_empty() {
                                     status_msg.set(
                                         "capability grant failed: account is not connected".to_owned(),
@@ -1975,7 +1975,7 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor_account_did = account_did.clone();
+                            let actor_principal_id = principal_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
@@ -1996,7 +1996,7 @@ pub fn RealmAdminPanel(
                                 // Capability events are authored by the account/principal DID,
                                 // not the device DID, or the server returns
                                 // `actor_session_mismatch`.
-                                let actor_id = actor_account_did.trim().to_owned();
+                                let actor_id = actor_principal_id.trim().to_owned();
                                 if actor_id.is_empty() {
                                     status_msg.set(
                                         "capability revoke failed: account is not connected".to_owned(),
@@ -2083,13 +2083,13 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor_account_did = account_did.clone();
+                            let actor_principal_id = principal_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
                                 let subject = admin_subject_did().trim().to_owned();
-                                let actor_id = actor_account_did.trim().to_owned();
+                                let actor_id = actor_principal_id.trim().to_owned();
                                 if subject.is_empty() {
                                     status_msg.set(crate::i18n::tr("realm_admin.admin_subject_required"));
                                     return;
@@ -2135,13 +2135,13 @@ pub fn RealmAdminPanel(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor_account_did = account_did.clone();
+                            let actor_principal_id = principal_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
                                 let grant_id = admin_grant_id().trim().to_owned();
-                                let actor_id = actor_account_did.trim().to_owned();
+                                let actor_id = actor_principal_id.trim().to_owned();
                                 if grant_id.is_empty() {
                                     status_msg.set(crate::i18n::tr("realm_admin.admin_grant_id_required"));
                                     return;
@@ -2201,7 +2201,7 @@ pub fn RealmAdminPanel(
                 super::RealmOrganizationPanel {
                     token,
                     realm_id: selected_realm_id.clone(),
-                    account_did: account_did.clone(),
+                    principal_id: principal_id.clone(),
                 }
             }
 
@@ -2210,7 +2210,7 @@ pub fn RealmAdminPanel(
             // / appeal_* API; queues project from the local raw-operation log.
             if active_section == RealmAdminSection::Moderation {
                 crate::views::moderation::ModerationWorkbench {
-                    account_did: account_did.clone(),
+                    principal_id: principal_id.clone(),
                     token,
                     selected_realm_id: selected_realm_id.clone(),
                 }
@@ -2336,7 +2336,7 @@ pub fn RealmAdminPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let realm = selected_realm_id.clone();
-                                        let actor_account_did = account_did.clone();
+                                        let actor_principal_id = principal_id.clone();
                                         move |_| {
                                             if danger_confirm_text().trim() != realm.trim() {
                                                 status_msg.set("confirmation did not match the Realm ID".to_owned());
@@ -2345,7 +2345,7 @@ pub fn RealmAdminPanel(
                                             let base = base.clone();
                                             let realm = realm.clone();
                                             let api_token = token();
-                                            let actor_id = actor_account_did.trim().to_owned();
+                                            let actor_id = actor_principal_id.trim().to_owned();
                                             if actor_id.is_empty() {
                                                 status_msg.set(format!("{} failed: account is not connected", if is_destroy { "destroy" } else { "archive" }));
                                                 return;

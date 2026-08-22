@@ -5,7 +5,7 @@ pub(super) struct RecoveryReminderEffectState {
     pub recovery_key_setup_prompt: Signal<bool>,
     pub recovery_auto_prompt_fired: Signal<bool>,
     pub token: Signal<String>,
-    pub account_did: Signal<String>,
+    pub principal_id: Signal<String>,
     pub sync_bootstrap_complete: Signal<bool>,
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub on_onboarding_route: bool,
@@ -24,7 +24,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
         recovery_key_setup_prompt,
         recovery_auto_prompt_fired,
         token,
-        account_did,
+        principal_id,
         sync_bootstrap_complete,
         secure_store_bootstrap_ready,
         on_onboarding_route,
@@ -57,7 +57,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                 return;
             }
             let session = token();
-            let actor = account_did();
+            let actor = principal_id();
             if session.trim().is_empty() || actor.trim().is_empty() {
                 return;
             }

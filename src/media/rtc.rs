@@ -775,12 +775,12 @@ impl RealmMlsExporter {
     pub fn for_realm(
         snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-        actor_id: &str,
-        device_id: &str,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+        device_id: &arkret_sdk::DeviceId,
     ) -> Result<Self, RtcClientError> {
         let snapshot = snapshot.ok_or(RtcClientError::E2eeKeySourceUnauthorised)?;
         let secret =
-            crate::mls::runtime::load_device_snapshot_secret(secure_store, actor_id, device_id)
+            crate::mls::runtime::load_device_snapshot_secret(secure_store, authority, device_id)
                 .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
         let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
             .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
@@ -1124,6 +1124,18 @@ mod tests {
     const EXPORTER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
     const EXPORTER_REALM: &str = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
 
+    fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+        arkret_sdk::PrincipalAuthorityKey {
+            principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+            principal_server_id: arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned())
+                .unwrap(),
+        }
+    }
+
+    fn test_device(device: &str) -> arkret_sdk::DeviceId {
+        arkret_sdk::DeviceId::new(device.to_owned()).unwrap()
+    }
+
     /// Build a real MLS group for `EXPORTER_REALM`, store its account snapshot
     /// secret in `store`, and return the encrypted snapshot envelope — the same
     /// construction `crate::mls::runtime` uses for chat/reaction restore.
@@ -1132,8 +1144,11 @@ mod tests {
     ) -> crate::mls::persistence::MlsSnapshotEnvelope {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
-        let secret =
-            crate::mls::runtime::load_or_create_account_mls_secret(store, EXPORTER_ACTOR).unwrap();
+        let secret = crate::mls::runtime::load_or_create_account_mls_secret(
+            store,
+            &test_authority(EXPORTER_ACTOR),
+        )
+        .unwrap();
         let identity = ArkretMlsIdentity::new_basic(
             crate::mls_api_helpers::principal_core_id(EXPORTER_ACTOR).unwrap(),
             DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
@@ -1157,9 +1172,13 @@ mod tests {
         let store = crate::secure_key_store::MemorySecureKeyStore::new();
         let snapshot = seed_realm_snapshot(&store);
 
-        let exporter =
-            RealmMlsExporter::for_realm(Some(snapshot), &store, EXPORTER_ACTOR, EXPORTER_DEVICE)
-                .expect("a synced snapshot + account secret must restore the group");
+        let exporter = RealmMlsExporter::for_realm(
+            Some(snapshot),
+            &store,
+            &test_authority(EXPORTER_ACTOR),
+            &test_device(EXPORTER_DEVICE),
+        )
+        .expect("a synced snapshot + account secret must restore the group");
 
         // Derive the SFrame frame key the way join_call_media does. The key is
         // a real RFC 9420 §8 MLS-Exporter output, not a placeholder.
@@ -1190,10 +1209,18 @@ mod tests {
         let store = crate::secure_key_store::MemorySecureKeyStore::new();
         // Even with the account secret present, no snapshot means no synced
         // group on this device: honest fail-closed, no fabricated key.
-        let _ =
-            crate::mls::runtime::load_or_create_account_mls_secret(&store, EXPORTER_ACTOR).unwrap();
+        let _ = crate::mls::runtime::load_or_create_account_mls_secret(
+            &store,
+            &test_authority(EXPORTER_ACTOR),
+        )
+        .unwrap();
 
-        let result = RealmMlsExporter::for_realm(None, &store, EXPORTER_ACTOR, EXPORTER_DEVICE);
+        let result = RealmMlsExporter::for_realm(
+            None,
+            &store,
+            &test_authority(EXPORTER_ACTOR),
+            &test_device(EXPORTER_DEVICE),
+        );
         assert!(matches!(
             result.err(),
             Some(RtcClientError::E2eeKeySourceUnauthorised)
@@ -1211,8 +1238,8 @@ mod tests {
         let result = RealmMlsExporter::for_realm(
             Some(snapshot),
             &empty_store,
-            EXPORTER_ACTOR,
-            EXPORTER_DEVICE,
+            &test_authority(EXPORTER_ACTOR),
+            &test_device(EXPORTER_DEVICE),
         );
         assert!(matches!(
             result.err(),
@@ -1254,7 +1281,9 @@ mod tests {
         actor: &str,
         device: &str,
     ) -> RealmMlsExporter {
-        let secret = crate::mls::runtime::load_or_create_account_mls_secret(store, actor).unwrap();
+        let secret =
+            crate::mls::runtime::load_or_create_account_mls_secret(store, &test_authority(actor))
+                .unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = crate::mls::persistence::encrypt_state(
@@ -1265,7 +1294,13 @@ mod tests {
             &secret,
             b"deterministic-salt",
         );
-        RealmMlsExporter::for_realm(Some(envelope), store, actor, device).unwrap()
+        RealmMlsExporter::for_realm(
+            Some(envelope),
+            store,
+            &test_authority(actor),
+            &test_device(device),
+        )
+        .unwrap()
     }
 
     #[test]

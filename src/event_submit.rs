@@ -39,6 +39,9 @@ use crate::operation::{EventIntent, LocalOperation, uuid_v7};
 /// the shared SDK http-client (see `crate::transport::auth::with_event_submitter`).
 pub struct EventSubmitter {
     http: arkret_sdk::http_client::Client,
+    /// Exact account authority captured when this submitter is constructed.
+    /// Durable queue operations never re-read the process-global active scope.
+    authority: Option<arkret_sdk::PrincipalAuthorityKey>,
     describe_cache: OnceCell<ServiceDescribe>,
     state_store: Option<crate::runtime::input::StateStoreHandle>,
 }
@@ -63,9 +66,10 @@ pub(crate) struct DurablyQueuedError {
     pub(crate) operation_id: String,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct InksonPostAcceptHook {
     state_store: Option<crate::runtime::input::StateStoreHandle>,
+    authority: arkret_sdk::PrincipalAuthorityKey,
 }
 
 impl OutboundPostAcceptHook for InksonPostAcceptHook {
@@ -89,14 +93,20 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
             if matches!(action, PostAcceptAction::MlsAdmission { .. }) {
                 return Ok(());
             }
-            persist_post_accept_action(self.state_store.as_ref(), action.clone(), event_id.clone())
-                .await
+            persist_post_accept_action(
+                self.state_store.as_ref(),
+                &self.authority,
+                action.clone(),
+                event_id.clone(),
+            )
+            .await
         })
     }
 }
 
 async fn persist_post_accept_action(
     state_store: Option<&crate::runtime::input::StateStoreHandle>,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     action: PostAcceptAction,
     accepted_event_id: arkret_sdk::EventId,
 ) -> Result<(), garth::Error> {
@@ -143,6 +153,8 @@ async fn persist_post_accept_action(
         garth::Error::Protocol(format!("persist MLS post-accept snapshot: {error}"))
     })?;
     if let Some((actor_id, device_id)) = retain_history_for {
+        let device_id = arkret_sdk::DeviceId::new(device_id)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let derived = store
             .read(|store| {
@@ -150,6 +162,7 @@ async fn persist_post_accept_action(
                     store,
                     secure_store.as_ref(),
                     &realm_id,
+                    authority,
                     &actor_id,
                     &device_id,
                 )
@@ -398,6 +411,9 @@ impl EventOutboundSubmitter<'_> {
                 }
                 if let Err(error) = persist_post_accept_action(
                     self.state_store.as_ref(),
+                    self.owner
+                        .authority()
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
                     queued
                         .post_accept
                         .as_ref()
@@ -1004,11 +1020,14 @@ fn pending_chat_local_operation_ids_from_snapshot(
 /// send has no accepted Message id yet, because the Message is named by the
 /// create Event nobody has accepted.
 pub(crate) async fn pending_chat_outbound_local_operation_ids(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     realm_id: &str,
     strand_id: &str,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
-    let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(actor_id)?);
+    let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+        authority,
+        crate::outbound_store::OutboundLane::Standard,
+    )?);
     let snapshot = outbound.snapshot().await?;
     Ok(pending_chat_local_operation_ids_from_snapshot(
         &snapshot, realm_id, strand_id,
@@ -1030,21 +1049,19 @@ fn completed_outbound_result(item: &garth::SendQueueItem) -> SubmitEventResult {
     }
 }
 
-fn outbound_store_scope(intent: &EventIntent, durable_post_accept: bool) -> String {
-    let actor = intent.actor_id().as_str();
+fn outbound_store_lane(
+    intent: &EventIntent,
+    durable_post_accept: bool,
+) -> crate::outbound_store::OutboundLane {
     if durable_post_accept {
-        format!("{actor}\u{1f}mls-durable-post-accept")
+        crate::outbound_store::OutboundLane::MlsDurablePostAccept
     } else if intent.kind().as_str().starts_with("ak.mls.") {
         // MLS callers that persist their own snapshot after this method
         // returns carry no durable post-accept action; keep them host-only.
-        format!("{actor}\u{1f}mls-host-only")
+        crate::outbound_store::OutboundLane::MlsHostOnly
     } else {
-        actor.to_owned()
+        crate::outbound_store::OutboundLane::Standard
     }
-}
-
-fn durable_mls_store_scope(actor_id: &str) -> String {
-    format!("{actor_id}\u{1f}mls-durable-post-accept")
 }
 
 /// A browser runtime has multiple outbound triggers: the foreground writer
@@ -1062,6 +1079,8 @@ impl EventSubmitter {
     pub fn new(http: arkret_sdk::http_client::Client) -> Self {
         Self {
             http,
+            authority: crate::secure_key_store::active_device_seed_scope()
+                .map(|scope| scope.authority),
             describe_cache: OnceCell::new(),
             state_store: None,
         }
@@ -1075,11 +1094,36 @@ impl EventSubmitter {
         self
     }
 
+    pub(crate) fn with_authority(mut self, authority: arkret_sdk::PrincipalAuthorityKey) -> Self {
+        self.authority = Some(authority);
+        self
+    }
+
+    pub(crate) fn authority(&self) -> anyhow::Result<&arkret_sdk::PrincipalAuthorityKey> {
+        self.authority.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "durable Event submission requires an active PrincipalAuthorityKey captured when the submitter was created"
+            )
+        })
+    }
+
     pub(crate) fn from_current_session(http: arkret_sdk::http_client::Client) -> Self {
         match dioxus::prelude::try_consume_context::<crate::app::SessionContext>() {
-            Some(context) => Self::new(http).with_state_store(
-                crate::app::runtime_adapter::state_store_handle(context.state_store),
-            ),
+            Some(context) => {
+                use dioxus::prelude::ReadableExt as _;
+                let authority = context
+                    .active_account
+                    .peek()
+                    .as_ref()
+                    .map(|account| account.authority.clone());
+                let mut submitter = Self::new(http).with_state_store(
+                    crate::app::runtime_adapter::state_store_handle(context.state_store),
+                );
+                if let Some(authority) = authority {
+                    submitter = submitter.with_authority(authority);
+                }
+                submitter
+            }
             None => Self::new(http),
         }
     }
@@ -1120,7 +1164,8 @@ impl EventSubmitter {
             events,
         )?;
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
-            actor_id.as_str(),
+            self.authority()?,
+            crate::outbound_store::OutboundLane::Standard,
         )?);
         outbound
             .enqueue_scoped(
@@ -1209,7 +1254,8 @@ impl EventSubmitter {
         let expected_submission_bytes =
             arkret_sdk::canonical::canonical_json_bytes(&expected_submission)?;
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
-            actor_id.as_str(),
+            self.authority()?,
+            crate::outbound_store::OutboundLane::Standard,
         )?);
         let existing = outbound
             .snapshot()
@@ -1397,10 +1443,12 @@ impl EventSubmitter {
     /// Resume queued events for this actor without requiring a new user send.
     /// The account runner calls this after it has rebuilt an authenticated
     /// client, so process/browser restarts eventually drain pending work.
-    pub(crate) async fn drain_outbound(&self, actor_id: &str) -> anyhow::Result<usize> {
+    pub(crate) async fn drain_outbound(&self) -> anyhow::Result<usize> {
         let _single_writer = outbound_submit_lock().lock().await;
-        let outbound =
-            OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(actor_id)?);
+        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+            self.authority()?,
+            crate::outbound_store::OutboundLane::Standard,
+        )?);
         let results = OutboundAttemptResults::default();
         let submitter = EventOutboundSubmitter {
             owner: self,
@@ -1443,12 +1491,12 @@ impl EventSubmitter {
     /// finish the same idempotent action.
     pub(crate) async fn drain_mls_outbound(
         &self,
-        actor_id: &str,
         state_store: crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<usize> {
         let _single_writer = outbound_submit_lock().lock().await;
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
-            &durable_mls_store_scope(actor_id),
+            self.authority()?,
+            crate::outbound_store::OutboundLane::MlsDurablePostAccept,
         )?);
         let results = OutboundAttemptResults::default();
         let submitter = EventOutboundSubmitter {
@@ -1458,6 +1506,7 @@ impl EventSubmitter {
         };
         let hook = InksonPostAcceptHook {
             state_store: Some(state_store),
+            authority: self.authority()?.clone(),
         };
         let mut completed = 0usize;
         loop {
@@ -1715,8 +1764,8 @@ impl EventSubmitter {
     pub async fn send_scope_signal(
         &self,
         scope_ref: arkret_sdk::ScopeRef,
-        actor_id: &str,
-        device_id: &str,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+        device_id: &arkret_sdk::DeviceId,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
@@ -1724,16 +1773,14 @@ impl EventSubmitter {
         let seal_ref = self.current_seal_for(scope_ref.realm_id().as_str()).await?;
         let header = crate::signal::SignalHeader::new(
             scope_ref,
-            crate::mls_api_helpers::principal_core_id(actor_id)
-                .map_err(|error| anyhow::anyhow!("invalid signal actor_id: {error}"))?,
-            arkret_sdk::DeviceId::new(device_id)
-                .map_err(|error| anyhow::anyhow!("invalid signal device_id: {error}"))?,
+            authority.principal_id.clone(),
+            device_id.clone(),
             arkret_sdk::SealId::new(seal_ref)
                 .map_err(|error| anyhow::anyhow!("invalid signal seal_ref: {error}"))?,
             payload.signal_class(),
             crate::clock::now_utc(),
         );
-        self.send_signal(header, material, payload, state_store)
+        self.send_signal(authority, header, material, payload, state_store)
             .await
     }
 
@@ -1746,6 +1793,7 @@ impl EventSubmitter {
     /// v1 has no plaintext branch to fall back to.
     pub async fn send_signal(
         &self,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
         header: crate::signal::SignalHeader,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
@@ -1766,6 +1814,7 @@ impl EventSubmitter {
             crate::signal::encrypt_signal_payload_with_store(
                 store,
                 secure_store.as_ref(),
+                authority,
                 &header,
                 material,
                 &plaintext,
@@ -2277,7 +2326,8 @@ impl EventSubmitter {
             )
         })?;
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
-            &outbound_store_scope(&queued.intent, durable_post_accept),
+            self.authority()?,
+            outbound_store_lane(&queued.intent, durable_post_accept),
         )?);
         let existing = outbound
             .snapshot()
@@ -2402,7 +2452,10 @@ impl EventSubmitter {
             results: &results,
             state_store: state_store.clone(),
         };
-        let hook = InksonPostAcceptHook { state_store };
+        let hook = InksonPostAcceptHook {
+            state_store,
+            authority: self.authority()?.clone(),
+        };
         loop {
             let fence = match self.resolve_queue_generation_fence(&outbound).await {
                 Ok(fence) => fence,
@@ -4247,6 +4300,14 @@ mod tests {
                 .build()
                 .unwrap(),
         )
+        .with_authority(test_authority())
+    }
+
+    fn test_authority() -> arkret_sdk::PrincipalAuthorityKey {
+        arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
+        )
     }
 
     #[tokio::test]
@@ -4494,7 +4555,7 @@ mod tests {
             .auth(arkret_sdk::http_client::Auth::Bearer(token.clone()))
             .build()
             .expect("sdk client");
-        let submitter = EventSubmitter::new(sdk.clone());
+        let submitter = EventSubmitter::new(sdk.clone()).with_authority(test_authority());
 
         let outcome = async {
             // Manual genesis batch: the probe principal has no principal
@@ -4737,6 +4798,7 @@ mod tests {
         );
         let hook = InksonPostAcceptHook {
             state_store: Some(handle),
+            authority: test_authority(),
         };
         let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let event = sdk_event_with_kind(
@@ -4943,6 +5005,7 @@ mod tests {
 
         let error = persist_post_accept_action(
             Some(&handle),
+            &test_authority(),
             action,
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
                 .unwrap(),
@@ -5151,6 +5214,7 @@ mod tests {
         let previous_proof_mode = crate::operation::current_proof_mode();
         crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
         let error = EventSubmitter::new(http)
+            .with_authority(test_authority())
             .author_event_unit(steps)
             .await
             .expect_err("authoring must resolve the selected Principal Server");
@@ -5170,6 +5234,7 @@ mod tests {
             .unwrap();
 
         let error = EventSubmitter::new(http)
+            .with_authority(test_authority())
             .author_independent_events(vec![intent])
             .await
             .expect_err("ordinary Realm Event must refresh its combined actor frontier");

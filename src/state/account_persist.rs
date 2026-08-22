@@ -3,8 +3,8 @@
 //! On wasm the per-account `ClientLocalState` blob is stored in the
 //! IndexedDB + non-extractable SubtleCrypto encrypted entries store
 //! (the same `inkson.secret.inkson`/`entries` store the seed-grade secrets
-//! use). The semantic key is `inkson.local_state.v1.account.<core_id>`, and the physical backend
-//! is the hardened secure store, so the account
+//! use). The semantic key is `inkson.local_state.v1.account.<authority_digest>`, and the physical
+//! backend is the hardened secure store, so the account
 //! blob is ciphertext at rest instead of near-plaintext localStorage JSON.
 //!
 //! Two target-agnostic pieces live here so they can be unit-tested natively:
@@ -447,8 +447,8 @@ mod wasm_bootstrap {
     use std::sync::atomic::Ordering;
 
     use super::super::{
-        LocalStateStore, load_session_grant_from_user_secure_store,
-        store_session_grant_in_user_secure_store, user_local_store_for_principal,
+        LocalStateStore, active_user_local_store, load_session_grant_from_user_secure_store,
+        store_session_grant_in_user_secure_store,
     };
     use super::{
         ClientLocalState, merge_persisted_into_live, merge_secure_session_grant_into_live,
@@ -466,8 +466,8 @@ mod wasm_bootstrap {
             secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         ) {
             self.ensure_cached_loaded();
-            let effective_did = self.effective_account_key();
-            let user_store = user_local_store_for_principal(&effective_did).map_err(|error| {
+            let effective_scope = self.effective_account_key();
+            let user_store = active_user_local_store().map_err(|error| {
                 tracing::warn!(
                     ?error,
                     "secure session grant scope unavailable after IndexedDB upgrade"
@@ -486,7 +486,7 @@ mod wasm_bootstrap {
                     .ok()
                     .flatten()
             });
-            let Some(stored) = self.read_account_state(&effective_did) else {
+            let Some(stored) = self.read_account_state(&effective_scope) else {
                 // No durable entry yet; keep the live state and mark loaded so the
                 // first flush persists it under the active account key.
                 merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
@@ -656,8 +656,20 @@ mod tests {
             session_private_key_pem: String::new(),
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
             audience: "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
-            principal_id: "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
-            device_id: "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            authority: arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::DidCoreId::new(
+                    "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
+                )
+                .unwrap(),
+                arkret_sdk::DidCoreId::new(
+                    "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+                )
+                .unwrap(),
+            ),
+            device_id: arkret_sdk::DeviceId::new(
+                "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            )
+            .unwrap(),
             principal_server_url: "https://soland.example".to_owned(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),

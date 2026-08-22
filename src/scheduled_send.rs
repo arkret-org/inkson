@@ -49,8 +49,8 @@ pub(crate) struct PreparedScheduledSendPlan {
 }
 
 pub(crate) fn prepare_scheduled_send_plan(
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     existing_scheduled_send_id: Option<&str>,
     send_at: &str,
     message_payload: arkret_sdk::MessageCreatePayload,
@@ -60,7 +60,10 @@ pub(crate) fn prepare_scheduled_send_plan(
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         None => arkret_identifiers::ScheduledSendId::new_v7_at(crate::clock::now_unix_ms()),
     };
-    let hlc = crate::signing_stamp::issue_account_data_hlc(actor_id, device_id)?;
+    let hlc = crate::signing_stamp::issue_account_data_hlc(
+        authority.principal_id.as_str(),
+        device_id.as_str(),
+    )?;
     let value = crate::account_data::build_scheduled_send_value(
         scheduled_send_id.as_str(),
         send_at,
@@ -70,7 +73,7 @@ pub(crate) fn prepare_scheduled_send_plan(
     let account_data_key =
         crate::account_data::scheduled_send_account_data_key(scheduled_send_id.as_str())?;
     let encrypted_entry = crate::account_data::encrypt_account_data_value(
-        actor_id,
+        authority,
         &account_data_key,
         &crate::account_data::scheduled_send_account_data_value(&value)?,
     )?;
@@ -86,14 +89,14 @@ pub(crate) fn prepare_scheduled_send_plan(
 /// their own account-data key are skipped: a foreign or corrupt plan must
 /// never be dispatched, edited, or deleted by this client.
 pub(crate) fn staged_scheduled_send_plans(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     state_store: &LocalStateStore,
 ) -> Vec<DueScheduledSendPlan> {
     let state = state_store.load();
     let mut plans = Vec::new();
     for (account_data_key, content) in &state.scheduled_send_account_data {
         let plan =
-            crate::account_data::decrypt_account_data_value(actor_id, account_data_key, content)
+            crate::account_data::decrypt_account_data_value(authority, account_data_key, content)
                 .and_then(|plaintext| {
                     crate::account_data::scheduled_send_value_from_account_data(&plaintext)
                 })
@@ -128,11 +131,11 @@ pub(crate) fn staged_scheduled_send_plans(
 
 /// The subset of [`staged_scheduled_send_plans`] whose `send_at` has passed.
 pub(crate) fn due_scheduled_send_plans(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     state_store: &LocalStateStore,
     now: DateTime<Utc>,
 ) -> Vec<DueScheduledSendPlan> {
-    staged_scheduled_send_plans(actor_id, state_store)
+    staged_scheduled_send_plans(authority, state_store)
         .into_iter()
         .filter(|plan| match scheduled_send_plan_is_due(&plan.value, now) {
             Ok(due) => due,
@@ -224,10 +227,16 @@ async fn retire_scheduled_send_plan(
 /// data entry was retired).
 pub(crate) async fn dispatch_due_scheduled_sends(
     submitter: &EventSubmitter,
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<usize> {
-    let due = due_scheduled_send_plans(actor_id, &state_store.read(), crate::clock::now_utc());
+    if submitter.authority()? != authority {
+        anyhow::bail!(
+            "scheduled-send authority changed while constructing the durable Event submitter"
+        );
+    }
+    let actor_id = authority.principal_id.as_str();
+    let due = due_scheduled_send_plans(authority, &state_store.read(), crate::clock::now_utc());
     if due.is_empty() {
         return Ok(0);
     }
@@ -235,7 +244,7 @@ pub(crate) async fn dispatch_due_scheduled_sends(
     // persisted canonical signed bytes, never re-authored from the plan. The
     // durable outbound queue owns those bytes, so replay first; fresh
     // authoring below only runs for plans that have no dispatch record yet.
-    if let Err(error) = submitter.drain_outbound(actor_id).await {
+    if let Err(error) = submitter.drain_outbound().await {
         tracing::debug!(
             error = %format!("{error:#}"),
             "scheduled-send dispatch: durable outbound drain deferred"
@@ -243,7 +252,7 @@ pub(crate) async fn dispatch_due_scheduled_sends(
     }
     let mut dispatched = 0usize;
     for plan in due {
-        match dispatch_due_plan(submitter, actor_id, state_store, &plan).await {
+        match dispatch_due_plan(submitter, authority, actor_id, state_store, &plan).await {
             Ok(true) => dispatched += 1,
             Ok(false) => {}
             Err(error) => {
@@ -260,13 +269,16 @@ pub(crate) async fn dispatch_due_scheduled_sends(
 
 async fn dispatch_due_plan(
     submitter: &EventSubmitter,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     state_store: SyncSignal<LocalStateStore>,
     plan: &DueScheduledSendPlan,
 ) -> anyhow::Result<bool> {
     let scheduled_send_id = plan.value.scheduled_send_id.clone();
-    let outbound =
-        garth::OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(actor_id)?);
+    let outbound = garth::OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+        authority,
+        crate::outbound_store::OutboundLane::Standard,
+    )?);
     let existing = outbound
         .snapshot()
         .await?

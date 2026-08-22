@@ -35,7 +35,7 @@ fn encryption_label(profile: &arkret_sdk::EncryptionProfile) -> &'static str {
 pub fn CirclesPanel(
     realm_id: String,
     selected_circle_id: Option<String>,
-    account_did: String,
+    principal_id: String,
     token: Signal<String>,
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
@@ -215,7 +215,7 @@ pub fn CirclesPanel(
                                                 let base = base_url.clone();
                                                 let circle_id = circle.circle_id.to_string();
                                                 let member_realm_id = circle.realm_id.to_string();
-                                                let account_did = account_did.clone();
+                                                let principal_id = principal_id.clone();
                                                 let actor_id = member.to_string();
                                                 move |_| {
                                                     busy.set(true);
@@ -223,14 +223,14 @@ pub fn CirclesPanel(
                                                     let credential = token();
                                                     let circle_id = circle_id.clone();
                                                     let member_realm_id = member_realm_id.clone();
-                                                    let account_did = account_did.clone();
+                                                    let principal_id = principal_id.clone();
                                                     let actor_id = actor_id.clone();
                                                     spawn(async move {
                                                         let outcome = with_authed_api(&base, credential, |api| async move {
                                                             crate::transport::circle::remove_circle_member(
                                                                 &api.event_submitter()?,
                                                                 &member_realm_id,
-                                                                &account_did,
+                                                                &principal_id,
                                                                 &circle_id,
                                                                 &actor_id,
                                                             ).await
@@ -274,7 +274,7 @@ pub fn CirclesPanel(
                                         let base = base_url.clone();
                                         let circle_id = circle.circle_id.to_string();
                                         let member_realm_id = circle.realm_id.to_string();
-                                        let account_did = account_did.clone();
+                                        let principal_id = principal_id.clone();
                                         move |_| {
                                             let Ok(actor_id) = arkret_sdk::DidFullId::new(member_actor().trim().to_owned()) else {
                                                 status.set("Enter a valid member DID".to_owned());
@@ -292,11 +292,11 @@ pub fn CirclesPanel(
                                             let credential = token();
                                             let circle_id = circle_id.clone();
                                             let member_realm_id = member_realm_id.clone();
-                                            let account_did = account_did.clone();
+                                            let principal_id = principal_id.clone();
                                             spawn(async move {
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
                                                     crate::transport::circle::add_circle_member(
-                                                        &api.event_submitter()?, &member_realm_id, &account_did, &circle_id, actor_id.as_str(), membership,
+                                                        &api.event_submitter()?, &member_realm_id, &principal_id, &circle_id, actor_id.as_str(), membership,
                                                     ).await
                                                 }).await;
                                                 match outcome {
@@ -322,17 +322,17 @@ pub fn CirclesPanel(
                                         let base = base_url.clone();
                                         let circle_id = circle.circle_id.to_string();
                                         let realm_id = circle.realm_id.to_string();
-                                        let account_did = account_did.clone();
+                                        let principal_id = principal_id.clone();
                                         move |_| {
                                             busy.set(true);
                                             let base = base.clone();
                                             let credential = token();
                                             let circle_id = circle_id.clone();
                                             let realm_id = realm_id.clone();
-                                            let account_did = account_did.clone();
+                                            let principal_id = principal_id.clone();
                                             spawn(async move {
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
-                                                    crate::transport::circle::archive_circle(&api.event_submitter()?, &realm_id, &account_did, &circle_id, None).await
+                                                    crate::transport::circle::archive_circle(&api.event_submitter()?, &realm_id, &principal_id, &circle_id, None).await
                                                 }).await;
                                                 match outcome {
                                                     Ok(_) => { status.set("Circle archived".to_owned()); refresh += 1; }
@@ -353,17 +353,17 @@ pub fn CirclesPanel(
                                         let base = base_url.clone();
                                         let circle_id = circle.circle_id.to_string();
                                         let realm_id = circle.realm_id.to_string();
-                                        let account_did = account_did.clone();
+                                        let principal_id = principal_id.clone();
                                         move |_| {
                                             busy.set(true);
                                             let base = base.clone();
                                             let credential = token();
                                             let circle_id = circle_id.clone();
                                             let realm_id = realm_id.clone();
-                                            let account_did = account_did.clone();
+                                            let principal_id = principal_id.clone();
                                             spawn(async move {
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
-                                                    crate::transport::circle::restore_circle(&api.event_submitter()?, &realm_id, &account_did, &circle_id, None).await
+                                                    crate::transport::circle::restore_circle(&api.event_submitter()?, &realm_id, &principal_id, &circle_id, None).await
                                                 }).await;
                                                 match outcome {
                                                     Ok(_) => { status.set("Circle restored".to_owned()); refresh += 1; }
@@ -405,7 +405,7 @@ pub fn CirclesPanel(
                             }
                             div { class: "circle-boundary-preview",
                                 strong { "Boundary preview" }
-                                p { "Initial member: {account_did}" }
+                                p { "Initial member: {principal_id}" }
                                 p { "Directory: Circle members only" }
                                 p { "Join rule: open to active Realm members" }
                                 p { "History: joined members" }
@@ -427,15 +427,15 @@ pub fn CirclesPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let realm_id = realm_id.clone();
-                                    let account_did = account_did.clone();
+                                    let principal_id = principal_id.clone();
                                     move |_| {
                                         let realm_id_text = realm_id.clone();
                                         let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id_text.clone()) else {
                                             status.set("Invalid Realm id".to_owned());
                                             return;
                                         };
-                                        let Ok(actor_id) = arkret_sdk::DidFullId::new(account_did.clone()) else {
-                                            status.set("Invalid account DID".to_owned());
+                                        let Ok(actor_id) = arkret_sdk::DidCoreId::new(principal_id.clone()) else {
+                                            status.set("Invalid principal id".to_owned());
                                             return;
                                         };
                                         let encryption_profile = if create_encryption() == "none" {
@@ -451,7 +451,7 @@ pub fn CirclesPanel(
                                         let summary = create_summary().trim().to_owned();
                                         let create_event = match crate::operation::ak_ops::circle_create(
                                             realm_id.as_str(),
-                                            &account_did,
+                                            &principal_id,
                                             crate::operation::ak_ops::CircleCreateOptions {
                                                 title: &title,
                                                 summary: Some(&summary),

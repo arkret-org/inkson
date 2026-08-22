@@ -1,6 +1,7 @@
 //! Welcome application, application-payload encrypt / decrypt, and the SEC-08
 //! minimal-metadata AAD policy enforcement.
 
+use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
 use arkret_wire::event_kind_str;
 
 use super::{
@@ -161,14 +162,16 @@ pub fn decrypt_application_payload(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
     decrypt_application_payload_for_effective_scope_internal(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         payload,
@@ -182,8 +185,9 @@ pub fn decrypt_application_payload_from_verified_sender(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     verified_sender_domain: &[u8],
     payload: &arkret_sdk::EncryptedPayload,
 ) -> Option<Vec<u8>> {
@@ -194,6 +198,7 @@ pub fn decrypt_application_payload_from_verified_sender(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         payload,
@@ -203,6 +208,7 @@ pub fn decrypt_application_payload_from_verified_sender(
     authenticate_received_identity_link(
         state_store,
         secure_store,
+        authority,
         actor_id,
         device_id,
         &effective_scope,
@@ -217,8 +223,9 @@ pub fn decrypt_application_payload_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     circle_id: Option<&str>,
 ) -> Option<Vec<u8>> {
@@ -226,6 +233,7 @@ pub fn decrypt_application_payload_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         payload,
@@ -239,8 +247,9 @@ fn decrypt_application_payload_for_effective_scope_internal(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     circle_id: Option<&str>,
     verified_sender_domain: Option<&[u8]>,
@@ -257,6 +266,7 @@ fn decrypt_application_payload_for_effective_scope_internal(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         payload,
@@ -317,8 +327,9 @@ pub fn decrypt_application_payload_for_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     effective_scope: &arkret_sdk::ScopeRef,
 ) -> Option<Vec<u8>> {
@@ -326,6 +337,7 @@ pub fn decrypt_application_payload_for_scope(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         payload,
@@ -339,8 +351,9 @@ pub fn decrypt_application_payload_for_scope_from_verified_sender(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     effective_scope: &arkret_sdk::ScopeRef,
     verified_sender_domain: &[u8],
@@ -349,6 +362,7 @@ pub fn decrypt_application_payload_for_scope_from_verified_sender(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         payload,
@@ -358,6 +372,7 @@ pub fn decrypt_application_payload_for_scope_from_verified_sender(
     authenticate_received_identity_link(
         state_store,
         secure_store,
+        authority,
         actor_id,
         device_id,
         effective_scope,
@@ -372,8 +387,9 @@ pub fn decrypt_application_payload_for_scope_from_verified_sender(
 fn authenticate_received_identity_link(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     effective_scope: &arkret_sdk::ScopeRef,
     payload: &arkret_sdk::EncryptedPayload,
     verified_sender_domain: &[u8],
@@ -413,6 +429,7 @@ fn authenticate_received_identity_link(
     let view = minimal_metadata_author_view_for_scope(
         state_store,
         secure_store,
+        authority,
         actor_id,
         device_id,
         effective_scope,
@@ -464,8 +481,9 @@ fn decrypt_application_payload_for_scope_internal(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     effective_scope: &arkret_sdk::ScopeRef,
     verified_sender_domain: Option<&[u8]>,
@@ -520,7 +538,7 @@ fn decrypt_application_payload_for_scope_internal(
         }
         return plaintext;
     };
-    let secret = match load_device_snapshot_secret(secure_store, actor_id, device_id) {
+    let secret = match load_device_snapshot_secret(secure_store, authority, device_id) {
         Ok(secret) => secret,
         Err(error) => {
             if circle.is_none() && !sidecar_scoped {
@@ -656,8 +674,9 @@ pub fn minimal_metadata_author_view(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     group_id: &str,
     epoch: u64,
     group_state_ref: &str,
@@ -668,6 +687,7 @@ pub fn minimal_metadata_author_view(
     minimal_metadata_author_view_for_scope(
         state_store,
         secure_store,
+        authority,
         actor_id,
         device_id,
         &effective_scope,
@@ -681,8 +701,9 @@ pub fn minimal_metadata_author_view(
 pub fn minimal_metadata_author_view_for_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     effective_scope: &arkret_sdk::ScopeRef,
     group_id: &str,
     epoch: u64,
@@ -706,7 +727,7 @@ pub fn minimal_metadata_author_view_for_scope(
     if accepted_ref.as_str() != group_state_ref {
         return None;
     }
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
     // COR-04: read-only restore — no ratchet advance / persist on this path.
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     if group.group_id() != group_id || group.epoch() != epoch {
@@ -720,8 +741,9 @@ pub fn ordinary_agent_mls_author_view(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     group_id: &str,
     epoch: u64,
     group_state_ref: &str,
@@ -730,6 +752,7 @@ pub fn ordinary_agent_mls_author_view(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         group_id,
@@ -940,13 +963,14 @@ pub(crate) fn derive_and_retain_realm_history_secret(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
 ) -> Result<Option<RetainedRealmHistorySecret>, MlsRuntimeError> {
     let Some(snapshot) = state_store.mls_snapshot_for(realm_id) else {
         return Ok(None);
     };
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: read-only export of the CURRENT epoch's history secret — floor 0 is
     // intentional (no ratchet advance / persist; OpenMLS only exports the epoch the
@@ -1142,14 +1166,16 @@ pub fn mls_group_member_principal_ids_for_realm(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
 ) -> Option<Vec<String>> {
     mls_group_member_principal_ids_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
         None,
+        authority,
         actor_id,
         device_id,
     )
@@ -1161,11 +1187,12 @@ pub fn mls_group_member_principal_ids_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
 ) -> Option<Vec<String>> {
     let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, circle_id)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     Some(
         group
@@ -1520,14 +1547,12 @@ pub(crate) struct WelcomeSecurityFrontierPreview {
 /// any snapshot is persisted.
 pub(crate) fn preview_welcome_security_frontiers(
     secure_store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     messages_value: &serde_json::Value,
 ) -> Result<Vec<WelcomeSecurityFrontierPreview>, String> {
-    let principal_did = crate::mls_api_helpers::principal_core_id(actor_id)
-        .map_err(|error| format!("preview Welcome principal: {error}"))?;
-    let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
-        .map_err(|error| format!("preview Welcome device: {error}"))?;
+    let principal_did = authority.principal_id.clone();
+    let device_id_typed = device_id.clone();
     let mut previews = Vec::new();
     for entry in collect_welcome_message_entries(messages_value) {
         let payload = durable_welcome_wire_payload(&entry.content);
@@ -1544,7 +1569,7 @@ pub(crate) fn preview_welcome_security_frontiers(
             .ok_or_else(|| "Welcome carries no key_package_id".to_owned())?;
         let serialized_state = load_mls_key_package_identity_state(
             secure_store,
-            actor_id,
+            authority,
             device_id,
             key_package_id,
         )
@@ -1585,8 +1610,9 @@ pub fn apply_welcome_messages_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     messages_value: &serde_json::Value,
 ) -> Result<WelcomeApplyOutcome, MlsRuntimeError> {
     let welcome_entries = collect_welcome_message_entries(messages_value);
@@ -1597,12 +1623,10 @@ pub fn apply_welcome_messages_with_device_snapshot(
     // The snapshot secret / identity are prerequisites for ALL welcomes: if they
     // are unavailable no welcome could possibly apply, so surface them as a hard
     // error (the readiness status machinery keys off these).
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = crate::mls_api_helpers::principal_core_id(actor_id)
-        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
-        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+    let principal_did = authority.principal_id.clone();
+    let device_id_typed = device_id.clone();
     // Per-welcome failures no longer abort the loop or get swallowed: each is
     // counted and the first reason retained so callers can report partial
     // success without failing the whole boot.
@@ -1635,7 +1659,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
         let identity = match welcome_entry.key_package_id.as_deref() {
             Some(key_package_id) => match load_mls_key_package_identity_state(
                 secure_store,
-                actor_id,
+                authority,
                 device_id,
                 key_package_id,
             ) {
@@ -1665,7 +1689,7 @@ pub fn apply_welcome_messages_with_device_snapshot(
                         target: "mls_admission",
                         realm = %yoface::utils::text::short_protocol_id(realm_id),
                         actor = %yoface::utils::text::short_protocol_id(actor_id),
-                        device = %yoface::utils::text::short_protocol_id(device_id),
+                        device = %yoface::utils::text::short_protocol_id(device_id.as_str()),
                         key_package_id = %yoface::utils::text::short_protocol_id(key_package_id),
                         "welcome apply: no local KeyPackage identity state for the Welcome's key_package_id — the published KeyPackage's private init key is missing from this device's secure store (cannot decrypt Welcome)"
                     );
@@ -1818,8 +1842,9 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     content_type: &str,
     plaintext_values: &[Vec<u8>],
 ) -> Result<
@@ -1844,6 +1869,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         content_type,
@@ -1860,8 +1886,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     content_type: &str,
     plaintext_values: &[Vec<u8>],
     event_kind: &str,
@@ -1889,7 +1916,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     let snapshot = state_store
         .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: send/encrypt under the Seal-view epoch floor so encrypting from a
     // stale local snapshot (below the Seal lattice) is rejected as OutdatedSnapshot
@@ -1903,7 +1930,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     let use_exporter_aead = sidecar_binding.is_none()
         && realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
     verify_exporter_sender_domain_for_send(
-        device_id,
+        device_id.as_str(),
         state_store.realm_projection_is_minimal_metadata(realm_id),
         use_exporter_aead,
     )?;
@@ -2066,8 +2093,9 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     content_type: &str,
     event_kind: &str,
     group_state_ref: arkret_sdk::EventId,
@@ -2090,7 +2118,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: send/encrypt under the Seal-view epoch floor so encrypting from a
     // stale local snapshot (below the Seal lattice) is rejected as OutdatedSnapshot
@@ -2103,7 +2131,11 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     }
     let use_exporter_aead = sidecar_binding.is_none()
         && realm_content_scheme_is_exporter_aead_for_send(state_store, realm_id, circle)?;
-    verify_exporter_sender_domain_for_send(device_id, is_minimal_metadata, use_exporter_aead)?;
+    verify_exporter_sender_domain_for_send(
+        device_id.as_str(),
+        is_minimal_metadata,
+        use_exporter_aead,
+    )?;
     let should_commit = should_force_epoch_advance(
         is_minimal_metadata,
         snapshot.epoch_started_at,
@@ -2265,14 +2297,16 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
 ) -> Option<bool> {
     let joined = state_store.complete_joined_member_hint_for_realm(realm_id)?;
     let members = mls_group_member_principal_ids_for_realm(
         state_store,
         secure_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
     )?

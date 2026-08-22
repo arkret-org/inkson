@@ -106,8 +106,6 @@ pub(super) fn RealmsSection(
     plaintext_service_id: String,
     secure_store_ready: bool,
     token: Signal<String>,
-    account_did: Signal<String>,
-    device_id: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     mut selected_realm_id: Signal<String>,
     // State signals are owned by the parent `SetupPanel` so the wizard's
@@ -132,6 +130,7 @@ pub(super) fn RealmsSection(
     mut created_realm_id: Signal<String>,
     mut pending_recovery_gate: Signal<bool>,
 ) -> Element {
+    let active_account = crate::app::SessionContext::get().active_account;
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
@@ -767,7 +766,11 @@ pub(super) fn RealmsSection(
                                             &encryption_profile,
                                         )
                                         {
-                                            let actor_now = account_did();
+                                            let Some(account) = active_account() else {
+                                                realm_state.set("create blocked: account is not connected".to_owned());
+                                                return;
+                                            };
+                                            let actor_now = account.authority.principal_id.to_string();
                                             let recovery_ready = {
                                                 let store = state_store.read();
                                                 crate::views::recovery::recovery_options_configured(
@@ -796,8 +799,12 @@ pub(super) fn RealmsSection(
                                         let federation_policy = realm_federation_policy();
                                         let digest_algorithm = realm_digest_algorithm();
                                         let seed_text = seed_members();
-                                        let actor = account_did();
-                                        let device = device_id();
+                                        let Some(account) = active_account() else {
+                                            realm_state.set("create blocked: account is not connected".to_owned());
+                                            return;
+                                        };
+                                        let actor = account.authority.principal_id.to_string();
+                                        let device = account.device_id.to_string();
                                         let configured_plaintext_service_id =
                                             plaintext_service_id.clone();
                                         spawn(async move {

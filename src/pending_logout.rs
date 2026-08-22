@@ -22,7 +22,7 @@
 //! [`SecureKeyStore`](crate::secure_key_store) **before** the local wipe,
 //! retrying it in the background, and on the next app boot. The record
 //! embeds the grant-binding seed, so it is classified seed-grade
-//! (`PENDING_LOGOUT_SECRET_KEY`): IndexedDB-only on wasm with no localStorage
+//! (`PENDING_LOGOUT_SECRET_KEY_PREFIX`): IndexedDB-only on wasm with no localStorage
 //! unload-race mirror, OS keyring on native. The record is cleared only once
 //! the coauth revoke has definitively succeeded (or the grant is already
 //! gone). A wall-clock TTL bounds the record so a permanently-unreachable
@@ -37,7 +37,7 @@ use zeroize::Zeroize as _;
 /// Secure-key-store key for the journalled logout intent. Defined in
 /// `secure_key_store` so its seed-grade (IndexedDB-only, no localStorage
 /// mirror) classification stays in lockstep with the key string.
-use crate::secure_key_store::PENDING_LOGOUT_SECRET_KEY as PENDING_LOGOUT_STORAGE_KEY;
+use crate::secure_key_store::PENDING_LOGOUT_SECRET_KEY_PREFIX as PENDING_LOGOUT_STORAGE_PREFIX;
 
 /// How long a pending-logout record stays actionable. Past this we drop it
 /// without further retries: the session grant's own TTL (8h, see
@@ -69,21 +69,21 @@ pub struct PendingLogout {
     /// Principal-server URL the grant was issued against; used to re-resolve
     /// the Account Authority `gate_account_base` if it was not journalled.
     #[serde(default)]
-    pub principal_server_url: Option<String>,
+    pub principal_server_url: Option<url::Url>,
     /// T1.Y4 — resolved Account Authority `gate_account_base`; the single
     /// `/logout` origin. Preferred over re-resolving from
     /// `principal_server_url` at retry time.
     #[serde(default)]
-    pub gate_account_base: Option<String>,
+    pub gate_account_base: Option<url::Url>,
     /// Principal-server base URL for diagnostics.
-    pub base_url: String,
+    pub base_url: url::Url,
     /// Last in-memory session credential captured for diagnostics. The single
     /// hard logout authenticates with the grant + DPoP, not this value.
     #[serde(default)]
     pub session_credential: String,
-    /// Account DID, for diagnostics only.
-    #[serde(default)]
-    pub account_did: String,
+    /// Exact account authority and device owning the journalled session.
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub device_id: arkret_sdk::DeviceId,
     /// When the record was journalled. Drives the [`RECORD_TTL_HOURS`] bound.
     pub created_at: DateTime<Utc>,
 }
@@ -103,6 +103,15 @@ impl Drop for PendingLogout {
 }
 
 impl PendingLogout {
+    fn storage_key(&self) -> anyhow::Result<String> {
+        Ok(format!(
+            "{PENDING_LOGOUT_STORAGE_PREFIX}{}.{}",
+            crate::secure_key_store::principal_authority_storage_digest(&self.authority)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+            crate::secure_key_store::device_storage_digest(&self.device_id)
+        ))
+    }
+
     /// True once the record is past its actionable window — the grant has
     /// long since expired by natural TTL and there is nothing left to
     /// revoke, so a stale entry should be dropped rather than retried.
@@ -115,11 +124,8 @@ impl PendingLogout {
     /// the journalled `gate_account_base` or a `principal_server_url` to
     /// re-resolve it from).
     pub fn has_coauth_revoke(&self) -> bool {
-        let has_route = self
-            .gate_account_base
-            .as_deref()
-            .is_some_and(|base| !base.trim().is_empty())
-            || self.principal_server_url.is_some();
+        let has_route =
+            self.gate_account_base.as_ref().is_some() || self.principal_server_url.is_some();
         self.grant_jwt.is_some()
             && self.device_seed_b64.is_some()
             && self.device_jkt.is_some()
@@ -154,14 +160,14 @@ pub async fn execute_pending_logout(
 ) -> LogoutRunOutcome {
     if !record.has_coauth_revoke() {
         // No grant / grant-binding material to terminate server-side — nothing to do.
-        let _ = clear_pending_logout(store);
+        let _ = clear_pending_logout(record, store);
         return LogoutRunOutcome::Completed;
     }
     match hard_logout_at_authority(record).await {
         // The SDK logout wrapper below classifies the HTTP result: a terminal
         // outcome (revoked / already-gone) → `Ok`, any real failure → `Err`.
         Ok(AccountLogoutRunOutcome::Terminated) => {
-            let _ = clear_pending_logout(store);
+            let _ = clear_pending_logout(record, store);
             LogoutRunOutcome::Completed
         }
         Err(error) => {
@@ -198,19 +204,23 @@ async fn hard_logout_at_authority(
         .map_err(|error| anyhow::anyhow!("rebuild device handle: {error}"))?;
     // Prefer the journalled gate_account_base; re-resolve from the principal
     // server only if it was not captured.
-    let gate_account_base = match record.gate_account_base.as_deref() {
-        Some(base) if !base.trim().is_empty() => base.to_owned(),
+    let gate_account_base = match record.gate_account_base.as_ref() {
+        Some(base) => base.clone(),
         _ => {
-            let principal_server_url = record.principal_server_url.as_deref().ok_or_else(|| {
+            let principal_server_url = record.principal_server_url.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("pending logout missing gate_account_base and principal_server_url")
             })?;
-            crate::identity::account_auth::resolve_principal_gate_account_base(principal_server_url)
-                .await
-                .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?
+            let resolved = crate::identity::account_auth::resolve_principal_gate_account_base(
+                principal_server_url.as_str(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?;
+            url::Url::parse(&resolved)?
         }
     };
-    let sdk_base_url =
-        crate::identity::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)?;
+    let sdk_base_url = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
+        gate_account_base.as_str(),
+    )?;
     let client = ClientBuilder::new(sdk_base_url)
         .allow_insecure_localhost()
         .auth(Auth::Dpop(
@@ -255,30 +265,36 @@ pub fn persist_pending_logout(
 ) -> anyhow::Result<()> {
     let json = serde_json::to_string(record)?;
     store
-        .store_secret(PENDING_LOGOUT_STORAGE_KEY, &json)
+        .store_secret(&record.storage_key()?, &json)
         .map_err(|error| anyhow::anyhow!("failed to persist pending logout: {error}"))?;
     Ok(())
 }
 
 /// Read the journalled logout intent, if any.
-pub fn restore_pending_logout(
+pub fn restore_pending_logouts(
     store: &dyn crate::secure_key_store::SecureKeyStore,
-) -> anyhow::Result<Option<PendingLogout>> {
-    let Some(json) = store
-        .get_secret(PENDING_LOGOUT_STORAGE_KEY)
-        .map_err(|error| anyhow::anyhow!("failed to load pending logout: {error}"))?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(serde_json::from_str(&json)?))
+) -> anyhow::Result<Vec<PendingLogout>> {
+    let keys = store
+        .list_secret_keys(Some(PENDING_LOGOUT_STORAGE_PREFIX))
+        .map_err(|error| anyhow::anyhow!("failed to enumerate pending logouts: {error}"))?;
+    keys.into_iter()
+        .filter_map(|key| match store.get_secret(&key) {
+            Ok(Some(json)) => Some(serde_json::from_str(&json).map_err(anyhow::Error::from)),
+            Ok(None) => None,
+            Err(error) => Some(Err(anyhow::anyhow!(
+                "failed to load pending logout {key}: {error}"
+            ))),
+        })
+        .collect()
 }
 
 /// Drop the journalled logout intent.
 pub fn clear_pending_logout(
+    record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> anyhow::Result<()> {
     store
-        .delete_secret(PENDING_LOGOUT_STORAGE_KEY)
+        .delete_secret(&record.storage_key()?)
         .map_err(|error| anyhow::anyhow!("failed to clear pending logout: {error}"))?;
     Ok(())
 }
@@ -298,20 +314,21 @@ pub async fn run_pending_logout_with_store(
     now: DateTime<Utc>,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) {
-    let record = match restore_pending_logout(store) {
-        Ok(Some(record)) => record,
-        Ok(None) => return,
+    let records = match restore_pending_logouts(store) {
+        Ok(records) => records,
         Err(error) => {
             tracing::warn!(?error, "pending logout: failed to read journal");
             return;
         }
     };
-    if record.is_expired(now) {
-        tracing::info!("pending logout: record past TTL, dropping (grant self-expired)");
-        let _ = clear_pending_logout(store);
-        return;
+    for record in records {
+        if record.is_expired(now) {
+            tracing::info!("pending logout: record past TTL, dropping (grant self-expired)");
+            let _ = clear_pending_logout(&record, store);
+            continue;
+        }
+        let _ = execute_pending_logout(&record, store).await;
     }
-    let _ = execute_pending_logout(&record, store).await;
 }
 
 #[cfg(test)]
@@ -323,11 +340,20 @@ mod tests {
             grant_jwt: Some("eyJ.grant.jwt".to_owned()),
             device_seed_b64: Some("seed".to_owned()),
             device_jkt: Some("jkt".to_owned()),
-            principal_server_url: Some("https://soland.example".to_owned()),
-            gate_account_base: Some("https://soland.example/_arkret/gate/account".to_owned()),
-            base_url: "https://soland.example".to_owned(),
+            principal_server_url: Some(url::Url::parse("https://soland.example").unwrap()),
+            gate_account_base: Some(
+                url::Url::parse("https://soland.example/_arkret/gate/account").unwrap(),
+            ),
+            base_url: url::Url::parse("https://soland.example").unwrap(),
             session_credential: "session-credential".to_owned(),
-            account_did: "did:web:soland.example:users:01".to_owned(),
+            authority: arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:soland.example".to_owned()).unwrap(),
+            ),
+            device_id: arkret_sdk::DeviceId::new(
+                "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            )
+            .unwrap(),
             created_at,
         }
     }
@@ -345,11 +371,14 @@ mod tests {
         use crate::secure_key_store::MemorySecureKeyStore;
         let store = MemorySecureKeyStore::default();
         let record = base_record(Utc::now());
-        assert!(restore_pending_logout(&store).unwrap().is_none());
+        assert!(restore_pending_logouts(&store).unwrap().is_empty());
         persist_pending_logout(&record, &store).unwrap();
-        assert_eq!(restore_pending_logout(&store).unwrap(), Some(record));
-        clear_pending_logout(&store).unwrap();
-        assert!(restore_pending_logout(&store).unwrap().is_none());
+        assert_eq!(
+            restore_pending_logouts(&store).unwrap(),
+            vec![record.clone()]
+        );
+        clear_pending_logout(&record, &store).unwrap();
+        assert!(restore_pending_logouts(&store).unwrap().is_empty());
     }
 
     #[test]
@@ -400,11 +429,11 @@ mod tests {
         let store = MemorySecureKeyStore::default();
         let mut record = base_record(Utc::now());
         record.grant_jwt = None;
-        record.base_url = String::new();
+        record.base_url = url::Url::parse("https://unused.example").unwrap();
         persist_pending_logout(&record, &store).unwrap();
         let outcome = execute_pending_logout(&record, &store).await;
         assert_eq!(outcome, LogoutRunOutcome::Completed);
-        assert!(restore_pending_logout(&store).unwrap().is_none());
+        assert!(restore_pending_logouts(&store).unwrap().is_empty());
     }
 
     #[test]

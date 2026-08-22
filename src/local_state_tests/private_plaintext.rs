@@ -204,7 +204,7 @@ fn e2ee_plaintext_cache_round_trips_through_account_scoped_secure_store() {
 
     {
         let mut writer = LocalStateStore::with_path(path.clone());
-        assert!(writer.switch_active_account(actor));
+        assert!(writer.switch_test_account(actor));
         writer.save_private_plaintext(realm, strand, "body", "\"author secret\"");
         writer.advance_mls_receive_chain(
             realm,
@@ -225,12 +225,13 @@ fn e2ee_plaintext_cache_round_trips_through_account_scoped_secure_store() {
         assert!(!raw.contains("mls_private_plaintext"));
         assert!(!raw.contains("mls_decrypted_plaintext"));
 
-        let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+        let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor))
+            .unwrap();
         assert!(secure.get_secret(&key).unwrap().is_some());
     }
 
     let mut reader = LocalStateStore::with_path(path);
-    assert!(!reader.switch_active_account(actor));
+    assert!(!reader.switch_test_account(actor));
     assert!(
         reader
             .private_plaintext_for(realm, strand, "body")
@@ -267,20 +268,21 @@ fn receive_snapshot_and_plaintext_share_one_secure_entry() {
     let envelope = encrypt_state(realm, "abcd", 4, b"advanced", "profile", b"salt");
 
     let mut writer = LocalStateStore::with_path(temp_state_path("e2ee-combined-writer"));
-    writer.switch_active_account(actor);
+    writer.switch_test_account(actor);
     writer.advance_mls_receive_chain(realm, envelope.clone(), digest, b"combined remote secret");
     writer
         .persist_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
 
-    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+    let key =
+        crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor)).unwrap();
     let raw = secure.get_secret(&key).unwrap().expect("combined entry");
     let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert!(value["mls_snapshots"].get(realm).is_some());
     assert!(value["decrypted_plaintext"][realm].get(digest).is_some());
 
     let mut reloaded = LocalStateStore::with_path(temp_state_path("e2ee-combined-reader"));
-    reloaded.switch_active_account(actor);
+    reloaded.switch_test_account(actor);
     assert!(reloaded.mls_snapshot_for(realm).is_none());
     assert!(
         reloaded
@@ -308,7 +310,7 @@ fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
     let current = encrypt_state(realm, "abcd", 5, b"current", "profile", b"salt");
 
     let mut secure_writer = LocalStateStore::with_path(temp_state_path("e2ee-current-writer"));
-    secure_writer.switch_active_account(actor);
+    secure_writer.switch_test_account(actor);
     secure_writer
         .save_mls_snapshot(realm, current.clone())
         .unwrap();
@@ -318,7 +320,7 @@ fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
 
     let local_path = temp_state_path("e2ee-stale-local");
     let mut reloaded = LocalStateStore::with_path(local_path);
-    reloaded.switch_active_account(actor);
+    reloaded.switch_test_account(actor);
     reloaded.save_mls_snapshot(realm, stale.clone()).unwrap();
     assert_eq!(reloaded.mls_snapshot_for(realm), Some(stale));
     assert!(
@@ -343,7 +345,7 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
 
     {
         let mut writer = LocalStateStore::with_path(path.clone());
-        writer.switch_active_account(actor);
+        writer.switch_test_account(actor);
         writer.save_mls_snapshot(realm, base.clone()).unwrap();
         writer.advance_mls_receive_chain(realm, advanced.clone(), digest, b"interrupted plaintext");
         assert_eq!(writer.mls_snapshot_for(realm), Some(advanced.clone()));
@@ -358,7 +360,7 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
     // while the hardened store is still empty and contains no plaintext.
     let secure = MemorySecureKeyStore::new();
     let mut reloaded = LocalStateStore::with_path(path);
-    assert!(!reloaded.switch_active_account(actor));
+    assert!(!reloaded.switch_test_account(actor));
     assert_eq!(reloaded.mls_snapshot_for(realm), Some(advanced));
     assert!(
         reloaded
@@ -395,7 +397,7 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
     let secure = MemorySecureKeyStore::new();
     {
         let mut writer = LocalStateStore::with_path(path.clone());
-        writer.switch_active_account(actor);
+        writer.switch_test_account(actor);
         writer
             .save_mls_snapshot(
                 realm,
@@ -417,7 +419,7 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
     }
 
     let mut reloaded = LocalStateStore::with_path(path);
-    assert!(!reloaded.switch_active_account(actor));
+    assert!(!reloaded.switch_test_account(actor));
     reloaded
         .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
@@ -437,7 +439,7 @@ fn secure_cache_hydration_fills_gaps_without_overwriting_live_values() {
     let secure = MemorySecureKeyStore::new();
 
     let mut persisted = LocalStateStore::with_path(temp_state_path("e2ee-secure-cache-old"));
-    persisted.switch_active_account(actor);
+    persisted.switch_test_account(actor);
     persisted.save_private_plaintext(realm, strand, "body", "\"stored older\"");
     persisted.save_private_plaintext(realm, strand, "synthesis", "\"stored gap\"");
     persisted.advance_mls_receive_chain(
@@ -457,7 +459,7 @@ fn secure_cache_hydration_fills_gaps_without_overwriting_live_values() {
         .unwrap();
 
     let mut live = LocalStateStore::with_path(temp_state_path("e2ee-secure-cache-live"));
-    live.switch_active_account(actor);
+    live.switch_test_account(actor);
     live.save_private_plaintext(realm, strand, "body", "\"live newer\"");
     live.advance_mls_receive_chain(
         realm,
@@ -500,10 +502,11 @@ fn secure_cache_bootstrap_persists_live_values_when_no_entry_exists_yet() {
     let strand = "ak:strand:AaOXNHSDDaM0JligIdzVZIU6um9pht5hNmk_nSGLvEGg";
     let secure = MemorySecureKeyStore::new();
     let mut live = LocalStateStore::with_path(temp_state_path("e2ee-secure-cache-first-frame"));
-    live.switch_active_account(actor);
+    live.switch_test_account(actor);
     live.save_private_plaintext(realm, strand, "body", "\"written before init\"");
 
-    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+    let key =
+        crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor)).unwrap();
     assert!(secure.get_secret(&key).unwrap().is_none());
     assert!(
         !live
@@ -514,7 +517,7 @@ fn secure_cache_bootstrap_persists_live_values_when_no_entry_exists_yet() {
 
     let mut reloaded =
         LocalStateStore::with_path(temp_state_path("e2ee-secure-cache-first-frame-reload"));
-    reloaded.switch_active_account(actor);
+    reloaded.switch_test_account(actor);
     assert!(
         reloaded
             .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
@@ -587,7 +590,7 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
     let digest = "sha256:6363636363636363636363636363636363636363636363636363636363636363";
     let secure = MemorySecureKeyStore::new();
     let mut store = LocalStateStore::with_path(temp_state_path("e2ee-cache-clear"));
-    store.switch_active_account(actor);
+    store.switch_test_account(actor);
     store.save_private_plaintext(realm_a, strand, "body", "realm-a-author");
     store.save_private_plaintext(realm_b, strand, "body", "realm-b-author");
     store.advance_mls_receive_chain(
@@ -621,7 +624,8 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
         Some("realm-b-author".to_owned())
     );
 
-    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+    let key =
+        crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor)).unwrap();
     let persisted: serde_json::Value =
         serde_json::from_str(&secure.get_secret(&key).unwrap().unwrap()).unwrap();
     assert!(persisted["mls_snapshots"].get(realm_a).is_some());
@@ -630,7 +634,7 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
     assert!(persisted["private_plaintext"].get(realm_b).is_some());
 
     let mut reloaded = LocalStateStore::with_path(temp_state_path("e2ee-cache-clear-reload"));
-    reloaded.switch_active_account(actor);
+    reloaded.switch_test_account(actor);
     reloaded
         .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
@@ -716,12 +720,13 @@ async fn failed_durable_plaintext_cleanup_rolls_back_and_reports_error() {
     let strand = "ak:strand:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8";
     let secure = FailingStore::default();
     let mut store = LocalStateStore::with_path(temp_state_path("e2ee-cache-clear-failure"));
-    store.switch_active_account(actor);
+    store.switch_test_account(actor);
     store.save_private_plaintext(realm, strand, "body", "must-survive");
     store
         .persist_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
-    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+    let key =
+        crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor)).unwrap();
     let before = secure.get_secret(&key).unwrap().unwrap();
 
     secure.fail_writes.store(true, Ordering::SeqCst);

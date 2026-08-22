@@ -29,7 +29,7 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 pub fn CallPanel(
     token: Signal<String>,
     selected_realm_id: String,
-    account_did: String,
+    principal_id: String,
     device_id: String,
     /// Deep-linked call id (`ak:call:…`); empty when the user opens the
     /// dialer fresh.
@@ -46,8 +46,10 @@ pub fn CallPanel(
     incoming: bool,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
+    let session_context = crate::app::SessionContext::get();
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let state_store = session_context.state_store;
+    let active_account = session_context.active_account;
     // Sealing a Signal burns the SDK-owned AEAD nonce counter into the
     // persisted MLS snapshot before submit, so every emit needs the store
     // itself and not just the key-material descriptor.
@@ -123,7 +125,7 @@ pub fn CallPanel(
     // inside the effect subscribe it to inbox mutations the sync path makes.
     if let Some(mut hub) = call_signal_hub {
         let base = base_url.clone();
-        let actor = account_did.clone();
+        let actor = principal_id.clone();
         let device = device_id.clone();
         let signal_store = signal_store.clone();
         use_effect(move || {
@@ -162,7 +164,7 @@ pub fn CallPanel(
         });
     }
 
-    let account_label = actor_display_label(&state_store.read(), &account_did);
+    let account_label = actor_display_label(&state_store.read(), &principal_id);
     let device_label = short_protocol_id(&device_id);
     let peer_input_value = peer_input();
     let peer_input_label = actor_display_label(&state_store.read(), &peer_input_value);
@@ -189,7 +191,7 @@ pub fn CallPanel(
     // ── Start an outgoing call (1:1 or SFU). ─────────────────────────
     let start_call = {
         let base = base_url.clone();
-        let actor = account_did.clone();
+        let actor = principal_id.clone();
         let device = device_id.clone();
         let signal_store = signal_store.clone();
         move |mode: CallMode| {
@@ -199,6 +201,10 @@ pub fn CallPanel(
             let realm_id = active_realm();
             let api_token = token();
             let want_video = want_video_signal();
+            let Some(account) = active_account() else {
+                last_error.set("active account is unavailable".to_owned());
+                return;
+            };
 
             let peers: Vec<String> = match mode {
                 CallMode::P2p => vec![peer_input().trim().to_owned()]
@@ -351,8 +357,8 @@ pub fn CallPanel(
                     &base,
                     &api_token,
                     &join,
-                    &actor,
-                    &device,
+                    &account.authority,
+                    &account.device_id,
                     realm_mls_snapshot,
                 )
                 .await
@@ -479,7 +485,7 @@ pub fn CallPanel(
 
     let start_confirmed_capture = {
         let base = base_url.clone();
-        let actor = account_did.clone();
+        let actor = principal_id.clone();
         move |capture_kind: String| {
             let base = base.clone();
             let actor = actor.clone();
@@ -571,7 +577,7 @@ pub fn CallPanel(
                         "data-call-id": "{active_call_id}",
                         if active_call_id().is_empty() { "no active call" } else { "{active_call_id}" }
                     }
-                    span { class: "mono", title: "{account_did}", "{account_label}" }
+                    span { class: "mono", title: "{principal_id}", "{account_label}" }
                     span { class: "mono", title: "{device_id}", "{device_label}" }
                 }
 
@@ -667,7 +673,7 @@ pub fn CallPanel(
                                 "data-testid": "call-cancel-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let device = device_id.clone();
                                     let signal_store = signal_store.clone();
                                     move |_| {
@@ -712,7 +718,7 @@ pub fn CallPanel(
                                 disabled: media_plaintext_confirmation_required && !media_plaintext_confirmed(),
                                 onclick: {
                                     let base = base_url.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let device = device_id.clone();
                                     let signal_store = signal_store.clone();
                                     move |_| {
@@ -723,6 +729,10 @@ pub fn CallPanel(
                                         let call = active_call_id();
                                         let api_token = token();
                                         let signal_store = signal_store.clone();
+                                        let Some(account) = active_account() else {
+                                            last_error.set("active account is unavailable".to_owned());
+                                            return;
+                                        };
                                         let (
                                             media_dids,
                                             focus_id,
@@ -794,8 +804,8 @@ pub fn CallPanel(
                                                 &base,
                                                 &api_token,
                                                 &join,
-                                                &actor,
-                                                &device,
+                                                &account.authority,
+                                                &account.device_id,
                                                 realm_mls_snapshot,
                                             )
                                             .await
@@ -897,7 +907,7 @@ pub fn CallPanel(
                                 "data-testid": "call-decline-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let device = device_id.clone();
                                     let signal_store = signal_store.clone();
                                     move |_| {
@@ -1004,7 +1014,7 @@ pub fn CallPanel(
                                 "aria-pressed": "{mic_muted()}",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let device = device_id.clone();
                                     let signal_store = signal_store.clone();
                                     move |_| {
@@ -1052,7 +1062,7 @@ pub fn CallPanel(
                                 "aria-pressed": "{screen_sharing()}",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let device = device_id.clone();
                                     let signal_store = signal_store.clone();
                                     move |_| {
@@ -1116,7 +1126,7 @@ pub fn CallPanel(
                                 "data-testid": "call-leave-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let device = device_id.clone();
                                     let signal_store = signal_store.clone();
                                     move |_| {
@@ -1180,7 +1190,7 @@ pub fn CallPanel(
                             token,
                             realm_id: active_realm(),
                             call_id: active_call_id(),
-                            actor: account_did.clone(),
+                            actor: principal_id.clone(),
                             device: device_id.clone(),
                             participants,
                             call_seq,

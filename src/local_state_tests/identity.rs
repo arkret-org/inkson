@@ -34,8 +34,10 @@ fn secure_identity_store_keeps_seed_out_of_state_record() {
     let path = temp_state_path("local-identity-secure");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let user_store = crate::secure_key_store::UserLocalStore::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-    );
+        test_authority("did:web:alice.example"),
+        test_device_id(),
+    )
+    .unwrap();
     user_store.activate();
     let id = {
         let mut store = LocalStateStore::with_path(path.clone());
@@ -107,9 +109,9 @@ fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
     let path = temp_state_path("explicit-device-reset");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let account = "did:web:alice.example";
-    let user_store = crate::secure_key_store::UserLocalStore::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-    );
+    let user_store =
+        crate::secure_key_store::UserLocalStore::new(test_authority(account), test_device_id())
+            .unwrap();
     user_store.activate();
     let old_signing_seed = [41_u8; 32];
     let old_grant_binding = [42_u8; 32];
@@ -126,14 +128,11 @@ fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
     crate::secure_key_store::store_grant_binding_seed(&secure, &old_grant_binding).unwrap();
 
     let mut store = LocalStateStore::with_path(path);
-    store.switch_active_account(account);
+    store.switch_test_account(account);
     let old_local_identity = store
         .ensure_local_identity_with_secure_store(&secure)
         .unwrap();
-    let dpop_key = crate::secure_key_store::account_scoped_device_key_for(
-        LocalStateStore::SECURE_DPOP_DEVICE_KEY,
-        Some(account),
-    );
+    let dpop_key = user_store.secret_key(LocalStateStore::SECURE_DPOP_DEVICE_KEY);
     secure
         .store_secret(&dpop_key, "cached-dpop-record")
         .unwrap();
@@ -141,7 +140,7 @@ fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
     store.clear_device_scoped_with_secure_store(&secure);
 
     assert!(
-        crate::secure_key_store::load_signing_seed_scoped(&secure, Some(account))
+        crate::secure_key_store::load_signing_seed(&secure)
             .unwrap()
             .is_none()
     );

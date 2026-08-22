@@ -99,7 +99,7 @@ where
 
 /// Decrypt and decode every private View in an account-data listing.
 pub fn private_views_from_account_data(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     entries: &[arkret_sdk::AccountDataRow],
 ) -> Vec<PrivateViewEntry> {
     entries
@@ -110,7 +110,7 @@ pub fn private_views_from_account_data(
         .map(|entry| {
             let account_data_key = entry.account_data_key.clone();
             let revision = entry.revision;
-            let loaded = super::decrypt_account_data_entry(actor_id, &account_data_key, entry)
+            let loaded = super::decrypt_account_data_entry(authority, &account_data_key, entry)
                 .and_then(|plaintext| private_view_from_plaintext(&account_data_key, &plaintext));
             match loaded {
                 Ok(view) => PrivateViewEntry::Loaded {

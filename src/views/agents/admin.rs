@@ -773,21 +773,28 @@ fn spawn_set_agent_enabled(
             }
         };
         let result = with_event_submitter(&base, api_token, move |submitter| async move {
-            let controller_did = arkret_sdk::DidFullId::new(controller_id.clone())?;
+            let account = crate::app::SessionContext::get()
+                .active_account()
+                .ok_or_else(|| anyhow::anyhow!("active controller account is unavailable"))?;
+            anyhow::ensure!(
+                account.principal_id().as_str() == controller_id,
+                "active controller authority changed before lifecycle submission"
+            );
             let signer = crate::event_signer::active_signer()
                 .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
             let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
             let device_id = super::bootstrap::controller_signer_device_id(
-                &controller_id,
+                account.full_id(),
+                &account.authority,
                 signer.as_ref(),
-                signer_account_scope.as_deref(),
+                signer_account_scope.as_ref(),
             )?;
             super::bootstrap::ensure_managed_agent_pcr_seal_current(
                 &submitter,
                 submitter.http(),
                 signer.as_ref(),
-                &controller_did,
-                &device_id,
+                account.full_id(),
+                device_id.as_str(),
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )
@@ -827,8 +834,8 @@ fn spawn_set_agent_enabled(
                 &submitter,
                 submitter.http(),
                 signer.as_ref(),
-                &controller_did,
-                &device_id,
+                account.full_id(),
+                device_id.as_str(),
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )

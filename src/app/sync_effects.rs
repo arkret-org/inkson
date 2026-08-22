@@ -12,7 +12,6 @@ pub(super) fn SyncEffects(
     mut websocket_rail_active_generation: Signal<Option<u64>>,
     sync_bootstrap_complete: Signal<bool>,
     token: Signal<String>,
-    account_did: Signal<String>,
     device_id: Signal<String>,
     selected_realm_id: Signal<String>,
     realm_events_route_enabled: Signal<bool>,
@@ -22,6 +21,7 @@ pub(super) fn SyncEffects(
     let SessionContext {
         state_store,
         base_url,
+        active_account,
         ..
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
@@ -35,7 +35,10 @@ pub(super) fn SyncEffects(
     let sync_websocket_rail = runtime_services.websocket_rail.clone();
     use_effect(move || {
         let current_gen = sync_generation();
-        let base = base_url();
+        let Some(account) = active_account() else {
+            return;
+        };
+        let base = account.server_url.to_string();
         let session = token();
         if base.trim().is_empty() || session.trim().is_empty() || !sync_bootstrap_complete() {
             return;
@@ -45,17 +48,17 @@ pub(super) fn SyncEffects(
         }
         sync_engine_active_generation.set(Some(current_gen));
         let effect = sync_effects.register(crate::runtime::effects::EffectKey {
-            owner: crate::runtime::effects::EffectOwner::Account(account_did()),
+            owner: crate::runtime::effects::EffectOwner::Account(
+                account.principal_id().to_string(),
+            ),
             name: "account-sync".to_owned(),
             generation: current_gen,
         });
         let completion_effects = sync_effects.clone();
         let ctx = crate::sync_engine::SyncEngineContext {
-            base_url: base,
             token: runtime_adapter::value_reader(token),
             state_store: runtime_adapter::state_store_handle(state_store),
-            account_did: account_did(),
-            device_id: device_id(),
+            account,
             live_device_id: runtime_adapter::value_cell(device_id),
             selected_realm_id: runtime_adapter::value_reader(selected_realm_id),
             websocket_rail: sync_websocket_rail.clone(),
@@ -92,16 +95,11 @@ pub(super) fn SyncEffects(
     let signal_websocket_rail = runtime_services.websocket_rail.clone();
     use_effect(move || {
         let current_gen = sync_generation();
-        let base = base_url();
         let session = token();
-        let actor = account_did();
-        let device = device_id();
-        if base.trim().is_empty()
-            || session.trim().is_empty()
-            || actor.trim().is_empty()
-            || device.trim().is_empty()
-            || !sync_bootstrap_complete()
-        {
+        let Some(account) = active_account() else {
+            return;
+        };
+        if session.trim().is_empty() || !sync_bootstrap_complete() {
             return;
         }
         if *signal_receive_engine_active_generation.peek() == Some(current_gen) {
@@ -109,17 +107,17 @@ pub(super) fn SyncEffects(
         }
         signal_receive_engine_active_generation.set(Some(current_gen));
         let effect = signal_effects.register(crate::runtime::effects::EffectKey {
-            owner: crate::runtime::effects::EffectOwner::Account(actor.clone()),
+            owner: crate::runtime::effects::EffectOwner::Account(
+                account.principal_id().to_string(),
+            ),
             name: "signal-receive".to_owned(),
             generation: current_gen,
         });
         let completion_effects = signal_effects.clone();
         let ctx = crate::signal_receive_engine::SignalReceiveEngineContext {
-            base_url: runtime_adapter::value_reader(base_url),
             token: runtime_adapter::value_reader(token),
             state_store: runtime_adapter::state_store_handle(state_store),
-            account_did: actor,
-            device_id: device,
+            account,
             profiles: runtime_adapter::value_reader(profiles),
             client_runtime: signal_client_runtime.clone(),
             effect: effect.clone(),
@@ -159,7 +157,11 @@ pub(super) fn SyncEffects(
         }
         websocket_rail_active_generation.set(Some(current_gen));
         let effect = rail_effects.register(crate::runtime::effects::EffectKey {
-            owner: crate::runtime::effects::EffectOwner::Account(account_did()),
+            owner: crate::runtime::effects::EffectOwner::Account(
+                active_account()
+                    .map(|account| account.principal_id().to_string())
+                    .unwrap_or_default(),
+            ),
             name: "websocket-rail".to_owned(),
             generation: current_gen,
         });
@@ -211,7 +213,9 @@ pub(super) fn SyncEffects(
         realm_events_engine_active_key.set(Some(active_key.clone()));
         let effect = realm_effects.register(crate::runtime::effects::EffectKey {
             owner: crate::runtime::effects::EffectOwner::Realm {
-                account: account_did(),
+                account: active_account()
+                    .map(|account| account.principal_id().to_string())
+                    .unwrap_or_default(),
                 realm: realm_id.clone(),
             },
             name: "realm-events".to_owned(),

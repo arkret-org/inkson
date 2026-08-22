@@ -1,5 +1,17 @@
 use super::*;
 
+fn test_user(device_suffix: &str) -> UserLocalStore {
+    UserLocalStore::new(
+        arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
+        ),
+        arkret_sdk::DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{device_suffix}"))
+            .unwrap(),
+    )
+    .unwrap()
+}
+
 /// T5.2 — store / load signing seed round-trips through a
 /// MemorySecureKeyStore. `load_signing_seed` returns None on a
 /// fresh store; `store_signing_seed` followed by
@@ -8,9 +20,7 @@ use super::*;
 #[test]
 fn signing_seed_round_trips_through_memory_store() {
     let store = MemorySecureKeyStore::new();
-    let user = UserLocalStore::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-    );
+    let user = test_user("000000000001");
     assert!(user.load_signing_seed(&store).unwrap().is_none());
 
     let seed = [11u8; 32];
@@ -31,9 +41,7 @@ fn signing_seed_round_trips_through_memory_store() {
 #[test]
 fn ensure_signing_seed_generates_and_is_idempotent() {
     let store = MemorySecureKeyStore::new();
-    let user = UserLocalStore::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-    );
+    let user = test_user("000000000001");
     let first = user.ensure_signing_seed(&store).expect("first");
     // Seed must be non-trivial.
     assert!(first.seed.iter().any(|b| *b != 0));
@@ -48,9 +56,7 @@ fn pending_promotion_preserves_returning_user_device_identity() {
     // device-seed scope.
     let _scope = DeviceSeedScopeTestGuard::replace(None);
     let store = MemorySecureKeyStore::new();
-    let user = UserLocalStore::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-    );
+    let user = test_user("000000000001");
     let old_device =
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
             .unwrap();
@@ -101,9 +107,7 @@ fn pending_promotion_moves_material_for_first_time_user() {
     // device-seed scope.
     let _scope = DeviceSeedScopeTestGuard::replace(None);
     let store = MemorySecureKeyStore::new();
-    let user = UserLocalStore::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-    );
+    let user = test_user("000000000002");
     let pending = PendingLocalStore::new(
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
             .unwrap(),
@@ -126,9 +130,7 @@ fn pending_promotion_moves_material_for_first_time_user() {
 #[test]
 fn deleting_pending_transaction_preserves_user_identity() {
     let store = MemorySecureKeyStore::new();
-    let user = UserLocalStore::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-    );
+    let user = test_user("000000000001");
     let user_device =
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
             .unwrap();
@@ -155,9 +157,7 @@ fn deleting_pending_transaction_preserves_user_identity() {
 #[test]
 fn load_signing_seed_rejects_short_entries() {
     let store = MemorySecureKeyStore::new();
-    let user = UserLocalStore::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-    );
+    let user = test_user("000000000001");
     store
         .store_secret(
             &user.secret_key(SIGNING_SEED_KEY),
@@ -196,9 +196,9 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
         "inkson.device_hpke_x25519.private.ak:device:01964137-0000-7000-8000-000000000001"
     ));
     // The hard-logout journal embeds a grant-binding seed and is IndexedDB-only.
-    assert!(is_wasm_indexeddb_required_secret_key(
-        PENDING_LOGOUT_SECRET_KEY
-    ));
+    assert!(is_wasm_indexeddb_required_secret_key(&format!(
+        "{PENDING_LOGOUT_SECRET_KEY_PREFIX}authority.device"
+    )));
     assert!(is_wasm_indexeddb_required_secret_key(
         "inkson.e2ee_plaintext_cache.v1.account-digest"
     ));
@@ -627,13 +627,19 @@ fn history_secret_store_key_is_classified_indexeddb_only() {
 
 #[test]
 fn e2ee_plaintext_cache_key_is_account_scoped_and_indexeddb_only() {
-    let alice = e2ee_plaintext_cache_store_key("did:web:alice.example");
-    let bob = e2ee_plaintext_cache_store_key("did:web:bob.example");
+    let principal = arkret_sdk::DidCoreId::new("ak:did_core:webvh:zAlice".to_owned()).unwrap();
+    let authority_a = arkret_sdk::PrincipalAuthorityKey::new(
+        principal.clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:webvh:zServerA".to_owned()).unwrap(),
+    );
+    let authority_b = arkret_sdk::PrincipalAuthorityKey::new(
+        principal,
+        arkret_sdk::DidCoreId::new("ak:did_core:webvh:zServerB".to_owned()).unwrap(),
+    );
+    let alice = e2ee_plaintext_cache_store_key(&authority_a).unwrap();
+    let bob = e2ee_plaintext_cache_store_key(&authority_b).unwrap();
     assert!(alice.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX));
     assert!(is_wasm_indexeddb_required_secret_key(&alice));
     assert_ne!(alice, bob);
-    assert_eq!(
-        alice,
-        e2ee_plaintext_cache_store_key("did:web:alice.example")
-    );
+    assert_eq!(alice, e2ee_plaintext_cache_store_key(&authority_a).unwrap());
 }

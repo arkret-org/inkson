@@ -5,30 +5,32 @@ use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use crate::state::LocalStateStore;
 
 pub(crate) fn controller_signer_device_id(
-    controller_id: &str,
+    controller_full_id: &arkret_sdk::DidFullId,
+    controller_authority: &arkret_sdk::PrincipalAuthorityKey,
     signer: &crate::event_signer::InksonEventSigner,
-    signer_account_scope: Option<&str>,
-) -> anyhow::Result<String> {
-    let normalized_scope = signer_account_scope
-        .map(str::trim)
-        .filter(|scope| !scope.is_empty());
-    let signer_binding_matches = match normalized_scope {
-        Some(scope) => scope == controller_id,
-        None => signer.signer_did() == controller_id,
+    signer_account_scope: Option<&crate::secure_key_store::ActiveDeviceSeedScope>,
+) -> anyhow::Result<arkret_sdk::DeviceId> {
+    let signer_binding_matches = match signer_account_scope {
+        Some(scope) => scope.authority == *controller_authority,
+        None => signer.signer_did() == controller_full_id.as_str(),
     };
     if !signer_binding_matches {
         anyhow::bail!(
-            "active signer is not bound to controller {} (signer DID: {}, account scope: {})",
-            controller_id,
+            "active signer is not bound to controller {} (signer DID: {}, account authority: {:?})",
+            controller_full_id,
             signer.signer_did(),
-            normalized_scope.unwrap_or("unavailable")
+            signer_account_scope.map(|scope| &scope.authority)
         );
     }
-    signer
+    let device_id = signer
         .device_id()
         .filter(|device| !device.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("active controller device id is unavailable"))
+        .ok_or_else(|| anyhow::anyhow!("active controller device id is unavailable"))?;
+    let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())?;
+    if signer_account_scope.is_some_and(|scope| scope.device_id != device_id) {
+        anyhow::bail!("active signer device does not match its account seed scope");
+    }
+    Ok(device_id)
 }
 
 fn managed_agent_initial_seal_required(error: &anyhow::Error) -> bool {
@@ -258,28 +260,26 @@ pub(crate) async fn seal_managed_agent_pcr_current(
     state_store: SyncSignal<LocalStateStore>,
     realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::Seal> {
-    let controller_id = state_store
-        .read()
-        .active_account_did()
-        .filter(|did| !did.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("active controller DID is unavailable"))?;
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active controller account is unavailable"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
     let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
     let device_id = controller_signer_device_id(
-        &controller_id,
+        account.full_id(),
+        &account.authority,
         signer.as_ref(),
-        signer_account_scope.as_deref(),
+        signer_account_scope.as_ref(),
     )?;
-    let controller_did = arkret_sdk::DidFullId::new(controller_id)?;
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
     let (_, seal) = ensure_managed_agent_pcr_seal_current(
         &submitter,
         &http,
         signer.as_ref(),
-        &controller_did,
-        &device_id,
+        account.full_id(),
+        device_id.as_str(),
         realm_id.as_str(),
         state_store,
     )
@@ -298,20 +298,18 @@ pub(crate) async fn bootstrap_provisioned_agent(
     realm_id: &arkret_sdk::RealmId,
     controller_authorization_ref: &str,
 ) -> anyhow::Result<()> {
-    let controller_id = state_store
-        .read()
-        .active_account_did()
-        .filter(|did| !did.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("active controller DID is unavailable"))?;
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active controller account is unavailable"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
     let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
     let device_id = controller_signer_device_id(
-        &controller_id,
+        account.full_id(),
+        &account.authority,
         signer.as_ref(),
-        signer_account_scope.as_deref(),
+        signer_account_scope.as_ref(),
     )?;
-    let controller_did = arkret_sdk::DidFullId::new(controller_id.clone())?;
     let agent_id = agent_id.as_str();
     let realm_id = realm_id.as_str();
     let submitter = api.event_submitter()?;
@@ -334,8 +332,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
         &submitter,
         &http,
         signer.as_ref(),
-        &controller_did,
-        &device_id,
+        account.full_id(),
+        device_id.as_str(),
         realm_id,
         state_store,
     )
@@ -350,9 +348,11 @@ pub(crate) async fn bootstrap_provisioned_agent(
     );
 
     let group_id = arkret_sdk::base64url_encode(realm_id.as_bytes());
-    let leaves =
-        crate::mls::governance_proof::singleton_security_frontier_leaf(agent_id, &device_id)
-            .map_err(anyhow::Error::msg)?;
+    let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
+        agent_id,
+        device_id.as_str(),
+    )
+    .map_err(anyhow::Error::msg)?;
     let proof_request = crate::mls::governance_proof::proof_request(
         &state_store.read(),
         realm_id,
@@ -388,8 +388,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
             &submitter,
             &http,
             signer.as_ref(),
-            &controller_did,
-            &device_id,
+            account.full_id(),
+            device_id.as_str(),
             realm_id,
             state_store,
         )
@@ -402,7 +402,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
                 &mut store,
                 secure_store.as_ref(),
                 realm_id,
-                agent_id,
+                &account.authority,
                 &device_id,
             )
             .map_err(|error| anyhow::anyhow!(error.user_message()))?
@@ -412,7 +412,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
                     &store,
                     secure_store.as_ref(),
                     realm_id,
-                    agent_id,
+                    &account.authority,
                     &device_id,
                 )
                 .map_err(|error| anyhow::anyhow!(error.user_message()))?
@@ -435,9 +435,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         }
         .ok_or_else(|| anyhow::anyhow!("Agent PCR MLS genesis was not built"))?;
         let genesis = genesis
-            .with_executed_by(arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::DidFullId::new(controller_id.clone())?,
-            )?)
+            .with_executed_by(account.authority.principal_id.clone())
             .with_authorization_ref(
                 arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
                     .map_err(anyhow::Error::msg)?,
@@ -480,8 +478,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
             &submitter,
             &http,
             signer.as_ref(),
-            &controller_did,
-            &device_id,
+            account.full_id(),
+            device_id.as_str(),
             realm_id,
             state_store,
         )
@@ -507,6 +505,25 @@ mod tests {
     use super::*;
 
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
+
+    fn controller(full_id: &str) -> (arkret_sdk::DidFullId, arkret_sdk::PrincipalAuthorityKey) {
+        let full_id = arkret_sdk::DidFullId::new(full_id.to_owned()).unwrap();
+        let principal_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+        let server_id = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
+        (
+            full_id,
+            arkret_sdk::PrincipalAuthorityKey::new(principal_id, server_id),
+        )
+    }
+
+    fn scope(
+        authority: arkret_sdk::PrincipalAuthorityKey,
+    ) -> crate::secure_key_store::ActiveDeviceSeedScope {
+        crate::secure_key_store::ActiveDeviceSeedScope {
+            authority,
+            device_id: arkret_sdk::DeviceId::new(TEST_DEVICE_ID).unwrap(),
+        }
+    }
 
     fn api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
@@ -541,7 +558,8 @@ mod tests {
 
     #[test]
     fn controller_signer_accepts_account_scoped_device_did_key() {
-        let controller_id = "did:web:alice.example";
+        let (controller_id, authority) = controller("did:web:alice.example");
+        let account_scope = scope(authority.clone());
         let signer = crate::event_signer::build_ed25519_device_signer(
             [31_u8; 32],
             "did:key:z6MkhDeviceSigningKey",
@@ -549,8 +567,10 @@ mod tests {
         );
 
         assert_eq!(
-            controller_signer_device_id(controller_id, &signer, Some(controller_id)).unwrap(),
-            TEST_DEVICE_ID
+            controller_signer_device_id(&controller_id, &authority, &signer, Some(&account_scope),)
+                .unwrap()
+                .as_str(),
+            TEST_DEVICE_ID,
         );
     }
 
@@ -562,27 +582,29 @@ mod tests {
             TEST_DEVICE_ID,
         );
 
-        let error = controller_signer_device_id(
-            "did:web:alice.example",
-            &signer,
-            Some("did:web:bob.example"),
-        )
-        .unwrap_err();
+        let (controller_id, authority) = controller("did:web:alice.example");
+        let (_, other_authority) = controller("did:web:bob.example");
+        let account_scope = scope(other_authority);
+        let error =
+            controller_signer_device_id(&controller_id, &authority, &signer, Some(&account_scope))
+                .unwrap_err();
 
         assert!(error.to_string().contains("is not bound to controller"));
     }
 
     #[test]
     fn controller_signer_rejects_controller_did_when_account_scope_differs() {
-        let controller_id = "did:web:alice.example";
+        let (controller_id, authority) = controller("did:web:alice.example");
+        let (_, other_authority) = controller("did:web:bob.example");
+        let account_scope = scope(other_authority);
         let signer = crate::event_signer::build_ed25519_device_signer(
             [34_u8; 32],
-            controller_id,
+            controller_id.as_str(),
             TEST_DEVICE_ID,
         );
 
         let error =
-            controller_signer_device_id(controller_id, &signer, Some("did:web:bob.example"))
+            controller_signer_device_id(&controller_id, &authority, &signer, Some(&account_scope))
                 .unwrap_err();
 
         assert!(error.to_string().contains("is not bound to controller"));
@@ -590,16 +612,18 @@ mod tests {
 
     #[test]
     fn controller_signer_accepts_controller_identified_external_signer() {
-        let controller_id = "did:web:alice.example";
+        let (controller_id, authority) = controller("did:web:alice.example");
         let signer = crate::event_signer::build_ed25519_device_signer(
             [33_u8; 32],
-            controller_id,
+            controller_id.as_str(),
             TEST_DEVICE_ID,
         );
 
         assert_eq!(
-            controller_signer_device_id(controller_id, &signer, None).unwrap(),
-            TEST_DEVICE_ID
+            controller_signer_device_id(&controller_id, &authority, &signer, None)
+                .unwrap()
+                .as_str(),
+            TEST_DEVICE_ID,
         );
     }
 }

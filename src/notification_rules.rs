@@ -10,10 +10,10 @@ pub use chime::{
 use serde_json::Value;
 
 pub fn push_rules_from_account_data(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     entries: &[arkret_sdk::Event],
 ) -> Option<PushRulesConfig> {
-    let value = encrypted_account_data_content(actor_id, entries, AccountDataKey::PUSH_RULES)?;
+    let value = encrypted_account_data_content(authority, entries, AccountDataKey::PUSH_RULES)?;
     match parse_push_rules(&value) {
         Ok(config) => Some(config),
         // A rejected rule set is not "no rules": evaluation must fall back to
@@ -36,15 +36,15 @@ pub fn push_rules_from_account_data(
 }
 
 pub fn dnd_settings_from_account_data(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     entries: &[arkret_sdk::Event],
 ) -> Option<DndSettings> {
-    encrypted_account_data_content(actor_id, entries, AccountDataKey::DND_SCHEDULE)
+    encrypted_account_data_content(authority, entries, AccountDataKey::DND_SCHEDULE)
         .and_then(|value| parse_dnd_settings(&value))
 }
 
 fn encrypted_account_data_content(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     entries: &[arkret_sdk::Event],
     account_data_key: &str,
 ) -> Option<Value> {
@@ -52,7 +52,7 @@ fn encrypted_account_data_content(
         .iter()
         .find(|entry| entry.payload.get("key").and_then(Value::as_str) == Some(account_data_key))?;
     match crate::account_data::decrypt_account_data_entry(
-        actor_id,
+        authority,
         account_data_key,
         &entry.payload,
     ) {

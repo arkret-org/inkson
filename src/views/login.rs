@@ -33,11 +33,9 @@ use crate::views::helpers::{actor_display_label, persist_config, short_protocol_
 
 #[derive(Clone, Debug)]
 struct CompletedLogin {
-    principal_server_url: String,
-    actor: arkret_sdk::DidFullId,
+    account: crate::config::ActiveAccountContext,
     personal_handle: Option<String>,
-    pending_device_id: String,
-    device_id: String,
+    pending_device_id: arkret_sdk::DeviceId,
     dpop_device_key: crate::state::DpopDeviceKeyRecord,
     session_credential: String,
     session_grant: PersistedSessionGrant,
@@ -288,8 +286,6 @@ thread_local! {
 
 #[component]
 pub fn LoginPanel(
-    account_did: Signal<String>,
-    device_id: Signal<String>,
     token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     mut locale: Signal<crate::i18n::Locale>,
@@ -298,12 +294,21 @@ pub fn LoginPanel(
     on_onboarding: EventHandler<()>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
-    let mut base_url = crate::app::SessionContext::get().base_url;
-    let state_store = crate::app::SessionContext::get().state_store;
+    let session_context = crate::app::SessionContext::get();
+    let mut base_url = session_context.base_url;
+    let mut active_account = session_context.active_account;
+    let state_store = session_context.state_store;
     let i18n = use_context::<crate::i18n::I18nSignal>();
     let session = use_context::<crate::runtime::services::RuntimeServices>()
         .session
         .clone();
+    let pending_device_id = use_signal(|| {
+        active_account
+            .peek()
+            .as_ref()
+            .map(|account| account.device_id.to_string())
+            .unwrap_or_else(crate::config::new_device_id)
+    });
     let mut auth_status = use_signal(|| {
         if auto_capture_callback {
             "Completing sign in...".to_owned()
@@ -336,22 +341,25 @@ pub fn LoginPanel(
         callback_started.set(true);
         is_busy.set(true);
 
-        let callback_device = device_id();
+        let callback_device = pending_device_id();
         let result = finish_oidc_callback(callback_device, state_store_write).await;
         match result {
             Ok(OidcCallbackOutcome::Login(completed)) => {
-                let principal_server_url = normalize_server_url(&completed.principal_server_url);
-                let actor = completed.actor.to_string();
-                let server_changed = {
-                    let previous = normalize_server_url(&base_url());
-                    !previous.trim().is_empty() && previous != principal_server_url
-                };
+                let mut completed = *completed;
+                if let Some(existing) = state_store_write
+                    .read()
+                    .known_profile_refs()
+                    .into_iter()
+                    .find(|known| known.authority == completed.account.authority)
+                {
+                    completed.account.profile_id = existing.profile_id;
+                }
+                let principal_server_url = completed.account.server_url.to_string();
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                 let prepared_keys = match prepare_completed_login_dpop_key(
                     secure_store.as_ref(),
-                    &completed.actor,
-                    &completed.pending_device_id,
-                    &completed.device_id,
+                    &completed.account,
+                    completed.pending_device_id.as_str(),
                     &completed.dpop_device_key,
                 )
                 .await
@@ -368,15 +376,11 @@ pub fn LoginPanel(
                 let mut persist_error = None::<String>;
                 {
                     let mut store = state_store_write.write();
-                    let new_account = store.adopt_pending_login(&completed.actor);
-                    if server_changed && !new_account {
-                        store.clear_account_scoped();
-                        store.set_session_grant(None);
-                    }
+                    store.adopt_pending_login(&completed.account);
                     if let Err(error) = commit_completed_login_dpop_key(
                         &mut store,
                         secure_store.as_ref(),
-                        &completed.actor,
+                        &completed.account,
                         &completed.dpop_device_key,
                         prepared_keys,
                     ) {
@@ -387,7 +391,10 @@ pub fn LoginPanel(
                         if let Some(handle) = completed.personal_handle.as_deref() {
                             store.set_primary_handle(handle);
                         }
-                        store.register_known_account(&actor);
+                        store.register_known_profile(
+                            &completed.account.profile_id,
+                            &completed.account.authority,
+                        );
                         store.set_session_grant(Some(completed.session_grant.clone()));
                         if let Err(error) =
                             crate::identity::account_auth::clear_account_handoff_grant(
@@ -418,14 +425,11 @@ pub fn LoginPanel(
                     return;
                 }
                 base_url.set(principal_server_url.clone());
-                account_did.set(actor.clone());
-                device_id.set(completed.device_id.clone());
+                active_account.set(Some(completed.account.clone()));
                 token.set(completed.session_credential.clone());
                 persist_config(
                     config_store,
-                    principal_server_url,
-                    actor,
-                    completed.device_id.clone(),
+                    Some(completed.account.clone()),
                     completed.session_credential.clone(),
                 );
                 auth_status.set("Signed in on this authorized device.".to_owned());
@@ -473,25 +477,12 @@ pub fn LoginPanel(
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
         let loaded_config = config_store.read().load();
-        let live_actor = account_did();
-        let persisted_actor = if live_actor.trim().is_empty() {
-            loaded_config.account_did
-        } else {
-            live_actor
-        };
-        let persisted_device = if crate::config::is_valid_device_id(&loaded_config.device_id) {
-            loaded_config.device_id
-        } else {
-            device_id()
-        };
-        let returning_principal = {
-            let store = state_store.read();
-            match returning_sign_in_principal(&store, &persisted_actor) {
-                Ok(principal) => principal,
-                Err(error) => {
-                    auth_status.set(error);
-                    return;
-                }
+        let persisted_account = active_account().or_else(|| loaded_config.active_account.clone());
+        let returning_principal = match returning_sign_in_principal(persisted_account.as_ref()) {
+            Ok(principal) => principal,
+            Err(error) => {
+                auth_status.set(error);
+                return;
             }
         };
         let mut reset_state_store = state_store;
@@ -511,8 +502,8 @@ pub fn LoginPanel(
                 return;
             }
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let returning_device = if let Some(expected) = returning_principal.as_ref() {
-                match returning_device_id(secure_store.as_ref(), expected, &persisted_device) {
+            let returning_device = if let Some(expected) = persisted_account.as_ref() {
+                match returning_device_id(secure_store.as_ref(), expected) {
                     Ok(device) => device,
                     Err(error) => {
                         is_busy.set(false);
@@ -713,9 +704,8 @@ pub fn LoginPanel(
                         disabled: is_busy(),
                         oninput: move |event: FormEvent| {
                             let value = normalize_server_url(&event.value());
-                            base_url.set(value.clone());
+                            base_url.set(value);
                             token.set(String::new());
-                            persist_config(config_store, value, account_did(), device_id(), String::new());
                         },
                     }
                     button {
@@ -754,15 +744,8 @@ pub fn LoginPanel(
                                         let option_url = option_url.clone();
                                         move |_| {
                                             let value = normalize_server_url(&option_url);
-                                            base_url.set(value.clone());
+                                            base_url.set(value);
                                             token.set(String::new());
-                                            persist_config(
-                                                config_store,
-                                                value,
-                                                account_did(),
-                                                device_id(),
-                                                String::new(),
-                                            );
                                             server_menu_open.set(false);
                                         }
                                     },
@@ -813,8 +796,15 @@ pub fn LoginPanel(
                 // without scraping log lines.
                 {
                     let token_value = token();
-                    let device_value = device_id();
-                    let actor_value = account_did();
+                    let account_value = active_account();
+                    let device_value = account_value
+                        .as_ref()
+                        .map(|account| account.device_id.to_string())
+                        .unwrap_or_else(|| pending_device_id());
+                    let actor_value = account_value
+                        .as_ref()
+                        .map(|account| account.principal_id().to_string())
+                        .unwrap_or_default();
                     let store_snapshot = state_store_write.read();
                     let session_status = compute_session_status(
                         &token_value,
@@ -921,26 +911,9 @@ fn restore_oidc_callback_device_seed_scope(
 }
 
 fn returning_sign_in_principal(
-    store: &LocalStateStore,
-    persisted_actor: &str,
+    active_account: Option<&crate::config::ActiveAccountContext>,
 ) -> Result<Option<arkret_sdk::DidFullId>, String> {
-    let actor = persisted_actor.trim();
-    if actor.is_empty() {
-        return Ok(None);
-    }
-    if let Ok(full_id) = arkret_sdk::DidFullId::new(actor.to_owned()) {
-        arkret_sdk::project_full_id_to_core_id(&full_id)
-            .map_err(|error| format!("The saved account principal cannot be projected: {error}"))?;
-        return Ok(Some(full_id));
-    }
-
-    let core_id = arkret_sdk::DidCoreId::new(actor.to_owned())
-        .map_err(|error| format!("The saved account principal is invalid: {error}"))?;
-    // Builds predating the typed account-viewer boundary could persist the
-    // viewer's core id into the full-DID config slot. Recover only an exact
-    // matching full id retained by this installation; never synthesize one
-    // from the core id.
-    Ok(store.full_account_did_for_principal(&core_id))
+    Ok(active_account.map(|account| account.full_id().clone()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1168,12 +1141,13 @@ fn pending_handoff_from_authority(
 
 fn returning_device_id(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    principal_id: &arkret_sdk::DidFullId,
-    configured_device_id: &str,
+    account: &crate::config::ActiveAccountContext,
 ) -> Result<Option<String>, String> {
-    let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)
-        .map_err(|error| format!("Project the returning account principal: {error}"))?;
-    let user_store = crate::secure_key_store::UserLocalStore::new(principal_core_id);
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    )
+    .map_err(|error| format!("Open returning account secure scope: {error}"))?;
     let Some(stored_device_id) = user_store
         .load_device_id(secure_store)
         .map_err(|error| format!("Load the returning account device id: {error}"))?
@@ -1187,13 +1161,8 @@ fn returning_device_id(
     {
         return Ok(None);
     }
-    let configured_device_id = configured_device_id.trim();
-    if !configured_device_id.is_empty() && configured_device_id != stored_device_id.as_str() {
-        tracing::warn!(
-            configured_device_id,
-            stored_device_id = %stored_device_id,
-            "using secure-store device id instead of stale public config during returning sign-in"
-        );
+    if stored_device_id != account.device_id {
+        return Err("Returning account secure-store device does not match its profile.".to_owned());
     }
     Ok(Some(stored_device_id.to_string()))
 }
@@ -1207,18 +1176,18 @@ pub(crate) struct PreparedCompletedLoginKeys {
 
 pub(crate) async fn prepare_completed_login_dpop_key(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    principal_id: &arkret_sdk::DidFullId,
+    account: &crate::config::ActiveAccountContext,
     pending_device_id: &str,
-    device_id: &str,
     record: &crate::state::DpopDeviceKeyRecord,
 ) -> Result<PreparedCompletedLoginKeys, String> {
-    let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)
-        .map_err(|error| format!("project account principal to core id: {error}"))?;
-    let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())
-        .map_err(|error| format!("validate account device id: {error}"))?;
+    let device_id = account.device_id.clone();
     let pending_device_id = arkret_sdk::DeviceId::new(pending_device_id.to_owned())
         .map_err(|error| format!("validate pending login device id: {error}"))?;
-    let user_store = crate::secure_key_store::UserLocalStore::new(principal_core_id);
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    )
+    .map_err(|error| format!("Open completed login secure scope: {error}"))?;
     let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
     pending_store
         .copy_to_durable(secure_store, &user_store)
@@ -1247,7 +1216,7 @@ pub(crate) async fn prepare_completed_login_dpop_key(
 pub(crate) fn commit_completed_login_dpop_key(
     store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    principal_id: &arkret_sdk::DidFullId,
+    account: &crate::config::ActiveAccountContext,
     record: &crate::state::DpopDeviceKeyRecord,
     prepared: PreparedCompletedLoginKeys,
 ) -> Result<(), String> {
@@ -1262,7 +1231,7 @@ pub(crate) fn commit_completed_login_dpop_key(
     )
     .map_err(|error| format!("activate account device signer: {error}"))?;
     crate::event_signer::bind_active_signer_principal_device_id(
-        principal_id,
+        account.full_id(),
         prepared.device_id.as_str(),
     )
     .map_err(|error| format!("bind account device signer principal: {error}"))?;
@@ -1750,6 +1719,14 @@ async fn issue_bound_handoff_session(
     correlation: &mut crate::identity::account_auth::transition::LoginCorrelation,
 ) -> Result<CompletedLogin, ReturningSessionExchangeError> {
     let now = Utc::now();
+    let principal_server_id = arkret_sdk::DidCoreId::new(pending_handoff.audience.clone())
+        .map_err(|error| {
+            ReturningSessionExchangeError::Fatal(format!(
+                "Account handoff principal_server_id is invalid: {error}"
+            ))
+        })?;
+    let authority =
+        arkret_sdk::PrincipalAuthorityKey::new(principal_id.clone(), principal_server_id);
     let proof_expires_at = std::cmp::min(
         now + chrono::Duration::minutes(5),
         pending_handoff.expires_at,
@@ -1771,7 +1748,9 @@ async fn issue_bound_handoff_session(
             // The pending-login DPoP key proves the fresh AccountHandoff; it
             // must never be mistaken for the durable accepted-device signer.
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let user_store = crate::secure_key_store::UserLocalStore::new(principal_id.clone());
+            let user_store =
+                crate::secure_key_store::UserLocalStore::new(authority.clone(), device_id.clone())
+                    .map_err(|error| format!("Open returning-device secure scope: {error}"))?;
             let signing_seed = user_store
                 .load_signing_seed(secure_store.as_ref())
                 .map_err(|error| format!("Load returning-device signer: {error}"))?
@@ -1925,18 +1904,36 @@ async fn issue_bound_handoff_session(
             dpop_handle.seed_b64().as_str(),
         )
         .map_err(|error| format!("DPoP device key record failed: {error}"))?;
+    let principal_server_route = url::Url::parse(&normalize_server_url(principal_server_url))
+        .map_err(|error| format!("Invalid Principal Server route: {error}"))?;
+    let active_account = crate::transport::account::resolve_active_account_context(
+        &principal_http,
+        format!("ak:profile:{}", crate::operation::uuid_v7()),
+        authority.clone(),
+        device_id.clone(),
+        principal_server_route.clone(),
+    )
+    .await
+    .map_err(|error| {
+        ReturningSessionExchangeError::Fatal(format!("Verify active principal resolution: {error}"))
+    })?;
     let persisted_session_grant = persisted_session_grant_from_state(
         &session_grant,
         &session_private_key_pem,
-        principal_server_url,
-        device_id.as_str(),
+        authority,
+        principal_server_route,
+        device_id.clone(),
     );
     Ok(CompletedLogin {
-        principal_server_url: principal_server_url.to_owned(),
-        actor: full_id,
+        account: active_account,
         personal_handle: crate::app::personal_handle_from_account_handle(&account.handle),
-        pending_device_id: pending_handoff.device_id.clone(),
-        device_id: device_id.to_string(),
+        pending_device_id: arkret_sdk::DeviceId::new(pending_handoff.device_id.clone()).map_err(
+            |error| {
+                ReturningSessionExchangeError::Fatal(format!(
+                    "Pending login device id is invalid: {error}"
+                ))
+            },
+        )?,
         dpop_device_key,
         session_credential: session_grant.grant_jwt.clone(),
         session_grant: persisted_session_grant,
@@ -1947,17 +1944,18 @@ async fn issue_bound_handoff_session(
 fn persisted_session_grant_from_state(
     grant: &SessionGrantState,
     session_private_key_pem: &str,
-    principal_server_url: &str,
-    device_id: &str,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    principal_server_url: url::Url,
+    device_id: arkret_sdk::DeviceId,
 ) -> PersistedSessionGrant {
     PersistedSessionGrant {
         grant_jwt: grant.grant_jwt.clone(),
         session_private_key_pem: session_private_key_pem.to_owned(),
         grant_id: grant.grant_id.as_str().to_owned(),
         audience: grant.audience.to_string(),
-        principal_id: grant.principal_id.to_string(),
-        device_id: device_id.to_owned(),
-        principal_server_url: principal_server_url.to_owned(),
+        authority,
+        device_id,
+        principal_server_url: principal_server_url.to_string(),
         grant_expires_at: Some(grant.expires_at),
         stored_at: Utc::now(),
     }
@@ -2000,6 +1998,28 @@ mod tests {
         .expect("dpop record")
     }
 
+    fn test_active_account(full_id: &str, device_id: &str) -> crate::config::ActiveAccountContext {
+        let full_id = arkret_sdk::DidFullId::new(full_id.to_owned()).unwrap();
+        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+            arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned()).unwrap(),
+        );
+        crate::config::ActiveAccountContext::new(
+            "ak:profile:test".to_owned(),
+            authority,
+            arkret_sdk::PrincipalResolutionProjection {
+                full_id,
+                method_history_head: "head-test".to_owned(),
+                version_id: "version-test".to_owned(),
+                resolution_event_ref: "event-test".to_owned(),
+                updated_at: "2026-08-22T00:00:00Z".parse().unwrap(),
+            },
+            arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap(),
+            url::Url::parse("https://principal.example").unwrap(),
+        )
+        .unwrap()
+    }
+
     fn dummy_grant() -> PersistedSessionGrant {
         let now = chrono::Utc::now();
         PersistedSessionGrant {
@@ -2007,8 +2027,14 @@ mod tests {
             session_private_key_pem: "PEM".to_owned(),
             grant_id: "grant-1".to_owned(),
             audience: "did:web:principal.example".to_owned(),
-            principal_id: "did:web:alice.example".to_owned(),
-            device_id: "device-1".to_owned(),
+            authority: arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::DidCoreId::new("did:web:alice.example".to_owned()).unwrap(),
+                arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned()).unwrap(),
+            ),
+            device_id: arkret_sdk::DeviceId::new(
+                "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
+            )
+            .unwrap(),
             principal_server_url: "https://principal.example".to_owned(),
             grant_expires_at: Some(now + chrono::Duration::seconds(3600)),
             stored_at: now,
@@ -2228,8 +2254,16 @@ mod tests {
 
     #[test]
     fn oidc_callback_restores_bootstrap_device_seed_scope() {
-        let _scope =
-            crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some("did:web:old.example"));
+        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            crate::mls_api_helpers::principal_core_id("did:web:old.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        );
+        let device_id =
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000000".to_owned())
+                .unwrap();
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+            &authority, &device_id,
+        )));
         let _signer = crate::event_signer::ActiveSignerTestGuard::replace(None);
 
         restore_oidc_callback_device_seed_scope("ak:device:01964137-0000-7000-8000-000000000001")
@@ -2244,63 +2278,64 @@ mod tests {
 
     #[test]
     fn account_first_sign_in_has_no_returning_principal() {
-        let store = crate::state::isolated_store_for_tests("account-first-fresh-device");
-        assert_eq!(returning_sign_in_principal(&store, "").unwrap(), None);
+        assert_eq!(returning_sign_in_principal(None).unwrap(), None);
     }
 
     #[test]
     fn returning_sign_in_keeps_the_resolvable_principal_assertion() {
-        let store = crate::state::isolated_store_for_tests("returning-principal");
-        let actor = "did:webvh:z6mkfixture:alice.example";
+        let account = test_active_account(
+            "did:webvh:z6mkfixture:alice.example",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        );
 
         assert_eq!(
-            returning_sign_in_principal(&store, actor)
+            returning_sign_in_principal(Some(&account))
                 .unwrap()
                 .expect("returning principal")
                 .as_str(),
-            actor
+            account.full_id().as_str()
         );
     }
 
     #[test]
-    fn same_browser_second_login_repairs_core_id_profile_and_routes_as_returning_device() {
-        let mut store = crate::state::isolated_store_for_tests("returning-core-id-profile");
+    fn typed_active_account_routes_as_returning_device() {
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
-        let principal =
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
-        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal).unwrap();
-        let device =
-            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
-                .unwrap();
-
-        // Reproduce the old account-viewer bug: registration first retained
-        // the full DID, then a viewer refresh selected the same account by its
-        // core id and persisted that core id into the active profile.
-        store.switch_active_account(principal.as_str());
-        store.switch_active_account(principal_core.as_str());
-
-        let user_store = crate::secure_key_store::UserLocalStore::new(principal_core.clone());
-        user_store.save_device_id(&secure_store, &device).unwrap();
+        let account = test_active_account(
+            "did:webvh:z6mkfixture:alice.example",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        );
+        let user_store = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )
+        .unwrap();
+        user_store
+            .save_device_id(&secure_store, &account.device_id)
+            .unwrap();
         user_store
             .save_signing_seed(&secure_store, &[41_u8; 32])
             .unwrap();
 
-        let repaired = returning_sign_in_principal(&store, principal_core.as_str())
+        let returning_principal = returning_sign_in_principal(Some(&account))
             .unwrap()
-            .expect("known full DID repairs the core-id-only profile");
-        let returning_device = returning_device_id(&secure_store, &repaired, device.as_str())
+            .expect("typed account retains its full principal");
+        let returning_device = returning_device_id(&secure_store, &account)
             .unwrap()
             .expect("durable device identity remains available");
         let disposition = AccountHandoffDisposition::Bound {
-            principal_id: principal_core,
-            full_id: principal.clone(),
+            principal_id: account.principal_id().clone(),
+            full_id: account.full_id().clone(),
         };
 
-        assert_eq!(repaired, principal);
-        assert_eq!(returning_device, device.to_string());
+        assert_eq!(returning_principal, *account.full_id());
+        assert_eq!(returning_device, account.device_id.to_string());
         assert_eq!(
-            authenticated_account_route(&disposition, Some(&repaired), Some(&device),),
-            AuthenticatedAccountRoute::ReturningSession(device),
+            authenticated_account_route(
+                &disposition,
+                Some(&returning_principal),
+                Some(&account.device_id),
+            ),
+            AuthenticatedAccountRoute::ReturningSession(account.device_id),
             "same-browser second login must not enter device setup",
         );
     }
@@ -2395,16 +2430,21 @@ mod tests {
     #[test]
     fn returning_sign_in_requires_the_durable_device_identity_key() {
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
-        let principal = arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap();
-        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal).unwrap();
-        let user_store = crate::secure_key_store::UserLocalStore::new(principal_core);
-        let device =
-            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
-                .unwrap();
-        user_store.save_device_id(&secure_store, &device).unwrap();
+        let account = test_active_account(
+            "did:web:alice.example",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        );
+        let user_store = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )
+        .unwrap();
+        user_store
+            .save_device_id(&secure_store, &account.device_id)
+            .unwrap();
 
         assert_eq!(
-            returning_device_id(&secure_store, &principal, device.as_str()).unwrap(),
+            returning_device_id(&secure_store, &account).unwrap(),
             None,
             "a public device id without its long-term signing key is a new device"
         );
@@ -2413,15 +2453,11 @@ mod tests {
             .save_signing_seed(&secure_store, &[41_u8; 32])
             .unwrap();
         assert_eq!(
-            returning_device_id(
-                &secure_store,
-                &principal,
-                "ak:device:01964137-0000-7000-8000-000000000099",
-            )
-            .unwrap()
-            .as_deref(),
-            Some(device.as_str()),
-            "secure storage is authoritative over a stale public config"
+            returning_device_id(&secure_store, &account)
+                .unwrap()
+                .as_deref(),
+            Some(account.device_id.as_str()),
+            "the typed profile and secure scope select the same device"
         );
     }
 
@@ -2431,43 +2467,37 @@ mod tests {
         let _signer = crate::event_signer::ActiveSignerTestGuard::replace(None);
         let mut store = crate::state::isolated_store_for_tests("completed-login-dpop-key");
         let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
-        let actor = "did:web:alice.example";
-        let principal_id = arkret_sdk::DidFullId::new(actor.to_owned()).expect("full principal id");
         let device = "ak:device:01964137-0000-7000-8000-000000000001";
+        let account = test_active_account("did:web:alice.example", device);
         let pending_device = "ak:device:01964137-0000-7000-8000-000000000002";
         let old_seed = [3_u8; 32];
         let new_record = dpop_record_for_seed([7_u8; 32]);
 
-        crate::secure_key_store::store_signing_seed_scoped(&secure_store, Some(actor), &old_seed)
+        let user_store = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )
+        .unwrap();
+        user_store
+            .save_signing_seed(&secure_store, &old_seed)
             .expect("old account seed");
 
-        let prepared = prepare_completed_login_dpop_key(
-            &secure_store,
-            &principal_id,
-            pending_device,
-            device,
-            &new_record,
-        )
-        .await
-        .expect("prepare completed login dpop");
+        let prepared =
+            prepare_completed_login_dpop_key(&secure_store, &account, pending_device, &new_record)
+                .await
+                .expect("prepare completed login dpop");
         assert!(
-            store.active_account_did().is_none(),
+            store.active_account_authority().is_none(),
             "fallible secure preparation must not switch the public account"
         );
-        store.adopt_pending_login(&principal_id);
-        commit_completed_login_dpop_key(
-            &mut store,
-            &secure_store,
-            &principal_id,
-            &new_record,
-            prepared,
-        )
-        .expect("commit completed login dpop");
+        store.adopt_pending_login(&account);
+        commit_completed_login_dpop_key(&mut store, &secure_store, &account, &new_record, prepared)
+            .expect("commit completed login dpop");
 
-        let loaded_seed =
-            crate::secure_key_store::load_signing_seed_scoped(&secure_store, Some(actor))
-                .expect("load account seed")
-                .expect("account seed");
+        let loaded_seed = user_store
+            .load_signing_seed(&secure_store)
+            .expect("load account seed")
+            .expect("account seed");
         assert_eq!(loaded_seed.seed, old_seed);
         let grant_binding = crate::secure_key_store::load_grant_binding_seed(&secure_store)
             .expect("load grant-binding seed")

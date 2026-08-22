@@ -69,8 +69,8 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
     state_store: &mut LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<crate::mls::runtime::InitialMlsSnapshotSummary>, String> {
     if state_store.mls_snapshot_for(realm_id).is_some() {
         return Ok(None);
@@ -101,10 +101,14 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
         );
         return Ok(None);
     }
-    if !projected_realm_creator_matches_actor(&state.realm_tree_projections, realm_id, actor_id) {
+    if !projected_realm_creator_matches_actor(
+        &state.realm_tree_projections,
+        realm_id,
+        authority.principal_id.as_str(),
+    ) {
         tracing::warn!(
             realm = %realm_id,
-            actor = %actor_id,
+            actor = %authority.principal_id,
             projected_create_controller = ?crate::security_state::realm_authority_root_controller_for_realm(
                 &state.realm_tree_projections,
                 realm_id,
@@ -135,7 +139,7 @@ pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
         state_store,
         secure_store,
         realm_id,
-        actor_id,
+        authority,
         device_id,
     )
     .map_err(|err| err.user_message())
@@ -558,8 +562,12 @@ mod tests {
             &mut store,
             secure.as_ref(),
             REALM,
-            ACTOR,
-            "ak:device:01904100-0000-7000-8000-000000000042",
+            &arkret_sdk::PrincipalAuthorityKey::new(
+                crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+            ),
+            &arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000042".to_owned())
+                .unwrap(),
         )
         .expect_err("group creation must not run before the anchor prelude");
         assert!(error.contains("governance checkpoint"), "{error}");

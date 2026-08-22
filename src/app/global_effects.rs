@@ -18,6 +18,7 @@ pub(super) fn GlobalEffects(
     mut system_theme_is_night: Signal<bool>,
 ) -> Element {
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
+    let active_account = crate::app::SessionContext::get().active_account;
 
     use_effect(move || {
         crate::i18n::set_locale(&mut i18n_signal, locale());
@@ -152,19 +153,18 @@ pub(super) fn GlobalEffects(
                 if session.trim().is_empty() {
                     continue;
                 }
-                let Some(actor) = crate::secure_key_store::active_device_seed_scope()
-                    .filter(|actor| !actor.trim().is_empty())
-                else {
+                let Some(account) = active_account() else {
                     continue;
                 };
-                let base = base_url();
+                let base = account.server_url.to_string();
+                let authority = account.authority;
                 if let Err(error) = crate::transport::auth::with_event_submitter(
                     &base,
                     session,
                     |submitter| async move {
                         crate::scheduled_send::dispatch_due_scheduled_sends(
                             &submitter,
-                            &actor,
+                            &authority,
                             state_store,
                         )
                         .await

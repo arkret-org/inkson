@@ -4,6 +4,18 @@ use crate::mls::runtime::*;
 use crate::secure_key_store::MemorySecureKeyStore;
 use crate::state::isolated_store_for_tests as temp_state_store;
 
+fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    arkret_sdk::PrincipalAuthorityKey {
+        principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+        principal_server_id: arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned())
+            .unwrap(),
+    }
+}
+
+fn device(value: &str) -> arkret_sdk::DeviceId {
+    arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
+}
+
 fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap();
@@ -35,9 +47,15 @@ fn build_mls_genesis_payload_has_required_fields() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_genesis_governance_proof(&mut state, realm);
-    let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
-        .unwrap()
-        .expect("creator snapshot should be created");
+    let summary = ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &authority(actor),
+        &device(device),
+    )
+    .unwrap()
+    .expect("creator snapshot should be created");
     let binding = genesis_governance_binding(&summary.group_id);
     let typed_payload = build_mls_genesis_payload(&summary, &binding).unwrap();
     let payload = serde_json::to_value(&typed_payload).unwrap();
@@ -107,13 +125,24 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_genesis_governance_proof(&mut state, realm);
-    let fresh = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
-        .unwrap()
-        .expect("creator snapshot should be created");
-    let restored =
-        initial_mls_snapshot_summary_from_existing(&state, &secure, realm, actor, device)
-            .unwrap()
-            .expect("epoch-0 snapshot restores summary");
+    let fresh = ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &authority(actor),
+        &device(device),
+    )
+    .unwrap()
+    .expect("creator snapshot should be created");
+    let restored = initial_mls_snapshot_summary_from_existing(
+        &state,
+        &secure,
+        realm,
+        &authority(actor),
+        &device(device),
+    )
+    .unwrap()
+    .expect("epoch-0 snapshot restores summary");
 
     assert_eq!(restored.realm_id, fresh.realm_id);
     assert_eq!(restored.group_id, fresh.group_id);
@@ -129,7 +158,7 @@ fn legacy_epoch_zero_snapshot_without_governance_binding_fails_closed() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let secret = load_or_create_account_mls_secret(&secure, actor).unwrap();
+    let secret = load_or_create_account_mls_secret(&secure, &authority(actor)).unwrap();
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
@@ -150,8 +179,14 @@ fn legacy_epoch_zero_snapshot_without_governance_binding_fails_closed() {
     state.save_mls_snapshot(realm, snapshot).unwrap();
     super::seed_genesis_governance_proof(&mut state, realm);
 
-    let error = initial_mls_snapshot_summary_from_existing(&state, &secure, realm, actor, device)
-        .unwrap_err();
+    let error = initial_mls_snapshot_summary_from_existing(
+        &state,
+        &secure,
+        realm,
+        &authority(actor),
+        &device(device),
+    )
+    .unwrap_err();
 
     assert!(error.user_message().contains("recreate local MLS state"));
 }

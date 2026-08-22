@@ -112,14 +112,15 @@ pub fn merge_scheduled_send_values(
 /// value that does not decrypt or does not bind this key is refused rather
 /// than overwritten.
 pub fn merge_scheduled_send_account_data(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     account_data_key: &str,
     candidate: &arkret_sdk::ScheduledSendValue,
     current: Option<&arkret_sdk::AccountDataRow>,
 ) -> anyhow::Result<Value> {
     let remote = match current {
         Some(current) => {
-            let plaintext = super::decrypt_account_data_entry(actor_id, account_data_key, current)?;
+            let plaintext =
+                super::decrypt_account_data_entry(authority, account_data_key, current)?;
             let value = scheduled_send_value_from_account_data(&plaintext)?;
             let value_key =
                 super::scheduled_send_account_data_key(value.scheduled_send_id.as_str())?;
@@ -132,7 +133,7 @@ pub fn merge_scheduled_send_account_data(
     };
     let winner = merge_scheduled_send_values(candidate.clone(), remote.as_ref())?;
     super::encrypt_account_data_value(
-        actor_id,
+        authority,
         account_data_key,
         &scheduled_send_account_data_value(&winner)?,
     )

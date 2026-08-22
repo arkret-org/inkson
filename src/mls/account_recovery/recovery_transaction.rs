@@ -167,8 +167,8 @@ pub(crate) async fn prepare_root_anchored_recovery(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair_durable(
         secure_store.as_ref(),
-        verified_session.principal_authority.principal_id.as_str(),
-        verified_session.requesting_device_id.as_str(),
+        &verified_session.principal_authority,
+        &verified_session.requesting_device_id,
     )
     .await?;
     let hpke_key = crate::identity::did_key::encode_x25519_multibase(&hpke_public_key);
@@ -481,6 +481,7 @@ pub(crate) async fn execute_root_anchored_recovery(
             &restore_payload,
             &mut store,
             secure_store.as_ref(),
+            &session.principal_authority,
             session.principal_authority.principal_id.as_str(),
             session.requesting_device_id.as_str(),
             prepared.recovery_private_key.as_slice(),
@@ -649,6 +650,7 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
             &restore_payload,
             &mut store,
             secure_store.as_ref(),
+            &session.principal_authority,
             session.principal_authority.principal_id.as_str(),
             session.requesting_device_id.as_str(),
             &recovery_material.backup_hpke_serialized_private_key,

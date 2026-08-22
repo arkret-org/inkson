@@ -3,7 +3,7 @@ use super::*;
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct ShellEffectState {
     pub account_primary_handle: Signal<String>,
-    pub account_did: Signal<String>,
+    pub principal_id: Signal<String>,
     pub token: Signal<String>,
     pub server_description: Signal<Option<ServiceDescribe>>,
     pub personal_handles: Signal<Vec<String>>,
@@ -23,7 +23,7 @@ pub(super) struct ShellEffectState {
 pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     let ShellEffectState {
         mut account_primary_handle,
-        account_did,
+        principal_id,
         token,
         server_description,
         mut personal_handles,
@@ -51,7 +51,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     // Authority handoff's unsigned account_handle hint.
     use_effect(move || {
         let lookup_base_url = base_url();
-        let lookup_actor = account_did();
+        let lookup_actor = principal_id();
         let lookup_device = device_id();
         let lookup_token = token();
         let key = format!(
@@ -99,7 +99,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 return;
             };
             // Ignore a late response from the previous account.
-            if account_did().trim() != actor.trim() {
+            if principal_id().trim() != actor.trim() {
                 return;
             }
             let display_name = viewer
@@ -142,7 +142,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
 
     use_effect(move || {
         let handle = account_primary_handle();
-        let account = account_did();
+        let account = principal_id();
         if handle.trim().is_empty() || account.trim().is_empty() {
             return;
         }
@@ -156,7 +156,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         let store = state_store.read();
         let unread = unread_notification_count(&store.load());
         let sound_enabled =
-            crate::notification_sound::notification_sound_enabled(&store, &account_did());
+            crate::notification_sound::notification_sound_enabled(&store, &principal_id());
         let previous = *previous_unread_notification_count.peek();
         if crate::notification_sound::should_play_notification_sound(
             previous,
@@ -246,7 +246,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     {
         use_effect(move || {
             let lookup_base_url = base_url();
-            let lookup_actor = account_did();
+            let lookup_actor = principal_id();
             let lookup_token = token();
             let lookup_supported = server_description().as_ref().is_some_and(|description| {
                 service_supports_operation(

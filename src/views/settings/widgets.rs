@@ -50,7 +50,12 @@ pub(super) fn render_notification_kind_toggle(
 #[component]
 pub(super) fn RealmOverrideRow(realm_id: String, label: String, token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::get().base_url;
+    let active_account = crate::app::SessionContext::get().active_account;
+    let base_url = use_signal(move || {
+        active_account()
+            .map(|account| account.server_url.to_string())
+            .unwrap_or_default()
+    });
     let mut state_store = crate::app::SessionContext::get().state_store;
     let level = state_store.read().realm_watch_level(&realm_id);
     let selected = use_memo({

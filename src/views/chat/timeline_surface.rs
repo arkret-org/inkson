@@ -30,13 +30,15 @@ pub(super) struct ChatTimelineContext {
     pub visible_moderation_appeal_prompts: Vec<ModerationAppealPrompt>,
     pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
     pub private_sidecar_strand_ids: std::collections::BTreeSet<String>,
-    pub account_did: String,
+    pub principal_id: String,
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub full_id: arkret_sdk::DidFullId,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,
     pub selected_realm_id: String,
     pub selected_channel_id: String,
     pub sidecar_active: bool,
-    pub device_id: String,
+    pub device_id: arkret_sdk::DeviceId,
     pub plaintext_service_id: String,
     pub base_url: String,
     pub focus_message_id: String,
@@ -58,7 +60,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         visible_moderation_appeal_prompts,
         strand_scope_lookup,
         private_sidecar_strand_ids,
-        account_did,
+        principal_id,
+        authority,
+        full_id,
         account_display_label,
         participants: participants_for_messages,
         selected_realm_id,
@@ -82,7 +86,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     let state_store = crate::app::SessionContext::get().state_store;
     let command_context = ChatCommandContext {
         base_url: base_url.clone(),
-        account_did: account_did.clone(),
+        principal_id: principal_id.clone(),
+        authority,
+        full_id,
         device_id: device_id.clone(),
         selected_realm_id: selected_realm_id.clone(),
         selected_channel_id: selected_channel_value.clone(),
@@ -157,7 +163,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 AppealEntrypoint {
                                     key: "{prompt.decision_ref}",
                                     realm_id: prompt.realm_id.clone(),
-                                    appellant: account_did.clone(),
+                                    appellant: principal_id.clone(),
                                     decision_event_id: prompt.decision_ref.clone(),
                                     target_ref: prompt.target_ref.clone(),
                                     api_token,
@@ -235,7 +241,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                 .iter()
                                 .any(|local_id| msg.matches_id_or_protocol(local_id));
                             let sender_is_own =
-                                is_own_message_sender(&msg.sender, &account_did);
+                                is_own_message_sender(&msg.sender, &principal_id);
                             // Deep-link focus target (design/route-view-ia.md §3.2).
                             let is_focus_message =
                                 !focus_message_id.is_empty() && msg.id == focus_message_id;
@@ -577,7 +583,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     }
                                 }
                                 div { class: "msg-head",
-                                    span { class: "name", "{sender_display_label(&msg.sender, &account_did, &account_display_label, &participants_for_messages)}" }
+                                    span { class: "name", "{sender_display_label(&msg.sender, &principal_id, &account_display_label, &participants_for_messages)}" }
                                     if sender_is_own {
                                         SelfAttributionBadge {
                                             class: Some("message-self-badge".to_owned()),
@@ -769,7 +775,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
                                         messages_for_reply_lookup,
                                         reply_id,
-                                        &account_did,
+                                        &principal_id,
                                         &account_display_label,
                                         &participants_for_messages,
                                     ) {
@@ -973,7 +979,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         Some(card) => {
                                             let poll_id = card.poll_id.clone();
                                             let total = card.total_votes();
-                                            let voted = card.actor_has_voted(&account_did);
+                                            let voted = card.actor_has_voted(&principal_id);
                                             rsx! {
                                                 div {
                                                     class: "poll-card message-event-poll",

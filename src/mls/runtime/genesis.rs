@@ -27,15 +27,15 @@ pub fn ensure_creator_mls_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     ensure_creator_mls_snapshot_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
         None,
-        actor_id,
+        authority,
         device_id,
     )
 }
@@ -45,15 +45,15 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         state_store,
         secure_store,
         realm_id,
         circle_id,
-        actor_id,
+        authority,
         device_id,
         None,
     )
@@ -64,8 +64,8 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
@@ -106,14 +106,11 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         return Ok(None);
     }
 
-    let secret = load_or_create_account_mls_secret(secure_store, actor_id)
+    let secret = load_or_create_account_mls_secret(secure_store, authority)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = crate::mls_api_helpers::principal_core_id(actor_id)
-        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned())
-        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
-    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal_did, device_id_typed)
-        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+    let identity =
+        arkret_sdk::ArkretMlsIdentity::new_basic(authority.principal_id.clone(), device_id.clone())
+            .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
     let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
         &effective_scope,
@@ -169,15 +166,15 @@ pub fn initial_mls_snapshot_summary_from_existing(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     initial_mls_snapshot_summary_from_existing_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
         None,
-        actor_id,
+        authority,
         device_id,
     )
 }
@@ -187,15 +184,15 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     initial_mls_snapshot_summary_from_existing_for_effective_scope_with_binding(
         state_store,
         secure_store,
         realm_id,
         circle_id,
-        actor_id,
+        authority,
         device_id,
         None,
     )
@@ -206,8 +203,8 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
@@ -251,7 +248,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     if snapshot.epoch != 0 {
         return Ok(None);
     }
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: genesis path — the snapshot is asserted to be epoch 0 just above, so
     // a Seal-view floor would be meaningless; floor 0 is intentional.

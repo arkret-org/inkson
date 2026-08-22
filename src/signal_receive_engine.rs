@@ -54,11 +54,9 @@ const MAX_LIVE_PRESENCE_BODIES: usize = 512;
 /// the app adapter that builds these handles.
 #[derive(Clone)]
 pub struct SignalReceiveEngineContext {
-    pub base_url: crate::runtime::input::ValueReader<String>,
     pub token: crate::runtime::input::ValueReader<String>,
     pub state_store: crate::runtime::input::StateStoreHandle,
-    pub account_did: String,
-    pub device_id: String,
+    pub account: crate::config::ActiveAccountContext,
     /// Active multi-profile snapshot — the engine exits when the active profile
     /// rotates, mirroring the other two engines.
     pub profiles: crate::runtime::input::ValueReader<MultiProfileConfig>,
@@ -118,8 +116,8 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
 pub struct MlsSignalDecryptor {
     state_store: crate::runtime::input::StateStoreHandle,
     secure_store: std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
-    account_did: String,
-    device_id: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    device_id: arkret_sdk::DeviceId,
     /// §10.1 obliges a receiver to keep a seen-counter set per
     /// `(key_ref, epoch, device_id, purpose, aead_profile)`. It is shared
     /// across every envelope this engine opens, and bounded by the SDK.
@@ -129,13 +127,13 @@ pub struct MlsSignalDecryptor {
 impl MlsSignalDecryptor {
     pub fn new(
         state_store: crate::runtime::input::StateStoreHandle,
-        account_did: String,
-        device_id: String,
+        authority: arkret_sdk::PrincipalAuthorityKey,
+        device_id: arkret_sdk::DeviceId,
     ) -> Self {
         Self {
             state_store,
             secure_store: crate::secure_key_store::default_secure_key_store("inkson"),
-            account_did,
+            authority,
             device_id,
             replay: Mutex::new(arkret_sdk::AeadNonceReplayTracker::new()),
         }
@@ -155,7 +153,7 @@ impl garth::SignalDecryptor for MlsSignalDecryptor {
                     store,
                     self.secure_store.as_ref(),
                     &envelope.scope_ref,
-                    &self.account_did,
+                    &self.authority,
                     &self.device_id,
                     envelope.encrypted_payload.epoch,
                 )
@@ -504,8 +502,8 @@ pub async fn run_signal_receive_engine(
     let resolver = DirectorySenderKeyResolver;
     let decryptor = MlsSignalDecryptor::new(
         ctx.state_store.clone(),
-        ctx.account_did.clone(),
-        ctx.device_id.clone(),
+        ctx.account.authority.clone(),
+        ctx.account.device_id.clone(),
     );
     let sink = InksonSignalSink {
         state_store: ctx.state_store.clone(),
@@ -567,7 +565,7 @@ impl TransportProvider for SignalTransportProvider {
     /// decision and needs no state to carry across.
     async fn provide(&self) -> garth::Result<Self::Transport> {
         let http = crate::identity::session_refresh::provide_authenticated_sdk_client(
-            &self.ctx.base_url.get(),
+            self.ctx.account.server_url.as_str(),
         )
         .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
@@ -579,7 +577,7 @@ impl TransportProvider for SignalTransportProvider {
 
     async fn recover_unauthorized(&self) -> garth::Result<bool> {
         crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
-            &self.ctx.base_url.get(),
+            self.ctx.account.server_url.as_str(),
         )
         .await
         .map(|_| true)
@@ -590,7 +588,6 @@ impl TransportProvider for SignalTransportProvider {
         self.generation.get() == self.start_generation
             && self.ctx.profiles.get().active_profile_id == self.start_profile_id
             && !self.ctx.effect.is_cancelled()
-            && !self.ctx.base_url.get().trim().is_empty()
             && !self.ctx.token.get().trim().is_empty()
     }
 }

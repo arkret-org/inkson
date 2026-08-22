@@ -12,8 +12,9 @@ use super::*;
 pub(super) struct ScheduledSendPanelContext {
     pub realm_id: String,
     pub strand_id: String,
-    pub account_did: String,
-    pub device_id: String,
+    pub principal_id: String,
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub device_id: arkret_sdk::DeviceId,
     pub token: Signal<String>,
     pub draft: Signal<String>,
     pub status_msg: Signal<String>,
@@ -56,7 +57,8 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
     let ScheduledSendPanelContext {
         realm_id,
         strand_id,
-        account_did,
+        principal_id,
+        authority,
         device_id,
         token,
         mut draft,
@@ -71,11 +73,11 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
     let mut refresh = use_signal(|| 0u64);
 
     let plans = use_memo({
-        let account_did = account_did.clone();
+        let principal_id = principal_id.clone();
         let strand_id = strand_id.clone();
         move || {
             refresh();
-            crate::scheduled_send::staged_scheduled_send_plans(&account_did, &state_store.read())
+            crate::scheduled_send::staged_scheduled_send_plans(&principal_id, &state_store.read())
                 .iter()
                 .filter(|plan| plan.value.message_payload.strand_id.as_str() == strand_id)
                 .map(ScheduledSendPlanView::from_plan)
@@ -86,7 +88,7 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
     let create_plan = {
         let realm_id = realm_id.clone();
         let strand_id = strand_id.clone();
-        let account_did = account_did.clone();
+        let authority = authority.clone();
         let device_id = device_id.clone();
         let base_url = base_url.clone();
         move |_| {
@@ -119,11 +121,7 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
             let payload =
                 arkret_sdk::MessageCreatePayload::with_content(strand, "discussion", content);
             let prepared = match crate::scheduled_send::prepare_scheduled_send_plan(
-                &account_did,
-                &device_id,
-                None,
-                &send_at,
-                payload,
+                &authority, &device_id, None, &send_at, payload,
             ) {
                 Ok(prepared) => prepared,
                 Err(error) => {
@@ -219,7 +217,7 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
                                         r#type: "button",
                                         "data-testid": "scheduled-send-save-button",
                                         onclick: {
-                                            let account_did = account_did.clone();
+                                            let authority = authority.clone();
                                             let device_id = device_id.clone();
                                             let plan_id = plan_id.clone();
                                             let plan_key = plan_key.clone();
@@ -254,7 +252,7 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
                                                     content,
                                                 );
                                                 let prepared = match crate::scheduled_send::prepare_scheduled_send_plan(
-                                                    &account_did,
+                                                    &authority,
                                                     &device_id,
                                                     Some(&plan_id),
                                                     &send_at,

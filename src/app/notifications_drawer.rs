@@ -8,7 +8,7 @@ use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 #[component]
 pub(crate) fn NotificationsDrawer(
     mut open: Signal<bool>,
-    account_did: String,
+    principal_id: String,
     device_id: String,
     token: Signal<String>,
 ) -> Element {
@@ -57,7 +57,7 @@ pub(crate) fn NotificationsDrawer(
                     }
                 }
                 crate::views::notifications::NotificationsPanel {
-                    account_did,
+                    principal_id,
                     device_id,
                     token,
                 }

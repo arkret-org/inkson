@@ -99,9 +99,14 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
 }
 
 #[component]
-pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<String>) -> Element {
+pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::get().base_url;
+    let active_account = crate::app::SessionContext::get().active_account;
+    let base_url = use_signal(move || {
+        active_account()
+            .map(|account| account.server_url.to_string())
+            .unwrap_or_default()
+    });
     let state_store = crate::app::SessionContext::get().state_store;
     let mut rows = use_signal(Vec::<CapabilityRow>::new);
     let mut status = use_signal(String::new);
@@ -112,7 +117,7 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
     let mut relinquish_for = use_signal(|| Option::<String>::None);
     let mut relinquish_reason = use_signal(String::new);
     // Grants where this core id is the subject get the relinquish control.
-    let my_core_id = crate::mls_api_helpers::principal_core_id(&account_did())
+    let my_core_id = crate::mls_api_helpers::principal_core_id(&principal_id())
         .map(|id| id.as_str().to_owned())
         .unwrap_or_default();
 
@@ -120,7 +125,7 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
     use_effect(move || {
         let base = base_url();
         let tok = token();
-        let did = account_did();
+        let did = principal_id();
         if tok.trim().is_empty() || did.trim().is_empty() {
             return;
         }
@@ -322,7 +327,7 @@ pub fn CapabilitiesSettingsCard(account_did: Signal<String>, token: Signal<Strin
                                                 move |_| {
                                                     let base = base_url();
                                                     let api_token = token();
-                                                    let actor = account_did().trim().to_owned();
+                                                    let actor = principal_id().trim().to_owned();
                                                     if actor.is_empty() {
                                                         status.set("relinquish failed: account is not connected".to_owned());
                                                         return;

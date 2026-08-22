@@ -6,11 +6,13 @@ use super::*;
 pub(super) struct ChatComposerContext {
     pub embedded: bool,
     pub selected_channel_info: Option<ChannelEntity>,
-    pub account_did: String,
+    pub principal_id: String,
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub full_id: arkret_sdk::DidFullId,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,
     pub selected_realm_id: String,
-    pub device_id: String,
+    pub device_id: arkret_sdk::DeviceId,
     pub plaintext_service_id: String,
     pub selected_channel_security_encrypted: bool,
     pub selected_realm_pending_mls_binding: bool,
@@ -80,7 +82,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let ChatComposerContext {
         embedded: _,
         selected_channel_info,
-        account_did,
+        principal_id,
+        authority,
+        full_id,
         account_display_label,
         participants: participants_for_messages,
         selected_realm_id,
@@ -187,7 +191,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     {
         let mut request_signal = mention_insert_request;
         let request_participants = participants_for_messages.clone();
-        let request_account_did = account_did.clone();
+        let request_principal_id = principal_id.clone();
         let request_public_agent_dids = public_agent_dids.clone();
         let request_controller_handle = own_controller_handle.clone();
         use_effect(use_reactive(
@@ -213,7 +217,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 let candidate = owned_agent_mention_candidate(
                     &request.target_id,
                     request.agent_slug.as_deref(),
-                    &request_account_did,
+                    &request_principal_id,
                     request_controller_handle.as_deref(),
                 )
                 .or_else(|| {
@@ -223,7 +227,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     mention_candidate_for_explicit_target(
                         participant,
                         &request_participants,
-                        &request_account_did,
+                        &request_principal_id,
                         &request_public_agent_dids,
                         None,
                         request_controller_handle.as_deref(),
@@ -284,7 +288,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         if let Some((quoted_name, quoted_body)) = chat_reply_quote_preview(
                             messages_for_composer_lookup,
                             &reply_id,
-                            &account_did,
+                            &principal_id,
                             &account_display_label,
                             &participants_for_messages,
                         ) {
@@ -461,7 +465,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         oninput: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
+                            let authority = authority.clone();
                             let typing_device_id = device_id.clone();
                             let selected_strand = selected_channel_value.clone();
                             move |event: FormEvent| {
@@ -504,6 +509,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let actor = actor.clone();
+                                let authority = authority.clone();
                                 let device = typing_device_id.clone();
                                 if selected_strand.trim().is_empty() {
                                     return;
@@ -543,7 +549,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                             realm.clone(),
                                                         )?,
                                                     },
-                                                    &actor,
+                                                    &authority,
                                                     &device,
                                                     &material,
                                                     &crate::signal::SignalPayload::Typing {
@@ -587,19 +593,19 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let mut candidates: Vec<crate::messaging::mentions::MentionCandidate> =
                                     participants_for_messages
                                         .iter()
-                                        .filter(|p| agent_candidate_is_visible(p, &public_agent_dids, &account_did))
+                                        .filter(|p| agent_candidate_is_visible(p, &public_agent_dids, &principal_id))
                                         .filter_map(|p| mention_candidate_for_participant(
                                             p,
                                             &participants_for_messages,
-                                            &account_did,
+                                            &principal_id,
                                         ))
                                         .collect();
                                 candidates.sort_by_key(|candidate| {
-                                    if candidate.did.trim() == account_did.trim() {
+                                    if candidate.did.trim() == principal_id.trim() {
                                         0u8
                                     } else if candidate.is_agent
                                         && candidate.controller_subject_id.trim()
-                                            == account_did.trim()
+                                            == principal_id.trim()
                                     {
                                         1u8
                                     } else {
@@ -627,7 +633,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     let candidate_label =
                                                         format!("@{}", candidate.insert_label());
                                                     let candidate_is_self =
-                                                        candidate.did.trim() == account_did.trim();
+                                                        candidate.did.trim() == principal_id.trim();
                                                     let candidate_agent_slug = candidate
                                                         .is_agent
                                                         .then(|| candidate.agent_slug_at_time.clone());
@@ -871,7 +877,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 onclick: {
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let selected_strand = selected_channel_value.clone();
                                     move |_| {
                                         let Some(draft_snapshot) = poll_draft.read().clone() else {
@@ -1013,7 +1019,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 onclick: {
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let selected_strand = selected_channel_value.clone();
                                     move |_| {
                                         let Some(draft_snapshot) = poll_draft.read().clone() else {
@@ -1157,7 +1163,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         context: super::scheduled_send_panel::ScheduledSendPanelContext {
                             realm_id: selected_realm_id.clone(),
                             strand_id: selected_channel(),
-                            account_did: account_did.clone(),
+                            principal_id: principal_id.clone(),
+                            authority: authority.clone(),
                             device_id: device_id.clone(),
                             token,
                             draft: chat_draft,
@@ -1175,11 +1182,15 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let base = base_url.clone();
                             let service_id = plaintext_service_id.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
+                            let sidecar_authority = authority.clone();
+                            let sidecar_full_id = full_id.clone();
                             let own_controller_handle = own_controller_handle.clone();
                             let sidecar_device_id = device_id.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
+                                let authority_for_sidecar = sidecar_authority.clone();
+                                let full_id_for_sidecar = sidecar_full_id.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -1270,7 +1281,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &base,
                                             api_token.clone(),
                                             &trace_id,
-                                            &actor,
+                                            &authority_for_sidecar,
+                                            &full_id_for_sidecar,
                                             &device_id_for_sidecar,
                                             &realm,
                                             &strand_id,
@@ -1597,7 +1609,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
+                            let sidecar_authority = authority.clone();
+                            let sidecar_full_id = full_id.clone();
                             let own_controller_handle = own_controller_handle.clone();
                             let selected_strand = selected_channel_value.clone();
                             let pending_mls_binding = selected_realm_pending_mls_binding;
@@ -1606,6 +1620,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 selected_realm_pending_mls_binding_reason.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
+                                let authority_for_sidecar = sidecar_authority.clone();
+                                let full_id_for_sidecar = sidecar_full_id.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
                                 if pending_mls_binding {
                                     status_msg.set(
@@ -1709,7 +1725,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &base,
                                             api_token.clone(),
                                             &trace_id,
-                                            &actor_for_sidecar,
+                                            &authority_for_sidecar,
+                                            &full_id_for_sidecar,
                                             &device_id_for_sidecar,
                                             &realm_for_sidecar,
                                             &strand_for_sidecar,
@@ -1861,7 +1878,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 &base,
                                                 api_token,
                                                 &actor,
-                                                &device_id_for_sidecar,
+                                                device_id_for_sidecar.as_str(),
                                                 &session.source_realm_id,
                                                 &session.source_strand_id,
                                                 &source_strand_id,
@@ -2095,7 +2112,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     &seal_view,
                                     &realm,
                                     &actor,
-                                    &did,
+                                    did.as_str(),
                                     &strand_id,
                                     &message_id,
                                     reply_to.as_deref(),

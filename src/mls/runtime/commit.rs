@@ -1,5 +1,7 @@
 //! §5.6 self-preservation and forced-epoch-advance MLS commit logic.
 
+use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
+
 use super::{MlsRuntimeError, load_device_snapshot_secret};
 use crate::secure_key_store::SecureKeyStore;
 
@@ -28,8 +30,9 @@ pub fn force_epoch_rotation_commit(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
 ) -> Result<
     (
         arkret_sdk::MlsCommitEnvelope,
@@ -43,6 +46,7 @@ pub fn force_epoch_rotation_commit(
         secure_store,
         realm_id,
         None,
+        authority,
         actor_id,
         device_id,
     )
@@ -53,8 +57,9 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
 ) -> Result<
     (
         arkret_sdk::MlsCommitEnvelope,
@@ -69,7 +74,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     let snapshot = state_store
         .mls_snapshot_for_effective_scope(realm_id, circle)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
@@ -118,8 +123,9 @@ pub fn build_mls_remove_commit_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     target_principal_id: &str,
     revocation_membership_frontier: &[arkret_sdk::EventId],
 ) -> Result<
@@ -135,6 +141,7 @@ pub fn build_mls_remove_commit_for_effective_scope(
         secure_store,
         realm_id,
         circle_id,
+        authority,
         actor_id,
         device_id,
         std::slice::from_ref(&target_principal_id),
@@ -148,8 +155,9 @@ pub fn build_mls_remove_commit_for_effective_scope_with_sidecar_binding(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     target_principal_id: &str,
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
@@ -166,6 +174,7 @@ pub fn build_mls_remove_commit_for_effective_scope_with_sidecar_binding(
         secure_store,
         realm_id,
         circle_id,
+        authority,
         actor_id,
         device_id,
         std::slice::from_ref(&target_principal_id),
@@ -179,8 +188,9 @@ pub fn build_mls_remove_members_commit_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     target_principal_ids: &[&str],
     revocation_membership_frontier: &[arkret_sdk::EventId],
 ) -> Result<
@@ -196,6 +206,7 @@ pub fn build_mls_remove_members_commit_for_effective_scope(
         secure_store,
         realm_id,
         circle_id,
+        authority,
         actor_id,
         device_id,
         target_principal_ids,
@@ -209,8 +220,9 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     target_principal_ids: &[&str],
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
@@ -251,7 +263,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     let snapshot = state_store
         .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let targets: Vec<arkret_sdk::DidCoreId> = target_principal_ids
         .iter()
@@ -330,8 +342,9 @@ pub fn build_add_member_commit_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
 ) -> Result<
     (
@@ -346,6 +359,7 @@ pub fn build_add_member_commit_for_effective_scope(
         secure_store,
         realm_id,
         circle_id,
+        authority,
         actor_id,
         device_id,
         member_key_package,
@@ -359,8 +373,9 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
@@ -394,7 +409,7 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     let snapshot = state_store
         .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
@@ -443,8 +458,9 @@ pub fn build_add_members_commit_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     member_key_packages: &[arkret_sdk::MlsKeyPackageRecord],
 ) -> Result<
     (
@@ -459,6 +475,7 @@ pub fn build_add_members_commit_for_effective_scope(
         secure_store,
         realm_id,
         circle_id,
+        authority,
         actor_id,
         device_id,
         member_key_packages,
@@ -472,8 +489,9 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     member_key_packages: &[arkret_sdk::MlsKeyPackageRecord],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
@@ -512,7 +530,7 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     let snapshot = state_store
         .mls_snapshot_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
@@ -644,8 +662,9 @@ pub fn build_idle_self_update_commit(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<
     Option<(
@@ -683,7 +702,7 @@ pub fn build_idle_self_update_commit(
     {
         return Ok(None);
     }
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.

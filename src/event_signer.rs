@@ -1236,7 +1236,7 @@ mod tests {
     }
 
     #[test]
-    fn principal_move_signer_uses_authenticated_account_did_not_local_key_did() {
+    fn principal_move_signer_uses_authenticated_full_id_not_local_key_did() {
         let _g = reset();
         let signer =
             build_ed25519_device_signer([19u8; 32], "did:key:zlocal-device-key", TEST_DEVICE_ID);

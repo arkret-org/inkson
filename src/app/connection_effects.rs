@@ -5,8 +5,7 @@ pub(super) struct ConnectionEffectState {
     pub connection_status: Signal<String>,
     pub sync_cursor: Signal<String>,
     pub token: Signal<String>,
-    pub account_did: Signal<String>,
-    pub device_id: Signal<String>,
+    pub principal_id: Signal<String>,
     pub selected_realm_id: Signal<String>,
     pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub projection_events: Signal<Vec<ProjectionEvent>>,
@@ -40,8 +39,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         mut connection_status,
         mut sync_cursor,
         mut token,
-        account_did,
-        device_id,
+        principal_id,
         mut selected_realm_id,
         mut realm_tree_nodes,
         mut projection_events,
@@ -71,6 +69,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
     let SessionContext {
         mut state_store,
         base_url,
+        active_account,
         ..
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
@@ -88,14 +87,13 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 session_generation.set(session_generation() + 1);
                 state_store.write().set_session_grant(None);
                 token.set(String::new());
-                crate::config::clear_session_credential_secret(&account_did());
-                persist_config(
-                    config_store,
-                    base_url(),
-                    account_did(),
-                    device_id(),
-                    String::new(),
-                );
+                if let Some(account) = active_account() {
+                    crate::config::clear_session_credential_secret(
+                        &account.authority,
+                        &account.device_id,
+                    );
+                    persist_config(config_store, Some(account), String::new());
+                }
                 sync_cursor.set(String::new());
                 selected_realm_id.set(String::new());
                 realm_tree_nodes.set(Vec::new());
@@ -138,10 +136,15 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             // list/account-sync edge is therefore the signal to re-check the
             // exact directory signer and release MLS publication on this one.
             let cursor = sync_cursor();
-            let base = base_url();
             let session = token();
-            let actor = account_did();
-            let device = device_id();
+            let Some(account) = active_account() else {
+                return;
+            };
+            let base = account.server_url.to_string();
+            let actor = account.principal_id().to_string();
+            let device = account.device_id.to_string();
+            let typed_principal_id = account.principal_id().clone();
+            let typed_device_id = account.device_id.clone();
             if cursor.trim().is_empty()
                 || base.trim().is_empty()
                 || session.trim().is_empty()
@@ -158,7 +161,12 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             spawn(async move {
                 let result =
                     crate::transport::auth::with_authed_api(&base, session, |api| async move {
-                        super::connect::probe_device_authorization(&actor, &device, &api).await
+                        super::connect::probe_device_authorization(
+                            &typed_principal_id,
+                            &typed_device_id,
+                            &api,
+                        )
+                        .await
                     })
                     .await;
                 match result {
@@ -197,16 +205,17 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
 
     let secure_store_ready = secure_store_bootstrap_ready();
     if bootstrap_pending() {
-        let base = base_url();
+        let active = active_account();
+        let base = active
+            .as_ref()
+            .map(|account| account.server_url.to_string())
+            .unwrap_or_else(|| base_url());
         let mut session = token();
         if session.trim().is_empty() && secure_store_ready {
             let loaded = config_store.read().load();
-            if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
-                &loaded,
-                &base,
-                &account_did(),
-                &device_id(),
-            ) {
+            if let Some(rehydrated) = active.as_ref().and_then(|account| {
+                rehydrated_session_credential_for_active_config(&loaded, account)
+            }) {
                 token.set(rehydrated.clone());
                 session = rehydrated;
             }
@@ -222,19 +231,13 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             if stale_for_selected_server {
                 token.set(String::new());
                 session_boot_state.set(SessionBootState::Unauthenticated);
-                persist_config(
-                    config_store,
-                    base.clone(),
-                    account_did(),
-                    device_id(),
-                    String::new(),
-                );
+                persist_config(config_store, active.clone(), String::new());
                 session.clear();
             }
         }
         let can_restore_session = {
             let store = state_store.read();
-            has_bootstrap_refresh_material(&store, &base, &account_did())
+            has_bootstrap_refresh_material(&store, &base, &principal_id())
         };
         if !base.trim().is_empty()
             && secure_store_ready
@@ -245,52 +248,51 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             let bootstrap_state = session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
-                &account_did(),
+                active.as_ref(),
                 secure_store_ready,
             );
             session_boot_state.set(bootstrap_state);
-            connect(
-                base,
-                account_did(),
-                device_id(),
-                ConnectContext {
-                    session: runtime_services.session.clone(),
-                    connection_status,
-                    sync_cursor,
-                    token,
-                    account_did,
-                    device_id,
-                    selected_realm_id,
-                    realm_tree_nodes,
-                    projection_events,
-                    device_queue,
-                    frontier_state,
-                    crypto_state,
-                    config_store,
-                    state_store,
-                    network_state,
-                    last_error,
-                    server_description,
-                    server_probe_status,
-                    account_primary_handle,
-                    personal_handles,
-                    personal_handles_status,
-                    theme,
-                    sync_generation,
-                    needs_device_authorization,
-                    device_authorization_check_complete,
-                    account_has_other_devices,
-                    sync_bootstrap_complete,
-                    session_boot_state,
-                    did_cache,
-                    did_resolution_health,
-                },
-            );
+            if let Some(active_account_snapshot) = active.clone() {
+                connect(
+                    active_account_snapshot,
+                    ConnectContext {
+                        session: runtime_services.session.clone(),
+                        connection_status,
+                        sync_cursor,
+                        token,
+                        principal_id,
+                        selected_realm_id,
+                        realm_tree_nodes,
+                        projection_events,
+                        device_queue,
+                        frontier_state,
+                        crypto_state,
+                        config_store,
+                        state_store,
+                        network_state,
+                        last_error,
+                        server_description,
+                        server_probe_status,
+                        account_primary_handle,
+                        personal_handles,
+                        personal_handles_status,
+                        theme,
+                        sync_generation,
+                        needs_device_authorization,
+                        device_authorization_check_complete,
+                        account_has_other_devices,
+                        sync_bootstrap_complete,
+                        session_boot_state,
+                        did_cache,
+                        did_resolution_health,
+                    },
+                );
+            }
         } else if !base.trim().is_empty() {
             let bootstrap_state = session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
-                &account_did(),
+                active.as_ref(),
                 secure_store_ready,
             );
             if *session_boot_state.peek() != bootstrap_state {

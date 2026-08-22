@@ -1,106 +1,41 @@
 use super::*;
 
 impl LocalStateStore {
-    /// The authenticated foreground account DID. A pending sign-in has its own
-    /// anonymous transaction namespace, so this returns `None` while that
-    /// transaction is active even though the last-selected account is retained.
-    pub fn active_account_did(&self) -> Option<String> {
+    /// The authenticated foreground account authority. A pending sign-in has
+    /// its own anonymous transaction namespace, so this returns `None` while
+    /// that transaction is active even though the selected profile is retained.
+    pub fn active_account_authority(&self) -> Option<arkret_sdk::PrincipalAuthorityKey> {
+        let root = self.read_root();
+        if root.pending_login.is_some() {
+            return None;
+        }
+        root.active_profile_id
+            .as_deref()
+            .and_then(|profile_id| root.authority_for_profile(profile_id))
+            .cloned()
+    }
+
+    pub fn active_profile_id(&self) -> Option<String> {
         let root = self.read_root();
         root.pending_login
             .is_none()
-            .then_some(root.active_did)
+            .then_some(root.active_profile_id)
             .flatten()
     }
 
-    /// Last account selected on this installation. This survives sign-in
+    /// Last profile selected on this installation. This survives sign-in
     /// failure/cancellation and is never used as authority for the pending
     /// transaction.
-    pub fn last_selected_account_did(&self) -> Option<String> {
-        self.read_root().active_did
+    pub fn last_selected_profile_id(&self) -> Option<String> {
+        self.read_root().active_profile_id
     }
 
-    /// Whether `principal` is the foreground identity. Equality is based on
-    /// the stable DID core id, so a legitimate full-id resolution update does
-    /// not create a second local account namespace.
-    pub fn active_account_matches(&self, principal: &str) -> bool {
-        let Some(active) = self.active_account_did() else {
-            return false;
-        };
-        match (
-            crate::mls_api_helpers::principal_core_id(&active),
-            crate::mls_api_helpers::principal_core_id(principal),
-        ) {
-            (Ok(active), Ok(candidate)) => active == candidate,
-            _ => active.trim() == principal.trim(),
-        }
+    pub fn active_account_matches(&self, authority: &arkret_sdk::PrincipalAuthorityKey) -> bool {
+        self.active_account_authority().as_ref() == Some(authority)
     }
 
-    /// Every account DID with a persisted per-account entry on this browser.
-    pub fn known_account_dids(&self) -> Vec<String> {
-        self.read_root().known_dids
-    }
-
-    /// Recover this installation's retained full DID for a server-authored
-    /// principal core id.
-    ///
-    /// Account-viewer responses intentionally contain only `DidCoreId`.  A
-    /// core id is sufficient for account-local storage selection, but it is
-    /// not resolution material and must never replace the full DID used by the
-    /// Event signer.  Search every durable source that can legitimately retain
-    /// that full id, including the anonymous pending-login handoff, so profiles
-    /// written by older builds can repair themselves without losing the local
-    /// device identity.
-    pub fn full_account_did_for_principal(
-        &self,
-        principal_id: &arkret_sdk::DidCoreId,
-    ) -> Option<arkret_sdk::DidFullId> {
-        let matching_full_id = |candidate: &str| {
-            let full_id = arkret_sdk::DidFullId::new(candidate.trim().to_owned()).ok()?;
-            (arkret_sdk::project_full_id_to_core_id(&full_id)
-                .ok()?
-                .as_str()
-                == principal_id.as_str())
-            .then_some(full_id)
-        };
-
-        let root = self.read_root();
-        if let Some(full_id) = root
-            .active_did
-            .as_deref()
-            .and_then(&matching_full_id)
-            .or_else(|| {
-                root.known_dids
-                    .iter()
-                    .find_map(|known| matching_full_id(known))
-            })
-        {
-            return Some(full_id);
-        }
-
-        let live = self.load();
-        if let Some(full_id) = live
-            .pending_account_handoff
-            .as_ref()
-            .and_then(|handoff| handoff.bound_principal_id.as_ref())
-            .and_then(|candidate| {
-                (arkret_sdk::project_full_id_to_core_id(candidate)
-                    .ok()?
-                    .as_str()
-                    == principal_id.as_str())
-                .then(|| candidate.clone())
-            })
-            .or_else(|| {
-                live.recovery_material_evidence
-                    .as_ref()
-                    .and_then(|evidence| matching_full_id(evidence.principal_id.as_str()))
-            })
-        {
-            return Some(full_id);
-        }
-
-        self.read_account_state(principal_id.as_str())
-            .and_then(|state| state.recovery_material_evidence)
-            .and_then(|evidence| matching_full_id(evidence.principal_id.as_str()))
+    pub fn known_profile_refs(&self) -> Vec<KnownProfileRef> {
+        self.read_root().known_profiles
     }
 
     /// Read a cross-account UI device preference (theme/locale/...), shared by
@@ -124,19 +59,21 @@ impl LocalStateStore {
     /// per-account entry is the single source of truth for the account
     /// selector's display label.
     pub fn set_primary_handle(&mut self, handle: &str) {
-        let did = self.effective_account_key();
-        self.set_primary_handle_for_did(&did, handle);
+        let Some(authority) = self.active_account_authority() else {
+            return;
+        };
+        self.set_primary_handle_for_authority(&authority, handle);
     }
 
     /// Record one specific account's primary handle without relying on which
     /// account happens to be active when an asynchronous lookup completes.
-    pub fn set_primary_handle_for_did(&mut self, did: &str, handle: &str) {
-        let did = did.trim();
-        if did.is_empty() {
-            return;
-        }
+    pub fn set_primary_handle_for_authority(
+        &mut self,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+        handle: &str,
+    ) {
         let handle = handle.trim();
-        let is_active = self.active_account_matches(did);
+        let is_active = self.active_account_matches(authority);
         if is_active {
             self.ensure_cached_loaded();
             if self.cached.primary_handle == handle {
@@ -147,30 +84,34 @@ impl LocalStateStore {
             return;
         }
 
-        let mut state = self.read_account_state(did).unwrap_or_default();
+        let Ok(scope) = account_storage_scope(authority) else {
+            return;
+        };
+        let mut state = self.read_account_state(&scope).unwrap_or_default();
         if state.primary_handle == handle {
             return;
         }
         state.primary_handle = handle.to_owned();
-        let _ = self.write_account_state(did, &state);
+        let _ = self.write_account_state(&scope, &state);
     }
 
     /// Read a SPECIFIC account's persisted primary handle by DID, without making
     /// that account active. Returns `None` for the active account's in-memory
     /// value too (prefers the live `cached` copy when `did` is active so an
     /// unflushed set is observed). Empty string is normalised to `None`.
-    pub fn primary_handle_for_did(&self, did: &str) -> Option<String> {
-        let did = did.trim();
-        if did.is_empty() {
-            return None;
-        }
-        let handle = if self.loaded.load(Ordering::Relaxed) && self.active_account_matches(did) {
-            self.cached.primary_handle.clone()
-        } else {
-            self.read_account_state(did)
-                .map(|state| state.primary_handle)
-                .unwrap_or_default()
-        };
+    pub fn primary_handle_for_authority(
+        &self,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+    ) -> Option<String> {
+        let scope = account_storage_scope(authority).ok()?;
+        let handle =
+            if self.loaded.load(Ordering::Relaxed) && self.active_account_matches(authority) {
+                self.cached.primary_handle.clone()
+            } else {
+                self.read_account_state(&scope)
+                    .map(|state| state.primary_handle)
+                    .unwrap_or_default()
+            };
         (!handle.trim().is_empty()).then_some(handle)
     }
 
@@ -178,12 +119,12 @@ impl LocalStateStore {
     /// Does not change the active account. The account's `device_id` /
     /// `server_url` for the selector come from its persisted `session_grant`
     /// (written by the login state persistence), so they need not be passed here.
-    pub fn register_known_account(&mut self, did: &str) {
-        let did = did.trim();
-        if did.is_empty() {
-            return;
-        }
-        self.mutate_root(|root| root.note_known_did(did));
+    pub fn register_known_profile(
+        &mut self,
+        profile_id: &str,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+    ) {
+        let _ = self.mutate_root(|root| root.note_known_profile(profile_id, authority));
     }
 
     /// Enumerate the accounts known on this browser for the signed-out account
@@ -193,32 +134,34 @@ impl LocalStateStore {
     /// is always preferred for display; callers must never render the raw DID.
     pub fn known_accounts(&self) -> Vec<KnownAccount> {
         let root = self.read_root();
-        root.known_dids
+        root.known_profiles
             .iter()
-            .map(|did| {
+            .map(|known| {
                 // Read the account's own entry; prefer the live `cached` copy
                 // for the active account so an unflushed login is reflected.
-                let state =
-                    if self.loaded.load(Ordering::Relaxed) && self.active_account_matches(did) {
-                        Some(self.cached.clone())
-                    } else {
-                        self.read_account_state(did)
-                    };
+                let state = if self.loaded.load(Ordering::Relaxed)
+                    && self.active_account_matches(&known.authority)
+                {
+                    Some(self.cached.clone())
+                } else {
+                    account_storage_scope(&known.authority)
+                        .ok()
+                        .and_then(|scope| self.read_account_state(&scope))
+                };
                 let (handle, device_id, server_url) = match state {
                     Some(state) => {
                         let grant = state.session_grant.as_ref();
                         (
                             state.primary_handle,
-                            grant.map(|g| g.device_id.clone()).unwrap_or_default(),
-                            grant
-                                .map(|g| g.principal_server_url.clone())
-                                .unwrap_or_default(),
+                            grant.map(|g| g.device_id.clone()),
+                            grant.and_then(|g| url::Url::parse(&g.principal_server_url).ok()),
                         )
                     }
-                    None => (String::new(), String::new(), String::new()),
+                    None => (String::new(), None, None),
                 };
                 KnownAccount {
-                    did: did.clone(),
+                    profile_id: known.profile_id.clone(),
+                    authority: known.authority.clone(),
                     handle,
                     device_id,
                     server_url,
@@ -267,33 +210,39 @@ impl LocalStateStore {
         self.persist_e2ee_plaintext_cache_if_ready();
     }
 
-    /// Make `actor` the active account, loading its own per-account entry.
+    /// Make one typed profile/authority pair active, loading its account entry.
     /// Account isolation is structural (one key per account), so switching is
-    /// re-pointing the persisted `active_did` and swapping `cached` for the
+    /// re-pointing the persisted active profile and swapping `cached` for the
     /// target account's persisted entry — never wiping another account's data.
     ///
     /// Ordering matters for correctness across clones: `mutate_root` lands the
-    /// new `active_did` in storage FIRST, then `cached` is hydrated from the
+    /// new active profile in storage FIRST, then `cached` is hydrated from the
     /// target entry, then `flush()` persists `cached` — at which point
-    /// `effective_account_key` reads back the just-written `active_did`, so the
-    /// blob lands under the right `…account.<did>` key.
+    /// `effective_account_key` reads back the just-written authority, so the
+    /// blob lands under the right authority-digest key.
     ///
     /// Returns `true` when the active account actually changed.
-    pub fn switch_active_account(&mut self, actor: &str) -> bool {
+    pub fn switch_active_account(
+        &mut self,
+        profile_id: &str,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+    ) -> bool {
         self.ensure_cached_loaded();
-        let actor = actor.trim();
-        if actor.is_empty() {
+        let profile_id = profile_id.trim();
+        if profile_id.is_empty() {
             return false;
         }
-        let current_active = self.read_root().active_did;
-        if current_active.as_deref() == Some(actor) {
+        let current_active = self.read_root().active_profile_id;
+        if current_active.as_deref() == Some(profile_id) && self.active_account_matches(authority) {
             // Already active — just make sure it's recorded as known.
-            self.mutate_root(|root| root.note_known_did(actor));
+            self.mutate_root(|root| {
+                root.note_known_profile(profile_id, authority);
+            });
             return false;
         }
         // Persist the outgoing account's entry before swapping so nothing is
         // lost. The outgoing entry is selected by the CURRENT (pre-switch)
-        // `active_did`, so flush while that still points at the old account.
+        // active profile, so flush while that still points at the old account.
         // Phase 2 (wasm): flush freezes the durable write under the OUTGOING
         // account key before the root index switches, so the incoming account's
         // single-writer queue never inherits the leaving account's queued state.
@@ -302,12 +251,25 @@ impl LocalStateStore {
         // E7: reset the account-scoped cursor overlay alongside the receive
         // overlay so a stale cursor never leaks across account scope changes.
         // Land the new active pointer in shared storage first.
-        self.mutate_root(|root| {
-            root.active_did = Some(actor.to_owned());
-            root.note_known_did(actor);
+        let activated_profile_id = self.mutate_root(|root| {
+            let activated_profile_id = root.note_known_profile(profile_id, authority);
+            if let Some(profile_id) = &activated_profile_id {
+                root.active_profile_id = Some(profile_id.clone());
+            }
+            activated_profile_id
         });
+        let Some(activated_profile_id) = activated_profile_id else {
+            return false;
+        };
         // Load the target account's own entry (default for a brand-new account).
-        self.cached = self.read_account_state(actor).unwrap_or_default();
+        self.cached = account_storage_scope(authority)
+            .ok()
+            .and_then(|scope| self.read_account_state(&scope))
+            .unwrap_or_default();
+        debug_assert_eq!(
+            self.read_root().active_profile_id.as_deref(),
+            Some(activated_profile_id.as_str())
+        );
         self.cached_account_key = Some(self.effective_account_key());
         self.loaded.store(true, Ordering::Relaxed);
         self.hydrate_e2ee_plaintext_cache_if_ready();
@@ -317,21 +279,27 @@ impl LocalStateStore {
     }
 
     /// Purge a single account's persisted state: its `…account.<did>` entry,
-    /// its secure-store wrap_seed namespace (wasm), and its `known_dids` entry.
+    /// its secure-store namespace (wasm), and its `known_profiles` entry.
     /// Cross-account [`DevicePrefs`] and every other account are untouched. When
     /// the purged account was active, the active pointer is cleared.
-    pub fn forget_account(&mut self, actor: &str) {
+    pub fn forget_account(
+        &mut self,
+        profile_id: &str,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+    ) {
         self.ensure_cached_loaded();
-        let actor = actor.trim();
-        if actor.is_empty() {
+        let profile_id = profile_id.trim();
+        if profile_id.is_empty() {
             return;
         }
-        self.delete_account_state(actor);
-        let was_active = self.read_root().active_did.as_deref() == Some(actor);
+        if let Ok(scope) = account_storage_scope(authority) {
+            self.delete_account_state(&scope);
+        }
+        let was_active = self.read_root().active_profile_id.as_deref() == Some(profile_id);
         self.mutate_root(|root| {
-            root.forget_known_did(actor);
-            if root.active_did.as_deref() == Some(actor) {
-                root.active_did = None;
+            root.forget_known_profile(profile_id);
+            if root.active_profile_id.as_deref() == Some(profile_id) {
+                root.active_profile_id = None;
             }
         });
         if was_active {
@@ -348,21 +316,23 @@ impl LocalStateStore {
     /// Start a fresh pre-DID login. Any onboarding checkpoint owned by the
     /// previously-active account stays with that account and the anonymous
     /// login namespace is reset before the new callback can write into it.
-    pub fn begin_pending_login(&mut self, device_id: &str, dpop_jkt: Option<&str>) {
+    pub fn begin_pending_login(
+        &mut self,
+        device_id: &arkret_sdk::DeviceId,
+        dpop_jkt: Option<&str>,
+    ) {
         self.begin_pending_login_inner(device_id, dpop_jkt, false);
     }
 
     /// Whether the current account has an unfinished identity handoff fenced
     /// to this exact device and its persisted DPoP holder.
-    pub fn can_resume_pending_login(&self, device_id: &str) -> bool {
+    pub fn can_resume_pending_login(&self, device_id: &arkret_sdk::DeviceId) -> bool {
         let state = self.load();
-        let device_id = device_id.trim();
         state
             .pending_account_handoff
             .as_ref()
             .is_some_and(|handoff| {
-                !device_id.is_empty()
-                    && handoff.device_id == device_id
+                handoff.device_id == device_id.as_str()
                     && state.dpop_device_key.as_ref().is_some_and(|dpop| {
                         !dpop.jkt.trim().is_empty() && handoff.holder_jkt == dpop.jkt
                     })
@@ -373,9 +343,8 @@ impl LocalStateStore {
     /// Returns `true` when the checkpoint was preserved. A failed match starts
     /// a fresh isolated login instead, so foreign onboarding state cannot leak
     /// into the next Account Authority callback.
-    pub fn resume_pending_login(&mut self, device_id: &str) -> bool {
+    pub fn resume_pending_login(&mut self, device_id: &arkret_sdk::DeviceId) -> bool {
         self.ensure_cached_loaded();
-        let device_id = device_id.trim();
         let resume_matches = self.can_resume_pending_login(device_id);
         let pending_jkt = if resume_matches {
             self.cached
@@ -395,14 +364,10 @@ impl LocalStateStore {
     /// verified resume; fresh login and registration always start empty.
     fn begin_pending_login_inner(
         &mut self,
-        device_id: &str,
+        device_id: &arkret_sdk::DeviceId,
         dpop_jkt: Option<&str>,
         preserve_onboarding: bool,
     ) {
-        let device_id = device_id.trim();
-        if device_id.is_empty() {
-            return;
-        }
         self.ensure_cached_loaded();
 
         let (pending_account_handoff, pending_principal_registration) = if preserve_onboarding {
@@ -432,7 +397,7 @@ impl LocalStateStore {
         // signs or resumes a prepared registration request.
         crate::event_signer::clear_active_device_signer();
         let pending = PendingLogin {
-            device_id: device_id.to_owned(),
+            device_id: device_id.clone(),
             dpop_jkt: dpop_jkt
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -469,14 +434,14 @@ impl LocalStateStore {
     /// Either way the pending root entry is cleared and `did` becomes active.
     /// The pending local store is promoted into a typed `UserLocalStore` before
     /// this is called. Returning users retain their existing device identity.
-    pub fn adopt_pending_login(&mut self, principal_id: &arkret_sdk::DidFullId) -> bool {
+    pub fn adopt_pending_login(&mut self, account: &crate::config::ActiveAccountContext) -> bool {
         self.ensure_cached_loaded();
-        let did = principal_id.as_str();
+        let full_id = account.resolution.full_id.as_str();
         let anonymous_onboarding = self.read_account_state(ANONYMOUS_ACCOUNT_NAMESPACE);
         let pending_registration = anonymous_onboarding
             .as_ref()
             .and_then(|state| state.pending_principal_registration.clone())
-            .filter(|registration| registration.full_id.as_str() == did);
+            .filter(|registration| registration.full_id.as_str() == full_id);
         let anonymous_account_handoff = anonymous_onboarding
             .as_ref()
             .and_then(|state| state.pending_account_handoff.clone());
@@ -485,14 +450,21 @@ impl LocalStateStore {
                 .as_ref()
                 .is_some_and(|registration| registration.handoff_request_id == handoff.request_id)
         });
-        let is_returning_account = self.read_root().known_dids.iter().any(|known| known == did)
-            || self.read_account_state(did).is_some();
+        let is_returning_account = self
+            .read_root()
+            .known_profiles
+            .iter()
+            .any(|known| known.authority == account.authority)
+            || account_storage_scope(&account.authority)
+                .ok()
+                .and_then(|scope| self.read_account_state(&scope))
+                .is_some();
         // Clear pending namespace pin before the seed-scope adopt re-homes it,
         // and clear the persisted `pending_login` (shared through storage, not a
         // per-clone field) so no stale clone resurrects it on a later flush.
         crate::secure_key_store::set_pending_login_device_id(None);
         self.mutate_root(|root| root.pending_login = None);
-        self.switch_active_account(did);
+        self.switch_active_account(&account.profile_id, &account.authority);
         if let Some(registration) = pending_registration {
             self.cached.pending_principal_registration = Some(registration);
             self.cached.pending_account_handoff = pending_account_handoff;
@@ -579,12 +551,10 @@ impl LocalStateStore {
         &mut self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) {
-        let account = self.active_account_did();
-        if let Some(account) = account.as_deref()
-            && let Ok(full_id) = arkret_sdk::DidFullId::new(account.to_owned())
-            && let Ok(core_id) = arkret_sdk::project_full_id_to_core_id(&full_id)
+        if let Some(scope) = crate::secure_key_store::active_device_seed_scope()
+            && let Ok(user_store) =
+                crate::secure_key_store::UserLocalStore::new(scope.authority, scope.device_id)
         {
-            let user_store = crate::secure_key_store::UserLocalStore::new(core_id);
             let _ = user_store.delete_secret(secure_store, Self::SECURE_DPOP_DEVICE_KEY);
             let _ = user_store.delete_secret(secure_store, Self::SECURE_IDENTITY_KEY);
             let _ = user_store.delete_device_identity(secure_store);

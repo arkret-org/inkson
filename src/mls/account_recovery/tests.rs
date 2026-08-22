@@ -34,6 +34,14 @@ const ACTIVE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-
 const STALE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000a2";
 const ACTIVE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b1";
 
+fn authority() -> arkret_sdk::PrincipalAuthorityKey {
+    let full_id = arkret_sdk::DidFullId::new(ACTOR).unwrap();
+    arkret_sdk::PrincipalAuthorityKey::new(
+        arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
+    )
+}
+
 fn backup_frontier_ref() -> arkret_sdk::KeyBackupFrontierRef {
     arkret_sdk::KeyBackupFrontierRef {
         frontier_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
@@ -574,7 +582,13 @@ fn backup_prompt_not_required_when_no_local_secret() {
     // backup either. Don't nag.
     let store = MemorySecureKeyStore::new();
     let payload = serde_json::json!({ "backups": [] });
-    assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
+    assert!(!mls_backup_prompt_required(
+        &payload,
+        &store,
+        &authority(),
+        ACTOR,
+        DEVICE
+    ));
 }
 
 #[test]
@@ -582,11 +596,17 @@ fn backup_prompt_required_when_local_secret_and_no_server_backup() {
     // User has used encryption (local secret present) but never backed it
     // up to the server -> prompt them to set a recovery passphrase.
     let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
+    crate::mls::runtime::store_account_mls_secret(&store, &authority(), ACCOUNT_SECRET).unwrap();
     let payload = serde_json::json!({
         "backups": [ { "backup_id": "ak:backup:a", "backup_kind": "mls_history" } ]
     });
-    assert!(mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
+    assert!(mls_backup_prompt_required(
+        &payload,
+        &store,
+        &authority(),
+        ACTOR,
+        DEVICE
+    ));
 }
 
 #[test]
@@ -594,9 +614,15 @@ fn backup_prompt_not_required_when_server_backup_present() {
     // Server already holds the passphrase-free recovery-public-key account-secret
     // backup: fresh-device recovery material exists, so nothing to upload.
     let store = MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&store, ACTOR, ACCOUNT_SECRET).unwrap();
+    crate::mls::runtime::store_account_mls_secret(&store, &authority(), ACCOUNT_SECRET).unwrap();
     let payload = payload_with_inferred_active_series(vec![recovery_hpke_backup()]);
-    assert!(!mls_backup_prompt_required(&payload, &store, ACTOR, DEVICE));
+    assert!(!mls_backup_prompt_required(
+        &payload,
+        &store,
+        &authority(),
+        ACTOR,
+        DEVICE
+    ));
 }
 
 #[test]

@@ -791,7 +791,7 @@ fn WriteStateBadge(state: CardState, icon_only: Option<bool>) -> Element {
 pub fn KanbanPanel(
     plaintext_service_id: String,
     token: Signal<String>,
-    account_did: String,
+    principal_id: String,
     account_primary_handle: Signal<String>,
     device_id: String,
     selected_realm_id: String,
@@ -806,8 +806,14 @@ pub fn KanbanPanel(
     event_write_ready: bool,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let session_context = crate::app::SessionContext::get();
+    let base_url = session_context.base_url.read().clone();
+    let state_store = session_context.state_store;
+    let Some(active_account) = session_context.active_account.read().clone() else {
+        return rsx! {};
+    };
+    let authority = active_account.authority;
+    let account_device_id = active_account.device_id;
     let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     // Demo seed fallback remains explicit; normal boards derive from events.
     let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
@@ -936,7 +942,7 @@ pub fn KanbanPanel(
     let columns = use_memo({
         let seed_realm_id = local_realm_id.clone();
         let decrypt_realm_id = selected_realm_id.clone();
-        let decrypt_actor = account_did.clone();
+        let decrypt_authority = authority.clone();
         let seed_columns = initial_columns.clone();
         move || {
             let board_id = selected_board()
@@ -945,7 +951,7 @@ pub fn KanbanPanel(
             let decrypt_store = state_store.read();
             let raw_operations = decrypt_store.load().raw_operations;
             let decrypt_ctx =
-                mls_decrypt_ctx_if_ready(&decrypt_store, &decrypt_realm_id, &decrypt_actor);
+                mls_decrypt_ctx_if_ready(&decrypt_store, &decrypt_realm_id, &decrypt_authority);
             if raw_operations.is_empty() && !seed_columns.is_empty() {
                 // Demo / seed-fallback columns: layer local optimistic ops on top.
                 let cols = overlay_local_card_create_records(
@@ -1006,7 +1012,7 @@ pub fn KanbanPanel(
     let synthesis_entries_memo = {
         let memo_realm_id = selected_realm_id.clone();
         let memo_projection_realm_id = projection_realm_id.clone();
-        let memo_account_did = account_did.clone();
+        let memo_authority = authority.clone();
         use_memo(move || {
             let want_synthesis = matches!(card_detail_tab(), CardDetailContentTab::Synthesis)
                 || (editing_card_detail() && card_edit_scope() == CardEditScope::Synthesis);
@@ -1030,7 +1036,7 @@ pub fn KanbanPanel(
                 realm_id: &realm_context,
                 member_rows: &member_rows,
             };
-            let decrypt_ctx = mls_decrypt_ctx_if_ready(&store, &memo_realm_id, &memo_account_did);
+            let decrypt_ctx = mls_decrypt_ctx_if_ready(&store, &memo_realm_id, &memo_authority);
             let _active_sidecar = hosted_sidecar_state().filter(|session| {
                 session.source_realm_id == memo_realm_id
                     && session.source_strand_id == card.primary_strand_id
@@ -1100,8 +1106,9 @@ pub fn KanbanPanel(
                 token,
                 selected_realm_id: selected_realm_id.clone(),
                 projection_realm_id: projection_realm_id.clone(),
-                account_did: account_did.clone(),
-                device_id: device_id.clone(),
+                principal_id: principal_id.clone(),
+                authority: authority.clone(),
+                device_id: account_device_id.clone(),
                 sync_cursor,
                 realm_live_epoch,
             }
@@ -1293,7 +1300,7 @@ pub fn KanbanPanel(
                                         // until `ak.self.events.command.submit` returns.
                                         let base = base_url.clone();
                                         let realm = selected_realm_id.clone();
-                                        let actor = account_did.clone();
+                                        let actor = principal_id.clone();
                                         move |_| {
                                             let title = new_column_title().trim().to_owned();
                                             if title.is_empty() {
@@ -1406,7 +1413,7 @@ pub fn KanbanPanel(
                                         onclick: {
                                             let base = base_url.clone();
                                             let realm = selected_realm_id.clone();
-                                            let actor = account_did.clone();
+                                            let actor = principal_id.clone();
                                             let create_route_realm_id = board_route_realm_id.clone();
                                             move |_| {
                                                 let title = new_board_title().trim().to_owned();
@@ -1601,7 +1608,7 @@ pub fn KanbanPanel(
                             let last_rank = active_cards.last().map(|c| c.rank.clone());
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
                             move |event| {
                                 event.prevent_default();
                                 drop_target_column.set(None);
@@ -1641,7 +1648,7 @@ pub fn KanbanPanel(
                                 let target_column_id = column_id.clone();
                                 let base = base_url.clone();
                                 let realm = selected_realm_id.clone();
-                                let actor = account_did.clone();
+                                let actor = principal_id.clone();
                                 move |event| {
                                     event.prevent_default();
                                     let dragged = dragging_column().or_else(|| {
@@ -1720,7 +1727,7 @@ pub fn KanbanPanel(
                                             let column_id = column_id.clone();
                                             let base = base_url.clone();
                                             let realm = selected_realm_id.clone();
-                                            let actor = account_did.clone();
+                                            let actor = principal_id.clone();
                                             move |event: KeyboardEvent| match event.key().to_string().as_str() {
                                                 "Enter" => {
                                                     event.prevent_default();
@@ -1748,7 +1755,7 @@ pub fn KanbanPanel(
                                             let column_id = column_id.clone();
                                             let base = base_url.clone();
                                             let realm = selected_realm_id.clone();
-                                            let actor = account_did.clone();
+                                            let actor = principal_id.clone();
                                             move |_| {
                                                 // Commit on blur so a click elsewhere keeps the edit;
                                                 // an empty draft is ignored by `submit_column_rename`.
@@ -1832,7 +1839,7 @@ pub fn KanbanPanel(
                                     };
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     move |event| {
                                         event.prevent_default();
                                         // Stop propagation so the column's
@@ -2020,7 +2027,7 @@ pub fn KanbanPanel(
                                                 onclick: {
                                                     let base = base_url.clone();
                                                     let realm = selected_realm_id.clone();
-                                                    let actor = account_did.clone();
+                                                    let actor = principal_id.clone();
                                                     let strand_id = card.id.clone();
                                                     move |evt: dioxus::events::MouseEvent| {
                                                         evt.stop_propagation();
@@ -2102,7 +2109,7 @@ pub fn KanbanPanel(
                                             let base = base_url.clone();
                                             let col_id = column.id.clone();
                                             let realm = selected_realm_id.clone();
-                                            let actor = account_did.clone();
+                                            let actor = principal_id.clone();
                                             move |_| {
                                                 let title = new_card_title().trim().to_owned();
                                                 if title.is_empty() {
@@ -2269,7 +2276,7 @@ pub fn KanbanPanel(
                                                     onclick: {
                                                         let base = base_url.clone();
                                                         let realm = selected_realm_id.clone();
-                                                        let actor = account_did.clone();
+                                                        let actor = principal_id.clone();
                                                         let space_container_id = column.id.clone();
                                                         move |_| {
                                                             dispatch_space_container_lifecycle(
@@ -2362,7 +2369,7 @@ pub fn KanbanPanel(
                                                     onclick: {
                                                         let base = base_url.clone();
                                                         let realm = selected_realm_id.clone();
-                                                        let actor = account_did.clone();
+                                                        let actor = principal_id.clone();
                                                         let strand_id = row.card.id.clone();
                                                         move |_| {
                                                             dispatch_strand_lifecycle(
@@ -2448,7 +2455,7 @@ pub fn KanbanPanel(
                                         // server Space->Strand cascade).
                                         let base = base_url.clone();
                                         let realm = selected_realm_id.clone();
-                                        let actor = account_did.clone();
+                                        let actor = principal_id.clone();
                                         move |_| {
                                             archive_board_confirm_open.set(false);
                                             dispatch_board_archive_cascade(
@@ -2510,7 +2517,7 @@ pub fn KanbanPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let realm = selected_realm_id.clone();
-                                        let actor = account_did.clone();
+                                        let actor = principal_id.clone();
                                         let space_container_id = confirm_list_id.clone();
                                         move |_| {
                                             list_archive_confirm.set(None);
@@ -2539,7 +2546,7 @@ pub fn KanbanPanel(
                 context: CardDetailContext {
                     base_url: base_url.clone(),
                     plaintext_service_id: plaintext_service_id.clone(),
-                    account_did: account_did.clone(),
+                    principal_id: principal_id.clone(),
                     account_primary_handle: account_primary_handle(),
                     device_id: device_id.clone(),
                     selected_realm_id: selected_realm_id.clone(),

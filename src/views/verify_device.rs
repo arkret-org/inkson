@@ -148,17 +148,15 @@ mod qr_tests {
 }
 
 #[component]
-pub fn VerifyDevicePanel(
-    token: Signal<String>,
-    device_id: String,
-    account_did: String,
-    selected_realm_id: String,
-) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    // `selected_realm_id` is kept on the prop list so the route binding in
-    // `app.rs` stays uniform with other panel signatures.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
+pub fn VerifyDevicePanel(token: Signal<String>, selected_realm_id: String) -> Element {
+    let session = crate::app::SessionContext::get();
+    let Some(account) = session.active_account() else {
+        return rsx! {};
+    };
+    let base_url = account.server_url.to_string();
+    let principal_id = account.principal_id().to_string();
+    let device_id = account.device_id.to_string();
+    let mut state_store = session.state_store;
     let _ = (&selected_realm_id,);
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);
@@ -479,7 +477,7 @@ pub fn VerifyDevicePanel(
                                     disabled: ephemeral_keypair().is_none() || target_device().trim().is_empty(),
                                     onclick: {
                                         let base = base_url.clone();
-                                        let account = account_did.clone();
+                                        let principal_id = principal_id.clone();
                                         let from_device_for_send = device_id.clone();
                                         let send_failed_signing_tpl = send_failed_signing_tpl.clone();
                                         let send_failed_sign_tpl = send_failed_sign_tpl.clone();
@@ -497,7 +495,7 @@ pub fn VerifyDevicePanel(
                                             }
                                             let public_b64 = pair.public_base64();
                                             let base = base.clone();
-                                            let account = account.clone();
+                                            let principal_id = principal_id.clone();
                                             let from_device = from_device_for_send.clone();
                                             let api_token = token();
                                             // `tr()` context is unavailable inside the
@@ -519,7 +517,7 @@ pub fn VerifyDevicePanel(
                                                     }
                                                 };
                                                 let proof = match crate::event_builders::build_signed_device_verification_proof(
-                                                    &account,
+                                                    &principal_id,
                                                     &from_device,
                                                     &target,
                                                     "sas_key",
@@ -564,7 +562,7 @@ pub fn VerifyDevicePanel(
                                                         >(
                                                             &http,
                                                             "inkson-sas-key",
-                                                            &account,
+                                                            &principal_id,
                                                             &target,
                                                             &crate::clock::timestamp_in(10),
                                                             signed_content,
@@ -710,7 +708,7 @@ pub fn VerifyDevicePanel(
                                             crate::i18n::tr("verify_device.sas_match_disabled_hint")
                                         },
                                         onclick: {
-                                            let actor = account_did.clone();
+                                            let actor = principal_id.clone();
                                             let from_device = device_id.clone();
                                             let target = target_device();
                                             let local_public = ephemeral_keypair()

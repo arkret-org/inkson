@@ -77,8 +77,8 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
         audience: "did:web:principal.example".to_owned(),
-        principal_id: actor.to_owned(),
-        device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+        authority: test_authority(actor),
+        device_id: test_device_id(),
         principal_server_url: "https://principal.example".to_owned(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
@@ -91,7 +91,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
 
     {
         let mut store = LocalStateStore::with_path(path.clone());
-        store.switch_active_account(actor);
+        store.switch_test_account(actor);
         store
             .save_mls_snapshot(
                 realm,
@@ -116,7 +116,9 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         assert!(store.private_plaintext_for(realm, strand, "body").is_none());
         assert!(store.mls_decrypted_plaintext_for(realm, digest).is_none());
 
-        let cache_key = crate::secure_key_store::e2ee_plaintext_cache_store_key(actor);
+        let cache_key =
+            crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor))
+                .unwrap();
         assert!(secure.get_secret(&cache_key).unwrap().is_some());
         store
             .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
@@ -134,7 +136,10 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     }
 
     let reader = LocalStateStore::with_path(path);
-    assert_eq!(reader.active_account_did().as_deref(), Some(actor));
+    assert_eq!(
+        reader.active_test_principal_id().as_deref(),
+        Some("ak:did_core:web:alice.example")
+    );
     assert!(reader.session_grant().is_none());
     assert!(reader.dpop_device_key().is_none());
     assert!(

@@ -326,14 +326,12 @@ pub fn classify_manifest_input(raw: &str) -> ManifestInputKind {
 }
 
 #[component]
-pub fn AppletsPanel(
-    token: Signal<String>,
-    account_did: Signal<String>,
-    selected_realm_id: String,
-) -> Element {
+pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element {
     // A4 — base_url / state_store from session context instead of props.
+    let session = crate::app::SessionContext::get();
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let state_store = session.state_store;
+    let active_account = session.active_account;
     // ─────────────────────────────────────────────────────────────
     // G3.Y4 — install / uninstall / accountability state
     // ─────────────────────────────────────────────────────────────
@@ -689,7 +687,11 @@ pub fn AppletsPanel(
                                         };
                                         let base = base.clone();
                                         let api_token = token();
-                                        let actor_id = account_did();
+                                        let Some(account) = active_account() else {
+                                            install_status.set("install failed: account is not connected".to_owned());
+                                            return;
+                                        };
+                                        let principal_id = account.authority.principal_id;
                                         let ghost_actor_mode = if install_ghost_actors_allowed() {
                                             AppletGhostActorMode::PolicyDeclared
                                         } else {
@@ -700,7 +702,10 @@ pub fn AppletsPanel(
                                             let idem = crate::operation::uuid_v7();
                                             let result = with_event_submitter(&base, api_token, |submitter| async move {
                                                 let (registration, grants) =
-                                                    build_formal_applet_install_events(&snapshot, &actor_id)?;
+                                                    build_formal_applet_install_events(
+                                                        &snapshot,
+                                                        principal_id.as_str(),
+                                                    )?;
                                                 let mut events = Vec::with_capacity(1 + grants.len());
                                                 events.push(registration.into_intent());
                                                 events.extend(
@@ -827,11 +832,11 @@ pub fn AppletsPanel(
                                                     let realm = realm.clone();
                                                     let aid = aid.clone();
                                                     let api_token = token();
-                                                    let actor_id = account_did().trim().to_owned();
-                                                    if actor_id.is_empty() {
+                                                    let Some(account) = active_account() else {
                                                         install_status.set("revoke failed: account is not connected".to_owned());
                                                         return;
-                                                    }
+                                                    };
+                                                    let principal_id = account.authority.principal_id;
                                                     install_status.set("revoking applet…".to_owned());
                                                     spawn(async move {
                                                         // Revoke targets the Realm-wide install; a
@@ -865,7 +870,7 @@ pub fn AppletsPanel(
                                                                 revoke_events.push(
                                                                     crate::operation::ak_ops::capability_revoke(
                                                                         &realm,
-                                                                        &actor_id,
+                                                                        principal_id.as_str(),
                                                                         intent.grant_id.as_str(),
                                                                         Some(intent.reason_code.as_str()),
                                                                     )?

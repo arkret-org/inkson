@@ -36,9 +36,9 @@ struct PendingAgentRuntimeApproval {
 }
 
 #[component]
-pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<String>) -> Element {
-    // A4 — base_url from session context instead of a prop.
-    let base_url = crate::app::SessionContext::get().base_url;
+pub fn AgentRuntimeApprovalPrompt(token: Signal<String>) -> Element {
+    let session_context = crate::app::SessionContext::get();
+    let active_account = session_context.active_account;
     let mut pending = use_signal(|| None::<PendingAgentRuntimeApproval>);
     let mut handled = use_signal(HashSet::<OpaqueLocalId>::new);
     let mut status = use_signal(String::new);
@@ -77,13 +77,16 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
             else {
                 return;
             };
-            let base = base_url();
+            let Some(account) = active_account() else {
+                return;
+            };
+            let server_url = account.server_url.to_string();
             let api_token = token();
             if api_token.trim().is_empty() {
                 return;
             }
             spawn(async move {
-                match fetch_agent_runtime_approval(&base, api_token, notification).await {
+                match fetch_agent_runtime_approval(&server_url, api_token, notification).await {
                     Ok(Some(request)) => {
                         status.set(String::new());
                         pending.set(Some(request));
@@ -125,10 +128,14 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                     continue;
                 }
 
-                let base = base_url();
+                let Some(account) = active_account() else {
+                    crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
+                    continue;
+                };
+                let server_url = account.server_url.to_string();
                 let handled_keys = handled.read().clone();
                 let failed = match fetch_pending_agent_runtime_approval(
-                    &base,
+                    &server_url,
                     api_token,
                     handled_keys,
                 )
@@ -157,7 +164,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
         });
     }
 
-    if token().trim().is_empty() {
+    if active_account().is_none() || token().trim().is_empty() {
         return rsx! {};
     }
 
@@ -257,13 +264,17 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                         onclick: {
                             let reject_agent_id = request.agent_id.clone();
                             move |_| {
-                                let base = base_url();
+                                let Some(account) = active_account() else {
+                                    status.set(crate::i18n::tr("agent_runtime.err_no_account"));
+                                    return;
+                                };
+                                let server_url = account.server_url.to_string();
                                 let api_token = token();
                                 let agent_id = reject_agent_id.clone();
                                 approving.set(true);
                                 status.set(crate::i18n::tr("agent_runtime.rejecting"));
                                 spawn(async move {
-                                    let result = with_authed_sdk_client(&base, api_token, move |http| {
+                                    let result = with_authed_sdk_client(&server_url, api_token, move |http| {
                                         let agent_id = agent_id.clone();
                                         async move {
                                             http.agent_renew_pairing(
@@ -311,11 +322,12 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                             if approving() {
                                 return;
                             }
-                            let controller = account_did();
-                            if controller.trim().is_empty() {
+                            let Some(account) = active_account() else {
                                 status.set(crate::i18n::tr("agent_runtime.err_no_account"));
                                 return;
-                            }
+                            };
+                            let server_url = account.server_url.to_string();
+                            let controller = account.full_id().to_string();
                             let body = match parse_runtime_key_approval_request(
                                 &approve_request.request_json,
                             ) {
@@ -334,7 +346,6 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                                 ));
                                 return;
                             }
-                            let base = base_url();
                             let api_token = token();
                             let request_key = approve_request.request_key.clone();
                             let key_state = approve_request.key_state.clone();
@@ -342,7 +353,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, account_did: Signal<Str
                             status.set(crate::i18n::tr("agent_runtime.approving"));
                             approving.set(true);
                             spawn(async move {
-                                let result = with_authed_api(&base, api_token, move |api| {
+                                let result = with_authed_api(&server_url, api_token, move |api| {
                                     let body = body.clone();
                                     let key_state = key_state.clone();
                                     let controller = controller.clone();

@@ -10,7 +10,6 @@ use crate::state::LocalStateStore;
 #[component]
 pub fn EncryptionFloorPrompt(
     token: Signal<String>,
-    account_did: Signal<String>,
     sync_bootstrap_complete: Signal<bool>,
     device_authorization_check_complete: Signal<bool>,
     needs_device_authorization: Signal<bool>,
@@ -26,21 +25,24 @@ pub fn EncryptionFloorPrompt(
     /// `active_prompt` churns during sync.
     mut dismissed: Signal<bool>,
 ) -> Element {
-    // A4 — state_store from session context instead of a prop.
-    let state_store = crate::app::SessionContext::get().state_store;
+    let session_context = crate::app::SessionContext::get();
+    let active_account = session_context.active_account;
+    let state_store = session_context.state_store;
     use_effect(move || {
         let session = token();
-        let actor = account_did();
+        let Some(account) = active_account() else {
+            return;
+        };
+        let principal_id = account.principal_id().to_string();
         if dismissed()
             || !sync_bootstrap_complete()
             || !device_authorization_check_complete()
             || session.trim().is_empty()
-            || actor.trim().is_empty()
             || needs_device_authorization()
             || needs_mls_unlock()
             || needs_mls_backup()
             || recovery_key_setup_prompt()
-            || !account_needs_recommended_encryption_prompt(&state_store.read(), &actor)
+            || !account_needs_recommended_encryption_prompt(&state_store.read(), &principal_id)
         {
             return;
         }
@@ -50,11 +52,11 @@ pub fn EncryptionFloorPrompt(
         // state as not configured so the auto-apply path never assumes a
         // Recovery Key exists before the account recovery probe has completed.
         let local_recovery_configured =
-            crate::views::recovery::recovery_options_configured(&state_store.read(), &actor);
+            crate::views::recovery::recovery_options_configured(&state_store.read(), &principal_id);
         let recovery_key_configured =
             matches!(account_recovery_configured(), Some(true)) || local_recovery_configured;
 
-        acknowledge_recommended_encryption(dismissed, account_did, state_store);
+        acknowledge_recommended_encryption(dismissed, &account, state_store);
         if !recovery_key_configured {
             recovery_key_setup_prompt.set(true);
         }
@@ -71,35 +73,32 @@ pub fn EncryptionFloorPrompt(
 /// once-per-account suppression.
 fn acknowledge_recommended_encryption(
     mut dismissed: Signal<bool>,
-    account_did: Signal<String>,
+    account: &crate::config::ActiveAccountContext,
     mut state_store: SyncSignal<LocalStateStore>,
 ) {
     dismissed.set(true);
-    let actor = account_did();
-    if !actor.trim().is_empty() {
-        state_store.write().save_private_data(
-            &actor,
-            crate::app::ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY,
-            "1".to_owned(),
-        );
-    }
+    state_store.write().save_private_data(
+        account.principal_id().as_str(),
+        crate::app::ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY,
+        "1".to_owned(),
+    );
 }
 
 pub(crate) fn account_needs_recommended_encryption_prompt(
     state_store: &LocalStateStore,
-    account_did: &str,
+    principal_id: &str,
 ) -> bool {
     account_needs_recommended_encryption_prompt_for_projections(
-        account_did,
+        principal_id,
         &state_store.load().realm_tree_projections,
     )
 }
 
 pub(crate) fn account_needs_recommended_encryption_prompt_for_projections(
-    account_did: &str,
+    principal_id: &str,
     projections: &BTreeMap<String, Value>,
 ) -> bool {
-    let actor = account_did.trim();
+    let actor = principal_id.trim();
     if actor.is_empty() {
         return false;
     }

@@ -9,7 +9,7 @@ pub(super) fn AccountRecoveryEffects(
     mut account_recovery_detection_key_seen: Signal<Option<String>>,
     mut last_error: Signal<Option<String>>,
     token: Signal<String>,
-    account_did: Signal<String>,
+    principal_id: Signal<String>,
     device_id: Signal<String>,
     sync_generation: Signal<u64>,
     session_boot_state: Signal<SessionBootState>,
@@ -34,7 +34,7 @@ pub(super) fn AccountRecoveryEffects(
         }
         let base = base_url();
         let credential = token();
-        let actor = account_did();
+        let actor = principal_id();
         let generation = sync_generation();
         if !matches!(session_boot_state(), SessionBootState::Authenticated)
             || base.trim().is_empty()

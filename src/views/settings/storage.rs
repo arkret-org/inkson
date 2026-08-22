@@ -11,8 +11,9 @@ async fn retain_current_history_secrets_before_clear(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     scope: &E2eePlaintextCacheClearScope,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<usize> {
     let realms: Vec<String> = {
         let store = state_store.read();
@@ -39,6 +40,7 @@ async fn retain_current_history_secrets_before_clear(
                 &store,
                 secure_store,
                 &realm_id,
+                authority,
                 actor_id,
                 device_id,
             )
@@ -100,8 +102,15 @@ async fn refresh_browser_storage_quota(
 }
 
 #[component]
-pub(super) fn E2eeStorageManagement(account_did: String, device_id: String) -> Element {
-    let mut state_store = crate::app::SessionContext::get().state_store;
+pub(super) fn E2eeStorageManagement() -> Element {
+    let session = crate::app::SessionContext::get();
+    let mut state_store = session.state_store;
+    let Some(account) = session.active_account() else {
+        return rsx! {};
+    };
+    let authority = account.authority.clone();
+    let principal_id = account.principal_id().to_string();
+    let device_id = account.device_id.clone();
     let mut cache_usage = use_signal(|| state_store.read().e2ee_plaintext_cache_usage());
     let mut pending_clear = use_signal(|| None::<E2eePlaintextCacheClearScope>);
     let mut cache_status = use_signal(String::new);
@@ -269,7 +278,7 @@ pub(super) fn E2eeStorageManagement(account_did: String, device_id: String) -> E
                                     "data-testid": "e2ee-cache-clear-confirm",
                                     onclick: move |_| {
                                         let clear_scope = clear_scope_for_action.clone();
-                                        let actor_id = account_did.clone();
+                                        let actor_id = principal_id.clone();
                                         let active_device_id = device_id.clone();
                                         spawn(async move {
                                             let secure_store =
@@ -278,6 +287,7 @@ pub(super) fn E2eeStorageManagement(account_did: String, device_id: String) -> E
                                                 state_store,
                                                 secure_store.as_ref(),
                                                 &clear_scope,
+                                                &authority,
                                                 &actor_id,
                                                 &active_device_id,
                                             )

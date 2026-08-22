@@ -68,13 +68,13 @@ pub struct CreatedOrganization {
 /// version suffix per the storage-key convention.
 const CREATED_ORGANIZATIONS_KEY: &str = "organizations.created";
 
-/// Read the created-organizations index for `account_did` from local state.
+/// Read the created-organizations index for `principal_id` from local state.
 fn load_created_organizations(
     store: &crate::state::LocalStateStore,
-    account_did: &str,
+    principal_id: &str,
 ) -> Vec<CreatedOrganization> {
     store
-        .load_private_data(account_did, CREATED_ORGANIZATIONS_KEY)
+        .load_private_data(principal_id, CREATED_ORGANIZATIONS_KEY)
         .and_then(|raw| serde_json::from_str::<Vec<CreatedOrganization>>(&raw).ok())
         .unwrap_or_default()
 }
@@ -82,17 +82,17 @@ fn load_created_organizations(
 /// Append (or replace by DID) a created organization into the per-account index.
 fn upsert_created_organization(
     store: &mut crate::state::LocalStateStore,
-    account_did: &str,
+    principal_id: &str,
     entry: CreatedOrganization,
 ) {
-    let mut list = load_created_organizations(store, account_did);
+    let mut list = load_created_organizations(store, principal_id);
     if let Some(existing) = list.iter_mut().find(|item| item.did == entry.did) {
         *existing = entry;
     } else {
         list.push(entry);
     }
     if let Ok(serialized) = serde_json::to_string(&list) {
-        store.save_private_data(account_did, CREATED_ORGANIZATIONS_KEY, serialized);
+        store.save_private_data(principal_id, CREATED_ORGANIZATIONS_KEY, serialized);
     }
 }
 
@@ -279,10 +279,10 @@ fn dtos_from_list(list: &RealmOrganizationRelationshipList) -> Vec<OrgRelationsh
 pub fn RealmOrganizationPanel(
     token: Signal<String>,
     realm_id: String,
-    /// Authenticated account DID (the operator). Used to scope the locally
+    /// Authenticated principal id (the operator). Used to scope the locally
     /// stored organization control keys + created-organization index, and as the
     /// outer event `actor`.
-    account_did: String,
+    principal_id: String,
 ) -> Element {
     // A4 — base_url from session context instead of a prop. (state_store is read
     // from context directly by the Create/Bind sub-panels; this panel doesn't need it.)
@@ -392,12 +392,12 @@ pub fn RealmOrganizationPanel(
             if server_admin {
                 OrganizationCreatePanel {
                     token,
-                    account_did: account_did.clone(),
+                    principal_id: principal_id.clone(),
                 }
                 OrganizationBindPanel {
                     token,
                     realm_id: realm_id.clone(),
-                    account_did: account_did.clone(),
+                    principal_id: principal_id.clone(),
                 }
             } else {
                 div { class: "muted", "data-testid": "org-bind-readonly-note",
@@ -415,7 +415,7 @@ pub fn RealmOrganizationPanel(
 /// key locally, and display the minted DID. Server-administrator only (mounted
 /// only when `is_server_admin()` is true).
 #[component]
-fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Element {
+fn OrganizationCreatePanel(token: Signal<String>, principal_id: String) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
@@ -464,10 +464,10 @@ fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Elemen
                     disabled: busy(),
                     onclick: {
                         let base = base_url.clone();
-                        let account_did = account_did.clone();
+                        let principal_id = principal_id.clone();
                         move |_| {
                             let base = base.clone();
-                            let account_did = account_did.clone();
+                            let principal_id = principal_id.clone();
                             let api_token = token();
                             let local_id = handle().trim().to_owned();
                             let name = display_name().trim().to_owned();
@@ -529,7 +529,7 @@ fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Elemen
                                             let mut store = state_store.write();
                                             upsert_created_organization(
                                                 &mut store,
-                                                &account_did,
+                                                &principal_id,
                                                 CreatedOrganization {
                                                     did: organization.did.clone(),
                                                     did_key_id: organization.did_key_id.clone(),
@@ -584,13 +584,13 @@ fn OrganizationCreatePanel(token: Signal<String>, account_did: String) -> Elemen
 /// key; the resulting `ak.realm.organization` event is submitted on the
 /// operator's self plane. Server-administrator only.
 #[component]
-fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: String) -> Element {
+fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: String) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
     let created = use_memo({
-        let account_did = account_did.clone();
-        move || load_created_organizations(&state_store.read(), &account_did)
+        let principal_id = principal_id.clone();
+        move || load_created_organizations(&state_store.read(), &principal_id)
     });
 
     let mut selected_org = use_signal(String::new);
@@ -702,11 +702,11 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, account_did: S
                         onclick: {
                             let base = base_url.clone();
                             let realm_id = realm_id.clone();
-                            let account_did = account_did.clone();
+                            let principal_id = principal_id.clone();
                             move |_| {
                                 let base = base.clone();
                                 let realm_id = realm_id.clone();
-                                let actor = account_did.clone();
+                                let actor = principal_id.clone();
                                 let api_token = token();
                                 let org_did = selected_org().trim().to_owned();
                                 if org_did.is_empty() {

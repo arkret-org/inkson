@@ -49,10 +49,8 @@ pub(crate) enum RecoveryKeyBackupOutcome {
 }
 
 pub(crate) fn upload_recovery_key_account_backup(
-    base_url: String,
     token: Signal<String>,
-    account_did: Signal<String>,
-    device_id: Signal<String>,
+    account: crate::config::ActiveAccountContext,
     state_store: SyncSignal<LocalStateStore>,
     recovery_key: String,
     mut status: Signal<String>,
@@ -66,10 +64,12 @@ pub(crate) fn upload_recovery_key_account_backup(
     else {
         return;
     };
-    let base = base_url;
+    let base = account.server_url.to_string();
     let session = token();
-    let actor = account_did();
-    let device = device_id();
+    let actor = account.principal_id().to_string();
+    let actor_full_id = account.full_id().clone();
+    let authority = account.authority.clone();
+    let device = account.device_id.to_string();
     if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
         if let Some(handler) = on_outcome {
             handler.call(RecoveryKeyBackupOutcome::Transient);
@@ -98,6 +98,7 @@ pub(crate) fn upload_recovery_key_account_backup(
     spawn(async move {
         let _publication_guard = publication_guard;
         let actor_for_sidecar = actor.clone();
+        let authority_for_sidecar = authority.clone();
         let device_for_sidecar = device.clone();
         let base_for_sidecar = base.clone();
         let session_for_sidecar = session.clone();
@@ -106,7 +107,6 @@ pub(crate) fn upload_recovery_key_account_backup(
             let evidence = recovery_material_evidence.ok_or_else(|| {
                 anyhow::anyhow!("frozen PCR authority evidence is required for recovery setup")
             })?;
-            let actor_full_id = arkret_sdk::DidFullId::new(actor.clone())?;
             if evidence.principal_id != actor_full_id || evidence.device_id.as_str() != device {
                 anyhow::bail!("recovery authority evidence does not match the active session");
             }
@@ -126,13 +126,14 @@ pub(crate) fn upload_recovery_key_account_backup(
             )
             .await?;
             let secure = crate::secure_key_store::default_secure_key_store("inkson");
-            crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &actor)
+            crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &authority)
                 .map_err(|err| anyhow::anyhow!("load account MLS secret before backup: {err}"))?
                 .ok_or_else(|| anyhow::anyhow!("account MLS secret recovery is required"))?;
             let account_backup_id = Some(
                 crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                     &api,
                     secure.as_ref(),
+                    &authority,
                     &actor,
                     &device,
                     &recovery_secret,
@@ -176,6 +177,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                             crate::mls::account_recovery::upload_mls_private_plaintext_backup(
                                 &api,
                                 secure.as_ref(),
+                                &authority_for_sidecar,
                                 &actor,
                                 &device,
                                 &sidecar_json,

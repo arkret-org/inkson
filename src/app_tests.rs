@@ -1,5 +1,32 @@
 use super::*;
 
+fn test_active_account(
+    principal_full_id: &str,
+    server_url: &str,
+    device_id: &str,
+) -> crate::config::ActiveAccountContext {
+    let full_id = arkret_sdk::DidFullId::new(principal_full_id.to_owned()).unwrap();
+    let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+        arkret_sdk::DidCoreId::new("did:web:principal-server.example".to_owned()).unwrap(),
+    );
+    let resolution = arkret_sdk::PrincipalResolutionProjection {
+        full_id,
+        method_history_head: "head-test".to_owned(),
+        version_id: "version-test".to_owned(),
+        resolution_event_ref: "event-test".to_owned(),
+        updated_at: "2026-08-22T00:00:00Z".parse().unwrap(),
+    };
+    crate::config::ActiveAccountContext::new(
+        "ak:profile:test".to_owned(),
+        authority,
+        resolution,
+        arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap(),
+        url::Url::parse(server_url).unwrap(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
     let contacts: Vec<crate::models::ContactListRow> = serde_json::from_value(serde_json::json!([
@@ -43,9 +70,11 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
 fn unchanged_session_refresh_is_a_noop_for_reactive_and_persisted_state() {
     let grant = session_grant(3600);
     let config = ClientConfig::from_fields(
-        "https://example.test",
-        grant.principal_id.clone(),
-        grant.device_id.clone(),
+        Some(test_active_account(
+            grant.authority.principal_id.as_str(),
+            grant.principal_server_url.as_str(),
+            grant.device_id.as_str(),
+        )),
         grant.grant_jwt.clone(),
     );
 
@@ -180,14 +209,19 @@ fn unread_notification_count_ignores_read_and_archived_items() {
 
 fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
     let now = chrono::Utc::now();
+    let account = test_active_account(
+        "did:web:alice.example",
+        "https://local.host",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    );
     PersistedSessionGrant {
         grant_jwt: "grant.jwt".to_owned(),
         session_private_key_pem: "PEM".to_owned(),
         grant_id: "grant-1".to_owned(),
-        audience: "did:web:local.host".to_owned(),
-        principal_id: "did:web:alice.example".to_owned(),
-        device_id: "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
-        principal_server_url: "https://local.host".to_owned(),
+        audience: url::Url::parse("https://local.host").unwrap(),
+        authority: account.authority,
+        device_id: account.device_id,
+        principal_server_url: account.server_url,
         grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
         stored_at: now,
     }
@@ -196,8 +230,13 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
 #[test]
 fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
     let actor = "did:web:alice.example";
+    let account = test_active_account(
+        actor,
+        "https://local.host",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    );
     let mut store = crate::state::isolated_store_for_tests("account-scope-no-restore");
-    store.switch_active_account(actor);
+    store.switch_active_account(&account.profile_id, &account.authority);
 
     assert!(!has_bootstrap_refresh_material(
         &store,
@@ -528,9 +567,11 @@ use crate::state::isolated_store_for_tests as isolated_store;
 fn boot_session_credential_ignores_config_token_without_boot_material() {
     let state = ClientLocalState::default();
     let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ak:device:01964137-0000-7000-8000-000000000001",
+        Some(test_active_account(
+            "did:web:alice.example",
+            "https://local.host",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        )),
         "config-token",
     );
 
@@ -548,9 +589,11 @@ fn boot_session_credential_uses_fresh_session_grant() {
         ..Default::default()
     };
     let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ak:device:01964137-0000-7000-8000-000000000001",
+        Some(test_active_account(
+            "did:web:alice.example",
+            "https://local.host",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        )),
         "bridge-token",
     );
 
@@ -568,9 +611,11 @@ fn boot_session_credential_ignores_expired_session_grant() {
         ..Default::default()
     };
     let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ak:device:01964137-0000-7000-8000-000000000001",
+        Some(test_active_account(
+            "did:web:alice.example",
+            "https://local.host",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        )),
         "bridge-token",
     );
 
@@ -584,15 +629,17 @@ fn boot_session_credential_ignores_expired_session_grant() {
 fn boot_session_credential_ignores_session_grant_for_other_server() {
     let now = chrono::Utc::now().timestamp();
     let mut grant = session_grant(3600);
-    grant.principal_server_url = "https://other.local.host".to_owned();
+    grant.principal_server_url = url::Url::parse("https://other.local.host").unwrap();
     let state = ClientLocalState {
         session_grant: Some(grant),
         ..Default::default()
     };
     let config = ClientConfig::from_fields(
-        "https://local.host",
-        "did:web:alice.example",
-        "ak:device:01964137-0000-7000-8000-000000000001",
+        Some(test_active_account(
+            "did:web:alice.example",
+            "https://local.host",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        )),
         "bridge-token",
     );
 
@@ -620,7 +667,7 @@ fn bootstrap_can_start_with_session_grant_without_live_credential() {
 fn bootstrap_ignores_session_grant_for_other_server() {
     let mut store = isolated_store("bootstrap-other-server");
     let mut grant = session_grant(3600);
-    grant.principal_server_url = "https://other.local.host".to_owned();
+    grant.principal_server_url = url::Url::parse("https://other.local.host").unwrap();
     store.set_session_grant(Some(grant));
 
     assert!(!has_bootstrap_refresh_material(
@@ -648,72 +695,72 @@ fn boot_state_restores_when_refresh_material_exists_without_token() {
 
 #[test]
 fn boot_state_waits_for_secure_store_before_known_account_is_signed_out() {
+    let account = test_active_account(
+        "did:web:alice.example",
+        "https://local.host",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, "did:web:alice.example", false),
+        session_boot_state_from_bootstrap_material("", false, Some(&account), false),
         SessionBootState::Restoring
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, "", false),
+        session_boot_state_from_bootstrap_material("", false, None, false),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, "did:web:alice.example", true),
+        session_boot_state_from_bootstrap_material("", false, Some(&account), true),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material(
-            "sx-live",
-            false,
-            "did:web:alice.example",
-            false
-        ),
+        session_boot_state_from_bootstrap_material("sx-live", false, Some(&account), false),
         SessionBootState::Checking
     );
 }
 
 #[test]
 fn rehydrated_session_credential_only_matches_active_config() {
-    let config = ClientConfig::from_fields(
-        "https://local.host",
+    let account = test_active_account(
         "did:web:alice.example",
+        "https://local.host",
         "ak:device:01964137-0000-7000-8000-000000000001",
-        "sx-live",
     );
+    let config = ClientConfig::from_fields(Some(account.clone()), "sx-live");
 
     assert_eq!(
-        rehydrated_session_credential_for_active_config(
-            &config,
-            "https://local.host",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        )
-        .as_deref(),
+        rehydrated_session_credential_for_active_config(&config, &account).as_deref(),
         Some("sx-live")
     );
     assert!(
         rehydrated_session_credential_for_active_config(
             &config,
-            "https://other.local.host",
-            "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
+            &test_active_account(
+                "did:web:alice.example",
+                "https://other.local.host",
+                "ak:device:01964137-0000-7000-8000-000000000001",
+            )
         )
         .is_none()
     );
     assert!(
         rehydrated_session_credential_for_active_config(
             &config,
-            "https://local.host",
-            "did:web:bob.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
+            &test_active_account(
+                "did:web:bob.example",
+                "https://local.host",
+                "ak:device:01964137-0000-7000-8000-000000000001",
+            )
         )
         .is_none()
     );
     assert!(
         rehydrated_session_credential_for_active_config(
             &config,
-            "https://local.host",
-            "",
-            "ak:device:01964137-0000-7000-8000-000000000099",
+            &test_active_account(
+                "did:web:alice.example",
+                "https://local.host",
+                "ak:device:01964137-0000-7000-8000-000000000099",
+            )
         )
         .is_none()
     );
@@ -737,12 +784,17 @@ fn auth_surface_hides_login_while_session_is_restoring() {
 
 #[test]
 fn session_boot_state_leaves_restoring_when_secure_store_is_ready_without_material() {
+    let account = test_active_account(
+        "did:web:alice.example",
+        "https://local.host",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, "did:web:alice.example", false,),
+        session_boot_state_from_bootstrap_material("", false, Some(&account), false,),
         SessionBootState::Restoring
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, "did:web:alice.example", true),
+        session_boot_state_from_bootstrap_material("", false, Some(&account), true),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
@@ -850,20 +902,46 @@ fn kanban_board_task_route_uses_realm_context_for_mls_bootstrap() {
     );
 }
 
+fn bootstrap_account_coordinates() -> (
+    url::Url,
+    arkret_sdk::PrincipalAuthorityKey,
+    arkret_sdk::DeviceId,
+) {
+    let full_id = arkret_sdk::DidFullId::new("did:web:inkson.example".to_owned()).unwrap();
+    let principal_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+    (
+        url::Url::parse("http://localhost:8080").unwrap(),
+        arkret_sdk::PrincipalAuthorityKey::new(
+            principal_id,
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal-server.example".to_owned())
+                .unwrap(),
+        ),
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
+            .unwrap(),
+    )
+}
+
 #[test]
 fn board_first_mls_bootstrap_key_never_prompts_for_passphrase() {
     let route = Route::KanbanBoard {
         realm_id: "ak:realm:AUf2ZqXlKTr5IIncoCa4UlpeBVoaSUsvUwd8LUD9kCtw".to_owned(),
         board_id: "ak:space:AesqLH8RhGikjlM4RLUj-JoBx4kk_5wjP_27TFgpETVa".to_owned(),
     };
-    let realm_id = route.realm_id().expect("board route carries a realm id");
+    let realm_id = arkret_sdk::RealmId::new(
+        route
+            .realm_id()
+            .expect("board route carries a realm id")
+            .to_owned(),
+    )
+    .unwrap();
+    let (server_url, authority, device_id) = bootstrap_account_coordinates();
 
     let key = mls_welcome_bootstrap_key(
-        "http://localhost:8080",
+        &server_url,
         "secret-session-token",
-        "did:web:inkson.example",
-        "ak:device:01964137-0000-7000-8000-000000000001",
-        realm_id,
+        &authority,
+        &device_id,
+        &realm_id,
         true,
         true,
     )
@@ -1007,47 +1085,55 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_stor
 
 #[test]
 fn mls_welcome_bootstrap_key_waits_for_e2ee_profile_and_sync() {
-    let base = "https://local.host/";
+    let (mut base, authority, device) = bootstrap_account_coordinates();
+    base.set_scheme("https").unwrap();
+    base.set_host(Some("local.host")).unwrap();
+    base.set_port(None).unwrap();
     let session = "session-token";
-    let actor = "did:web:inkson.example";
-    let device = "ak:device:01964137-0000-7000-8000-000000000001";
-    let realm = "ak:realm:AUf2ZqXlKTr5IIncoCa4UlpeBVoaSUsvUwd8LUD9kCtw";
+    let realm = arkret_sdk::RealmId::new(
+        "ak:realm:AUf2ZqXlKTr5IIncoCa4UlpeBVoaSUsvUwd8LUD9kCtw".to_owned(),
+    )
+    .unwrap();
 
     assert_eq!(
-        mls_welcome_bootstrap_key(base, session, actor, device, realm, false, true),
+        mls_welcome_bootstrap_key(&base, session, &authority, &device, &realm, false, true),
         None
     );
     assert_eq!(
-        mls_welcome_bootstrap_key(base, session, actor, device, realm, true, false),
+        mls_welcome_bootstrap_key(&base, session, &authority, &device, &realm, true, false),
         None
     );
     assert_eq!(
-        mls_welcome_bootstrap_key(base, "", actor, device, realm, true, true),
+        mls_welcome_bootstrap_key(&base, "", &authority, &device, &realm, true, true),
         None
     );
-    assert!(mls_welcome_bootstrap_key(base, session, actor, device, realm, true, true).is_some());
+    assert!(
+        mls_welcome_bootstrap_key(&base, session, &authority, &device, &realm, true, true)
+            .is_some()
+    );
 }
 
 #[test]
 fn mls_key_package_publish_key_waits_for_e2ee_profile_and_sync() {
-    let base = "https://local.host/";
+    let (mut base, authority, device) = bootstrap_account_coordinates();
+    base.set_scheme("https").unwrap();
+    base.set_host(Some("local.host")).unwrap();
+    base.set_port(None).unwrap();
     let session = "session-token";
-    let actor = "did:web:inkson.example";
-    let device = "ak:device:01964137-0000-7000-8000-000000000001";
 
     assert_eq!(
-        mls_key_package_publish_key(base, session, actor, device, false, true),
+        mls_key_package_publish_key(&base, session, &authority, &device, false, true),
         None
     );
     assert_eq!(
-        mls_key_package_publish_key(base, session, actor, device, true, false),
+        mls_key_package_publish_key(&base, session, &authority, &device, true, false),
         None
     );
     assert_eq!(
-        mls_key_package_publish_key(base, "", actor, device, true, true),
+        mls_key_package_publish_key(&base, "", &authority, &device, true, true),
         None
     );
-    let key = mls_key_package_publish_key(base, session, actor, device, true, true)
+    let key = mls_key_package_publish_key(&base, session, &authority, &device, true, true)
         .expect("ready session should publish an MLS KeyPackage");
     assert!(!key.contains(session));
 }

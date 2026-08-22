@@ -317,9 +317,14 @@ mod tests {
     // its own scope instead of depending on whatever a neighbouring test
     // happens to leave behind.
     fn activate_test_scope() -> crate::secure_key_store::DeviceSeedScopeTestGuard {
-        crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some(
-            "ak:did_core:web:alice.example",
-        ))
+        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        );
+        let device_id =
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000042".to_owned())
+                .unwrap();
+        crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)))
     }
 
     #[tokio::test]

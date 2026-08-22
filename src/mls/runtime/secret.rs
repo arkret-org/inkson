@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -25,7 +26,7 @@ const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publ
 // Canonical server-visible KeyPackage reference paired with the local publish
 // marker. It is local durable routing state, not a governance authorization.
 const MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX: &str = "inkson.mls_key_package.publish_ref.v1";
-/// Per-(actor, device) X25519 keypair used to open HPKE-sealed history-key
+/// Per-(account authority, device) X25519 keypair used to open HPKE-sealed history-key
 /// recovery records addressed to this device.
 ///
 /// The receiver should eventually advertise (and open with)
@@ -61,43 +62,38 @@ pub struct AccountMlsSecretRotation {
 }
 
 /// Account-scoped storage key for a specific MLS snapshot-secret version.
-pub fn account_mls_secret_key_for_version(actor_id: &str, version: u32) -> String {
-    format!(
-        "{ACCOUNT_MLS_SECRET_PREFIX}.v{}.{}",
-        version,
-        actor_id.trim()
-    )
+pub fn account_mls_secret_key_for_version(
+    authority: &PrincipalAuthorityKey,
+    version: u32,
+) -> Result<String, SecureKeyStoreError> {
+    let authority_digest = crate::secure_key_store::principal_authority_storage_digest(authority)?;
+    Ok(format!(
+        "{ACCOUNT_MLS_SECRET_PREFIX}.v{version}.{authority_digest}"
+    ))
 }
 
 /// Default write key for the account-scoped MLS snapshot secret shared by every
 /// device of the account. Recoverable via the user's recovery passphrase.
-pub fn account_mls_secret_key(actor_id: &str) -> String {
-    account_mls_secret_key_for_version(actor_id, ACCOUNT_MLS_SECRET_CURRENT_VERSION)
+pub fn account_mls_secret_key(
+    authority: &PrincipalAuthorityKey,
+) -> Result<String, SecureKeyStoreError> {
+    account_mls_secret_key_for_version(authority, ACCOUNT_MLS_SECRET_CURRENT_VERSION)
 }
 
-fn validate_account_secret_inputs<'a>(
-    actor_id: &'a str,
-    secret: &str,
-) -> Result<&'a str, SecureKeyStoreError> {
-    let actor = actor_id.trim();
-    if actor.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for MLS snapshot secret".to_owned(),
-        ));
-    }
+fn validate_account_secret(secret: &str) -> Result<(), SecureKeyStoreError> {
     if secret.trim().is_empty() {
         return Err(SecureKeyStoreError::Backend(
             "account MLS secret must not be empty".to_owned(),
         ));
     }
-    Ok(actor)
+    Ok(())
 }
 
 /// Store (or overwrite) a specific version of the account-scoped MLS snapshot
 /// secret.
 pub fn store_account_mls_secret_version(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
     version: u32,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
@@ -106,8 +102,11 @@ pub fn store_account_mls_secret_version(
             "account MLS secret version {version} is outside the supported scan range"
         )));
     }
-    let actor = validate_account_secret_inputs(actor_id, secret)?;
-    store.store_secret(&account_mls_secret_key_for_version(actor, version), secret)
+    validate_account_secret(secret)?;
+    store.store_secret(
+        &account_mls_secret_key_for_version(authority, version)?,
+        secret,
+    )
 }
 
 /// Replace all locally-known account MLS secret versions with one recovered
@@ -119,7 +118,7 @@ pub fn store_account_mls_secret_version(
 /// recovered backup ineffective.
 pub fn replace_account_mls_secret_version(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
     version: u32,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
@@ -128,11 +127,17 @@ pub fn replace_account_mls_secret_version(
             "account MLS secret version {version} is outside the supported scan range"
         )));
     }
-    let actor = validate_account_secret_inputs(actor_id, secret)?;
-    store.store_secret(&account_mls_secret_key_for_version(actor, version), secret)?;
+    validate_account_secret(secret)?;
+    store.store_secret(
+        &account_mls_secret_key_for_version(authority, version)?,
+        secret,
+    )?;
     for existing_version in 1..=ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION {
         if existing_version != version {
-            store.delete_secret(&account_mls_secret_key_for_version(actor, existing_version))?;
+            store.delete_secret(&account_mls_secret_key_for_version(
+                authority,
+                existing_version,
+            )?)?;
         }
     }
     Ok(())
@@ -142,25 +147,19 @@ pub fn replace_account_mls_secret_version(
 /// Used by the recovery import path after unwrapping the recovery vault.
 pub fn store_account_mls_secret(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
-    store_account_mls_secret_version(store, actor_id, ACCOUNT_MLS_SECRET_CURRENT_VERSION, secret)
+    store_account_mls_secret_version(store, authority, ACCOUNT_MLS_SECRET_CURRENT_VERSION, secret)
 }
 
 /// Load the highest local account-secret version currently present.
 pub fn load_account_mls_secret(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
 ) -> Result<Option<StoredAccountMlsSecret>, SecureKeyStoreError> {
-    let actor = actor_id.trim();
-    if actor.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for MLS snapshot secret".to_owned(),
-        ));
-    }
     for version in (1..=ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION).rev() {
-        let key = account_mls_secret_key_for_version(actor, version);
+        let key = account_mls_secret_key_for_version(authority, version)?;
         if let Some(secret) = store.get_secret(&key)?
             && !secret.trim().is_empty()
         {
@@ -170,40 +169,32 @@ pub fn load_account_mls_secret(
     Ok(None)
 }
 
-fn account_mls_secret_verified_key(actor_id: &str) -> String {
-    format!(
-        "{ACCOUNT_MLS_SECRET_PREFIX}.{ACCOUNT_MLS_SECRET_VERIFIED_MARKER}.v1.{}",
-        actor_id.trim()
-    )
+fn account_mls_secret_verified_key(
+    authority: &PrincipalAuthorityKey,
+) -> Result<String, SecureKeyStoreError> {
+    let authority_digest = crate::secure_key_store::principal_authority_storage_digest(authority)?;
+    Ok(format!(
+        "{ACCOUNT_MLS_SECRET_PREFIX}.{ACCOUNT_MLS_SECRET_VERIFIED_MARKER}.v1.{authority_digest}"
+    ))
 }
 
 /// Mark the active account secret as proven to belong to the server recovery
 /// chain. Only a successful backup upload or recovery import may set this.
 pub fn mark_account_mls_secret_verified(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
 ) -> Result<(), SecureKeyStoreError> {
-    let actor_id = actor_id.trim();
-    if actor_id.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for account-secret verification".to_owned(),
-        ));
-    }
-    store.store_secret(&account_mls_secret_verified_key(actor_id), "verified")
+    store.store_secret(&account_mls_secret_verified_key(authority)?, "verified")
 }
 
 /// Whether this device has proved that its local account secret belongs to
 /// the server recovery chain. A freshly generated bootstrap secret is false.
 pub fn account_mls_secret_verified(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
 ) -> Result<bool, SecureKeyStoreError> {
-    let actor_id = actor_id.trim();
-    if actor_id.is_empty() {
-        return Ok(false);
-    }
     Ok(store
-        .get_secret(&account_mls_secret_verified_key(actor_id))?
+        .get_secret(&account_mls_secret_verified_key(authority)?)?
         .as_deref()
         == Some("verified"))
 }
@@ -223,19 +214,13 @@ fn generate_account_mls_secret() -> Result<String, SecureKeyStoreError> {
 ///      current account key, and returned.
 pub fn load_or_create_account_mls_secret(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
 ) -> Result<String, SecureKeyStoreError> {
-    let actor = actor_id.trim();
-    if actor.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for MLS snapshot secret".to_owned(),
-        ));
-    }
-    if let Some(existing) = load_account_mls_secret(store, actor)? {
+    if let Some(existing) = load_account_mls_secret(store, authority)? {
         return Ok(existing.secret);
     }
     let secret = generate_account_mls_secret()?;
-    store_account_mls_secret(store, actor, &secret)?;
+    store_account_mls_secret(store, authority, &secret)?;
     Ok(secret)
 }
 
@@ -253,20 +238,14 @@ pub fn load_or_create_account_mls_secret(
 /// is durably stored first.
 pub async fn ensure_account_mls_secret_durable(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
 ) -> Result<String, SecureKeyStoreError> {
-    let actor = actor_id.trim();
-    if actor.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for MLS snapshot secret".to_owned(),
-        ));
-    }
-    if let Some(existing) = load_account_mls_secret(store, actor)? {
+    if let Some(existing) = load_account_mls_secret(store, authority)? {
         // Re-commit the already-visible value: if the creation-time background
         // write was lost to an unload, this is the retry that lands it.
         store
             .store_secret_durable(
-                &account_mls_secret_key_for_version(actor, existing.version),
+                &account_mls_secret_key_for_version(authority, existing.version)?,
                 &existing.secret,
             )
             .await?;
@@ -274,11 +253,11 @@ pub async fn ensure_account_mls_secret_durable(
     }
     let secret = generate_account_mls_secret()?;
     store
-        .store_secret_durable(&account_mls_secret_key(actor), &secret)
+        .store_secret_durable(&account_mls_secret_key(authority)?, &secret)
         .await?;
     // Concurrent first-creation is last-write-wins on the store; re-read so
     // every caller converges on the value that actually landed.
-    if let Some(landed) = load_account_mls_secret(store, actor)? {
+    if let Some(landed) = load_account_mls_secret(store, authority)? {
         return Ok(landed.secret);
     }
     Ok(secret)
@@ -291,18 +270,13 @@ pub async fn ensure_account_mls_secret_durable(
 /// root that cannot open the account's existing snapshots or backups.
 pub async fn ensure_existing_account_mls_secret_durable(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
 ) -> Result<String, SecureKeyStoreError> {
-    let actor = actor_id.trim();
-    if actor.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for MLS snapshot secret".to_owned(),
-        ));
-    }
-    let existing = load_account_mls_secret(store, actor)?.ok_or(SecureKeyStoreError::NotFound)?;
+    let existing =
+        load_account_mls_secret(store, authority)?.ok_or(SecureKeyStoreError::NotFound)?;
     store
         .store_secret_durable(
-            &account_mls_secret_key_for_version(actor, existing.version),
+            &account_mls_secret_key_for_version(authority, existing.version)?,
             &existing.secret,
         )
         .await?;
@@ -310,37 +284,27 @@ pub async fn ensure_existing_account_mls_secret_durable(
 }
 
 pub fn mls_key_package_identity_state_key(
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     key_package_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
-    let actor = actor_id.trim();
-    let device = device_id.trim();
     let key_package = key_package_id.trim();
-    if actor.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for MLS KeyPackage identity state".to_owned(),
-        ));
-    }
-    if device.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "device_id is required for MLS KeyPackage identity state".to_owned(),
-        ));
-    }
     if key_package.is_empty() {
         return Err(SecureKeyStoreError::Backend(
             "key_package_id is required for MLS KeyPackage identity state".to_owned(),
         ));
     }
+    let scope = account_device_storage_suffix(authority, device_id)?;
+    let key_package = secure_key_component(key_package, "key_package_id")?;
     Ok(format!(
-        "{MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX}.{actor}.{device}.{key_package}"
+        "{MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX}.{scope}.{key_package}"
     ))
 }
 
 pub fn store_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     key_package_id: &str,
     serialized_state: &[u8],
 ) -> Result<(), SecureKeyStoreError> {
@@ -349,7 +313,7 @@ pub fn store_mls_key_package_identity_state(
             "MLS KeyPackage identity state must not be empty".to_owned(),
         ));
     }
-    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    let key = mls_key_package_identity_state_key(authority, device_id, key_package_id)?;
     let encoded = URL_SAFE_NO_PAD.encode(serialized_state);
     store.store_secret(&key, &encoded)
 }
@@ -357,8 +321,8 @@ pub fn store_mls_key_package_identity_state(
 /// Durable variant of [`store_mls_key_package_identity_state`].
 pub async fn store_mls_key_package_identity_state_durable(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     key_package_id: &str,
     serialized_state: &[u8],
 ) -> Result<(), SecureKeyStoreError> {
@@ -367,7 +331,7 @@ pub async fn store_mls_key_package_identity_state_durable(
             "MLS KeyPackage identity state must not be empty".to_owned(),
         ));
     }
-    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    let key = mls_key_package_identity_state_key(authority, device_id, key_package_id)?;
     store
         .store_secret_durable(&key, &URL_SAFE_NO_PAD.encode(serialized_state))
         .await
@@ -375,11 +339,11 @@ pub async fn store_mls_key_package_identity_state_durable(
 
 pub fn load_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     key_package_id: &str,
 ) -> Result<Option<Vec<u8>>, SecureKeyStoreError> {
-    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    let key = mls_key_package_identity_state_key(authority, device_id, key_package_id)?;
     let secret = store.get_secret(&key)?;
     let Some(secret) = secret else {
         return Ok(None);
@@ -398,11 +362,11 @@ pub fn load_mls_key_package_identity_state(
 
 pub fn delete_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     key_package_id: &str,
 ) -> Result<(), SecureKeyStoreError> {
-    let key = mls_key_package_identity_state_key(actor_id, device_id, key_package_id)?;
+    let key = mls_key_package_identity_state_key(authority, device_id, key_package_id)?;
     store.delete_secret(&key)
 }
 
@@ -416,24 +380,27 @@ fn secure_key_component(value: &str, label: &str) -> Result<String, SecureKeySto
     Ok(URL_SAFE_NO_PAD.encode(trimmed.as_bytes()))
 }
 
-pub fn mls_key_package_publish_marker_key(
-    server_scope: &str,
-    actor_id: &str,
-    device_id: &str,
+fn account_device_storage_suffix(
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
-    let server = secure_key_component(server_scope, "server_scope")?;
-    let actor = secure_key_component(actor_id, "actor_id")?;
-    let device = secure_key_component(device_id, "device_id")?;
-    Ok(format!(
-        "{MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX}.{server}.{actor}.{device}"
-    ))
+    let authority = crate::secure_key_store::principal_authority_storage_digest(authority)?;
+    let device = crate::secure_key_store::device_storage_digest(device_id);
+    Ok(format!("{authority}.{device}"))
+}
+
+pub fn mls_key_package_publish_marker_key(
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+) -> Result<String, SecureKeyStoreError> {
+    let scope = account_device_storage_suffix(authority, device_id)?;
+    Ok(format!("{MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX}.{scope}"))
 }
 
 pub fn store_mls_key_package_publish_marker(
     store: &dyn SecureKeyStore,
-    server_scope: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     key_package_id: &str,
 ) -> Result<(), SecureKeyStoreError> {
     let key_package = key_package_id.trim();
@@ -442,17 +409,16 @@ pub fn store_mls_key_package_publish_marker(
             "key_package_id is required for MLS KeyPackage publish marker".to_owned(),
         ));
     }
-    let key = mls_key_package_publish_marker_key(server_scope, actor_id, device_id)?;
+    let key = mls_key_package_publish_marker_key(authority, device_id)?;
     store.store_secret(&key, key_package)
 }
 
 pub fn load_mls_key_package_publish_marker(
     store: &dyn SecureKeyStore,
-    server_scope: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<Option<String>, SecureKeyStoreError> {
-    let key = mls_key_package_publish_marker_key(server_scope, actor_id, device_id)?;
+    let key = mls_key_package_publish_marker_key(authority, device_id)?;
     Ok(store
         .get_secret(&key)?
         .map(|value| value.trim().to_owned())
@@ -461,32 +427,25 @@ pub fn load_mls_key_package_publish_marker(
 
 pub fn delete_mls_key_package_publish_marker(
     store: &dyn SecureKeyStore,
-    server_scope: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<(), SecureKeyStoreError> {
-    let key = mls_key_package_publish_marker_key(server_scope, actor_id, device_id)?;
+    let key = mls_key_package_publish_marker_key(authority, device_id)?;
     store.delete_secret(&key)
 }
 
 pub fn mls_key_package_publish_ref_key(
-    server_scope: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
-    let server = secure_key_component(server_scope, "server_scope")?;
-    let actor = secure_key_component(actor_id, "actor_id")?;
-    let device = secure_key_component(device_id, "device_id")?;
-    Ok(format!(
-        "{MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX}.{server}.{actor}.{device}"
-    ))
+    let scope = account_device_storage_suffix(authority, device_id)?;
+    Ok(format!("{MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX}.{scope}"))
 }
 
 pub fn store_mls_key_package_publish_ref(
     store: &dyn SecureKeyStore,
-    server_scope: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
     key_package_ref: &str,
 ) -> Result<(), SecureKeyStoreError> {
     let key_package_ref = key_package_ref.trim();
@@ -495,17 +454,16 @@ pub fn store_mls_key_package_publish_ref(
             "key_package_ref is required for MLS KeyPackage publish ref".to_owned(),
         ));
     }
-    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
+    let key = mls_key_package_publish_ref_key(authority, device_id)?;
     store.store_secret(&key, key_package_ref)
 }
 
 pub fn load_mls_key_package_publish_ref(
     store: &dyn SecureKeyStore,
-    server_scope: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<Option<String>, SecureKeyStoreError> {
-    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
+    let key = mls_key_package_publish_ref_key(authority, device_id)?;
     Ok(store
         .get_secret(&key)?
         .map(|value| value.trim().to_owned())
@@ -514,30 +472,23 @@ pub fn load_mls_key_package_publish_ref(
 
 pub fn delete_mls_key_package_publish_ref(
     store: &dyn SecureKeyStore,
-    server_scope: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<(), SecureKeyStoreError> {
-    let key = mls_key_package_publish_ref_key(server_scope, actor_id, device_id)?;
+    let key = mls_key_package_publish_ref_key(authority, device_id)?;
     store.delete_secret(&key)
 }
 
-/// Load (without creating) the snapshot secret for `(actor, device)`.
+/// Load (without creating) the snapshot secret for an account authority.
 ///
 /// Delegates to the account-scoped secret. `device_id` no longer scopes the
 /// stored key.
 pub fn load_device_snapshot_secret(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
-    _device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    _device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
-    let actor = actor_id.trim();
-    if actor.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for MLS snapshot secret".to_owned(),
-        ));
-    }
-    if let Some(existing) = load_account_mls_secret(store, actor)? {
+    if let Some(existing) = load_account_mls_secret(store, authority)? {
         return Ok(existing.secret);
     }
     Err(SecureKeyStoreError::NotFound)
@@ -551,16 +502,10 @@ pub fn load_device_snapshot_secret(
 /// state and the secret store advance together.
 pub fn prepare_account_mls_secret_rotation(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
     snapshots: &BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<AccountMlsSecretRotation, MlsRuntimeError> {
-    let actor = actor_id.trim();
-    if actor.is_empty() {
-        return Err(MlsRuntimeError::DeviceSecret(SecureKeyStoreError::Backend(
-            "actor_id is required for MLS snapshot secret".to_owned(),
-        )));
-    }
-    let previous_secret = load_account_mls_secret(store, actor)
+    let previous_secret = load_account_mls_secret(store, authority)
         .map_err(MlsRuntimeError::DeviceSecret)?
         .ok_or(MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound))?;
     let new_version = previous_secret
@@ -622,30 +567,19 @@ pub fn prepare_account_mls_secret_rotation(
 
 /// Storage key for this device's history-recovery HPKE X25519 private key.
 fn device_hpke_private_key_key(
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
-    let actor = actor_id.trim();
-    let device = device_id.trim();
-    if actor.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "actor_id is required for device HPKE key".to_owned(),
-        ));
-    }
-    if device.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "device_id is required for device HPKE key".to_owned(),
-        ));
-    }
-    Ok(format!("{DEVICE_HPKE_PRIVATE_KEY_PREFIX}.{actor}.{device}"))
+    let scope = account_device_storage_suffix(authority, device_id)?;
+    Ok(format!("{DEVICE_HPKE_PRIVATE_KEY_PREFIX}.{scope}"))
 }
 
 /// Load or create the device HPKE keypair and await the private-key commit.
 /// Network requests that advertise the public half must use this entry point.
 pub async fn load_or_create_device_hpke_keypair_durable(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<(Vec<u8>, Vec<u8>), SecureKeyStoreError> {
     static HPKE_KEY_CREATE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
         std::sync::OnceLock::new();
@@ -653,7 +587,7 @@ pub async fn load_or_create_device_hpke_keypair_durable(
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
-    let key = device_hpke_private_key_key(actor_id, device_id)?;
+    let key = device_hpke_private_key_key(authority, device_id)?;
     if let Some(existing) = store.get_secret(&key)?
         && !existing.trim().is_empty()
     {
@@ -679,10 +613,10 @@ pub async fn load_or_create_device_hpke_keypair_durable(
 /// Load (without creating) this device's HPKE X25519 private key, if present.
 pub fn load_device_hpke_private_key(
     store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
 ) -> Result<Option<Vec<u8>>, SecureKeyStoreError> {
-    let key = device_hpke_private_key_key(actor_id, device_id)?;
+    let key = device_hpke_private_key_key(authority, device_id)?;
     let Some(secret) = store.get_secret(&key)? else {
         return Ok(None);
     };
@@ -715,7 +649,7 @@ fn x25519_public_from_private(private_key: &[u8]) -> Result<Vec<u8>, SecureKeySt
 pub fn commit_account_mls_secret_rotation(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    actor_id: &str,
+    authority: &PrincipalAuthorityKey,
     rotation: &AccountMlsSecretRotation,
 ) -> Result<(), SecureKeyStoreError> {
     for (realm_id, envelope) in &rotation.rewrapped_snapshots {
@@ -725,12 +659,13 @@ pub fn commit_account_mls_secret_rotation(
     }
     store_account_mls_secret_version(
         secure_store,
-        actor_id,
+        authority,
         rotation.new_version,
         &rotation.new_secret,
     )?;
     for version in 1..rotation.new_version {
-        let _ = secure_store.delete_secret(&account_mls_secret_key_for_version(actor_id, version));
+        let key = account_mls_secret_key_for_version(authority, version)?;
+        let _ = secure_store.delete_secret(&key);
     }
     Ok(())
 }

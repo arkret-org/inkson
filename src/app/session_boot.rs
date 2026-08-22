@@ -49,25 +49,25 @@ impl SessionBootState {
 pub(super) fn should_wait_for_secure_store_session_restore(
     credential: &str,
     can_restore_session: bool,
-    account_did: &str,
+    active_account: Option<&crate::config::ActiveAccountContext>,
     secure_store_ready: bool,
 ) -> bool {
     credential.trim().is_empty()
         && !can_restore_session
-        && !account_did.trim().is_empty()
+        && active_account.is_some()
         && !secure_store_ready
 }
 
 pub(super) fn session_boot_state_from_bootstrap_material(
     credential: &str,
     can_restore_session: bool,
-    account_did: &str,
+    active_account: Option<&crate::config::ActiveAccountContext>,
     secure_store_ready: bool,
 ) -> SessionBootState {
     if should_wait_for_secure_store_session_restore(
         credential,
         can_restore_session,
-        account_did,
+        active_account,
         secure_store_ready,
     ) {
         SessionBootState::Restoring
@@ -78,34 +78,26 @@ pub(super) fn session_boot_state_from_bootstrap_material(
 
 pub(super) fn rehydrated_session_credential_for_active_config(
     config: &ClientConfig,
-    base_url: &str,
-    account_did: &str,
-    device_id: &str,
+    active_account: &crate::config::ActiveAccountContext,
 ) -> Option<String> {
-    // Signed-out boot has no user scope to restore. A freshly generated
-    // anonymous device id is expected to differ from the last signed-in
-    // account's persisted device id; that is not a credential mismatch.
-    if account_did.trim().is_empty() {
-        return None;
-    }
     let cred_empty = config.session_credential.trim().is_empty();
-    let server_mismatch =
-        normalize_server_url(&config.server_url) != normalize_server_url(base_url);
-    let account_mismatch = config.account_did.trim() != account_did.trim();
-    let device_mismatch = config.device_id.trim() != device_id.trim();
-    if cred_empty || server_mismatch || account_mismatch || device_mismatch {
+    let stored_account = config.active_account();
+    let authority_mismatch =
+        stored_account.is_none_or(|stored| !stored.is_same_account(&active_account.authority));
+    let route_mismatch =
+        stored_account.is_none_or(|stored| stored.server_url != active_account.server_url);
+    let device_mismatch =
+        stored_account.is_none_or(|stored| stored.device_id != active_account.device_id);
+    if cred_empty || authority_mismatch || route_mismatch || device_mismatch {
         tracing::debug!(
             target: "secure_store",
             cred_empty,
-            server_mismatch,
-            account_mismatch,
+            authority_mismatch,
+            route_mismatch,
             device_mismatch,
-            stored_server = %config.server_url,
-            want_server = %base_url,
-            stored_account = %config.account_did,
-            want_account = %account_did,
-            stored_device = %config.device_id,
-            want_device = %device_id,
+            want_authority = ?active_account.authority,
+            want_server = %active_account.server_url,
+            want_device = %active_account.device_id,
             "rehydrate session credential: returning None (credential does not match active config)"
         );
         None
@@ -152,12 +144,11 @@ pub(super) fn auth_surface_for_route(
 pub(super) fn account_projections_visible(
     route: &Route,
     has_session: bool,
-    current_account_did: &str,
-    projection_owner_did: &str,
+    current_principal_id: Option<&arkret_sdk::DidCoreId>,
+    projection_owner_id: Option<&arkret_sdk::DidCoreId>,
 ) -> bool {
-    let current = current_account_did.trim();
-    !current.is_empty()
-        && current == projection_owner_did.trim()
+    current_principal_id.is_some()
+        && current_principal_id == projection_owner_id
         && (has_session || !matches!(route, Route::Onboarding))
 }
 
@@ -170,8 +161,10 @@ pub(super) fn initial_session_credential_from_state(
     config: &ClientConfig,
     now_unix: i64,
 ) -> String {
-    if let Some(grant) = local_state.session_grant.as_ref() {
-        return if session_grant_boot_usable(grant, &config.server_url, now_unix) {
+    if let (Some(grant), Some(active_account)) =
+        (local_state.session_grant.as_ref(), config.active_account())
+    {
+        return if session_grant_boot_usable(grant, active_account.server_url.as_str(), now_unix) {
             grant.grant_jwt.clone()
         } else {
             String::new()
@@ -184,19 +177,23 @@ pub(super) fn initial_session_credential_from_state(
 mod account_projection_tests {
     use super::*;
 
+    fn principal(value: &str) -> arkret_sdk::DidCoreId {
+        arkret_sdk::DidCoreId::new(value.to_owned()).expect("valid principal id")
+    }
+
     #[test]
     fn pre_session_onboarding_never_exposes_previous_account_projections() {
         assert!(!account_projections_visible(
             &Route::Onboarding,
             false,
-            "did:webvh:znew:principal.example",
-            "did:webvh:zold:principal.example",
+            Some(&principal("did:webvh:znew:principal.example")),
+            Some(&principal("did:webvh:zold:principal.example")),
         ));
         assert!(!account_projections_visible(
             &Route::Onboarding,
             false,
-            "did:webvh:zold:principal.example",
-            "did:webvh:zold:principal.example",
+            Some(&principal("did:webvh:zold:principal.example")),
+            Some(&principal("did:webvh:zold:principal.example")),
         ));
     }
 
@@ -205,14 +202,14 @@ mod account_projection_tests {
         assert!(!account_projections_visible(
             &Route::Dashboard,
             true,
-            "did:webvh:znew:principal.example",
-            "did:webvh:zold:principal.example",
+            Some(&principal("did:webvh:znew:principal.example")),
+            Some(&principal("did:webvh:zold:principal.example")),
         ));
         assert!(account_projections_visible(
             &Route::Dashboard,
             true,
-            "did:webvh:znew:principal.example",
-            "did:webvh:znew:principal.example",
+            Some(&principal("did:webvh:znew:principal.example")),
+            Some(&principal("did:webvh:znew:principal.example")),
         ));
     }
 }
@@ -233,9 +230,7 @@ pub(super) const TEST_SESSION_CREDENTIAL_INJECTION_KEY: &str =
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) fn inject_test_session_credential(
     config_store: Signal<LocalConfigStore>,
-    server_url: &str,
-    account_did: &str,
-    device_id: &str,
+    active_account: &crate::config::ActiveAccountContext,
 ) -> Option<String> {
     let credential = web_sys::window()
         .and_then(|window| window.local_storage().ok().flatten())
@@ -250,9 +245,7 @@ pub(super) fn inject_test_session_credential(
     }
     persist_config(
         config_store,
-        server_url.to_owned(),
-        account_did.to_owned(),
-        device_id.to_owned(),
+        Some(active_account.clone()),
         credential.clone(),
     );
     Some(credential)
@@ -277,9 +270,7 @@ pub(super) fn inject_test_session_credential(
 pub(super) fn inject_test_session_grant(
     state_store: &mut SyncSignal<LocalStateStore>,
     config_store: Signal<LocalConfigStore>,
-    server_url: &str,
-    account_did: &str,
-    device_id: &str,
+    active_account: &crate::config::ActiveAccountContext,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<String> {
     let raw = match web_sys::window()
@@ -306,18 +297,15 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
-    let account_did = if account_did.trim().is_empty() {
-        parsed
-            .get("principal_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-    } else {
-        account_did
-    };
-    if crate::mls_api_helpers::principal_core_id(account_did).is_err() {
+    let principal_id = active_account.principal_id();
+    if parsed
+        .get("principal_id")
+        .and_then(Value::as_str)
+        .is_some_and(|fixture| fixture != principal_id.as_str())
+    {
         tracing::warn!(
-            principal_id = %account_did,
-            "test session injection skipped: principal_id is not a valid DidCoreId"
+            principal_id = %principal_id,
+            "test session injection skipped: principal_id does not match active authority"
         );
         return None;
     }
@@ -327,13 +315,18 @@ pub(super) fn inject_test_session_grant(
     // persisting so connect() observes the grant and resumable registration in
     // the same account scope. SecureStoreEffects also selects this scope before
     // hydration so the durable snapshot is loaded from the correct namespace.
-    state_store.write().switch_active_account(account_did);
+    state_store
+        .write()
+        .switch_active_account(&active_account.profile_id, &active_account.authority);
     if parsed
         .get("recovery_gate_verified")
         .and_then(Value::as_bool)
         == Some(true)
     {
-        crate::event_submit::remember_verified_recovery_gate(account_did, device_id);
+        crate::event_submit::remember_verified_recovery_gate(
+            principal_id.as_str(),
+            active_account.device_id.as_str(),
+        );
     }
     for (fixture_field, private_data_key) in [
         ("local_recovery_state", "recovery.state.v1"),
@@ -353,12 +346,12 @@ pub(super) fn inject_test_session_grant(
             };
             state_store
                 .write()
-                .save_private_data(account_did, private_data_key, payload);
+                .save_private_data(principal_id.as_str(), private_data_key, payload);
         }
     }
     if let Some(value) = parsed.get("pending_principal_registration").cloned() {
         match serde_json::from_value::<crate::state::PendingPrincipalRegistration>(value) {
-            Ok(registration) if registration.full_id.as_str() == account_did => {
+            Ok(registration) if registration.full_id == *active_account.full_id() => {
                 if let Err(error) = state_store
                     .write()
                     .set_pending_principal_registration(Some(registration))
@@ -483,12 +476,17 @@ pub(super) fn inject_test_session_grant(
         .map(str::trim)
         .filter(|seed| !seed.is_empty())
         .map_or_else(
-            || crate::event_signer::bootstrap_default_signer_for_device("inkson", device_id),
+            || {
+                crate::event_signer::bootstrap_default_signer_for_device(
+                    "inkson",
+                    active_account.device_id.as_str(),
+                )
+            },
             |seed| {
                 crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
                     seed,
                     Some(secure_store),
-                    Some(device_id),
+                    Some(active_account.device_id.as_str()),
                 )
             },
         );
@@ -499,7 +497,7 @@ pub(super) fn inject_test_session_grant(
         );
         return None;
     }
-    let principal_id = match parsed
+    let principal_full_id = match parsed
         .get("principal_full_id")
         .and_then(Value::as_str)
         .map(str::trim)
@@ -514,19 +512,10 @@ pub(super) fn inject_test_session_grant(
             );
             return None;
         }
-        None => match arkret_sdk::DidFullId::new(account_did.to_owned()) {
-            Ok(principal_id) => principal_id,
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "test session injection: principal_full_id is missing"
-                );
-                return None;
-            }
-        },
+        None => active_account.full_id().clone(),
     };
-    let principal_core_id = match arkret_sdk::project_full_id_to_core_id(&principal_id) {
-        Ok(principal_core_id) if principal_core_id.as_str() == account_did => principal_core_id,
+    let _principal_core_id = match arkret_sdk::project_full_id_to_core_id(&principal_full_id) {
+        Ok(projected) if projected == *principal_id => projected,
         Ok(_) => {
             tracing::warn!(
                 "test session injection: principal_full_id does not project to principal_id"
@@ -541,9 +530,10 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
-    if let Err(error) =
-        crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device_id)
-    {
+    if let Err(error) = crate::event_signer::bind_active_signer_principal_device_id(
+        &principal_full_id,
+        active_account.device_id.as_str(),
+    ) {
         tracing::warn!(
             ?error,
             "test session injection: principal signer binding failed"
@@ -559,18 +549,18 @@ pub(super) fn inject_test_session_grant(
         // refreshes the injected grant.
         session_private_key_pem: String::new(),
         grant_id,
-        audience,
-        principal_id: principal_core_id.to_string(),
-        device_id: device_id.to_owned(),
+        audience: url::Url::parse(&audience).ok()?,
+        authority: active_account.authority.clone(),
+        device_id: active_account.device_id.clone(),
         // MUST match the active server so the bootstrap does not discard the
         // grant as stale (see `grant_matches_principal_server`).
-        principal_server_url: server_url.to_owned(),
+        principal_server_url: active_account.server_url.clone(),
         grant_expires_at: Some(now + chrono::Duration::hours(8)),
         stored_at: now,
     };
     tracing::warn!(
         target: "mls_admission",
-        device = %device_id,
+        device = %active_account.device_id,
         "test session injection: session grant installed"
     );
     state_store.write().set_session_grant(Some(grant));
@@ -578,9 +568,7 @@ pub(super) fn inject_test_session_grant(
     // reload rehydrates the same session instead of bouncing to /login.
     persist_config(
         config_store,
-        server_url.to_owned(),
-        account_did.to_owned(),
-        device_id.to_owned(),
+        Some(active_account.clone()),
         grant_jwt.clone(),
     );
     Some(grant_jwt)

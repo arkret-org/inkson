@@ -29,10 +29,10 @@ pub(crate) fn encrypted_account_data_value(
     account_data_key: &str,
     plaintext: &serde_json::Value,
 ) -> anyhow::Result<serde_json::Value> {
-    let actor = crate::secure_key_store::active_device_seed_scope()
-        .filter(|actor| !actor.trim().is_empty())
+    let authority = crate::secure_key_store::active_device_seed_scope()
+        .map(|scope| scope.authority)
         .ok_or_else(|| anyhow::anyhow!("active account scope is unavailable"))?;
-    crate::account_data::encrypt_account_data_value(&actor, account_data_key, plaintext)
+    crate::account_data::encrypt_account_data_value(&authority, account_data_key, plaintext)
 }
 
 /// Spawn a fire-and-forget task that pushes the current read-receipt

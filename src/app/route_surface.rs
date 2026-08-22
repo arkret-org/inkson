@@ -34,7 +34,7 @@ pub(super) fn direct_conversation_peer_id(
 pub(super) struct RouteSurfaceState {
     pub(super) content_route: Route,
     pub(super) navigation: NavigationState,
-    pub(super) account_did: Signal<String>,
+    pub(super) principal_id: Signal<String>,
     pub(super) device_id: Signal<String>,
     pub(super) token: Signal<String>,
     pub(super) config_store: Signal<LocalConfigStore>,
@@ -80,7 +80,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
     let RouteSurfaceState {
         content_route,
         navigation,
-        account_did,
+        principal_id,
         device_id,
         token,
         config_store,
@@ -149,8 +149,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                 match content_route {
                     Route::Login => rsx! {
                         crate::views::login::LoginPanel {
-                            account_did,
-                            device_id,
                             token,
                             config_store,
                             locale,
@@ -161,8 +159,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     },
                     Route::AuthCallback => rsx! {
                         crate::views::login::LoginPanel {
-                            account_did,
-                            device_id,
                             token,
                             config_store,
                             locale,
@@ -190,8 +186,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     Route::FileTransfer => rsx! {
                         crate::views::file_transfer::FileTransferPanel {
                             token,
-                            account_did: account_did(),
-                            device_id: device_id(),
                         }
                     },
                     Route::Realm { .. } => {
@@ -202,7 +196,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                         crate::views::kanban::KanbanPanel {
                                             plaintext_service_id: active_service_id.clone(),
                                             token,
-                                            account_did: account_did(),
+                                            principal_id: principal_id(),
                                             account_primary_handle,
                                             device_id: device_id(),
                                             selected_realm_id: active_realm_id.clone(),
@@ -233,7 +227,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             rsx! {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
-                                    account_did: account_did(),
+                                    principal_id: principal_id(),
                                     account_primary_handle: account_primary_handle(),
                                     device_id: device_id(),
                                     token,
@@ -262,7 +256,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             rsx! {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
-                                    account_did: account_did(),
+                                    principal_id: principal_id(),
                                     account_primary_handle: account_primary_handle(),
                                     device_id: device_id(),
                                     token,
@@ -296,7 +290,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     },
                     Route::RealmsManage => rsx! {
                         RealmsManagePage {
-                            account_did: account_did(),
+                            principal_id: principal_id(),
                             token,
                             has_session,
                             realm_rows: manage_realm_rows.clone(),
@@ -331,8 +325,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                     plaintext_service_id: active_service_id.clone(),
                                     secure_store_ready: secure_store_bootstrap_ready(),
                                     token,
-                                    account_did,
-                                    device_id,
                                     config_store,
                                     realm_tree_nodes,
                                     selected_realm_id,
@@ -354,8 +346,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     | Route::Audit
                     | Route::Developer => rsx! {
                         crate::views::settings::SettingsPanel {
-                            account_did,
-                            device_id,
                             token,
                             account_primary_handle: account_primary_handle(),
                             personal_handles: personal_handles(),
@@ -372,8 +362,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             rsx! {
                                 crate::views::verify_device::VerifyDevicePanel {
                                     token,
-                                    device_id: device_id(),
-                                    account_did: account_did(),
                                     selected_realm_id: selected_realm_id(),
                                 }
                             }
@@ -390,7 +378,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 crate::views::circles::CirclesPanel {
                                     realm_id: realm_id.clone(),
                                     selected_circle_id: routed_circle_id.clone(),
-                                    account_did: account_did(),
+                                    principal_id: principal_id(),
                                     token,
                                 }
                             }
@@ -408,7 +396,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             rsx! {
                                 crate::views::realm_admin::RealmMembersPanel {
                                     active_service_id: active_service_id.clone(),
-                                    account_did: account_did(),
+                                    principal_id: principal_id(),
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
@@ -429,7 +417,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         if full_ready {
                             rsx! {
                                 crate::views::realm_admin::RealmAdminPanel {
-                                    account_did: account_did(),
+                                    principal_id: principal_id(),
                                     device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
@@ -457,7 +445,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 crate::views::kanban::KanbanPanel {
                                     plaintext_service_id: active_service_id.clone(),
                                     token,
-                                    account_did: account_did(),
+                                    principal_id: principal_id(),
                                     account_primary_handle,
                                     device_id: device_id(),
                                     selected_realm_id: active_realm_id.clone(),
@@ -474,8 +462,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     },
                     Route::Notifications => rsx! {
                         crate::views::notifications::NotificationsPanel {
-                            account_did: account_did(),
-                            device_id: device_id(),
                             token,
                         }
                     },
@@ -510,7 +496,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             crate::views::call::CallPanel {
                                 token,
                                 selected_realm_id: call_realm_id,
-                                account_did: account_did(),
+                                principal_id: principal_id(),
                                 device_id: device_id(),
                                 call_id: call_id.clone(),
                                 peer: peer.clone(),
@@ -523,8 +509,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         crate::views::onboarding::OnboardingPanel {
                             secure_store_ready: secure_store_bootstrap_ready(),
                             token,
-                            account_did,
-                            device_id,
                             config_store,
                             account_primary_handle,
                             needs_device_authorization,
@@ -538,7 +522,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         if crate::views::applets::applets_enabled() {
                             crate::views::applets::AppletsPanel {
                                 token,
-                                account_did,
                                 selected_realm_id: selected_realm_id(),
                             }
                         } else {
@@ -548,8 +531,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     // A6.1 — global cross-Space message search panel.
                     Route::Search => rsx! {
                         crate::views::global_search::GlobalSearchPanel {
-                            account_did,
-                            device_id,
                             initial_query: String::new(),
                         }
                     },

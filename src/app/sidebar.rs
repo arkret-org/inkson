@@ -277,7 +277,7 @@ pub(super) fn leave_sidebar_realm(
     base_url: String,
     api_token: String,
     realm_id: String,
-    account_did: String,
+    principal_id: String,
     mut state_store: SyncSignal<LocalStateStore>,
     mut realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     mut selected_realm_id: Signal<String>,
@@ -288,7 +288,7 @@ pub(super) fn leave_sidebar_realm(
     // session actor
     // session actor (`actor_session_mismatch`). The local device DID is not the
     // session actor, so it must not be used here.
-    let actor_id = account_did.trim().to_owned();
+    let actor_id = principal_id.trim().to_owned();
     if actor_id.is_empty() {
         crate::components::feedback::toast_error("feedback.account_not_connected", vec![], None);
         return;

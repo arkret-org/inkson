@@ -11,7 +11,7 @@
 //! YOU-01-006: the form edits a `arkret_sdk::InviteReceivePolicy` held whole in
 //! a signal. On GET we keep the *entire* server policy (including the
 //! `trusted_*` / `denied_principal_services` lists this form does not surface);
-//! on SET we stamp the required `schema` constant and `subject_id = account_did`
+//! on SET we stamp the required `schema` constant and `subject_id = principal_id`
 //! and post the same object back, so server-stored lists survive the round-trip
 //! and the body satisfies the soland handler (which deserialises the SDK type
 //! with `deny_unknown_fields` and enforces `subject_id == session actor`).
@@ -153,8 +153,8 @@ fn constraints_lines(constraints: &arkret_wire::ReceivePolicyConstraints) -> Vec
 }
 
 #[component]
-pub fn InvitePolicySettingsCard(token: Signal<String>, account_did: Signal<String>) -> Element {
-    let subject_id = match crate::mls_api_helpers::principal_core_id(&account_did()) {
+pub fn InvitePolicySettingsCard(token: Signal<String>, principal_id: Signal<String>) -> Element {
+    let subject_id = match crate::mls_api_helpers::principal_core_id(&principal_id()) {
         Ok(subject_id) => subject_id,
         Err(error) => {
             return rsx! {
@@ -180,7 +180,12 @@ fn InvitePolicySettingsCardBody(
     subject_id: arkret_sdk::DidCoreId,
 ) -> Element {
     // A4 — base_url from session context instead of a prop.
-    let base_url = crate::app::SessionContext::get().base_url;
+    let active_account = crate::app::SessionContext::get().active_account;
+    let base_url = use_signal(move || {
+        active_account()
+            .map(|account| account.server_url.to_string())
+            .unwrap_or_default()
+    });
     let initial_subject_id = subject_id.clone();
     let mut policy = use_signal(move || InviteReceivePolicy::spec_default(initial_subject_id));
     let mut loaded = use_signal(|| false);

@@ -37,8 +37,10 @@ fn shared_pin_operation_body(
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatCommandContext {
     pub base_url: String,
-    pub account_did: String,
-    pub device_id: String,
+    pub principal_id: String,
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub full_id: arkret_sdk::DidFullId,
+    pub device_id: arkret_sdk::DeviceId,
     pub selected_realm_id: String,
     pub selected_channel_id: String,
     pub plaintext_service_id: String,
@@ -337,7 +339,7 @@ impl ChatController {
         self.moderation_report_pending.set(true);
         let base_url = context.base_url;
         let session_credential = (context.token)();
-        let account_did = context.account_did;
+        let principal_id = context.principal_id;
         spawn(async move {
             let result = crate::transport::auth::with_event_submitter(
                 &base_url,
@@ -346,7 +348,7 @@ impl ChatController {
                     crate::transport::moderation::report(
                         &submitter,
                         &draft.realm_id,
-                        &account_did,
+                        &principal_id,
                         draft.effective_scope,
                         &draft.target_ref,
                         &draft.reason,
@@ -409,7 +411,7 @@ impl ChatController {
             self.message_context_menu.set(None);
             return;
         }
-        let namespace_key = match load_chat_productivity_namespace_key(&context.account_did) {
+        let namespace_key = match load_chat_productivity_namespace_key(&context.authority) {
             Ok(key) => key,
             Err(error) => {
                 self.status_msg
@@ -418,18 +420,9 @@ impl ChatController {
                 return;
             }
         };
-        let actor = match arkret_sdk::DidFullId::new(context.account_did.clone()) {
-            Ok(actor) => actor,
-            Err(error) => {
-                self.status_msg
-                    .set(format!("Private save failed: {error:#}"));
-                self.message_context_menu.set(None);
-                return;
-            }
-        };
         let hlc = match crate::signing_stamp::issue_account_data_hlc(
-            actor.as_str(),
-            &context.device_id,
+            context.full_id.as_str(),
+            context.device_id.as_str(),
         ) {
             Ok(hlc) => hlc,
             Err(error) => {
@@ -522,14 +515,14 @@ impl ChatController {
         let operation = if removing {
             shared_message_pin_remove_operation(
                 &realm_id,
-                &context.account_did,
+                &context.principal_id,
                 &pin_scope,
                 &target_ref,
             )
         } else {
             shared_message_pin_add_operation(
                 &realm_id,
-                &context.account_did,
+                &context.principal_id,
                 &pin_scope,
                 &target_ref,
                 &rank,
@@ -642,21 +635,21 @@ impl ChatController {
         {
             if let Some((_, senders)) = message.reactions.iter_mut().find(|(key, _)| key == &emoji)
             {
-                if !senders.contains(&context.account_did) {
-                    senders.push(context.account_did.clone());
+                if !senders.contains(&context.principal_id) {
+                    senders.push(context.principal_id.clone());
                 }
             } else {
                 message
                     .reactions
-                    .push((emoji.clone(), vec![context.account_did.clone()]));
+                    .push((emoji.clone(), vec![context.principal_id.clone()]));
             }
         }
         let state_store = crate::app::SessionContext::get().state_store;
         let operation = match build_chat_reaction_add_operation(
             state_store,
             &context.selected_realm_id,
-            &context.account_did,
-            &context.device_id,
+            &context.principal_id,
+            context.device_id.as_str(),
             &target_ref,
             &emoji,
             context.selected_channel_security_encrypted,
@@ -718,7 +711,7 @@ impl ChatController {
         self.editing_message.set(None);
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
-        let actor = context.account_did;
+        let actor = context.principal_id;
         let api_token = (context.token)();
         let wait_for = active_sync_token((context.sync_cursor)());
         let mut messages = self.messages;
@@ -820,7 +813,7 @@ impl ChatController {
         self.redact_confirm.set(None);
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
-        let actor = context.account_did;
+        let actor = context.principal_id;
         let api_token = (context.token)();
         let wait_for = active_sync_token((context.sync_cursor)());
         let mut frontier_state = context.frontier_state;
@@ -916,7 +909,7 @@ impl ChatController {
             plaintext_services_for_policy(projection.as_ref(), &context.plaintext_service_id);
         let mention_values = mention_nodes_to_values(&message.mentions);
         let base_url = context.base_url;
-        let actor = context.account_did;
+        let actor = context.principal_id;
         let device_id = context.device_id;
         let encrypted = context.selected_channel_security_encrypted;
         let api_token = (context.token)();
@@ -981,7 +974,7 @@ impl ChatController {
                     &seal_view,
                     &message.realm_id,
                     &actor,
-                    &device_id,
+                    device_id.as_str(),
                     &message.strand_id,
                     &retry_message_id,
                     message.reply_to.as_deref(),
@@ -1162,7 +1155,7 @@ impl ChatController {
             .iter_mut()
             .find(|card| card.message_id == message_id)
         {
-            card.vote(&context.account_did, option_index);
+            card.vote(&context.principal_id, option_index);
         }
         if let Some(message) = self
             .messages
@@ -1177,7 +1170,7 @@ impl ChatController {
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
         let strand_id = context.selected_channel_id;
-        let actor = context.account_did;
+        let actor = context.principal_id;
         let api_token = (context.token)();
         let mut messages = self.messages;
         let mut status_msg = self.status_msg;
@@ -1244,7 +1237,7 @@ fn mark_message_command_failed(
 pub(super) fn use_chat_controller(
     selected_realm_id: &str,
     initial_strand_id: &str,
-    _account_did: &str,
+    _principal_id: &str,
 ) -> ChatController {
     let initial_default_channel = (!selected_realm_id.trim().is_empty())
         .then(|| discussion_channel_for_strand(initial_strand_id))

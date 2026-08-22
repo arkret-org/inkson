@@ -39,6 +39,8 @@ pub(crate) async fn optional_invite_notifications(
 pub(crate) fn refresh_notifications(
     base_url: String,
     session_credential: Signal<String>,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    principal_id: String,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
@@ -54,17 +56,16 @@ pub(crate) fn refresh_notifications(
         .await
         {
             Ok((response, invite_notifications)) => {
-                let account_did = state_store.read().active_account_did().unwrap_or_default();
                 let push_rules =
-                    push_rules_from_account_data(&account_did, &response.updates.account_data);
+                    push_rules_from_account_data(&authority, &response.updates.account_data);
                 let account_dnd =
-                    dnd_settings_from_account_data(&account_did, &response.updates.account_data);
+                    dnd_settings_from_account_data(&authority, &response.updates.account_data);
                 let mut raw_notifications = raw_notifications_from_sources(
                     Some(&response.updates.notifications),
                     &response.updates.account_data,
                 );
                 let joined_realms =
-                    JoinedRealmIds::from_realm_entries(&response.realm_entries, &account_did);
+                    JoinedRealmIds::from_realm_entries(&response.realm_entries, &principal_id);
                 merge_invite_notifications(
                     &mut raw_notifications,
                     invite_notifications,
@@ -72,7 +73,7 @@ pub(crate) fn refresh_notifications(
                 );
                 let inbox_states =
                     crate::account_data::notification_inbox_states_from_account_data_events(
-                        &account_did,
+                        &authority,
                         &response.updates.account_data,
                     );
                 let hydrated = {
@@ -86,11 +87,11 @@ pub(crate) fn refresh_notifications(
                         .as_ref()
                         .or(account_dnd.as_ref());
                     let privacy_gate =
-                        crate::sidecar::SidecarPrivacyGate::from_store(&store, &account_did);
+                        crate::sidecar::SidecarPrivacyGate::from_store(&store, &principal_id);
                     hydrate_notifications_with_privacy_gate(
                         raw_notifications,
                         &local_state,
-                        &account_did,
+                        &principal_id,
                         push_rules.as_ref(),
                         effective_dnd,
                         &privacy_gate,
@@ -297,6 +298,7 @@ pub(crate) fn mark_notification_read_state(
 pub(crate) fn set_notification_inbox_state(
     base_url: String,
     session_credential: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     actor_id: String,
     device_id: String,
     notification_id: String,
@@ -342,7 +344,7 @@ pub(crate) fn set_notification_inbox_state(
                 &account_data_key,
                 |snapshot| {
                     crate::account_data::merge_notification_inbox_account_data(
-                        &actor_id,
+                        &authority,
                         &account_data_key,
                         &candidate,
                         snapshot.entry.as_ref(),
@@ -398,6 +400,8 @@ fn build_notification_inbox_candidate(
 pub(crate) fn run_notification_action(
     base_url: String,
     session_credential: Signal<String>,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    principal_id: String,
     state_store: SyncSignal<LocalStateStore>,
     notifications: Signal<Vec<UiNotification>>,
     status_msg: Signal<String>,
@@ -412,6 +416,8 @@ pub(crate) fn run_notification_action(
         } => accept_invite_notification(
             base_url,
             session_credential,
+            authority,
+            principal_id,
             state_store,
             notifications,
             status_msg,
@@ -427,6 +433,8 @@ pub(crate) fn run_notification_action(
 fn accept_invite_notification(
     base_url: String,
     session_credential: Signal<String>,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    principal_id: String,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
@@ -506,13 +514,12 @@ fn accept_invite_notification(
         .await
         {
             Ok((Ok(sync), invite_notifications, accepted_title, delivery_cell)) => {
-                let account_did = state_store.read().active_account_did().unwrap_or_default();
                 let push_rules =
-                    push_rules_from_account_data(&account_did, &sync.updates.account_data);
+                    push_rules_from_account_data(&authority, &sync.updates.account_data);
                 let account_dnd =
-                    dnd_settings_from_account_data(&account_did, &sync.updates.account_data);
+                    dnd_settings_from_account_data(&authority, &sync.updates.account_data);
                 let hidden_realms =
-                    JoinedRealmIds::from_realm_entries(&sync.realm_entries, &account_did)
+                    JoinedRealmIds::from_realm_entries(&sync.realm_entries, &principal_id)
                         .joined_now(accepted_realm.clone());
                 let mut realm_title_hints = BTreeMap::new();
                 // The Realm title comes from the directory resolve the accept
@@ -557,13 +564,12 @@ fn accept_invite_notification(
                         .notification_dnd_settings
                         .as_ref()
                         .or(account_dnd.as_ref());
-                    let account_did = store.active_account_did().unwrap_or_default();
                     let privacy_gate =
-                        crate::sidecar::SidecarPrivacyGate::from_store(&store, &account_did);
+                        crate::sidecar::SidecarPrivacyGate::from_store(&store, &principal_id);
                     hydrate_notifications_with_privacy_gate(
                         raw_notifications,
                         &local_state,
-                        &account_did,
+                        &principal_id,
                         push_rules.as_ref(),
                         effective_dnd,
                         &privacy_gate,

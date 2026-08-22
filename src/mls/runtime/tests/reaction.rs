@@ -4,6 +4,18 @@ use crate::mls::runtime::*;
 use crate::secure_key_store::MemorySecureKeyStore;
 use crate::state::isolated_store_for_tests as temp_state_store;
 
+fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    arkret_sdk::PrincipalAuthorityKey {
+        principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+        principal_server_id: arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned())
+            .unwrap(),
+    }
+}
+
+fn typed_device(device: &str) -> arkret_sdk::DeviceId {
+    arkret_sdk::DeviceId::new(device.to_owned()).unwrap()
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
@@ -27,7 +39,14 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     assert!(state.realm_projection_is_minimal_metadata(realm));
 
     super::seed_genesis_governance_proof(&mut state, realm);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &authority(actor),
+        &typed_device(device),
+    )
+    .unwrap();
     let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
 
     // Backdate the persisted snapshot's epoch clock past the 1h cap.
@@ -42,8 +61,9 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
         &mut state,
         &secure,
         realm,
+        &authority(actor),
         actor,
-        device,
+        &typed_device(device),
         &target,
         chrono::Utc::now(),
         "👍",
@@ -70,7 +90,14 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     let realm = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
 
     super::seed_genesis_governance_proof(&mut state, realm);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &authority(actor),
+        &typed_device(device),
+    )
+    .unwrap();
     let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
@@ -83,8 +110,9 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
         &mut state,
         &secure,
         realm,
+        &authority(actor),
         actor,
-        device,
+        &typed_device(device),
         &target,
         chrono::Utc::now(),
         "👍",

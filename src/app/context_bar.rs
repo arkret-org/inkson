@@ -4,7 +4,7 @@ use super::*;
 pub(super) fn RealmContextBar(
     realm_id: String,
     current_surface: Option<RealmSurface>,
-    account_did: String,
+    principal_id: String,
     members_active: bool,
     minimal_ready: bool,
     kanban_ready: bool,
@@ -27,12 +27,12 @@ pub(super) fn RealmContextBar(
                             class: if current_surface == Some(surface) { "primary" } else { "secondary" },
                             to: surface.route(realm_id.clone()),
                             onclick: {
-                                let account_did = account_did.clone();
+                                let principal_id = principal_id.clone();
                                 let realm_id = realm_id.clone();
                                 move |_| {
                                     persist_realm_surface_preference(
                                         &mut state_store.write(),
-                                        &account_did,
+                                        &principal_id,
                                         &realm_id,
                                         surface,
                                     );
@@ -95,12 +95,12 @@ pub(super) fn RealmContextBar(
                                     role: "menuitem",
                                     to: surface.route(realm_id.clone()),
                                     onclick: {
-                                        let account_did = account_did.clone();
+                                        let principal_id = principal_id.clone();
                                         let realm_id = realm_id.clone();
                                         move |_| {
                                             persist_realm_surface_preference(
                                                 &mut state_store.write(),
-                                                &account_did,
+                                                &principal_id,
                                                 &realm_id,
                                                 surface,
                                             );

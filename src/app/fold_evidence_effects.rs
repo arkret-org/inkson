@@ -8,7 +8,7 @@ const SIDECAR_FOLD_EVIDENCE_HOOK: &str = "__inkson_sidecar_fold_evidence_v1";
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct SidecarFoldEvidenceEffectState {
-    pub account_did: Signal<String>,
+    pub principal_id: Signal<String>,
 }
 
 /// Install the controller-only, read-only fold-cache evidence surface.
@@ -29,14 +29,14 @@ pub(super) fn SidecarFoldEvidenceEffects(state: SidecarFoldEvidenceEffectState) 
         use wasm_bindgen::JsCast as _;
         use wasm_bindgen::prelude::Closure;
 
-        let SidecarFoldEvidenceEffectState { account_did } = state;
+        let SidecarFoldEvidenceEffectState { principal_id } = state;
         let SessionContext { state_store, .. } = SessionContext::get();
         use_hook(move || {
             let Some(window) = web_sys::window() else {
                 return;
             };
             let hook = Closure::<dyn Fn(String) -> String>::new(move |source_realm_id: String| {
-                let controller_id = account_did.peek().clone();
+                let controller_id = principal_id.peek().clone();
                 if controller_id.is_empty() {
                     return serde_json::json!({"error": "no signed-in controller"}).to_string();
                 }

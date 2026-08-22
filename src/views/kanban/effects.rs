@@ -10,8 +10,9 @@ pub(super) fn KanbanEffects(
     token: Signal<String>,
     selected_realm_id: String,
     projection_realm_id: String,
-    account_did: String,
-    device_id: String,
+    principal_id: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    device_id: arkret_sdk::DeviceId,
     sync_cursor: Signal<String>,
     realm_live_epoch: Signal<u64>,
 ) -> Element {
@@ -434,7 +435,8 @@ pub(super) fn KanbanEffects(
         let restore_token = token;
         let restore_realm_id = selected_realm_id.clone();
         let restore_local_realm_id = local_realm_id.clone();
-        let restore_actor = account_did.clone();
+        let restore_actor = principal_id.clone();
+        let restore_authority = authority.clone();
         let restore_device = device_id.clone();
         let restore_sync_cursor = sync_cursor;
         let restore_realm_live_epoch = realm_live_epoch;
@@ -450,13 +452,16 @@ pub(super) fn KanbanEffects(
                 || api_token.trim().is_empty()
                 || restore_realm_id.trim().is_empty()
                 || restore_actor.trim().is_empty()
-                || restore_device.trim().is_empty()
+                || restore_device.as_str().trim().is_empty()
             {
                 return;
             }
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             if !matches!(
-                crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &restore_actor),
+                crate::mls::runtime::load_account_mls_secret(
+                    secure_store.as_ref(),
+                    &restore_authority
+                ),
                 Ok(Some(_))
             ) {
                 return;
@@ -470,7 +475,7 @@ pub(super) fn KanbanEffects(
                 "{}|{}|{}|{}|{}|{}|description={}|synthesis={}",
                 restore_base.trim().trim_end_matches('/'),
                 restore_actor.trim(),
-                restore_device.trim(),
+                restore_device.as_str().trim(),
                 restore_realm_id.trim(),
                 card.primary_strand_id,
                 projection_shape,
@@ -495,6 +500,7 @@ pub(super) fn KanbanEffects(
             let realm_id = restore_realm_id.clone();
             let local_realm_id = restore_local_realm_id.clone();
             let actor = restore_actor.clone();
+            let authority = restore_authority.clone();
             let device = restore_device.clone();
             spawn(async move {
                 for attempt in 0..5u32 {
@@ -505,7 +511,7 @@ pub(super) fn KanbanEffects(
                         .await;
                     }
                     let actor_for_fetch = actor.clone();
-                    let device_for_fetch = device.clone();
+                    let device_for_fetch = device.to_string();
                     let realm_for_fetch = realm_id.clone();
                     let result =
                         with_authed_api(&base, api_token.clone(), move |api| async move {
@@ -558,8 +564,9 @@ pub(super) fn KanbanEffects(
                             &payload,
                             &mut store,
                             secure_store.as_ref(),
+                            &authority,
                             &actor,
-                            &device,
+                            device.as_str(),
                         );
                         report.private_plaintext_restored || report.restored > 0
                     };

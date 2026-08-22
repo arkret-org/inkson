@@ -15,8 +15,8 @@ pub struct HistoryResponsePageInstallOutcome {
 
 struct ResponseCapabilityOpener<'a> {
     secure_store: &'a dyn SecureKeyStore,
-    actor_id: &'a str,
-    device_id: &'a str,
+    authority: &'a arkret_sdk::PrincipalAuthorityKey,
+    device_id: &'a arkret_sdk::DeviceId,
 }
 
 impl garth::HistoryResponseCapabilityOpener for ResponseCapabilityOpener<'_> {
@@ -27,7 +27,7 @@ impl garth::HistoryResponseCapabilityOpener for ResponseCapabilityOpener<'_> {
         async move {
             let private_key = crate::mls::runtime::load_device_hpke_private_key(
                 self.secure_store,
-                self.actor_id,
+                self.authority,
                 self.device_id,
             )
             .map_err(|error| garth::Error::Protocol(error.to_string()))?
@@ -169,8 +169,8 @@ pub async fn create_or_resume_request(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     request: arkret_sdk::HistoryKeyRequest,
 ) -> anyhow::Result<arkret_sdk::HistoryKeyRequestCreateOutcome> {
     let http = http_client(api)?;
@@ -179,7 +179,7 @@ pub async fn create_or_resume_request(
             &http,
             &ResponseCapabilityOpener {
                 secure_store,
-                actor_id,
+                authority,
                 device_id,
             },
             secure_store,
@@ -225,8 +225,8 @@ pub async fn verify_and_install_response_page<VerifyExternalSourceKey>(
     mut state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     request_id: &arkret_sdk::HistoryRequestId,
     limit: Option<u8>,
     now: chrono::DateTime<chrono::Utc>,
@@ -252,7 +252,7 @@ where
         )
     })?;
     let private_key =
-        crate::mls::runtime::load_device_hpke_private_key(secure_store, actor_id, device_id)?
+        crate::mls::runtime::load_device_hpke_private_key(secure_store, authority, device_id)?
             .ok_or_else(|| anyhow::anyhow!("history recipient HPKE private key is unavailable"))?;
     let private_key_b64u = URL_SAFE_NO_PAD.encode(private_key);
     let request_receipt_digest = accepted.request_receipt.request_receipt_digest()?;
@@ -567,8 +567,8 @@ where
 fn verify_history_external_source_key(
     state_store: SyncSignal<LocalStateStore>,
     secure_store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     request: arkret_sdk::HistorySourceProofExternalVerificationRequest<'_>,
 ) -> Result<arkret_sdk::signatures::proof::PublicKeyMaterial, arkret_sdk::WireError> {
     match request {
@@ -649,7 +649,7 @@ fn verify_history_external_source_key(
             let winning_group_state = crate::mls::runtime::minimal_metadata_author_view_for_scope(
                 &state_store.read(),
                 secure_store,
-                actor_id,
+                authority,
                 device_id,
                 &effective_scope,
                 &signer_evidence.mls_group_id,
@@ -680,8 +680,8 @@ pub async fn verify_and_install_response_page_from_local_state(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     request_id: &arkret_sdk::HistoryRequestId,
     limit: Option<u8>,
     now: chrono::DateTime<chrono::Utc>,
@@ -690,7 +690,7 @@ pub async fn verify_and_install_response_page_from_local_state(
         state_store,
         api,
         secure_store,
-        actor_id,
+        authority,
         device_id,
         request_id,
         limit,
@@ -699,7 +699,7 @@ pub async fn verify_and_install_response_page_from_local_state(
             verify_history_external_source_key(
                 state_store,
                 secure_store,
-                actor_id,
+                authority,
                 device_id,
                 request,
             )

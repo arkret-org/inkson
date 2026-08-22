@@ -15,12 +15,12 @@ pub(super) use crate::views::member_display::{
     RealmMemberRow, owned_agent_slug as owned_agent_slug_for_row, realm_member_roster,
 };
 
-pub(super) fn card_member_is_current_account(row: &RealmMemberRow, account_did: &str) -> bool {
-    actor_is_current_account(&row.actor_id, account_did)
+pub(super) fn card_member_is_current_account(row: &RealmMemberRow, principal_id: &str) -> bool {
+    actor_is_current_account(&row.actor_id, principal_id)
         || row
             .subject_id
             .as_deref()
-            .is_some_and(|subject_id| actor_is_current_account(subject_id, account_did))
+            .is_some_and(|subject_id| actor_is_current_account(subject_id, principal_id))
 }
 
 pub(super) fn member_roster_realm_context(

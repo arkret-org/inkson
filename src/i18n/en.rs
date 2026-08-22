@@ -48,7 +48,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("login.server_url", "Server URL");
     dict.set("login.test_connection", "Test Connection");
     dict.set("login.account", "Account");
-    dict.set("login.account_did", "Account DID");
     dict.set("login.device_id", "Device ID");
     dict.set("login.passkey", "Passkey Login");
     dict.set("login.oidc", "OIDC Login");

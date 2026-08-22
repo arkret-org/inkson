@@ -45,7 +45,7 @@ pub(super) struct AppSignalProductSink {
     read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
     base_url: Signal<String>,
     token: Signal<String>,
-    account_did: Signal<String>,
+    principal_id: Signal<String>,
     did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     state_store: crate::runtime::input::StateStoreHandle,
     authz_verdicts: RefCell<BTreeMap<String, CachedVerdict>>,
@@ -58,7 +58,7 @@ impl AppSignalProductSink {
         read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
         base_url: Signal<String>,
         token: Signal<String>,
-        account_did: Signal<String>,
+        principal_id: Signal<String>,
         did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
         state_store: crate::runtime::input::StateStoreHandle,
     ) -> Self {
@@ -68,7 +68,7 @@ impl AppSignalProductSink {
             read_receipt_hub,
             base_url,
             token,
-            account_did,
+            principal_id,
             did_cache,
             state_store,
             authz_verdicts: RefCell::new(BTreeMap::new()),
@@ -234,7 +234,7 @@ impl SignalProductSink for AppSignalProductSink {
     ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
             let mut hub = self.call_hub;
-            let local_actor = self.account_did.peek().clone();
+            let local_actor = self.principal_id.peek().clone();
             let api = self.authenticated_api();
             // A fresh anchor per batch keeps the resolver's ingested evidence
             // scoped to this routing pass; the (possibly back-filled) cache is
@@ -297,7 +297,7 @@ impl SignalProductSink for AppSignalProductSink {
         // §2.5 is the exception and is enforced inside the hub: `disabled` and
         // `private` are client-side discards, because a Sync Service cannot
         // read the receipt to apply them.
-        let local_actor = self.account_did.peek().clone();
+        let local_actor = self.principal_id.peek().clone();
         let mut hub = self.read_receipt_hub;
         hub.apply_authorized(plaintext, policy, &local_actor);
     }

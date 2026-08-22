@@ -94,7 +94,7 @@ struct ResolvedPairingApprovalPayload {
 #[serde(deny_unknown_fields)]
 struct PairingApprovalPayload {
     schema: arkret_sdk::NonEmptyString,
-    account_did: arkret_sdk::DidFullId,
+    principal_id: arkret_sdk::DidFullId,
     pairing_code: arkret_sdk::DevicePairingCode,
     new_device_pubkey: arkret_sdk::PublicKey,
     challenge_proof: arkret_sdk::DevicePairingChallengeProof,
@@ -160,7 +160,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
 /// key; the existing device turns this payload into
 /// `ak.gate.account.command.pair_device`.
 fn build_pair_payload(
-    account_did: &str,
+    principal_id: &str,
     requesting_device_id: &str,
     public_key_material: &str,
     pairing_code: &str,
@@ -173,7 +173,7 @@ fn build_pair_payload(
         |value: &str| arkret_sdk::NonEmptyString::new(value.to_owned()).map_err(anyhow::Error::msg);
     let payload = PairingApprovalPayload {
         schema: non_empty(arkret_sdk::SchemaId::DEVICE_PAIRING_OPERATIONS_V1)?,
-        account_did: arkret_sdk::DidFullId::new(account_did.to_owned())?,
+        principal_id: arkret_sdk::DidFullId::new(principal_id.to_owned())?,
         pairing_code: arkret_sdk::DevicePairingCode::new(pairing_code.to_owned())
             .map_err(anyhow::Error::msg)?,
         new_device_pubkey: arkret_sdk::PublicKey {
@@ -361,14 +361,19 @@ fn build_pairing_verification_content(
 }
 
 #[component]
-pub fn SettingsDevicesPanel(
-    account_did: Signal<String>,
-    device_id: Signal<String>,
-    token: Signal<String>,
-) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::get().base_url;
-    let state_store = crate::app::SessionContext::get().state_store;
+pub fn SettingsDevicesPanel(token: Signal<String>) -> Element {
+    let session = crate::app::SessionContext::get();
+    let state_store = session.state_store;
+    let Some(account) = session.active_account() else {
+        return rsx! {};
+    };
+    let server_url = account.server_url.to_string();
+    let full_id = account.full_id().to_string();
+    let active_device_id = account.device_id.to_string();
+    let authority = account.authority.clone();
+    let base_url = use_signal(move || server_url.clone());
+    let principal_id = use_signal(move || full_id.clone());
+    let device_id = use_signal(move || active_device_id.clone());
     let route = use_route::<Route>();
     let pair_mode = matches!(route, Route::SettingsDevicesPair);
 
@@ -535,8 +540,9 @@ pub fn SettingsDevicesPanel(
 
             if pair_mode {
                 {render_pair_strand(
-                    account_did,
+                    principal_id,
                     device_id,
+                    authority.clone(),
                     base_url,
                     token,
                     state_store,
@@ -562,10 +568,11 @@ pub fn SettingsDevicesPanel(
                     revoke_target,
                     revoke_status,
                     base_url,
-                    account_did,
+                    principal_id,
                     device_id,
                     token,
                     state_store,
+                    authority.clone(),
                     revoke_passphrase,
                 )}
             }
@@ -582,10 +589,11 @@ fn render_device_list(
     revoke_target: Signal<Option<String>>,
     revoke_status: Signal<String>,
     base_url: Signal<String>,
-    account_did: Signal<String>,
+    principal_id: Signal<String>,
     device_id: Signal<String>,
     token: Signal<String>,
     state_store: SyncSignal<LocalStateStore>,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     revoke_passphrase: Signal<crate::fresh_device_recovery::RecoveryWordsInput>,
 ) -> Element {
     let rows = devices();
@@ -640,8 +648,9 @@ fn render_device_list(
                 devices,
                 load_status,
                 state_store,
-                account_did,
+                principal_id,
                 device_id,
+                authority,
                 revoke_passphrase,
             )}
         }
@@ -783,8 +792,9 @@ fn render_revoke_modal(
     mut devices: Signal<Vec<DeviceRow>>,
     mut load_status: Signal<String>,
     state_store: SyncSignal<LocalStateStore>,
-    account_did: Signal<String>,
+    principal_id: Signal<String>,
     device_id: Signal<String>,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     mut revoke_passphrase: Signal<crate::fresh_device_recovery::RecoveryWordsInput>,
 ) -> Element {
     let confirm_target = target.clone();
@@ -842,7 +852,7 @@ fn render_revoke_modal(
                         onclick: move |_| {
                             let base = base_url();
                             let api_token = token();
-                            let actor = account_did();
+                            let actor = principal_id();
                             let current_device = device_id();
                             let target_id = confirm_target.clone();
                             let target_for_status = target_id.clone();
@@ -866,6 +876,7 @@ fn render_revoke_modal(
                                             &api,
                                             secure_store,
                                             state_store,
+                                            &authority,
                                             &actor,
                                             &current_device,
                                             &target_id,
@@ -930,8 +941,9 @@ fn render_revoke_modal(
 
 #[allow(clippy::too_many_arguments)]
 fn render_pair_strand(
-    account_did: Signal<String>,
+    principal_id: Signal<String>,
     device_id: Signal<String>,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     base_url: Signal<String>,
     token: Signal<String>,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -948,7 +960,7 @@ fn render_pair_strand(
     mut accept_resolved: Signal<String>,
     mut accept_action_busy: Signal<bool>,
 ) -> Element {
-    let actor_id = account_did();
+    let actor_id = principal_id();
     let payload_value = pair_payload();
     let status_value = pair_status();
     let pair_code_value = pair_code();
@@ -1187,7 +1199,7 @@ fn render_pair_strand(
                         if pair_action_busy() {
                             return;
                         }
-                        let actor = account_did();
+                        let actor = principal_id();
                         if actor.trim().is_empty() {
                             pair_status.set("No active session. Sign in first.".to_owned());
                             return;
@@ -1228,6 +1240,7 @@ fn render_pair_strand(
                         let base = base_url();
                         let api_token = token();
                         let public_key_material = public_key_material.to_owned();
+                        let authority = authority.clone();
                         spawn(async move {
                             let client_nonce = match arkret_sdk::DevicePairingNonce::new(client_nonce)
                             {
@@ -1361,8 +1374,8 @@ fn render_pair_strand(
                             };
                             let target_attestation = match crate::identity::device_pairing::sign_target_attestation(
                                 &signer,
-                                &actor,
-                                &requesting_device_id,
+                                &authority,
+                                &arkret_sdk::DeviceId::new(requesting_device_id.clone()).expect("active account device id is typed before rendering"),
                                 challenge_proof.transcript_digest.clone(),
                             ).await {
                                 Ok(attestation) => attestation,
@@ -1534,7 +1547,7 @@ fn render_pair_strand(
                             let request_id = pair_request_id();
                             let code = pair_code();
                             let handoff_link = pair_payload();
-                            let principal = account_did();
+                            let principal = principal_id();
                             if request_id.trim().is_empty() {
                                 pair_status.set("Request approval first.".to_owned());
                                 return;
@@ -1954,7 +1967,7 @@ mod tests {
             parsed["schema"],
             arkret_sdk::SchemaId::DEVICE_PAIRING_OPERATIONS_V1
         );
-        assert_eq!(parsed["account_did"], "did:web:alice");
+        assert_eq!(parsed["principal_id"], "did:web:alice");
         assert_eq!(parsed["pairing_code"], "7H2K9M4Q");
         assert_eq!(parsed["new_device_pubkey"]["kid"], "device-1");
         // Spec-canonical field name is `key`, not `public_key` — the gate body

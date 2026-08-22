@@ -26,30 +26,20 @@ const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
 /// index retains the last-selected account independently from `pending_login`;
 /// while a transaction is pending this namespace takes precedence without
 /// erasing that account pointer. It is not a real account and never appears in
-/// `known_dids`.
+/// `known_profiles`.
 const ANONYMOUS_ACCOUNT_NAMESPACE: &str = "anonymous";
 
-/// Canonical local account namespace. Identity equality and every durable
-/// account-local key use the stable DID core id; a full DID is resolution
-/// material and may legitimately change without creating a new local account.
-fn account_storage_scope(principal: &str) -> String {
-    let principal = principal.trim();
-    if principal.is_empty() || principal == ANONYMOUS_ACCOUNT_NAMESPACE {
-        return principal.to_owned();
-    }
-    crate::mls_api_helpers::principal_core_id(principal)
-        .map(|core_id| core_id.as_str().to_owned())
-        .unwrap_or_else(|_| principal.to_owned())
+/// Bounded physical locator for one exact account authority pair.
+fn account_storage_scope(
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+) -> Result<String, crate::secure_key_store::SecureKeyStoreError> {
+    crate::secure_key_store::principal_authority_storage_digest(authority)
 }
 
-/// Per-account `ClientLocalState` storage key, always core-id scoped for a
-/// signed-in principal.
+/// Per-account `ClientLocalState` storage key, always authority-pair scoped.
 #[cfg(target_arch = "wasm32")]
-fn account_state_key(principal: &str) -> String {
-    format!(
-        "{LOCAL_STATE_STORAGE_KEY}.account.{}",
-        account_storage_scope(principal)
-    )
+fn account_state_key(storage_scope: &str) -> String {
+    format!("{LOCAL_STATE_STORAGE_KEY}.account.{storage_scope}")
 }
 
 /// YOU-02-003: hard cap on the persisted `raw_operations` audit log. Each
@@ -134,15 +124,15 @@ enum LocalProjectionCommand {
 pub struct LocalStateStore {
     /// The ACTIVE account's full state. Every existing read/write method
     /// operates on `cached` unchanged — they simply act on whichever account
-    /// the persisted root index's `active_did` selects. Loaded from
-    /// `account_state_key(active_did)` (or default when signed out) by
+    /// the persisted root index's active profile authority selects. Loaded from
+    /// the authority-digest account key (or default when signed out) by
     /// [`Self::ensure_cached_loaded`].
     ///
     /// NOTE: the root index is deliberately NOT a struct field. `LocalStateStore`
     /// is `#[derive(Clone)]` and held in a widely-cloned `Signal<_>`; a cached
     /// `root` field would diverge per clone (one clone adopting an account while
     /// a stale clone's later flush rewrites the index back), which is exactly the
-    /// "login leaves active_did = null / pending_login uncleared" race. Instead
+    /// "login leaves the active profile unset / pending_login uncleared" race. Instead
     /// the root index is the small localStorage/root-file blob itself — read
     /// through [`Self::read_root`] and updated atomically through
     /// [`Self::mutate_root`] so every clone observes one shared source of truth.
@@ -632,22 +622,22 @@ impl LocalStateStore {
     // ── Account-aware persistence (per-account isolation) ────────────────
     //
     // The storage layout is a small root index at [`LOCAL_STATE_STORAGE_KEY`]
-    // plus one full `ClientLocalState` per account at `account_state_key(did)`
+    // plus one full `ClientLocalState` per authority at its digest-derived key
     // (native: sibling files via `account_state_path`). The only persistence
     // functions that touch a storage key are the three below; the ~hundreds of
     // `cached`-based read/write methods are untouched — they act on whichever
-    // account `root.active_did` selects.
+    // account selected by `root.active_profile_id` and its typed authority.
     //
     // `read_persisted_state` returns the ACTIVE account's state (its callers
     // only want the state); `load_persisted_root` reads the index;
     // `write_persisted_state` writes the active account's entry and the index.
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn account_state_path(&self, did: &str) -> PathBuf {
-        // Sibling file with the stem suffixed by `.account.<sanitized_did>`.
+    fn account_state_path(&self, storage_scope: &str) -> PathBuf {
+        // Sibling file with the stem suffixed by `.account.<authority_digest>`.
         // DID syntax (`did:webvh:…`) contains `:` which is filesystem-hostile
         // on Windows, so sanitise to a stable token.
-        let sanitized = sanitize_did_for_filename(&account_storage_scope(did));
+        let sanitized = sanitize_storage_scope_for_filename(storage_scope);
         let stem = self
             .path
             .file_stem()
@@ -696,7 +686,7 @@ impl LocalStateStore {
     /// the backing store (it is small — a sync localStorage read on wasm, a tiny
     /// file on native — so this is cheap). There is no per-clone cache to go
     /// stale, so every `LocalStateStore` clone in the `Signal<_>` observes the
-    /// same `active_did` / `pending_login` / `known_dids`.
+    /// same `active_profile_id` / `pending_login` / `known_profiles`.
     fn read_root(&self) -> RootIndex {
         self.load_persisted_root()
     }
@@ -705,13 +695,14 @@ impl LocalStateStore {
     /// index, applies `f`, and writes the result straight back — no intermediate
     /// in-memory `self.root` to diverge across clones. Must NOT trigger anything
     /// that re-reads/re-writes the root (no `flush`) to avoid re-entrancy.
-    fn mutate_root(&self, f: impl FnOnce(&mut RootIndex)) {
+    fn mutate_root<T>(&self, f: impl FnOnce(&mut RootIndex) -> T) -> T {
         let mut root = self.load_persisted_root();
-        f(&mut root);
+        let result = f(&mut root);
         if let Err(error) = self.write_root(&root) {
             tracing::error!(%error, "persist root index failed");
             self.record_persist_result(&Err(error));
         }
+        result
     }
 
     /// Read the root index, preserving malformed data before resetting.
@@ -775,25 +766,41 @@ impl LocalStateStore {
         if root.pending_login.is_some() {
             ANONYMOUS_ACCOUNT_NAMESPACE.to_owned()
         } else {
-            root.active_did
-                .map(|principal| account_storage_scope(&principal))
+            root.active_profile_id
+                .as_deref()
+                .and_then(|profile_id| root.authority_for_profile(profile_id))
+                .and_then(|authority| match account_storage_scope(authority) {
+                    Ok(scope) => Some(scope),
+                    Err(error) => {
+                        tracing::error!(?error, "invalid active account authority namespace");
+                        None
+                    }
+                })
                 .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned())
         }
     }
 
     /// Read the ACTIVE account's `ClientLocalState`. Resolves the namespace
-    /// (active DID, or the anonymous sentinel when signed out) from the
+    /// (active authority, or the anonymous sentinel when signed out) from the
     /// root index, then reads that entry. `None` when the entry is
     /// absent.
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
         let root = self.read_root();
-        let active_did = root
+        let active_authority = root
             .pending_login
             .is_none()
-            .then_some(root.active_did)
+            .then(|| {
+                root.active_profile_id
+                    .as_deref()
+                    .and_then(|profile_id| root.authority_for_profile(profile_id))
+                    .cloned()
+            })
             .flatten();
-        let account_key = active_did.as_deref().unwrap_or(ANONYMOUS_ACCOUNT_NAMESPACE);
-        let state = self.read_account_state(account_key).unwrap_or_default();
+        let account_scope = active_authority
+            .as_ref()
+            .and_then(|authority| account_storage_scope(authority).ok())
+            .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned());
+        let state = self.read_account_state(&account_scope).unwrap_or_default();
         #[cfg(not(test))]
         {
             let mut state = state;
@@ -808,13 +815,23 @@ impl LocalStateStore {
             #[cfg(not(target_arch = "wasm32"))]
             let secure_store_ready = true;
             if secure_store_ready {
-                let secure_grant = active_did.as_deref().and_then(|principal| {
-                    let user_store = match user_local_store_for_principal(principal) {
+                let secure_grant = active_authority.as_ref().and_then(|authority| {
+                    let scope = crate::secure_key_store::active_device_seed_scope()?;
+                    if scope.authority != *authority {
+                        tracing::warn!(
+                            "secure session grant restore skipped because the active device scope belongs to a different authority"
+                        );
+                        return None;
+                    }
+                    let user_store = match crate::secure_key_store::UserLocalStore::new(
+                        authority.clone(),
+                        scope.device_id,
+                    ) {
                         Ok(user_store) => user_store,
                         Err(error) => {
                             tracing::warn!(
                                 ?error,
-                                "secure session grant restore skipped for invalid principal"
+                                "secure session grant restore skipped for invalid authority/device"
                             );
                             return None;
                         }
@@ -841,8 +858,8 @@ impl LocalStateStore {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn read_account_state(&self, did: &str) -> Option<ClientLocalState> {
-        let path = self.account_state_path(did);
+    fn read_account_state(&self, storage_scope: &str) -> Option<ClientLocalState> {
+        let path = self.account_state_path(storage_scope);
         let bytes = fs::read(&path).ok()?;
         match serde_json::from_slice::<ClientLocalState>(&bytes) {
             Ok(state) => Some(state),
@@ -1024,9 +1041,8 @@ impl LocalStateStore {
 /// reversible-free (we never need to decode it), and free of `:`/`/` which are
 /// hostile on Windows. Matches the per-account secure-store scoping convention.
 #[cfg(not(target_arch = "wasm32"))]
-fn sanitize_did_for_filename(did: &str) -> String {
-    use base64::Engine as _;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(did.as_bytes())
+fn sanitize_storage_scope_for_filename(storage_scope: &str) -> String {
+    storage_scope.to_owned()
 }
 
 fn e2ee_safe_persist_state(state: &ClientLocalState) -> ClientLocalState {

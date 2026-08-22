@@ -57,7 +57,7 @@ fn projection_text_from_private_sidecar(value: String) -> String {
 pub fn projection_events_from_sync_realms(
     realms: &std::collections::BTreeMap<String, Value>,
     store: Option<&crate::state::LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(&arkret_sdk::PrincipalAuthorityKey, &arkret_sdk::DeviceId)>,
 ) -> Vec<ProjectionEvent> {
     let mut events = Vec::new();
     for (realm_id, body) in realms {
@@ -183,7 +183,8 @@ pub fn projection_events_from_sync_realms(
                 // b. Remote decrypt-on-read — envelope → payload → MLS core →
                 // canonical Content Block JSON → display text.
                 let decrypted_body = if sidecar_body.is_none() {
-                    if let (Some((actor_id, device_id)), Some(store)) = (decrypt_identity, store) {
+                    if let (Some((authority, device_id)), Some(store)) = (decrypt_identity, store) {
+                        let actor_id = authority.principal_id.as_str();
                         event
                             .get("scope_ref")
                             .or_else(|| event.get("effective_scope"))
@@ -202,6 +203,7 @@ pub fn projection_events_from_sync_realms(
                                 try_local_mls_decrypt_core_for_scope_from_verified_sender(
                                     store,
                                     message_realm,
+                                    authority,
                                     actor_id,
                                     device_id,
                                     encrypted_content,

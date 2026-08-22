@@ -20,7 +20,7 @@ pub(super) fn contact_manage_scope_summary(contact: &crate::models::ContactListR
 
 #[component]
 pub(super) fn RealmsManagePage(
-    account_did: String,
+    principal_id: String,
     token: Signal<String>,
     has_session: bool,
     realm_rows: Vec<RealmManageRow>,
@@ -110,7 +110,7 @@ pub(super) fn RealmsManagePage(
                                 disabled: selection_count == 0 || busy() || !has_session,
                                 onclick: {
                                     let base = base_url.clone();
-                                    let actor_account_did = account_did.clone();
+                                    let actor_principal_id = principal_id.clone();
                                     move |_| {
                                         if busy() {
                                             return;
@@ -126,7 +126,7 @@ pub(super) fn RealmsManagePage(
                                         // Membership events are authored by the account/principal
                                         // DID (the authenticated session actor), not the local device DID,
                                         // or the server rejects them with `actor_session_mismatch`.
-                                        let actor_id = actor_account_did.clone();
+                                        let actor_id = actor_principal_id.clone();
                                         if actor_id.trim().is_empty() {
                                             crate::components::feedback::toast_error(
                                                 "feedback.account_not_connected",

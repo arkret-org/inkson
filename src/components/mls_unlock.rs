@@ -59,6 +59,10 @@ pub fn MlsUnlockPrompt(
     let session = crate::app::SessionContext::get();
     let base_url = session.base_url;
     let state_store = session.state_store;
+    let Some(active_account) = session.active_account() else {
+        return rsx! {};
+    };
+    let authority = active_account.authority.clone();
     let mut passphrase = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -116,6 +120,7 @@ pub fn MlsUnlockPrompt(
         let mut state_store = state_store;
         let needs_mls_unlock = needs_mls_unlock;
         let restore_payload_cache = restore_payload_cache;
+        let authority = authority.clone();
         busy.set(true);
         status.set(crate::i18n::tr("mls_unlock.status.fetching"));
         spawn(async move {
@@ -194,6 +199,7 @@ pub fn MlsUnlockPrompt(
                                         &payload,
                                         &mut store,
                                         secure_store.as_ref(),
+                                        &authority,
                                         &actor,
                                         &device,
                                         &recovery_private_key,
@@ -205,7 +211,8 @@ pub fn MlsUnlockPrompt(
                                 crate::sync_engine::apply_account_data_entries(
                                     &mut store,
                                     &account_data,
-                                    &actor,
+                                    &authority,
+                                    &authority.principal_id,
                                 );
                             }
                             tracing::warn!(

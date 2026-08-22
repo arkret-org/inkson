@@ -108,9 +108,10 @@ pub(crate) async fn ensure_mls_governance_coverage(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
     circle_id: Option<&str>,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<bool, String> {
+    let actor_id = authority.principal_id.as_str();
     let realm_id = realm_id.trim();
     if realm_id.is_empty() {
         return Err("realm_id is required for MLS coverage repair".to_owned());
@@ -166,7 +167,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
         &state_store.read(),
         realm_id,
         circle_id,
-        actor_id,
+        authority,
         device_id,
     )?;
     let request = crate::mls::governance_proof::proof_request(
@@ -196,6 +197,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
                 secure_store.as_ref(),
                 realm_id,
                 circle_id,
+                authority,
                 actor_id,
                 device_id,
             )

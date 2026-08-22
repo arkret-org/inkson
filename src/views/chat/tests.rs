@@ -3004,7 +3004,7 @@ fn treats_core_id_and_full_did_spellings_of_same_principal_as_own_sender() {
 }
 
 #[test]
-fn treats_canonical_account_did_as_own_sender() {
+fn treats_canonical_principal_id_as_own_sender() {
     let participants = Vec::new();
 
     assert!(is_own_message_sender(
@@ -3451,7 +3451,7 @@ fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
 
 #[test]
 fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
-    let account_did = "did:web:example.com:users:alice";
+    let principal_id = "did:web:example.com:users:alice";
     let stale_picker = vec![crate::messaging::mentions::MentionCandidate {
         did: "did:web:example.com:users:bob".to_owned(),
         display_name: "Bob".to_owned(),
@@ -3478,7 +3478,7 @@ fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
             mentions_enabled,
             "hello @me @all @bob:example.com",
             &stale_picker,
-            account_did,
+            principal_id,
         )
         .is_empty(),
         "direct-chat sends must not carry mention metadata"
@@ -3489,7 +3489,7 @@ fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
             "ask @me/summary",
             &[],
             &stale_picker,
-            account_did,
+            principal_id,
         )
         .is_empty(),
         "direct-chat text must not trigger agent mention routing"
@@ -3868,7 +3868,7 @@ fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
 
 #[test]
 fn explicit_member_click_builds_user_and_owned_agent_mentions() {
-    let account_did = "did:web:example.com:users:alice";
+    let principal_id = "did:web:example.com:users:alice";
     let member = SpaceParticipant {
         did: "did:web:example.com:users:bob".to_owned(),
         display_name: Some("Bob".to_owned()),
@@ -3882,7 +3882,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     let clicked_member = mention_candidate_for_explicit_target(
         &member,
         std::slice::from_ref(&member),
-        account_did,
+        principal_id,
         &std::collections::BTreeSet::new(),
         None,
         Some("alice:example.com"),
@@ -3904,7 +3904,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     let clicked_agent = mention_candidate_for_explicit_target(
         &unannotated_owned_agent,
         std::slice::from_ref(&unannotated_owned_agent),
-        account_did,
+        principal_id,
         &std::collections::BTreeSet::new(),
         Some("summary"),
         Some("alice:example.com"),
@@ -3912,13 +3912,13 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     .expect("explicit owned-agent mention");
     assert_eq!(clicked_agent.insert_label(), "me/summary");
     assert!(clicked_agent.is_agent);
-    assert_eq!(clicked_agent.controller_subject_id, account_did);
+    assert_eq!(clicked_agent.controller_subject_id, principal_id);
     assert_eq!(clicked_agent.agent_slug_at_time, "summary");
 
     let before_handle_load = owned_agent_mention_candidate(
         &unannotated_owned_agent.did,
         Some("summary"),
-        account_did,
+        principal_id,
         None,
     )
     .expect("@me selector must not wait for the account handle");
@@ -3929,7 +3929,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
             true,
             "ask @me/summary",
             std::slice::from_ref(&before_handle_load),
-            account_did,
+            principal_id,
         )
         .is_empty()
     );
@@ -4013,23 +4013,23 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
             display_name: "Bob Summary".to_owned(),
         }),
     };
-    let account_did = own_controller.did.as_str();
+    let principal_id = own_controller.did.as_str();
     let visible = std::collections::BTreeSet::new();
 
     assert!(agent_candidate_is_visible(
         &own_agent,
         &visible,
-        account_did
+        principal_id
     ));
     assert!(!agent_candidate_is_visible(
         &remote_agent,
         &visible,
-        account_did
+        principal_id
     ));
     assert!(agent_candidate_is_visible(
         &remote_agent,
         &std::collections::BTreeSet::from([remote_agent.did.clone()]),
-        account_did
+        principal_id
     ));
     let sidecar_mentions = sidecar_owned_agent_participants(
         &[
@@ -4037,11 +4037,11 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
             own_agent.clone(),
             remote_agent.clone(),
         ],
-        account_did,
+        principal_id,
     );
     assert_eq!(sidecar_mentions, vec![own_agent.clone()]);
     assert_eq!(
-        readable_participation_agent_ids(&[own_agent.clone(), remote_agent], account_did),
+        readable_participation_agent_ids(&[own_agent.clone(), remote_agent], principal_id),
         vec![own_agent.did]
     );
 }

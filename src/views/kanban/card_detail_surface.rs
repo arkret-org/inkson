@@ -6,7 +6,7 @@ use super::*;
 pub(super) struct CardDetailContext {
     pub base_url: String,
     pub plaintext_service_id: String,
-    pub account_did: String,
+    pub principal_id: String,
     pub account_primary_handle: String,
     pub device_id: String,
     pub selected_realm_id: String,
@@ -159,7 +159,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
     let CardDetailContext {
         base_url,
         plaintext_service_id,
-        account_did,
+        principal_id,
         account_primary_handle,
         device_id,
         selected_realm_id,
@@ -647,7 +647,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     onclick: {
                                                                         let base = base_url.clone();
                                                                         let realm = selected_realm_id.clone();
-                                                                        let actor = account_did.clone();
+                                                                        let actor = principal_id.clone();
                                                                         let strand_id = card.id.clone();
                                                                         move |_| {
                                                                             dispatch_strand_lifecycle(
@@ -775,7 +775,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             on_save: {
                                                                 let base = base_url.clone();
                                                                 let realm = selected_realm_id.clone();
-                                                                let actor = account_did.clone();
+                                                                let actor = principal_id.clone();
                                                                 let device = device_id.clone();
                                                                 let current = card.clone();
                                                                 let entries = synthesis_entries.clone();
@@ -957,7 +957,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     on_save: {
                                                                         let base = base_url.clone();
                                                                         let realm = selected_realm_id.clone();
-                                                                        let actor = account_did.clone();
+                                                                        let actor = principal_id.clone();
                                                                         let device = device_id.clone();
                                                                         let current = card.clone();
                                                                         let entries = synthesis_entries.clone();
@@ -1129,7 +1129,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             "history"
                                                                         };
                                                                         let synthesis_is_own =
-                                                                            actor_is_current_account(&display_revision.actor_id, &account_did);
+                                                                            actor_is_current_account(&display_revision.actor_id, &principal_id);
                                                                         let entry_class = if selected_synthesis_is_latest {
                                                                             if synthesis_is_own {
                                                                                 "card-synthesis-entry is-latest is-own"
@@ -1233,7 +1233,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                                 preview
                                                                                                             };
                                                                                                             let history_is_own =
-                                                                                                                actor_is_current_account(&history_entry.actor_id, &account_did);
+                                                                                                                actor_is_current_account(&history_entry.actor_id, &principal_id);
                                                                                                             rsx! {
                                                                                                                 Button {
                                                                                                                     variant: ButtonVariant::Secondary,
@@ -1329,7 +1329,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             on_save: {
                                                                                                 let base = base_url.clone();
                                                                                                 let realm = selected_realm_id.clone();
-                                                                                                let actor = account_did.clone();
+                                                                                                let actor = principal_id.clone();
                                                                                                 let device = device_id.clone();
                                                                                                 let current = track_card.clone();
                                                                                                 let entries = synthesis_entries.clone();
@@ -1420,7 +1420,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     on_save: {
                                                                         let base = base_url.clone();
                                                                         let realm = selected_realm_id.clone();
-                                                                        let actor = account_did.clone();
+                                                                        let actor = principal_id.clone();
                                                                         let device = device_id.clone();
                                                                         let current = track_card.clone();
                                                                         let entries = synthesis_entries.clone();
@@ -1518,7 +1518,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "aria-hidden": "{active_detail_tab != CardDetailContentTab::Discussion}",
                                                         crate::views::chat::ChatPanel {
                                                             plaintext_service_id: plaintext_service_id.clone(),
-                                                            account_did: account_did.clone(),
+                                                            principal_id: principal_id.clone(),
                                                             account_primary_handle: account_primary_handle.clone(),
                                                             device_id: device_id.clone(),
                                                             token,
@@ -1764,7 +1764,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         onclick: {
                                                                                             let base = base_url.clone();
                                                                                             let realm = selected_realm_id.clone();
-                                                                                            let actor = account_did.clone();
+                                                                                            let actor = principal_id.clone();
                                                                                             let current_card = card.clone();
                                                                                             let assignee_labels = assignee_label_lookup.clone();
                                                                                             move |_| {
@@ -1889,7 +1889,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             onclick: {
                                                                                                 let base = base_url.clone();
                                                                                                 let realm = selected_realm_id.clone();
-                                                                                                let actor = account_did.clone();
+                                                                                                let actor = principal_id.clone();
                                                                                                 let current_card = card.clone();
                                                                                                 let assignee_labels = assignee_label_lookup.clone();
                                                                                                 move |_| {
@@ -1971,7 +1971,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             onclick: {
                                                                                                 let base = base_url.clone();
                                                                                                 let realm = selected_realm_id.clone();
-                                                                                                let actor = account_did.clone();
+                                                                                                let actor = principal_id.clone();
                                                                                                 let device = device_id.clone();
                                                                                                 let current_card = card.clone();
                                                                                                 move |_| {
@@ -2151,7 +2151,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     onclick: {
                                                                                                         let base = base_url.clone();
                                                                                                         let realm = selected_realm_id.clone();
-                                                                                                        let actor = account_did.clone();
+                                                                                                        let actor = principal_id.clone();
                                                                                                         let device = device_id.clone();
                                                                                                         let current_card = card.clone();
                                                                                                         move |_| {
@@ -2212,7 +2212,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             on_save: {
                                                                                                 let base = base_url.clone();
                                                                                                 let realm = selected_realm_id.clone();
-                                                                                                let actor = account_did.clone();
+                                                                                                let actor = principal_id.clone();
                                                                                                 let device = device_id.clone();
                                                                                                 let current_card = card.clone();
                                                                                                 move |_| {
@@ -2428,7 +2428,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         onclick: {
                                                                                                             let base = base_url.clone();
                                                                                                             let realm = selected_realm_id.clone();
-                                                                                                            let actor = account_did.clone();
+                                                                                                            let actor = principal_id.clone();
                                                                                                             let current_card = card.clone();
                                                                                                             move |_| {
                                                                                                                 dispatch_calendar_rsvp(
@@ -2453,7 +2453,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         onclick: {
                                                                                                             let base = base_url.clone();
                                                                                                             let realm = selected_realm_id.clone();
-                                                                                                            let actor = account_did.clone();
+                                                                                                            let actor = principal_id.clone();
                                                                                                             let current_card = card.clone();
                                                                                                             move |_| {
                                                                                                                 dispatch_calendar_rsvp(
@@ -2478,7 +2478,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         onclick: {
                                                                                                             let base = base_url.clone();
                                                                                                             let realm = selected_realm_id.clone();
-                                                                                                            let actor = account_did.clone();
+                                                                                                            let actor = principal_id.clone();
                                                                                                             let current_card = card.clone();
                                                                                                             move |_| {
                                                                                                                 dispatch_calendar_rsvp(
@@ -2563,10 +2563,10 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 members.push(row);
                                                                             }
                                                                         }
-                                                                        members.sort_by_key(|row| !card_member_is_current_account(row, &account_did));
+                                                                        members.sort_by_key(|row| !card_member_is_current_account(row, &principal_id));
                                                                         agents.sort_by_key(|(row, slug)| (*slug, row.actor_id.as_str()));
                                                                         let has_controller = members.iter().any(|row| {
-                                                                            card_member_is_current_account(row, &account_did)
+                                                                            card_member_is_current_account(row, &principal_id)
                                                                         });
                                                                         rsx! { div {
                                                                         class: "card-detail-actor-list",
@@ -2574,7 +2574,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         for row in members {
                                                                             {
                                                                                 let did = row.actor_id.clone();
-                                                                                let is_self = card_member_is_current_account(row, &account_did);
+                                                                                let is_self = card_member_is_current_account(row, &principal_id);
                                                                                 let store = state_store.read();
                                                                                  let label = crate::views::member_display::resolve_member_display(
                                                                                      &store,

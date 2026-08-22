@@ -352,25 +352,27 @@ pub(crate) fn mls_recovery_setup_missing(
 }
 
 pub(crate) fn mls_welcome_bootstrap_key(
-    base_url: &str,
+    server_url: &url::Url,
     session_credential: &str,
-    account_did: &str,
-    device_id: &str,
-    realm_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+    realm_id: &arkret_sdk::RealmId,
     e2ee_ready: bool,
     sync_bootstrap_complete: bool,
 ) -> Option<String> {
     if !e2ee_ready || !sync_bootstrap_complete {
         return None;
     }
-    let base = server_key(base_url);
+    let base = server_key(server_url.as_str());
     let session = session_credential.trim();
-    let actor = account_did.trim();
-    let device = device_id.trim();
-    let realm = realm_id.trim();
+    let principal = authority.principal_id.as_str();
+    let principal_server = authority.principal_server_id.as_str();
+    let device = device_id.as_str();
+    let realm = realm_id.as_str();
     if base.is_empty()
         || session.is_empty()
-        || actor.is_empty()
+        || principal.is_empty()
+        || principal_server.is_empty()
         || device.is_empty()
         || realm.is_empty()
     {
@@ -380,58 +382,63 @@ pub(crate) fn mls_welcome_bootstrap_key(
     let mut token_hash = DefaultHasher::new();
     session.hash(&mut token_hash);
     Some(format!(
-        "{base}|{actor}|{device}|{realm}|{:016x}",
+        "{base}|{principal}|{principal_server}|{device}|{realm}|{:016x}",
         token_hash.finish()
     ))
 }
 
 pub(crate) fn mls_key_package_publish_key(
-    base_url: &str,
+    server_url: &url::Url,
     session_credential: &str,
-    account_did: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     e2ee_ready: bool,
     sync_bootstrap_complete: bool,
 ) -> Option<String> {
     if !e2ee_ready || !sync_bootstrap_complete {
         return None;
     }
-    let base = server_key(base_url);
+    let base = server_key(server_url.as_str());
     let session = session_credential.trim();
-    let actor = account_did.trim();
-    let device = device_id.trim();
-    if base.is_empty() || session.is_empty() || actor.is_empty() || device.is_empty() {
+    let principal = authority.principal_id.as_str();
+    let principal_server = authority.principal_server_id.as_str();
+    let device = device_id.as_str();
+    if base.is_empty()
+        || session.is_empty()
+        || principal.is_empty()
+        || principal_server.is_empty()
+        || device.is_empty()
+    {
         return None;
     }
 
     let mut token_hash = DefaultHasher::new();
     session.hash(&mut token_hash);
     Some(format!(
-        "{base}|{actor}|{device}|{:016x}",
+        "{base}|{principal}|{principal_server}|{device}|{:016x}",
         token_hash.finish()
     ))
 }
 
 pub(crate) fn local_mls_key_package_publish_hint(
     base_url: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> String {
     let base_scope = server_key(base_url);
-    if base_scope.is_empty() || actor_id.trim().is_empty() || device_id.trim().is_empty() {
+    if base_scope.is_empty() {
         return "not-ready".to_owned();
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     match crate::mls::runtime::load_mls_key_package_publish_marker(
         secure_store.as_ref(),
-        &base_scope,
-        actor_id,
+        authority,
         device_id,
     ) {
         Ok(Some(key_package_id)) => {
             match crate::mls::runtime::load_mls_key_package_identity_state(
                 secure_store.as_ref(),
-                actor_id,
+                authority,
                 device_id,
                 &key_package_id,
             ) {
@@ -448,29 +455,24 @@ pub(crate) fn local_mls_key_package_publish_hint(
 pub(crate) async fn ensure_local_mls_key_package_published(
     base_url: String,
     session_credential: String,
-    actor_id: String,
-    device_id: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    device_id: arkret_sdk::DeviceId,
 ) -> Result<Option<String>, String> {
     let base_scope = server_key(&base_url);
-    if base_scope.is_empty()
-        || session_credential.trim().is_empty()
-        || actor_id.trim().is_empty()
-        || device_id.trim().is_empty()
-    {
+    if base_scope.is_empty() || session_credential.trim().is_empty() {
         return Ok(None);
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     if let Some(key_package_id) = crate::mls::runtime::load_mls_key_package_publish_marker(
         secure_store.as_ref(),
-        &base_scope,
-        &actor_id,
+        &authority,
         &device_id,
     )
     .map_err(|error| format!("load MLS KeyPackage publish marker: {error}"))?
     {
         match crate::mls::runtime::load_mls_key_package_identity_state(
             secure_store.as_ref(),
-            &actor_id,
+            &authority,
             &device_id,
             &key_package_id,
         ) {
@@ -478,15 +480,13 @@ pub(crate) async fn ensure_local_mls_key_package_published(
             Ok(None) => {
                 crate::mls::runtime::delete_mls_key_package_publish_marker(
                     secure_store.as_ref(),
-                    &base_scope,
-                    &actor_id,
+                    &authority,
                     &device_id,
                 )
                 .map_err(|error| format!("delete stale MLS KeyPackage marker: {error}"))?;
                 crate::mls::runtime::delete_mls_key_package_publish_ref(
                     secure_store.as_ref(),
-                    &base_scope,
-                    &actor_id,
+                    &authority,
                     &device_id,
                 )
                 .map_err(|error| format!("delete stale MLS KeyPackage publish ref: {error}"))?;
@@ -497,12 +497,9 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         }
     }
 
-    let principal = crate::mls_api_helpers::principal_core_id(&actor_id)
-        .map_err(|error| format!("MLS principal_id: {error:?}"))?;
-    let device = arkret_sdk::DeviceId::new(device_id.trim().to_owned())
-        .map_err(|error| format!("MLS device_id: {error:?}"))?;
-    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal, device)
-        .map_err(|error| format!("create MLS identity: {error}"))?;
+    let identity =
+        arkret_sdk::ArkretMlsIdentity::new_basic(authority.principal_id.clone(), device_id.clone())
+            .map_err(|error| format!("create MLS identity: {error}"))?;
     // Publish a single-use KeyPackage. Direct Conversation peer claims must
     // reject last-resort packages, and the successful Welcome path below
     // replenishes this slot after the joined MLS state is durable.
@@ -523,7 +520,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     // the KeyPackage, the local init key is guaranteed on disk.
     crate::mls::runtime::store_mls_key_package_identity_state_durable(
         secure_store.as_ref(),
-        &actor_id,
+        &authority,
         &device_id,
         &key_package_id,
         &private_state,
@@ -533,7 +530,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     if key_package_ref != key_package_id {
         crate::mls::runtime::store_mls_key_package_identity_state_durable(
             secure_store.as_ref(),
-            &actor_id,
+            &authority,
             &device_id,
             &key_package_ref,
             &private_state,
@@ -542,7 +539,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         .map_err(|error| format!("store MLS KeyPackage identity ref state: {error}"))?;
     }
 
-    let publish_device_id = device_id.clone();
+    let publish_device_id = device_id.to_string();
     let publish_key_package_id = key_package_id.clone();
     let publish_key_package_ref = key_package_ref.clone();
     let outcome = crate::transport::auth::with_endpoint_clients(
@@ -561,14 +558,14 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     if outcome.accepted == 0 {
         let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
             secure_store.as_ref(),
-            &actor_id,
+            &authority,
             &device_id,
             &publish_key_package_id,
         );
         if publish_key_package_ref != publish_key_package_id {
             let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
                 secure_store.as_ref(),
-                &actor_id,
+                &authority,
                 &device_id,
                 &publish_key_package_ref,
             );
@@ -580,8 +577,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     }
     crate::mls::runtime::store_mls_key_package_publish_marker(
         secure_store.as_ref(),
-        &base_scope,
-        &actor_id,
+        &authority,
         &device_id,
         &key_package_id,
     )
@@ -592,8 +588,7 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     // instead of guessing which package the peer would claim.
     crate::mls::runtime::store_mls_key_package_publish_ref(
         secure_store.as_ref(),
-        &base_scope,
-        &actor_id,
+        &authority,
         &device_id,
         &key_package_ref,
     )
@@ -702,7 +697,8 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     base_url: String,
     session_credential: String,
     actor_id: String,
-    device_id: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    device_id: arkret_sdk::DeviceId,
     realm_id: String,
     mut state_store: SyncSignal<LocalStateStore>,
     needs_mls_backup: Option<Signal<bool>>,
@@ -778,7 +774,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let previews = crate::mls::runtime::preview_welcome_security_frontiers(
         secure_store.as_ref(),
-        &actor_id,
+        &authority,
         &device_id,
         &messages_value,
     )?;
@@ -818,7 +814,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         // a snapshot no local secret can open.
         crate::mls::runtime::ensure_existing_account_mls_secret_durable(
             secure_store.as_ref(),
-            &actor_id,
+            &authority,
         )
         .await
         .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
@@ -829,6 +825,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             &mut store,
             secure_store.as_ref(),
             &realm_id,
+            &authority,
             &actor_id,
             &device_id,
             &messages_value,
@@ -891,7 +888,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         let candidate = candidate.clone();
         let candidate_for_consume = candidate.clone();
         let key_package_id = candidate.key_package_id.clone();
-        let consumer_device_id = device_id.clone();
+        let consumer_device_id = device_id.to_string();
         let consume = crate::transport::auth::with_endpoint_clients(
             &base_url,
             session_credential.clone(),
@@ -928,7 +925,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             base_url.clone(),
             session_credential.clone(),
             actor_id.clone(),
-            device_id.clone(),
+            device_id.to_string(),
             state_store,
             needs_mls_backup,
         )
@@ -940,25 +937,22 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     };
     if applied > 0 || welcome_outcome.skipped_stale > 0 {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let base_scope = server_key(&base_url);
         crate::mls::runtime::delete_mls_key_package_publish_marker(
             secure_store.as_ref(),
-            &base_scope,
-            &actor_id,
+            &authority,
             &device_id,
         )
         .map_err(|error| format!("clear claimed MLS KeyPackage publish marker: {error}"))?;
         crate::mls::runtime::delete_mls_key_package_publish_ref(
             secure_store.as_ref(),
-            &base_scope,
-            &actor_id,
+            &authority,
             &device_id,
         )
         .map_err(|error| format!("clear claimed MLS KeyPackage publish ref: {error}"))?;
         ensure_local_mls_key_package_published(
             base_url.clone(),
             session_credential.clone(),
-            actor_id,
+            authority,
             device_id,
         )
         .await?;

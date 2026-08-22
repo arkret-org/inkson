@@ -7,6 +7,18 @@ use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
 use crate::state::isolated_store_for_tests as temp_state_store;
 
+fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    arkret_sdk::PrincipalAuthorityKey {
+        principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+        principal_server_id: arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned())
+            .unwrap(),
+    }
+}
+
+fn test_device(device: &str) -> arkret_sdk::DeviceId {
+    arkret_sdk::DeviceId::new(device.to_owned()).unwrap()
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn seed_complete_rfc9420_projection(
     state: &mut crate::state::LocalStateStore,
@@ -70,7 +82,14 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
             }]
         }),
     );
-    let summary = ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
+    let summary = ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+    )
+    .unwrap();
 
     let summary = summary.expect("missing creator snapshot should be created");
     assert_eq!(summary.realm_id, realm);
@@ -82,8 +101,9 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         &mut state,
         &secure,
         realm,
+        &test_authority(actor),
         actor,
-        device,
+        &test_device(device),
         "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
@@ -96,8 +116,9 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         &mut state,
         &secure,
         realm,
+        &test_authority(actor),
         actor,
-        device,
+        &test_device(device),
         "application/vnd.arkret.test+json",
         &[br#""private-again""#.to_vec()],
     )
@@ -124,9 +145,15 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
 
     super::seed_genesis_governance_proof(&mut state, realm);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
-        .unwrap()
-        .expect("creator snapshot");
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+    )
+    .unwrap()
+    .expect("creator snapshot");
 
     let effective_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
@@ -140,8 +167,9 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
             &mut state,
             &secure,
             realm,
+            &test_authority(actor),
             actor,
-            device,
+            &test_device(device),
             "application/vnd.arkret.message+json",
             arkret_wire::event_kind_str::MESSAGE_CREATE,
             group_state_ref,
@@ -189,9 +217,15 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
     let realm = "ak:realm:AcysOZi_v0RXNBYf47wJaNxuBSTq_WGE_xQtBPfwAWoj";
 
     super::seed_genesis_governance_proof(&mut state, realm);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
-        .unwrap()
-        .expect("creator snapshot");
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+    )
+    .unwrap()
+    .expect("creator snapshot");
     state.save_realm_tree_projection(
         realm,
         json!({
@@ -211,8 +245,9 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
         &mut state,
         &secure,
         realm,
+        &test_authority(actor),
         actor,
-        device,
+        &test_device(device),
         "application/vnd.arkret.test+json",
         &[br#""must-not-send-on-epoch-zero""#.to_vec()],
     )
@@ -237,9 +272,15 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     let realm = "ak:realm:AS5FqwC40o7__sjiREHUnzw9YDYeOTIYVGSZyZasRuaN";
 
     super::seed_genesis_governance_proof(&mut state, realm);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
-        .unwrap()
-        .expect("creator snapshot");
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+    )
+    .unwrap()
+    .expect("creator snapshot");
     state.save_realm_tree_projection(
         realm,
         json!({
@@ -256,8 +297,9 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
         &mut state,
         &secure,
         realm,
+        &test_authority(actor),
         actor,
-        device,
+        &test_device(device),
         "application/vnd.arkret.test+json",
         &[br#""must-wait-for-policy""#.to_vec()],
     )
@@ -283,9 +325,15 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     // exact scope/group pair, so this test uses a unique Realm.
     let realm = "ak:realm:Ae6wQDaXscJ6lZGbcWqFv_CW7o0_w5CGmtuB6TvlwNh2";
     super::seed_genesis_governance_proof(&mut state, realm);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
-        .unwrap()
-        .expect("creator snapshot");
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+    )
+    .unwrap()
+    .expect("creator snapshot");
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
     };
@@ -335,8 +383,9 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
         &mut state,
         &secure,
         realm,
+        &test_authority(actor),
         actor,
-        device,
+        &test_device(device),
         "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
@@ -390,7 +439,7 @@ fn two_member_group_with_bob_snapshot(
     let add = alice_group.add_member(&bob_key_package).unwrap();
     let bob_group = arkret_sdk::ArkretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
 
-    let secret = load_or_create_account_mls_secret(secure, bob_actor).unwrap();
+    let secret = load_or_create_account_mls_secret(secure, &test_authority(bob_actor)).unwrap();
     let post_state = bob_group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let mut salt = [0u8; 16];
@@ -433,15 +482,21 @@ fn historical_author_view_survives_epoch_rotation() {
         &state,
         &secure,
         realm,
+        &test_authority(bob_actor),
         bob_actor,
-        bob_device,
+        &test_device(bob_device),
         &epoch_one_snapshot.group_id,
         epoch_one_snapshot.epoch,
         epoch_one_ref.as_str(),
     )
     .expect("current epoch author view");
 
-    let secret = load_device_snapshot_secret(&secure, bob_actor, bob_device).unwrap();
+    let secret = load_device_snapshot_secret(
+        &secure,
+        &test_authority(bob_actor),
+        &test_device(bob_device),
+    )
+    .unwrap();
     let mut bob_group =
         crate::mls::persistence::restore_envelope(&epoch_one_snapshot, &secret, 0).unwrap();
     let commit = alice_group.self_update_commit().unwrap();
@@ -475,8 +530,9 @@ fn historical_author_view_survives_epoch_rotation() {
         &state,
         &secure,
         realm,
+        &test_authority(bob_actor),
         bob_actor,
-        bob_device,
+        &test_device(bob_device),
         &epoch_one_snapshot.group_id,
         epoch_one_snapshot.epoch,
         epoch_one_ref.as_str(),
@@ -488,8 +544,9 @@ fn historical_author_view_survives_epoch_rotation() {
             &state,
             &secure,
             realm,
+            &test_authority(bob_actor),
             bob_actor,
-            bob_device,
+            &test_device(bob_device),
             &epoch_one_snapshot.group_id,
             epoch_one_snapshot.epoch,
             "ak:event:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
@@ -536,8 +593,16 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
 
     // Decrypt m1: plaintext returned AND the persisted snapshot advanced
     // (same epoch, new ciphertext, observed-message counter bumped).
-    let plain1 = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
-        .expect("bob decrypts m1");
+    let plain1 = decrypt_application_payload(
+        &state,
+        &secure,
+        realm,
+        &test_authority(bob_actor),
+        bob_actor,
+        &test_device(bob_device),
+        &m1,
+    )
+    .expect("bob decrypts m1");
     assert_eq!(plain1, br#"{"body":"m1"}"#);
     let advanced = state.mls_snapshot_for(realm).unwrap();
     assert_eq!(advanced.epoch, base_envelope.epoch);
@@ -546,9 +611,16 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
 
     // Same session: m1 re-renders from the in-memory plaintext cache (a ratchet
     // replay would fail — its message key was consumed before the write-back).
-    let same_session_replay1 =
-        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
-            .expect("m1 served from the in-session plaintext cache");
+    let same_session_replay1 = decrypt_application_payload(
+        &state,
+        &secure,
+        realm,
+        &test_authority(bob_actor),
+        bob_actor,
+        &test_device(bob_device),
+        &m1,
+    )
+    .expect("m1 served from the in-session plaintext cache");
     assert_eq!(same_session_replay1, br#"{"body":"m1"}"#);
 
     // "Restart": a brand-new store over the same backing file must see
@@ -560,15 +632,30 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     // real restart m1 is NOT recoverable — its ratchet key was consumed and its
     // plaintext was never written to durable storage.
     assert!(
-        decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m1)
-            .is_none(),
+        decrypt_application_payload(
+            &restarted,
+            &secure,
+            realm,
+            &test_authority(bob_actor),
+            bob_actor,
+            &test_device(bob_device),
+            &m1,
+        )
+        .is_none(),
         "consumed-message plaintext must never survive a restart (nothing at rest)"
     );
     // m2 (the next generation in the same epoch) still decrypts from the
     // persisted advanced chain.
-    let plain2 =
-        decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m2)
-            .expect("bob decrypts m2 after restart");
+    let plain2 = decrypt_application_payload(
+        &restarted,
+        &secure,
+        realm,
+        &test_authority(bob_actor),
+        bob_actor,
+        &test_device(bob_device),
+        &m2,
+    )
+    .expect("bob decrypts m2 after restart");
     assert_eq!(plain2, br#"{"body":"m2"}"#);
     assert_eq!(
         restarted
@@ -607,16 +694,25 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
         .unwrap();
 
     assert!(
-        decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &encrypted)
-            .is_none(),
+        decrypt_application_payload(
+            &state,
+            &secure,
+            realm,
+            &test_authority(bob_actor),
+            bob_actor,
+            &test_device(bob_device),
+            &encrypted,
+        )
+        .is_none(),
         "Realm-scoped decrypt must not borrow a Circle snapshot"
     );
     let plaintext = decrypt_application_payload_for_effective_scope(
         &state,
         &secure,
         realm,
+        &test_authority(bob_actor),
         bob_actor,
-        bob_device,
+        &test_device(bob_device),
         &encrypted,
         Some(circle),
     )
@@ -660,15 +756,30 @@ fn out_of_order_skipped_keys_survive_restart() {
 
     // Out-of-order: m3 first (within OpenMLS's default
     // out_of_order_tolerance of 5).
-    let plain3 = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m3)
-        .expect("bob decrypts m3 ahead of m1/m2");
+    let plain3 = decrypt_application_payload(
+        &state,
+        &secure,
+        realm,
+        &test_authority(bob_actor),
+        bob_actor,
+        &test_device(bob_device),
+        &m3,
+    )
+    .expect("bob decrypts m3 ahead of m1/m2");
     assert_eq!(plain3, br#""three""#);
 
     // Restart, then decrypt the skipped earlier message.
     let restarted = crate::state::LocalStateStore::with_path(path.clone());
-    let plain1 =
-        decrypt_application_payload(&restarted, &secure, realm, bob_actor, bob_device, &m1)
-            .expect("persisted skipped key decrypts m1 after restart");
+    let plain1 = decrypt_application_payload(
+        &restarted,
+        &secure,
+        realm,
+        &test_authority(bob_actor),
+        bob_actor,
+        &test_device(bob_device),
+        &m1,
+    )
+    .expect("persisted skipped key decrypts m1 after restart");
     assert_eq!(plain1, br#""one""#);
     let _ = std::fs::remove_file(path);
 }
@@ -689,13 +800,21 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
 
     super::seed_genesis_governance_proof(&mut state, realm);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device).unwrap();
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+    )
+    .unwrap();
     let (_, _, encrypted_values, ..) = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
         realm,
+        &test_authority(actor),
         actor,
-        device,
+        &test_device(device),
         "application/json",
         &[br#""mine""#.to_vec()],
     )
@@ -704,7 +823,15 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
         serde_json::from_value(encrypted_values[0].clone()).unwrap();
     let after_send = state.mls_snapshot_for(realm).unwrap();
 
-    let decrypted = decrypt_application_payload(&state, &secure, realm, actor, device, &payload);
+    let decrypted = decrypt_application_payload(
+        &state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        actor,
+        &test_device(device),
+        &payload,
+    );
     assert!(decrypted.is_none(), "author must not decrypt own message");
     // No cache entry and no snapshot churn from the failed attempt.
     assert!(
@@ -734,14 +861,30 @@ fn plaintext_cache_outlives_group_state() {
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let header = test_message_header(&alice_group, realm);
     let m1 = alice_group.encrypt_payload(header, br#""cached""#).unwrap();
-    let first = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
-        .expect("first decrypt");
+    let first = decrypt_application_payload(
+        &state,
+        &secure,
+        realm,
+        &test_authority(bob_actor),
+        bob_actor,
+        &test_device(bob_device),
+        &m1,
+    )
+    .expect("first decrypt");
     assert_eq!(first, br#""cached""#);
 
     state.drop_mls_snapshot(realm);
     assert!(state.mls_snapshot_for(realm).is_none());
-    let cached = decrypt_application_payload(&state, &secure, realm, bob_actor, bob_device, &m1)
-        .expect("cache hit requires no group state");
+    let cached = decrypt_application_payload(
+        &state,
+        &secure,
+        realm,
+        &test_authority(bob_actor),
+        bob_actor,
+        &test_device(bob_device),
+        &m1,
+    )
+    .expect("cache hit requires no group state");
     assert_eq!(cached, br#""cached""#);
 }
 
@@ -769,8 +912,9 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
         &mut state,
         &store,
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        &test_authority("did:web:alice.example"),
         "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
+        &test_device("ak:device:01904100-0000-7000-8000-000000000001"),
         "text/plain",
         &[b"secret".to_vec()],
     )
@@ -792,7 +936,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
     let store = MemorySecureKeyStore::new();
-    let secret = load_or_create_account_mls_secret(&store, actor).unwrap();
+    let secret = load_or_create_account_mls_secret(&store, &test_authority(actor)).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
@@ -818,8 +962,9 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
             &mut state,
             &store,
             realm,
+            &test_authority(actor),
             actor,
-            device,
+            &test_device(device),
             "text/plain",
             &[b"secret".to_vec()],
         )
@@ -843,7 +988,7 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let secure = MemorySecureKeyStore::new();
-    let _ = load_or_create_account_mls_secret(&secure, actor).unwrap();
+    let _ = load_or_create_account_mls_secret(&secure, &test_authority(actor)).unwrap();
     let mut state = temp_state_store("persist-on-accept");
     let realm = "ak:realm:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk";
 
@@ -863,9 +1008,15 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
 
     // Genesis installs the epoch-0 snapshot.
     super::seed_genesis_governance_proof(&mut state, realm);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
-        .unwrap()
-        .expect("creator snapshot created");
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+    )
+    .unwrap()
+    .expect("creator snapshot created");
     let epoch_before = state.mls_snapshot_for(realm).unwrap().epoch;
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
@@ -878,8 +1029,9 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
         &mut state,
         &secure,
         realm,
+        &test_authority(actor),
         actor,
-        device,
+        &test_device(device),
         "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
@@ -915,8 +1067,9 @@ fn empty_welcome_set_reports_no_work() {
         &mut state,
         &store,
         "ak:realm:Awkt11sH1cqYGNwG-NdGAvUk2xwJeJ7AC-93lG5ups2U",
+        &test_authority("did:web:alice.example"),
         "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
+        &test_device("ak:device:01904100-0000-7000-8000-000000000001"),
         &json!({ "messages": [] }),
     )
     .unwrap();
@@ -932,7 +1085,12 @@ fn empty_welcome_set_reports_no_work() {
 fn malformed_welcome_is_counted_not_swallowed() {
     let mut state = temp_state_store("malformed");
     let store = MemorySecureKeyStore::new();
-    store_account_mls_secret(&store, "did:web:alice.example", "snapshot-secret").unwrap();
+    store_account_mls_secret(
+        &store,
+        &test_authority("did:web:alice.example"),
+        "snapshot-secret",
+    )
+    .unwrap();
     // A welcome entry whose content is not a valid MlsWelcomeEnvelope.
     let messages = json!({
         "messages": [
@@ -943,8 +1101,9 @@ fn malformed_welcome_is_counted_not_swallowed() {
         &mut state,
         &store,
         "ak:realm:Ae4L5dU13P9VksvkJAOF29Z7lsbKvgUqVqVh7q2H-E2I",
+        &test_authority("did:web:alice.example"),
         "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
+        &test_device("ak:device:01904100-0000-7000-8000-000000000001"),
         &messages,
     )
     .unwrap();
@@ -976,13 +1135,13 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
     let bob_private_state = bob.export_private_state().unwrap();
     store_mls_key_package_identity_state(
         &store,
-        bob_actor,
-        bob_device,
+        &test_authority(bob_actor),
+        &test_device(bob_device),
         &bob_key_package.keypackage_id,
         &bob_private_state,
     )
     .unwrap();
-    store_account_mls_secret(&store, bob_actor, "snapshot-secret").unwrap();
+    store_account_mls_secret(&store, &test_authority(bob_actor), "snapshot-secret").unwrap();
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
     let messages = json!({
@@ -998,7 +1157,13 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
     });
 
     let outcome = apply_welcome_messages_with_device_snapshot(
-        &mut state, &store, realm, bob_actor, bob_device, &messages,
+        &mut state,
+        &store,
+        realm,
+        &test_authority(bob_actor),
+        bob_actor,
+        &test_device(bob_device),
+        &messages,
     )
     .unwrap();
 
@@ -1023,8 +1188,8 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
     assert!(
         load_mls_key_package_identity_state(
             &store,
-            bob_actor,
-            bob_device,
+            &test_authority(bob_actor),
+            &test_device(bob_device),
             &bob_key_package.keypackage_id,
         )
         .unwrap()
@@ -1036,7 +1201,12 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
 fn durable_welcome_payload_without_claim_envelope_fails_closed() {
     let mut state = temp_state_store("welcome-claim-envelope");
     let store = MemorySecureKeyStore::new();
-    store_account_mls_secret(&store, "did:web:alice.example", "snapshot-secret").unwrap();
+    store_account_mls_secret(
+        &store,
+        &test_authority("did:web:alice.example"),
+        "snapshot-secret",
+    )
+    .unwrap();
     let messages = json!({
         "messages": [
             {
@@ -1066,8 +1236,9 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
         &mut state,
         &store,
         "ak:realm:Akb0VAmKqt26zC2oOrzxcUkvENt4KqxzU7fgzKks_4jk",
+        &test_authority("did:web:alice.example"),
         "did:web:alice.example",
-        "ak:device:01904100-0000-7000-8000-000000000001",
+        &test_device("ak:device:01904100-0000-7000-8000-000000000001"),
         &messages,
     )
     .unwrap();

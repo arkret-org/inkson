@@ -137,8 +137,8 @@ pub(crate) fn push_client_language_account_data(
     if api_token.trim().is_empty() {
         return;
     }
-    let Some(actor) = crate::secure_key_store::active_device_seed_scope()
-        .filter(|actor| !actor.trim().is_empty())
+    let Some(authority) =
+        crate::secure_key_store::active_device_seed_scope().map(|scope| scope.authority)
     else {
         return;
     };
@@ -150,7 +150,7 @@ pub(crate) fn push_client_language_account_data(
                 |snapshot| {
                     let mut plaintext = match snapshot.entry.as_ref() {
                         Some(entry) => crate::account_data::decrypt_account_data_entry(
-                            &actor,
+                            &authority,
                             AccountDataKey::CLIENT_UI_STATE,
                             entry,
                         )?,
@@ -158,7 +158,7 @@ pub(crate) fn push_client_language_account_data(
                     };
                     crate::account_data::set_client_ui_language(&mut plaintext, locale);
                     crate::account_data::encrypt_account_data_value(
-                        &actor,
+                        &authority,
                         AccountDataKey::CLIENT_UI_STATE,
                         &plaintext,
                     )
@@ -278,13 +278,14 @@ pub(crate) fn build_read_receipt_preferences_body(
 pub(crate) fn push_blocklist_account_data(
     base_url: String,
     api_token: String,
-    account_did: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
 ) {
     if api_token.trim().is_empty() {
         return;
     }
+    let principal_id = authority.principal_id.to_string();
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
             let outcome = crate::transport::account::update_account_data_with_merge(
@@ -292,7 +293,7 @@ pub(crate) fn push_blocklist_account_data(
                 AccountDataKey::ACCOUNT_BLOCKLIST,
                 |snapshot| {
                     let plaintext = crate::account_data::build_blocklist_account_data_body(
-                        &account_did,
+                        &authority,
                         snapshot.revision.checked_add(1).ok_or_else(|| {
                             anyhow::anyhow!("ak.account.blocklist revision overflow")
                         })?,
@@ -300,7 +301,7 @@ pub(crate) fn push_blocklist_account_data(
                     )
                     .map_err(anyhow::Error::msg)?;
                     crate::account_data::encrypt_account_data_value(
-                        &account_did,
+                        &principal_id,
                         AccountDataKey::ACCOUNT_BLOCKLIST,
                         &plaintext,
                     )
@@ -425,8 +426,8 @@ pub(crate) fn push_contact_remark_account_data(
     actor_id: String,
     remark: crate::account_data::ContactRemark,
 ) {
-    let holder = match crate::secure_key_store::active_device_seed_scope()
-        .filter(|holder| !holder.trim().is_empty())
+    let authority = match crate::secure_key_store::active_device_seed_scope()
+        .map(|scope| scope.authority)
     {
         Some(holder) => holder,
         None => {
@@ -438,7 +439,7 @@ pub(crate) fn push_contact_remark_account_data(
         tracing::warn!(%actor_id, "contact petname upload rejected: map key does not match subject.principal_id");
         return;
     }
-    let namespace_key = match crate::account_data::account_data_namespace_key(&holder) {
+    let namespace_key = match crate::account_data::account_data_namespace_key(&authority) {
         Ok(key) => key,
         Err(error) => {
             tracing::warn!(%error, "contact petname upload skipped: namespace key unavailable");
@@ -502,8 +503,6 @@ pub(crate) fn push_contact_remark_account_data(
 #[allow(clippy::expect_used)]
 #[component]
 pub fn SettingsPanel(
-    account_did: Signal<String>,
-    device_id: Signal<String>,
     token: Signal<String>,
     account_primary_handle: String,
     personal_handles: Vec<String>,
@@ -514,9 +513,23 @@ pub fn SettingsPanel(
     mut locale: Signal<Locale>,
     mut theme: Signal<String>,
 ) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::get().base_url;
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let session = crate::app::SessionContext::get();
+    let mut state_store = session.state_store;
+    let Some(active_account) = session.active_account() else {
+        return rsx! {};
+    };
+    let active_server_url = active_account.server_url.to_string();
+    let active_principal_id = active_account.principal_id().to_string();
+    let active_device_id = active_account.device_id.to_string();
+    let active_authority = active_account.authority.clone();
+    let active_storage_key =
+        crate::secure_key_store::principal_authority_storage_digest(&active_account.authority)
+            .unwrap_or_default();
+    let base_url = use_signal(move || active_server_url.clone());
+    let principal_id = use_signal(move || active_principal_id.clone());
+    let device_id = use_signal(move || active_device_id.clone());
+    let account_authority = use_signal(move || active_authority.clone());
+    let account_storage_key = use_signal(move || active_storage_key.clone());
     let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());
@@ -576,7 +589,10 @@ pub fn SettingsPanel(
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
     let mut notification_settings_status = use_signal(String::new);
     let mut notification_sound_enabled = use_signal(|| {
-        crate::notification_sound::notification_sound_enabled(&state_store.read(), &account_did())
+        crate::notification_sound::notification_sound_enabled(
+            &state_store.read(),
+            &account_storage_key(),
+        )
     });
     // Per-realm override editor state (spec push-notifications.md §4.3.2).
     // `new_override_realm` holds the realm id picked in the "add" row;
@@ -622,7 +638,7 @@ pub fn SettingsPanel(
     // published through the spec profile endpoint so directory projections can index it.
     let initial_avatar_blob_ref = state_store
         .read()
-        .load_private_data(&account_did(), "avatar_blob_ref")
+        .load_private_data(&account_storage_key(), "avatar_blob_ref")
         .unwrap_or_default();
     let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
     let mut avatar_upload_status = use_signal(String::new);
@@ -652,7 +668,7 @@ pub fn SettingsPanel(
     let mut invite_locator_token = use_signal(String::new);
     let mut invite_locator_status = use_signal(String::new);
     {
-        let current_account = account_did();
+        let current_account = principal_id();
         let current_token = token();
         let current_base_url = base_url();
         use_effect(move || {
@@ -700,7 +716,7 @@ pub fn SettingsPanel(
     };
     let invite_locator_qr_svg = render_invite_locator_qr_svg(&invite_locator_url);
     let principal_label = if has_session {
-        account_did()
+        principal_id()
     } else {
         "Not signed in".to_owned()
     };
@@ -718,7 +734,7 @@ pub fn SettingsPanel(
     };
     let device_short_label = short_protocol_id(&device_label);
     {
-        let account_key = account_did();
+        let account_key = account_storage_key();
         use_effect(move || {
             let hydrated = state_store
                 .read()
@@ -858,7 +874,7 @@ pub fn SettingsPanel(
                                         rsx! {
                                             crate::components::IdentityAvatar {
                                                 key: "{blob_ref}:{avatar_refresh_nonce()}",
-                                                seed: account_did(),
+                                                seed: principal_id(),
                                                 alt_text: "Account avatar".to_owned(),
                                                 blob_ref: Some(blob_ref),
                                                 class: "avatar-img lg".to_owned(),
@@ -1148,7 +1164,7 @@ pub fn SettingsPanel(
                                                                                 {
                                                                                     Ok(_) => {
                                                                                         state_store.write().save_private_data(
-                                                                                            &account_did(),
+                                                                                            &account_storage_key(),
                                                                                             "avatar_blob_ref",
                                                                                             blob_ref.clone(),
                                                                                         );
@@ -1160,7 +1176,7 @@ pub fn SettingsPanel(
                                                                                         );
                                                                                         let refreshed = state_store
                                                                                             .read()
-                                                                                            .load_private_data(&account_did(), "avatar_blob_ref")
+                                                                                            .load_private_data(&account_storage_key(), "avatar_blob_ref")
                                                                                             .filter(|value| !value.trim().is_empty())
                                                                                             .unwrap_or_else(|| blob_ref.clone());
                                                                                         profile_avatar_blob_ref.set(refreshed);
@@ -1240,7 +1256,7 @@ pub fn SettingsPanel(
                                                         pending_avatar_crop.set(None);
                                                         avatar_uploading.set(false);
                                                         state_store.write().save_private_data(
-                                                            &account_did(),
+                                                            &account_storage_key(),
                                                             "avatar_blob_ref",
                                                             "",
                                                         );
@@ -1475,21 +1491,19 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Agents {
                         crate::views::agents::PersonalAgentAdminPanel {
                             token,
-                            controller_id: account_did(),
+                            controller_id: principal_id(),
                         }
                     }
 
                     if active_section == SettingsSection::Devices {
                         crate::views::settings::devices::SettingsDevicesPanel {
-                            account_did,
-                            device_id,
                             token,
                         }
                     }
 
                     if active_section == SettingsSection::Consent {
                         crate::views::settings::consent::ConsentSettingsPanel {
-                            account_did,
+                            principal_id,
                             token,
                         }
                     }
@@ -1497,8 +1511,6 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Recovery {
                         crate::views::recovery::RecoveryPanel {
                             token,
-                            account_did,
-                            device_id,
                         }
                     }
 
@@ -1528,8 +1540,6 @@ pub fn SettingsPanel(
                 }
 
                             storage::E2eeStorageManagement {
-                                account_did: account_did,
-                                device_id: device_id,
                             }
 
                             details { class: "event", "data-testid": "storage-risks",
@@ -1597,8 +1607,6 @@ pub fn SettingsPanel(
                             // `needs_mls_backup`.
                             mls_recovery::SettingsMlsRecoveryPanel {
                                 token,
-                                account_did,
-                                device_id,
                                 account_primary_handle: account_primary_handle.clone(),
                             }
                             details { class: "event", "data-testid": "key-backup-guidance",
@@ -1788,7 +1796,7 @@ pub fn SettingsPanel(
                                 move |_| {
                                     let base = base_url();
                                     let api_token = token();
-                                    let actor = account_did();
+                                    let actor = principal_id();
                                     let device = device_id();
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
@@ -1853,7 +1861,7 @@ pub fn SettingsPanel(
                                 move |_| {
                                     let base = base_url();
                                     let api_token = token();
-                                    let actor = account_did();
+                                    let actor = principal_id();
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let request = arkret_sdk::MimiProxyDownloadRequestBody {
@@ -1941,7 +1949,7 @@ pub fn SettingsPanel(
                                                 notification_sound_enabled.set(enabled);
                                                 crate::notification_sound::set_notification_sound_enabled(
                                                     &mut state_store.write(),
-                                                    &account_did(),
+                                                    &account_storage_key(),
                                                     enabled,
                                                 );
                                                 if enabled {
@@ -1995,7 +2003,7 @@ pub fn SettingsPanel(
                                             push_dnd_account_data(
                                                 base_url(),
                                                 token(),
-                                                account_did(),
+                                                principal_id(),
                                                 device_id(),
                                                 dnd_enabled(),
                                                 dnd_mode(),
@@ -2155,7 +2163,7 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     let dev = device_id();
-                                    let principal_id = account_did();
+                                    let principal_id = principal_id();
                                     let persisted_grant = state_store.read().session_grant();
                                     spawn(async move {
                                         let principal_id =
@@ -2956,7 +2964,7 @@ pub fn SettingsPanel(
                         // §3.2.1 primary handle via list_handles_for_subject.
                         crate::views::helpers::WhyThisHandlePanel {
                             token: token(),
-                            subject_id: account_did(),
+                            subject_id: principal_id(),
                         }
                     }
                 }
@@ -3043,7 +3051,7 @@ pub fn SettingsPanel(
                                         push_blocklist_account_data(
                                             base(),
                                             token(),
-                                            account_did(),
+                                            account_authority(),
                                             state_store,
                                             entries,
                                         );
@@ -3137,7 +3145,7 @@ pub fn SettingsPanel(
                                                             push_blocklist_account_data(
                                                                 base(),
                                                                 token(),
-                                                                account_did(),
+                                                                account_authority(),
                                                                 state_store,
                                                                 entries,
                                                             );
@@ -3162,7 +3170,7 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             crate::views::settings::invite_policy::InvitePolicySettingsCard {
                                 token,
-                                account_did,
+                                principal_id,
                             }
                         }
                     }
@@ -3171,7 +3179,7 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Blocklist {
                         div { class: "settings-content-stack",
                             crate::views::settings::blocklist::BlocklistSettingsCard {
-                                account_did,
+                                authority: account_authority(),
                                 token,
                             }
                         }
@@ -3181,7 +3189,7 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Capabilities {
                         div { class: "settings-content-stack",
                             crate::views::settings::capabilities::CapabilitiesSettingsCard {
-                                account_did,
+                                principal_id,
                                 token,
                             }
                         }
@@ -3202,7 +3210,7 @@ pub fn SettingsPanel(
                             "aria-label": "Light theme",
                             onclick: move |_| {
                                 theme.set("light".to_owned());
-                                state_store.write().save_private_data(&account_did(), "theme", "light");
+                                state_store.write().save_private_data(&account_storage_key(), "theme", "light");
                                 push_client_ui_account_data(base_url(), token(), "light".to_owned());
                             },
                             UiIcon { name: "sun" }
@@ -3216,7 +3224,7 @@ pub fn SettingsPanel(
                             "aria-label": "Night theme",
                             onclick: move |_| {
                                 theme.set("night".to_owned());
-                                state_store.write().save_private_data(&account_did(), "theme", "night");
+                                state_store.write().save_private_data(&account_storage_key(), "theme", "night");
                                 push_client_ui_account_data(base_url(), token(), "night".to_owned());
                             },
                             UiIcon { name: "moon" }
@@ -3230,7 +3238,7 @@ pub fn SettingsPanel(
                             "aria-label": "System theme",
                             onclick: move |_| {
                                 theme.set("system".to_owned());
-                                state_store.write().save_private_data(&account_did(), "theme", "system");
+                                state_store.write().save_private_data(&account_storage_key(), "theme", "system");
                                 push_client_ui_account_data(base_url(), token(), "system".to_owned());
                             },
                             UiIcon { name: "monitor" }
@@ -3247,7 +3255,7 @@ pub fn SettingsPanel(
                             let base = base_url();
                             let api_token = token();
                             EventHandler::new(move |next: String| {
-                                state_store.write().save_private_data(&account_did(), "theme", next.clone());
+                                state_store.write().save_private_data(&account_storage_key(), "theme", next.clone());
                                 push_client_ui_account_data(base.clone(), api_token.clone(), next);
                             })
                         },

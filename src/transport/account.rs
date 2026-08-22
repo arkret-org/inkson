@@ -51,6 +51,42 @@ pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Resul
     Ok(current_account_from_viewer(viewer))
 }
 
+/// Fetch and verify the complete current principal resolution before it enters
+/// the active-account model. The route is transport only; both identity
+/// coordinates come from the already verified authority pair.
+pub async fn resolve_active_account_context(
+    http: &arkret_sdk::http_client::Client,
+    profile_id: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    device_id: arkret_sdk::DeviceId,
+    server_url: url::Url,
+) -> anyhow::Result<crate::config::ActiveAccountContext> {
+    let public_resolution = http
+        .open_principal_resolution(&authority.principal_id, &authority.principal_server_id)
+        .await?;
+    anyhow::ensure!(
+        public_resolution.authority() == authority,
+        "public principal resolution returned another account authority"
+    );
+    let principal_server_resolution = http
+        .open_service_resolution(&authority.principal_server_id)
+        .await?;
+    let (accepted_projection, _) =
+        arkret_identity::verify_embedded_public_principal_resolution_history(
+            &public_resolution,
+            &principal_server_resolution,
+            chrono::Utc::now(),
+        )?;
+    crate::config::ActiveAccountContext::new(
+        profile_id,
+        authority,
+        accepted_projection,
+        device_id,
+        server_url,
+    )
+    .map_err(Into::into)
+}
+
 /// Author and sign the authenticated principal's profile Event, then hand its
 /// exact publication wrapper to `ak.self.account.command.update_profile`.
 /// Existing profiles use the accepted create-derived id and PCR returned by
@@ -1359,11 +1395,18 @@ pub(crate) async fn account_data_snapshot(
 /// is resolved here rather than left to the server — soland used to author these
 /// Events under its own DID, which put every holder's value for one key into a
 /// single cell keyed by the service.
-fn account_data_holder() -> anyhow::Result<arkret_sdk::DidFullId> {
-    let actor = crate::secure_key_store::active_device_seed_scope()
-        .filter(|actor| !actor.trim().is_empty())
+fn account_data_holder()
+-> anyhow::Result<(arkret_sdk::DidFullId, arkret_sdk::PrincipalAuthorityKey)> {
+    let scope = crate::secure_key_store::active_device_seed_scope()
         .ok_or_else(|| anyhow::anyhow!("no active account; cannot author an account_data Event"))?;
-    arkret_sdk::DidFullId::new(actor).map_err(anyhow::Error::from)
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active account signer is unavailable"))?;
+    let full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
+    anyhow::ensure!(
+        arkret_sdk::project_full_id_to_core_id(&full_id)? == scope.authority.principal_id,
+        "active signer does not match the account authority"
+    );
+    Ok((full_id, scope.authority))
 }
 
 /// Build and sign the `ak.account_data.set` the endpoint now requires.
@@ -1373,7 +1416,7 @@ async fn account_data_set_submission(
     value: Option<Value>,
     expected_revision: u64,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
-    let holder = account_data_holder()?;
+    let (holder, _) = account_data_holder()?;
     let realm_id =
         crate::identity::principal_control::resolve_accepted(submitter.http(), &holder).await?;
     let builder = match value {
@@ -1494,10 +1537,10 @@ pub async fn put_scheduled_send_plan(
     crate::account_data::validate_scheduled_send_value(value)?;
     let key =
         crate::account_data::scheduled_send_account_data_key(value.scheduled_send_id.as_str())?;
-    let actor = account_data_holder()?;
+    let (_, authority) = account_data_holder()?;
     update_account_data_with_merge(submitter, &key, |snapshot| {
         crate::account_data::merge_scheduled_send_account_data(
-            actor.as_str(),
+            &authority,
             &key,
             value,
             snapshot.entry.as_ref(),

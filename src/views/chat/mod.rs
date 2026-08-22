@@ -672,8 +672,9 @@ async fn ensure_owned_agent_sidecar(
     base_url: &str,
     api_token: String,
     trace_id: &str,
-    controller_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    controller_full_id: &arkret_sdk::DidFullId,
+    device_id: &arkret_sdk::DeviceId,
     realm_id: &str,
     strand_id: &str,
     addressed_agent_ids: &[String],
@@ -682,8 +683,7 @@ async fn ensure_owned_agent_sidecar(
     if addressed_agent_ids.is_empty() {
         return Ok(None);
     }
-    let controller_full_id = arkret_sdk::DidFullId::new(controller_id.to_owned())?;
-    let controller = crate::mls_api_helpers::principal_core_id(controller_id)?;
+    let controller = authority.principal_id.clone();
     let source_realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
     let source_digest_suite = state_store
         .read()
@@ -754,7 +754,7 @@ async fn ensure_owned_agent_sidecar(
     let ceremony_realm = source_realm.clone();
     let ceremony_strand = source_strand.clone();
     let ceremony_context = context_ref.clone();
-    let ceremony_device = device_id.to_owned();
+    let ceremony_device = device_id.to_string();
     let ceremony_pending_key = pending_key.clone();
     let mut ceremony_state_store = state_store;
     let (sidecar_id, view) = crate::transport::auth::with_authed_sdk_client(
@@ -1252,7 +1252,7 @@ fn composer_mention_nodes(
     mentions_enabled: bool,
     body: &str,
     picker: &[crate::messaging::mentions::MentionCandidate],
-    account_did: &str,
+    principal_id: &str,
 ) -> Vec<MentionNode> {
     if !mentions_enabled {
         return Vec::new();
@@ -1309,10 +1309,10 @@ fn composer_mention_nodes(
     if crate::messaging::mentions::contains_self_mention_token(body)
         && !mentions.iter().any(|node| {
             node.as_mention().is_some_and(|mention| {
-                same_principal_core(mention.subject_id.as_str(), account_did)
+                same_principal_core(mention.subject_id.as_str(), principal_id)
             })
         })
-        && let Ok(subject_id) = crate::mls_api_helpers::principal_core_id(account_did)
+        && let Ok(subject_id) = crate::mls_api_helpers::principal_core_id(principal_id)
     {
         mentions.push(MentionNode::mention(
             arkret_sdk::Mention::new(subject_id).with_mention_text_original("@me".to_owned()),
@@ -1359,7 +1359,7 @@ fn should_start_circle_scope_request(
 #[component]
 pub fn ChatPanel(
     plaintext_service_id: String,
-    account_did: String,
+    principal_id: String,
     account_primary_handle: String,
     device_id: String,
     token: Signal<String>,
@@ -1392,8 +1392,15 @@ pub fn ChatPanel(
     mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let session_context = crate::app::SessionContext::get();
+    let base_url = session_context.base_url.read().clone();
+    let mut state_store = session_context.state_store;
+    let Some(active_account) = session_context.active_account.read().clone() else {
+        return rsx! {};
+    };
+    let authority = active_account.authority.clone();
+    let full_id = active_account.full_id().clone();
+    let account_device_id = active_account.device_id.clone();
     let mut sidecar_session_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     // Embedded Strand shells do not receive a route-owned Sidecar prop. Read
     // the same hosted session that renders the context bar so message
@@ -1405,7 +1412,7 @@ pub fn ChatPanel(
             .filter(|session| session.matches_route(&selected_realm_id, &initial_strand_id))
     });
     let navigator = use_navigator();
-    let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &account_did);
+    let controller = use_chat_controller(&selected_realm_id, &initial_strand_id, &principal_id);
     let mut migrated_draft_applied_for = use_signal(String::new);
     let mut sidecar_exchange_fold_basis_seen = use_signal(String::new);
     let sidecar_close_retry_epoch = use_signal(|| 0_u64);
@@ -1461,7 +1468,7 @@ pub fn ChatPanel(
         });
     }
     {
-        let actor = account_did.clone();
+        let actor = principal_id.clone();
         let state_store = state_store;
         use_effect(move || {
             let _account_cursor = sync_cursor();
@@ -1560,7 +1567,7 @@ pub fn ChatPanel(
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
-        let actor = account_did.clone();
+        let actor = principal_id.clone();
         use_effect(move || {
             let credential = token();
             let base = base.clone();
@@ -1652,14 +1659,14 @@ pub fn ChatPanel(
     // as soon as the panel mounts (e.g. the card-detail Discussion tab).
     let sidecar_exchange_projections = crate::sidecar::cached_sidecar_exchange_projections(
         &state_store.read(),
-        &account_did,
+        &principal_id,
         &selected_realm_id,
     );
     for projection in &sidecar_exchange_projections {
         private_sidecar_strand_ids.insert(projection.source_track_ref.strand_id.to_string());
     }
     let sidecar_privacy_gate =
-        crate::sidecar::SidecarPrivacyGate::from_store(&state_store.read(), &account_did);
+        crate::sidecar::SidecarPrivacyGate::from_store(&state_store.read(), &principal_id);
     let filter_value = track_filter();
     let visible_channels: Vec<ChannelEntity> = all_channels
         .iter()
@@ -1741,7 +1748,7 @@ pub fn ChatPanel(
                     &state_store.read(),
                     secure_store.as_ref(),
                     &selected_realm_id,
-                    &account_did,
+                    &principal_id,
                     &device_id,
                 );
             if roster_matches == Some(false) {
@@ -1790,8 +1797,9 @@ pub fn ChatPanel(
     // account has a substantial history, making the entire browser appear
     // hung even though network traffic stays quiet.
     let all_messages_snapshot = use_memo({
-        let account_did = account_did.clone();
-        let device_id = device_id.clone();
+        let principal_id = principal_id.clone();
+        let authority = authority.clone();
+        let device_id = account_device_id.clone();
         move || {
             // These are the durable invalidation edges. `peek` below avoids
             // treating unrelated LocalStateStore writes (backup metadata,
@@ -1800,7 +1808,7 @@ pub fn ChatPanel(
             let _realm_epoch = realm_live_epoch();
             let store = state_store.peek();
             let snapshot = store.load();
-            let decrypt_identity = Some((account_did.as_str(), device_id.as_str()));
+            let decrypt_identity = Some((&authority, principal_id.as_str(), &device_id));
             let mut folded = fold_local_state_into_chat_messages_with_sidecar(
                 messages(),
                 &snapshot,
@@ -1821,8 +1829,9 @@ pub fn ChatPanel(
     });
     {
         let close_base_url = base_url.clone();
-        let account_did = account_did.clone();
-        let device_id = device_id.clone();
+        let principal_id = principal_id.clone();
+        let authority = authority.clone();
+        let account_device_id = account_device_id.clone();
         let selected_realm_id = selected_realm_id.clone();
         let all_messages_for_fold = all_messages_snapshot;
         let active_sidecar = sidecar_session.clone();
@@ -1861,7 +1870,7 @@ pub fn ChatPanel(
             }
             sidecar_exchange_fold_basis_seen.set(basis);
             let mut store = state_store.write();
-            for (key, pending) in crate::sidecar::pending_sidecar_submissions(&store, &account_did)
+            for (key, pending) in crate::sidecar::pending_sidecar_submissions(&store, &principal_id)
             {
                 let Some(accepted_event_id) = accepted_event_by_message_id.get(&pending.message_id)
                 else {
@@ -1881,14 +1890,15 @@ pub fn ChatPanel(
             // and refresh the local fold cache (`zh/models/sidecar.md` §7.2.4).
             crate::sidecar::refold_sidecar_exchanges_from_history(
                 &mut store,
-                &account_did,
-                &device_id,
+                &principal_id,
+                &authority,
+                &account_device_id,
                 &selected_realm_id,
                 &session_scope_hints,
             );
             let retryable_closes = crate::sidecar::pending_sidecar_auto_close_intents(
                 &store,
-                &account_did,
+                &principal_id,
                 &selected_realm_id,
             )
             .into_iter()
@@ -1963,7 +1973,7 @@ pub fn ChatPanel(
         participant_projection.as_ref(),
         &state_store.read(),
         &selected_realm_id,
-        &account_did,
+        &principal_id,
     );
     let direct_peer_id = if direct_mode {
         crate::transport::account::cached_direct_conversation_peer(
@@ -1991,14 +2001,14 @@ pub fn ChatPanel(
     {
         let mut agent_metadata = owned_agent_metadata(
             &owned_agent_slugs(),
-            &account_did,
+            &principal_id,
             own_controller_handle.as_deref(),
         );
         enrich_authoritative_agent_metadata(
             &mut agent_metadata,
             agent_metadata_from_mentions(&all_messages_snapshot),
         );
-        upsert_agent_participants(&mut participants, &agent_metadata, &account_did);
+        upsert_agent_participants(&mut participants, &agent_metadata, &principal_id);
         annotate_agent_participants_with_metadata(&mut participants, &agent_metadata);
     }
     let participants_for_messages = participants.clone();
@@ -2015,7 +2025,7 @@ pub fn ChatPanel(
     // visible reply history, which avoids both forbidden requests and agent
     // policy enumeration.
     let readable_participation_agent_ids =
-        readable_participation_agent_ids(&participants_for_messages, &account_did);
+        readable_participation_agent_ids(&participants_for_messages, &principal_id);
     let selected_scope_circle = channels()
         .iter()
         .find(|channel| channel.strand_id == selected_channel_value)
@@ -2082,7 +2092,7 @@ pub fn ChatPanel(
     participants.retain(|participant| {
         !participant.is_agent || public_agent_dids.contains(&participant.did)
     });
-    let sidecar_owned_agents = sidecar_owned_agent_participants(&participants, &account_did);
+    let sidecar_owned_agents = sidecar_owned_agent_participants(&participants, &principal_id);
     // Actor mentions in a Sidecar are intentionally narrower than the Realm
     // roster: only controller-owned Agents may be selected. The controller is
     // already the sender, and unrelated Realm members are outside the private
@@ -2094,7 +2104,7 @@ pub fn ChatPanel(
     };
 
     let presence_participants = if sidecar_mode {
-        sidecar_presence_participants(&participants, &account_did)
+        sidecar_presence_participants(&participants, &principal_id)
     } else {
         participants.clone()
     };
@@ -2108,7 +2118,7 @@ pub fn ChatPanel(
     participant_dids_for_presence.dedup();
     let has_remote_presence = participant_dids_for_presence
         .iter()
-        .any(|did| did != &account_did);
+        .any(|did| did != &principal_id);
     let presence_sync_key = format!(
         "{}|{}",
         selected_realm_id,
@@ -2128,7 +2138,7 @@ pub fn ChatPanel(
         let latest = visible_messages
             .iter()
             .filter(|message| {
-                message.sender == account_did
+                message.sender == principal_id
                     && message
                         .created_at
                         .is_none_or(|created_at| created_at >= session.opened_at)
@@ -2158,8 +2168,9 @@ pub fn ChatPanel(
             "data-moderation-appeal-count": "{visible_moderation_appeal_prompt_count}",
             ChatEffects {
                 controller,
-                account_did: account_did.clone(),
-                device_id: device_id.clone(),
+                principal_id: principal_id.clone(),
+                authority: authority.clone(),
+                device_id: account_device_id.clone(),
                 selected_realm_id: selected_realm_id.clone(),
                 initial_strand_id: initial_strand_id.clone(),
                 plaintext_service_id: plaintext_service_id.clone(),
@@ -2340,7 +2351,7 @@ pub fn ChatPanel(
                                 "data-testid": "create-channel-button",
                                 onclick: {
                                     let base = base_url.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     let realm = selected_realm_id.clone();
                                     move |_| {
                                         let title = new_channel_name().trim().to_owned();
@@ -2561,7 +2572,7 @@ pub fn ChatPanel(
                             let level_label = crate::i18n::tr(watch_level_label_key(level_now));
                             let strand_id_for_watch = selected_channel_value.clone();
                             let realm_for_watch = selected_realm_id.clone();
-                            let actor_for_watch = account_did.clone();
+                            let actor_for_watch = principal_id.clone();
                             let watch_disabled = strand_id_for_watch.trim().is_empty()
                                 || !sidecar_privacy_gate.allows_strand(
                                     crate::sidecar::SidecarDisclosureSurface::Watch,
@@ -2877,7 +2888,7 @@ pub fn ChatPanel(
                 {
                     let active_typers: Vec<String> = typing_actors()
                         .into_iter()
-                        .filter(|did| did != &account_did)
+                        .filter(|did| did != &principal_id)
                         .collect();
                     if !active_typers.is_empty() {
                         let attr_value = active_typers.join(",");
@@ -2918,7 +2929,9 @@ pub fn ChatPanel(
                         visible_moderation_appeal_prompts: visible_moderation_appeal_prompts.clone(),
                         strand_scope_lookup: strand_scope_lookup.clone(),
                         private_sidecar_strand_ids: private_sidecar_strand_ids.clone(),
-                        account_did: account_did.clone(),
+                        principal_id: principal_id.clone(),
+                        authority: authority.clone(),
+                        full_id: full_id.clone(),
                         account_display_label: account_display_label.clone(),
                         participants: participants_for_messages.clone(),
                         selected_realm_id: selected_realm_id.clone(),
@@ -2927,7 +2940,7 @@ pub fn ChatPanel(
                             .map(|session| session.source_strand_id.clone())
                             .unwrap_or_else(|| selected_channel_value.clone()),
                         sidecar_active: sidecar_mode,
-                        device_id: device_id.clone(),
+                        device_id: account_device_id.clone(),
                         plaintext_service_id: plaintext_service_id.clone(),
                         base_url: base_url.clone(),
                         focus_message_id: focus_message_id.clone(),
@@ -3391,7 +3404,7 @@ pub fn ChatPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let realm = session.source_realm_id.clone();
-                                        let actor = account_did.clone();
+                                        let actor = principal_id.clone();
                                         let target_strand = session.source_strand_id.clone();
                                         move |_| {
                                             let body = sidecar_publish_draft().trim().to_owned();
@@ -3532,7 +3545,7 @@ pub fn ChatPanel(
                                 onclick: {
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
-                                    let actor = account_did.clone();
+                                    let actor = principal_id.clone();
                                     move |_| {
                                         let draft_snapshot = promote_discussion_draft.read().clone();
                                         let Some(source_id) = draft_snapshot.source_id.clone() else {
@@ -3624,11 +3637,13 @@ pub fn ChatPanel(
                 context: ChatComposerContext {
                     embedded,
                     selected_channel_info: selected_channel_info.clone(),
-                    account_did: account_did.clone(),
+                    principal_id: principal_id.clone(),
+                    authority: authority.clone(),
+                    full_id: full_id.clone(),
                     account_display_label: account_display_label.clone(),
                     participants: composer_participants.clone(),
                     selected_realm_id: selected_realm_id.clone(),
-                    device_id: device_id.clone(),
+                    device_id: account_device_id.clone(),
                     plaintext_service_id: plaintext_service_id.clone(),
                     selected_channel_security_encrypted,
                     selected_realm_pending_mls_binding,

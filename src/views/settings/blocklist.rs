@@ -74,9 +74,17 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<chrono::DateTime<chrono::Utc
 }
 
 #[component]
-pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>) -> Element {
+pub fn BlocklistSettingsCard(
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    token: Signal<String>,
+) -> Element {
     // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::get().base_url;
+    let active_account = crate::app::SessionContext::get().active_account;
+    let base_url = use_signal(move || {
+        active_account()
+            .map(|account| account.server_url.to_string())
+            .unwrap_or_default()
+    });
     let mut state_store = crate::app::SessionContext::get().state_store;
     let _ = token;
 
@@ -216,7 +224,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                                         crate::views::settings::push_blocklist_account_data(
                                                             base(),
                                                             token(),
-                                                            account_did(),
+                                                            authority.clone(),
                                                             state_store,
                                                             next,
                                                         );
@@ -390,7 +398,7 @@ pub fn BlocklistSettingsCard(account_did: Signal<String>, token: Signal<String>)
                                     crate::views::settings::push_blocklist_account_data(
                                         base(),
                                         token(),
-                                        account_did(),
+                                        authority.clone(),
                                         state_store,
                                         next,
                                     );

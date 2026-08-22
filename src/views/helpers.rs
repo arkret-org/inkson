@@ -12,18 +12,14 @@ use crate::config::{ClientConfig, LocalConfigStore};
 use crate::transport::auth::with_endpoint_clients;
 use crate::ui::button::{Button, ButtonVariant};
 
-/// Persist the current client configuration (server URL, DID, device ID, token).
+/// Persist the authenticated account context and its transient credential.
 pub fn persist_config(
     mut config_store: Signal<LocalConfigStore>,
-    server_url: String,
-    account_did: String,
-    device_id: String,
+    active_account: Option<crate::config::ActiveAccountContext>,
     session_credential: String,
 ) {
     config_store.write().save(ClientConfig::from_fields(
-        server_url,
-        account_did,
-        device_id,
+        active_account,
         session_credential,
     ));
 }

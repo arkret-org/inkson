@@ -76,9 +76,10 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
 ) -> Result<(), String> {
+    let actor_id = authority.principal_id.as_str();
     let realm_id = realm_id.trim();
     if realm_id.is_empty() {
         return Err("realm_id is required for creator MLS bootstrap".to_owned());
@@ -128,8 +129,10 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         .await
         .map_err(|error| format!("establishing the MLS governance checkpoint failed: {error}"))?;
 
-    let leaves =
-        crate::mls::governance_proof::singleton_security_frontier_leaf(actor_id, device_id)?;
+    let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
+        actor_id,
+        device_id.as_str(),
+    )?;
     let request = crate::mls::governance_proof::proof_request(
         &state_store.read(),
         realm_id,
@@ -153,7 +156,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     // state writer. Land the secret durably first: a page unload between the
     // two orphans the snapshot and dead-locks every later encrypted write on
     // this device behind "no account MLS secret".
-    crate::mls::runtime::ensure_account_mls_secret_durable(secure_store.as_ref(), actor_id)
+    crate::mls::runtime::ensure_account_mls_secret_durable(secure_store.as_ref(), authority)
         .await
         .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
     let fresh_summary = {
@@ -162,7 +165,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             &mut store,
             secure_store.as_ref(),
             realm_id,
-            actor_id,
+            authority,
             device_id,
         )
         .map_err(|error| format!("MLS initial group setup failed: {}", error.user_message()))?
@@ -179,7 +182,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             &state_store.read(),
             secure_store.as_ref(),
             realm_id,
-            actor_id,
+            authority,
             device_id,
         )
         .map_err(|error| {

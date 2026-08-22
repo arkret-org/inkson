@@ -1116,7 +1116,7 @@ pub struct ClientLocalState {
     /// DID-P2-B — accepted DID bindings that survive a restart.
     ///
     /// Scope: this vector lives inside the **per-account** `ClientLocalState`
-    /// entry (`inkson.local_state.v1.account.<core_id>` on wasm, a sibling account
+    /// entry (`inkson.local_state.v1.account.<authority_digest>` on wasm, a sibling account
     /// file on native), so principal scoping is structural — account B's blob is
     /// a different key and can never be read while account A is active. The
     /// residual scoping dimension *inside* one account is the trust domain
@@ -1304,22 +1304,23 @@ pub struct ClientLocalState {
 }
 
 /// One row for the signed-out account selector (Google-style "choose an
-/// account" list). Built from the [`RootIndex`] `known_dids` joined with each
+/// account" list). Built from the [`RootIndex`] `known_profiles` joined with each
 /// account's own persisted entry. The `handle` is the display label (callers
 /// MUST prefer it and never render the raw `did`); `device_id` / `server_url`
 /// are the values that account last signed in with, so a reuse-login targets
 /// that exact device + server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KnownAccount {
-    /// Canonical account DID. Used as the actor hint + per-account key; never
-    /// shown raw in the UI.
-    pub did: String,
+    /// Installation-local profile selector. It is never protocol authority.
+    pub profile_id: String,
+    /// Exact account authority pair owning the profile and its local state.
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
     /// Resolved primary personal handle (e.g. `david`), or empty when unknown.
     pub handle: String,
     /// The `device_id` this account last signed in with on this browser.
-    pub device_id: String,
+    pub device_id: Option<arkret_sdk::DeviceId>,
     /// The principal-server URL this account last signed in against.
-    pub server_url: String,
+    pub server_url: Option<url::Url>,
 }
 
 /// Cross-account UI device preferences — the ONLY part of local state shared
@@ -1345,7 +1346,7 @@ pub struct DevicePrefs {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingLogin {
     /// Freshly-minted device id carried in the authorize request.
-    pub device_id: String,
+    pub device_id: arkret_sdk::DeviceId,
     /// RFC 7638 thumbprint of the freshly-minted grant-binding (DPoP) key. Diagnostic
     /// mirror of the key whose private seed lives under the
     /// `pending.<device_id>` secure-store namespace.
@@ -1355,17 +1356,17 @@ pub struct PendingLogin {
 
 /// Small, cold-written root index that replaces the former single global
 /// `ClientLocalState` blob. Each account's full [`ClientLocalState`] lives in
-/// its own sibling key (`inkson.local_state.v1.account.<core_id>`); this index only
+/// its own sibling key (`inkson.local_state.v1.account.<authority-digest>`); this index only
 /// records which account is active, the cross-account [`DevicePrefs`], any
 /// in-flight [`PendingLogin`] device material, and the set of known account
 /// DIDs (for enumeration / cleanup). Hot per-write flushes touch only the
 /// active account's key, never this index.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootIndex {
-    /// The currently-foreground account DID, or `None` when signed out / before
+    /// The currently-foreground installation-local profile id, or `None` when signed out / before
     /// any account has been adopted on this browser.
     #[serde(default)]
-    pub active_did: Option<String>,
+    pub active_profile_id: Option<String>,
     /// Cross-account UI device preferences (the only shared part).
     #[serde(default)]
     pub device_prefs: DevicePrefs,
@@ -1373,28 +1374,65 @@ pub struct RootIndex {
     /// in-flight interactive sign-in.
     #[serde(default)]
     pub pending_login: Option<PendingLogin>,
-    /// Every account DID with a persisted `…account.<did>` entry, for
-    /// enumeration and cleanup. The active account is always a member.
+    /// Every profile with a persisted account-authority entry, for enumeration
+    /// and cleanup. The active profile is always a member.
     #[serde(default)]
-    pub known_dids: Vec<String>,
+    pub known_profiles: Vec<KnownProfileRef>,
 }
 
 impl RootIndex {
-    /// Record `did` as a known account (idempotent), keeping the vector sorted
-    /// and deduplicated so enumeration order is stable across flushes.
-    pub fn note_known_did(&mut self, did: &str) {
-        let did = did.trim();
-        if did.is_empty() || self.known_dids.iter().any(|known| known == did) {
-            return;
+    pub fn note_known_profile(
+        &mut self,
+        profile_id: &str,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+    ) -> Option<String> {
+        let profile_id = profile_id.trim();
+        if profile_id.is_empty() {
+            return None;
         }
-        self.known_dids.push(did.to_owned());
-        self.known_dids.sort();
+        if let Some(known) = self
+            .known_profiles
+            .iter_mut()
+            .find(|known| known.authority == *authority)
+        {
+            return Some(known.profile_id.clone());
+        }
+        if self
+            .known_profiles
+            .iter()
+            .any(|known| known.profile_id == profile_id)
+        {
+            return None;
+        }
+        self.known_profiles.push(KnownProfileRef {
+            profile_id: profile_id.to_owned(),
+            authority: authority.clone(),
+        });
+        self.known_profiles
+            .sort_by(|left, right| left.profile_id.cmp(&right.profile_id));
+        Some(profile_id.to_owned())
     }
 
-    /// Forget a known account DID (used when an account's entry is purged).
-    pub fn forget_known_did(&mut self, did: &str) {
-        self.known_dids.retain(|known| known != did);
+    pub fn forget_known_profile(&mut self, profile_id: &str) {
+        self.known_profiles
+            .retain(|known| known.profile_id != profile_id);
     }
+
+    pub fn authority_for_profile(
+        &self,
+        profile_id: &str,
+    ) -> Option<&arkret_sdk::PrincipalAuthorityKey> {
+        self.known_profiles
+            .iter()
+            .find(|known| known.profile_id == profile_id)
+            .map(|known| &known.authority)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnownProfileRef {
+    pub profile_id: String,
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
 }
 
 /// G3.Y0 — persisted shape of the per-device DPoP signing key. The
@@ -1453,12 +1491,10 @@ pub struct PersistedSessionGrant {
     pub grant_id: String,
     /// Audience the grant is bound to (typically the principal-server URL).
     pub audience: String,
-    /// Stable core principal ID (`DidCoreId`) the grant authorizes. A record
-    /// holding anything else is invalid and the session is unusable; it is
-    /// never repaired by back-projecting a full DID.
-    pub principal_id: String,
+    /// Exact account authority pair that issued and owns this grant.
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
     /// Device id bound to the grant.
-    pub device_id: String,
+    pub device_id: arkret_sdk::DeviceId,
     /// Principal-server base URL whose `/_arkret/self/*` surface accepts this grant.
     pub principal_server_url: String,
     /// When the grant itself stops being usable. Once we pass this the
@@ -1614,5 +1650,54 @@ impl MlsReceiveOverlay {
                 .authenticated_identity_links
                 .insert(key.clone(), identity_link.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod authority_root_tests {
+    use super::*;
+
+    fn authority(server: &str) -> arkret_sdk::PrincipalAuthorityKey {
+        arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:zAlice".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
+        )
+    }
+
+    #[test]
+    fn same_authority_keeps_the_original_profile_id() {
+        let mut root = RootIndex::default();
+        let authority = authority("ak:did_core:webvh:zServerA");
+
+        assert_eq!(
+            root.note_known_profile("ak:profile:first", &authority)
+                .as_deref(),
+            Some("ak:profile:first")
+        );
+        assert_eq!(
+            root.note_known_profile("ak:profile:relocated", &authority)
+                .as_deref(),
+            Some("ak:profile:first")
+        );
+        assert_eq!(root.known_profiles.len(), 1);
+    }
+
+    #[test]
+    fn profile_id_collision_with_another_authority_fails_closed() {
+        let mut root = RootIndex::default();
+        let first = authority("ak:did_core:webvh:zServerA");
+        let second = authority("ak:did_core:webvh:zServerB");
+        assert!(
+            root.note_known_profile("ak:profile:shared", &first)
+                .is_some()
+        );
+        assert!(
+            root.note_known_profile("ak:profile:shared", &second)
+                .is_none()
+        );
+        assert_eq!(
+            root.authority_for_profile("ak:profile:shared"),
+            Some(&first)
+        );
     }
 }

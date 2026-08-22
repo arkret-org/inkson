@@ -61,17 +61,14 @@ pub use platform::AndroidKeystoreSecureKeyStore;
 #[cfg(any(feature = "mobile-ios", target_os = "ios"))]
 pub use platform::IosKeychainSecureKeyStore;
 #[cfg(test)]
-pub(crate) use signing_seed::{
-    DeviceSeedScopeTestGuard, account_scoped_device_key_for, load_signing_seed_scoped,
-    store_signing_seed_scoped,
-};
+pub(crate) use signing_seed::DeviceSeedScopeTestGuard;
 pub use signing_seed::{
-    GRANT_BINDING_SEED_KEY, SIGNING_SEED_KEY, SigningSeedMaterial, account_scoped_device_key,
-    active_device_seed_scope, delete_grant_binding_seed, ensure_grant_binding_seed,
-    ensure_signing_seed, load_device_id, load_grant_binding_seed, load_signing_seed,
-    pending_login_device_id, reset_device_seed_scope_for_signin, rotate_grant_binding_seed,
-    set_active_device_seed_scope, set_pending_login_device_id, store_device_id,
-    store_grant_binding_seed, store_grant_binding_seed_b64url, store_signing_seed,
+    ActiveDeviceSeedScope, GRANT_BINDING_SEED_KEY, SIGNING_SEED_KEY, SigningSeedMaterial,
+    account_scoped_device_key, active_device_seed_scope, delete_grant_binding_seed,
+    ensure_grant_binding_seed, ensure_signing_seed, load_device_id, load_grant_binding_seed,
+    load_signing_seed, pending_login_device_id, reset_device_seed_scope_for_signin,
+    rotate_grant_binding_seed, set_active_device_seed_scope, set_pending_login_device_id,
+    store_device_id, store_grant_binding_seed, store_grant_binding_seed_b64url, store_signing_seed,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -95,7 +92,7 @@ const WASM_LOCAL_IDENTITY_SEED_KEY: &str = "identity.local.primary.v1";
 /// seed, so it is classified as a seed-grade secret: IndexedDB-only on wasm
 /// (no localStorage tier) and excluded from the unload-race localStorage
 /// mirror, exactly like an Ed25519 signing seed.
-pub(crate) const PENDING_LOGOUT_SECRET_KEY: &str = "arkret.pending_logout.v1";
+pub(crate) const PENDING_LOGOUT_SECRET_KEY_PREFIX: &str = "arkret.pending_logout.v1.";
 
 #[cfg(target_arch = "wasm32")]
 const WASM_ED25519_SEED_INDEXEDDB_REQUIRED: &str = "wasm Ed25519 signing seeds require IndexedDbSecureKeyStore with a non-extractable \
@@ -176,10 +173,36 @@ pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secre
 /// neither the plaintext nor a decryptable mirror can enter localStorage.
 pub(crate) const E2EE_PLAINTEXT_CACHE_KEY_PREFIX: &str = "inkson.e2ee_plaintext_cache.v1.";
 
+/// Stable, opaque physical namespace for one Account Authority pair.
+///
+/// The typed authority remains the source of truth in the profile/root index;
+/// this digest is only a bounded storage locator.  It deliberately hashes the
+/// SDK canonical JSON form instead of concatenating the two DIDs, so the
+/// namespace cannot be ambiguous and does not expose an unbounded DID in a
+/// native filename or platform-keystore key.
+pub(crate) fn principal_authority_storage_digest(
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+) -> Result<String, SecureKeyStoreError> {
+    authority.validate().map_err(|error| {
+        SecureKeyStoreError::Backend(format!("invalid principal authority: {error}"))
+    })?;
+    let canonical = arkret_sdk::canonical::canonical_json_bytes(authority).map_err(|error| {
+        SecureKeyStoreError::Backend(format!(
+            "canonicalize principal authority storage namespace: {error}"
+        ))
+    })?;
+    Ok(arkret_sdk::canonical::sha256_base64url(canonical))
+}
+
+/// Character-safe storage suffix for a device coordinate below an authority.
+pub(crate) fn device_storage_digest(device_id: &arkret_sdk::DeviceId) -> String {
+    arkret_sdk::canonical::sha256_base64url(device_id.as_str().as_bytes())
+}
+
 /// Per-account main `ClientLocalState` blob. Historically this lived in
 /// near-plaintext `localStorage`; phase 2 of the E2EE-local-state work moved it
 /// into the IndexedDB + non-extractable SubtleCrypto encrypted entries store.
-/// The semantic key is `inkson.local_state.v1.account.<core_id>`; v1 data is
+/// The semantic key is `inkson.local_state.v1.account.<authority_digest>`; ambiguous prior data is
 /// intentionally ignored rather than migrated or read through compatibility
 /// fallbacks. Classifying the prefix as IndexedDB-only makes the localStorage secure tier
 /// refuse it — so it fails closed before the wrapping key is ready and is never
@@ -193,8 +216,8 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         key.starts_with(logical_prefix) || key.contains(&format!(".{logical_prefix}"))
     };
     is_wasm_ed25519_seed_key(key)
-        || key == PENDING_LOGOUT_SECRET_KEY
-        || key.ends_with(&format!(".{PENDING_LOGOUT_SECRET_KEY}"))
+        || key.starts_with(PENDING_LOGOUT_SECRET_KEY_PREFIX)
+        || key.contains(&format!(".{PENDING_LOGOUT_SECRET_KEY_PREFIX}"))
         || scoped_prefix(crate::identity::account_auth::ACCOUNT_HANDOFF_GRANT_SECRET_KEY_PREFIX)
         || scoped_prefix(
             crate::identity::account_auth::PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY_PREFIX,
@@ -218,11 +241,13 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
 }
 
-pub(crate) fn e2ee_plaintext_cache_store_key(account_did: &str) -> String {
-    format!(
+pub(crate) fn e2ee_plaintext_cache_store_key(
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+) -> Result<String, SecureKeyStoreError> {
+    Ok(format!(
         "{E2EE_PLAINTEXT_CACHE_KEY_PREFIX}{}",
-        STANDARD_NO_PAD.encode(account_did.trim().as_bytes())
-    )
+        principal_authority_storage_digest(authority)?
+    ))
 }
 
 /// E2EE-at-rest T1 — SecureKeyStore key for one exact scope/group's aggregated

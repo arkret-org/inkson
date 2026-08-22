@@ -17,14 +17,14 @@ use serde_json::{Value, json};
 
 pub async fn sign_target_attestation(
     signer: &crate::event_signer::InksonEventSigner,
-    actor_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     transcript_digest: arkret_sdk::Hash,
 ) -> anyhow::Result<arkret_sdk::DevicePairingTargetAttestation> {
     let signer_device = signer
         .device_id()
         .ok_or_else(|| anyhow::anyhow!("device pairing signer is not bound to a device"))?;
-    if signer_device != device_id {
+    if signer_device != device_id.as_str() {
         anyhow::bail!("device pairing signer does not match the target device");
     }
     let public_key_multibase = signer
@@ -33,12 +33,12 @@ pub async fn sign_target_attestation(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let (_, hpke_public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair_durable(
         secure_store.as_ref(),
-        actor_id,
+        authority,
         device_id,
     )
     .await?;
     let unsigned = arkret_sdk::UnsignedDevicePairingTargetAttestation::new(
-        arkret_sdk::DeviceId::new(device_id.to_owned())?,
+        device_id.clone(),
         arkret_sdk::DidKey::new(format!("did:key:{public_key_multibase}"))
             .map_err(anyhow::Error::msg)?,
         arkret_sdk::NonEmptyString::new(crate::identity::did_key::encode_x25519_multibase(

@@ -16,6 +16,10 @@ use crate::state::LocalStateStore;
 /// `use_context::<SessionContext>()`.
 #[derive(Clone, Copy)]
 pub struct SessionContext {
+    /// The authenticated account and its four distinct identity coordinates.
+    /// `None` is the only signed-out representation; descendants must not
+    /// reconstruct an account from route or free-form DID strings.
+    pub active_account: Signal<Option<crate::config::ActiveAccountContext>>,
     /// The app-wide local state store handle (persisted client projection).
     pub state_store: SyncSignal<LocalStateStore>,
     /// The active server base URL. A `Signal<String>` so components that read it

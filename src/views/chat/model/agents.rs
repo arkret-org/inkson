@@ -113,7 +113,7 @@ pub(crate) fn enrich_authoritative_agent_metadata(
 pub(crate) fn upsert_agent_participants(
     participants: &mut Vec<SpaceParticipant>,
     agent_metadata: &std::collections::BTreeMap<String, AgentParticipantMetadata>,
-    account_did: &str,
+    principal_id: &str,
 ) {
     for (agent_id, metadata) in agent_metadata {
         if participants
@@ -133,7 +133,7 @@ pub(crate) fn upsert_agent_participants(
                 1
             },
             role: SpaceParticipantRole::Member,
-            is_self: agent_id == account_did,
+            is_self: agent_id == principal_id,
             is_agent: true,
             agent_metadata: Some(metadata.clone()),
         });

@@ -10,8 +10,7 @@ pub(super) struct MlsRecoveryEffectState {
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub account_recovery_configured: Signal<Option<bool>>,
     pub token: Signal<String>,
-    pub account_did: Signal<String>,
-    pub device_id: Signal<String>,
+    pub active_account: Signal<Option<crate::config::ActiveAccountContext>>,
     pub sync_generation: Signal<u64>,
     pub session_boot_state: Signal<SessionBootState>,
     pub on_onboarding_route: bool,
@@ -28,8 +27,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
         secure_store_bootstrap_ready,
         account_recovery_configured,
         token,
-        account_did,
-        device_id,
+        active_account,
         sync_generation,
         session_boot_state,
         on_onboarding_route,
@@ -66,8 +64,12 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             }
             let base = base_url();
             let session = token();
-            let actor = account_did();
-            let device = device_id();
+            let Some(account) = active_account() else {
+                return;
+            };
+            let actor = account.principal_id().to_string();
+            let authority = account.authority.clone();
+            let device = account.device_id.clone();
             let generation = sync_generation();
             let account_recovery_configured_value = account_recovery_configured_for_detection();
             if !matches!(session_boot_state(), SessionBootState::Authenticated) {
@@ -96,7 +98,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             // are present; the `seen_detection_key` guard still prevents
             // repeat runs, and re-running after sync (snap= flips) is handled
             // by the detection key below.
-            if base.trim().is_empty() || actor.trim().is_empty() || device.trim().is_empty() {
+            if base.trim().is_empty() || actor.trim().is_empty() {
                 return;
             }
             // BUG X4: the account MLS secret is created lazily on the
@@ -123,13 +125,13 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             drop(state_for_detection_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
-                &actor,
+                &authority,
             )
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let local_account_secret_verified = crate::mls::runtime::account_mls_secret_verified(
                 crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
-                &actor,
+                &authority,
             )
             .unwrap_or(false);
             let detection_key = format!(
@@ -154,7 +156,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
 
             spawn(async move {
                 let actor_for_sidecar_restore = actor.clone();
-                let device_for_sidecar_restore = device.clone();
+                let device_for_sidecar_restore = device.to_string();
                 match crate::transport::auth::with_authed_api(
                     &base,
                     session.clone(),
@@ -245,8 +247,9 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     history_payload,
                                     &mut store,
                                     secure_store.as_ref(),
+                                    &authority,
                                     &actor,
-                                    &device,
+                                    device.as_str(),
                                 );
                                 if report.failed > 0 {
                                     tracing::warn!(
@@ -264,8 +267,9 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     &sidecar_payload,
                                     &mut store,
                                     secure_store.as_ref(),
+                                    &authority,
                                     &actor,
-                                    &device,
+                                    device.as_str(),
                                 );
                                 if report.failed > 0 {
                                     tracing::warn!(
@@ -283,8 +287,9 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                 history_payload_for_local_restore.as_ref().unwrap_or(&payload),
                                 &store,
                                 secure_store.as_ref(),
+                                &authority,
                                 &actor,
-                                &device,
+                                device.as_str(),
                             )
                         };
                         // Mutual exclusion (task X3): restore (unlock) always
@@ -312,15 +317,16 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                 crate::mls::account_recovery::mls_backup_prompt_required(
                                     &payload,
                                     secure_store.as_ref(),
+                                    &authority,
                                     &actor,
-                                    &device,
+                                    device.as_str(),
                                 );
                             if should_backup {
                                 crate::components::maybe_auto_backup_mls_after_encrypted_write(
                                     base.clone(),
                                     session.clone(),
                                     actor.clone(),
-                                    device.clone(),
+                                    device.to_string(),
                                     state_store_for_detection,
                                     needs_mls_backup,
                                 )

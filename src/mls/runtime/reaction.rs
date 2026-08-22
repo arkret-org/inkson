@@ -1,5 +1,6 @@
 //! §2.9 E2EE reaction sealing and routing-tag derivation.
 
+use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
 use arkret_wire::event_kind_str;
 
 use super::{MlsRuntimeError, load_device_snapshot_secret, should_force_epoch_advance};
@@ -36,8 +37,9 @@ pub fn encrypt_reaction_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
+    authority: &PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &DeviceId,
     target_ref: &arkret_sdk::EventId,
     created_at: chrono::DateTime<chrono::Utc>,
     canonical_emoji: &str,
@@ -45,7 +47,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     let snapshot = state_store
         .mls_snapshot_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, actor_id, device_id)
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: reaction send may force an epoch commit; bind it to the Seal-view
     // epoch floor so a stale local snapshot can't seal a reaction on a forked ratchet.
@@ -87,7 +89,7 @@ pub fn encrypt_reaction_with_device_snapshot(
         None,
     )?;
     super::message::verify_exporter_sender_domain_for_send(
-        device_id,
+        device_id.as_str(),
         is_minimal_metadata,
         use_exporter_aead,
     )?;

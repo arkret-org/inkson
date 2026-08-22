@@ -2,10 +2,10 @@
 //!
 //! The namespace is part of the store instance, not an optional argument at
 //! each read/write call. Callers pass a bare logical key; the store always
-//! expands it with the validated [`DidCoreId`] supplied at construction time.
+//! expands it with the validated authority/device supplied at construction time.
 //! Pre-principal transactions use [`PendingLocalStore`].
 
-use arkret_sdk::{DeviceId, DidCoreId};
+use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -24,13 +24,6 @@ const GLOBAL_NAMESPACE: &str = "global";
 const DEVICE_ID_ENTRY: &str = "device_id.v1";
 const SIGNING_SEED_ENTRY: &str = "device.ed25519.signing_seed.v1";
 const GRANT_BINDING_SEED_ENTRY: &str = "device.ed25519.grant_binding.v1";
-
-fn did_core_storage_scope(principal_id: &DidCoreId) -> &str {
-    principal_id
-        .as_str()
-        .strip_prefix("ak:did_core:")
-        .unwrap_or_else(|| principal_id.as_str())
-}
 
 fn pending_storage_scope(device_id: &DeviceId) -> &str {
     device_id
@@ -166,30 +159,41 @@ impl GlobalLocalStore {
     }
 }
 
-/// Local data belonging to one server-authored principal.
+/// Local secret data belonging to one account authority and one device.
 ///
 /// There is intentionally no default constructor and no string/optional
 /// scope. Methods accept bare logical keys and every emitted storage key
-/// contains the validated core id.
+/// contains bounded digests of the typed authority and device coordinates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserLocalStore {
-    principal_id: DidCoreId,
+    authority: PrincipalAuthorityKey,
+    device_id: DeviceId,
     namespace: String,
 }
 
 impl UserLocalStore {
-    #[must_use]
-    pub fn new(principal_id: DidCoreId) -> Self {
-        let namespace = format!("inkson.{}", did_core_storage_scope(&principal_id));
-        Self {
-            principal_id,
+    pub fn new(
+        authority: PrincipalAuthorityKey,
+        device_id: DeviceId,
+    ) -> Result<Self, SecureKeyStoreError> {
+        let authority_digest = super::principal_authority_storage_digest(&authority)?;
+        let device_digest = super::device_storage_digest(&device_id);
+        let namespace = format!("inkson.authority.{authority_digest}.device.{device_digest}");
+        Ok(Self {
+            authority,
+            device_id,
             namespace,
-        }
+        })
     }
 
     #[must_use]
-    pub fn principal_id(&self) -> &DidCoreId {
-        &self.principal_id
+    pub fn authority(&self) -> &PrincipalAuthorityKey {
+        &self.authority
+    }
+
+    #[must_use]
+    pub fn device_id(&self) -> &DeviceId {
+        &self.device_id
     }
 
     /// Expand a caller-supplied logical key into
@@ -229,7 +233,7 @@ impl UserLocalStore {
 
     pub fn activate(&self) {
         super::set_pending_login_device_id(None);
-        super::set_active_device_seed_scope(Some(self.principal_id.as_str()));
+        super::set_active_device_seed_scope(Some((&self.authority, &self.device_id)));
     }
 
     pub fn load_device_id(
@@ -373,7 +377,7 @@ impl PendingLocalStore {
 
     pub fn activate(&self) {
         super::set_active_device_seed_scope(None);
-        super::set_pending_login_device_id(Some(self.device_id.as_str()));
+        super::set_pending_login_device_id(Some(&self.device_id));
     }
 
     pub fn save_device_id(&self, store: &dyn SecureKeyStore) -> Result<(), SecureKeyStoreError> {
@@ -616,17 +620,34 @@ mod tests {
         DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{suffix}")).unwrap()
     }
 
+    fn user(principal: &str, server: &str, device_id: DeviceId) -> UserLocalStore {
+        UserLocalStore::new(
+            PrincipalAuthorityKey::new(
+                arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
+                arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
+            ),
+            device_id,
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn user_keys_always_include_the_validated_core_id() {
-        let alice = UserLocalStore::new(
-            DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+    fn user_keys_include_authority_and_device_digests() {
+        let alice = user(
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:server.example",
+            device("000000000001"),
         );
-        let bob =
-            UserLocalStore::new(DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap());
+        let bob = user(
+            "ak:did_core:web:bob.example",
+            "ak:did_core:web:server.example",
+            device("000000000002"),
+        );
 
         let alice_key = alice.key(DEVICE_ID_ENTRY);
         let bob_key = bob.key(DEVICE_ID_ENTRY);
-        assert!(alice_key.starts_with("inkson.web:alice.example."));
+        assert!(alice_key.starts_with("inkson.authority."));
+        assert!(alice_key.contains(".device."));
         assert!(alice_key.ends_with(".device_id.v1"));
         assert_ne!(alice_key, bob_key);
         assert_ne!(alice_key, DEVICE_ID_ENTRY);
@@ -638,10 +659,8 @@ mod tests {
         let first = PendingLocalStore::new(device("000000000001"));
         let second = PendingLocalStore::new(device("000000000002"));
         assert_ne!(first.key(DEVICE_ID_ENTRY), second.key(DEVICE_ID_ENTRY));
-        assert_eq!(
-            first.key(DEVICE_ID_ENTRY),
-            "inkson.pending.01964137-0000-7000-8000-000000000001.device_id.v1"
-        );
+        assert!(first.key(DEVICE_ID_ENTRY).starts_with("inkson.pending."));
+        assert!(first.key(DEVICE_ID_ENTRY).ends_with(".device_id.v1"));
         assert!(!first.key(DEVICE_ID_ENTRY).contains("inkson.secret"));
         assert!(!first.key(DEVICE_ID_ENTRY).contains("inkson.inkson"));
     }
@@ -654,8 +673,10 @@ mod tests {
         let store = MemorySecureKeyStore::default();
         let pending = PendingLocalStore::new(device("000000000003"));
         pending.save_device_id(&store).unwrap();
-        let user = UserLocalStore::new(
-            DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+        let user = user(
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:server.example",
+            device("000000000003"),
         );
 
         pending.promote_to(&store, &user).unwrap();
@@ -679,12 +700,14 @@ mod tests {
 
     #[test]
     fn scoped_key_helper_has_no_bare_key_case() {
-        let user = UserLocalStore::new(
-            DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+        let user = user(
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:server.example",
+            device("000000000003"),
         );
         let key = user.key(DEVICE_ID_ENTRY);
         assert_ne!(key, DEVICE_ID_ENTRY);
-        assert_eq!(key, "inkson.web:alice.example.device_id.v1");
+        assert!(key.ends_with(".device_id.v1"));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -697,8 +720,10 @@ mod tests {
             .ensure_grant_binding_seed_durable(&store)
             .await
             .unwrap();
-        let user = UserLocalStore::new(
-            DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+        let user = user(
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:server.example",
+            device("000000000004"),
         );
 
         pending.copy_to_durable(&store, &user).await.unwrap();

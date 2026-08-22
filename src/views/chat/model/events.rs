@@ -15,14 +15,14 @@ pub(crate) use crate::state::projection::message_ops::{
 pub(crate) fn chat_reply_quote_preview(
     messages: &[ChatMessage],
     reply_id: &str,
-    account_did: &str,
+    principal_id: &str,
     account_display_name: &str,
     participants: &[SpaceParticipant],
 ) -> Option<(String, String)> {
     let quoted = messages.iter().find(|m| m.id == reply_id)?;
     let name = sender_display_label(
         &quoted.sender,
-        account_did,
+        principal_id,
         account_display_name,
         participants,
     );
@@ -693,7 +693,11 @@ fn chat_messages_from_event_list_with_sidecar(
     realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<ChatMessage> {
     fold_event_list_into_chat_messages(Vec::new(), realm_id, events, state_store, decrypt_identity)
 }
@@ -703,7 +707,11 @@ fn fold_event_list_into_chat_messages(
     realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<ChatMessage> {
     let mut durable_messages = Vec::new();
     let mut pending_revisions = Vec::<(String, ChatMessage)>::new();
@@ -905,8 +913,9 @@ pub(crate) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<C
 pub(crate) fn decrypt_chat_encrypted_content(
     state_store: &LocalStateStore,
     realm_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &arkret_sdk::DeviceId,
     circle_id: Option<&str>,
     encrypted_content: &Value,
 ) -> Option<String> {
@@ -920,6 +929,7 @@ pub(crate) fn decrypt_chat_encrypted_content(
     decrypt_chat_encrypted_content_value(
         state_store,
         realm_id,
+        authority,
         actor_id,
         device_id,
         effective_scope.as_ref(),
@@ -932,8 +942,9 @@ pub(crate) fn decrypt_chat_encrypted_content(
 fn decrypt_chat_encrypted_content_value(
     state_store: &LocalStateStore,
     realm_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &arkret_sdk::DeviceId,
     effective_scope: Option<&arkret_sdk::ScopeRef>,
     encrypted_content: &Value,
     verified_sender_domain: Option<&[u8]>,
@@ -965,6 +976,7 @@ fn decrypt_chat_encrypted_content_value(
             state_store,
             secure_store.as_ref(),
             realm_id,
+            authority,
             actor_id,
             device_id,
             &payload,
@@ -989,7 +1001,11 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
 
 fn verify_chat_envelope_proof_with_local_identity(
     event: &Value,
-    local_identity: Option<(&str, &str)>,
+    local_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> ChatProofVerdict {
     // Locate the envelope layer that actually carries `actor_id` + `proofs`.
     // Projected chat events nest the signed envelope under `event` / `envelope`
@@ -1072,7 +1088,7 @@ fn verify_chat_envelope_proof_with_local_identity(
             // actor, device id, active signer binding and detached proof must
             // all agree, and a directory NegativeHit (revoked/absent device)
             // is never overridden.
-            let local_key = local_identity.and_then(|(local_actor, local_device)| {
+            let local_key = local_identity.and_then(|(_, local_actor, local_device)| {
                 // `actor_id` in the envelope and the local account identity
                 // can spell the same principal in different Arkret id forms
                 // (full `did:webvh:…` vs core `ak:did_core:…`); compare the
@@ -1086,7 +1102,7 @@ fn verify_chat_envelope_proof_with_local_identity(
                         (Ok(local_core), Ok(proof_core)) => local_core == proof_core,
                         _ => false,
                     };
-                if !same_principal || local_device != device {
+                if !same_principal || local_device.as_str() != device {
                     return None;
                 }
                 let signer = crate::event_signer::active_signer()?;
@@ -1124,7 +1140,11 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
     realm_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> ChatProofVerdict {
     if let Some(store) = state_store
         && store.realm_projection_is_minimal_metadata(realm_id)
@@ -1142,7 +1162,7 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
         };
         let coordinates = minimal_metadata_content_coordinates(realm_id, &candidates);
         let mls_view = if let Some((group_id, epoch, group_state_ref)) = &coordinates {
-            let Some((self_actor, self_device)) = decrypt_identity else {
+            let Some((authority, self_actor, self_device)) = decrypt_identity else {
                 return ChatProofVerdict::Unresolved;
             };
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -1150,6 +1170,7 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
                 store,
                 secure_store.as_ref(),
                 realm_id,
+                authority,
                 self_actor,
                 self_device,
                 group_id,
@@ -1200,7 +1221,11 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
     realm_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Option<Vec<u8>> {
     if verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity)
         != ChatProofVerdict::Verified
@@ -1242,7 +1267,11 @@ fn verify_minimal_metadata_chat_author(
     store: &LocalStateStore,
     realm_id: &str,
     event: &Value,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> ChatProofVerdict {
     let candidates = message_candidates(event);
     let proof_bearing = candidates.iter().copied().find(|candidate| {
@@ -1308,7 +1337,7 @@ fn verify_minimal_metadata_chat_author(
     else {
         return ChatProofVerdict::Rejected;
     };
-    let Some((self_actor, self_device)) = decrypt_identity else {
+    let Some((authority, self_actor, self_device)) = decrypt_identity else {
         return ChatProofVerdict::Unresolved;
     };
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -1316,6 +1345,7 @@ fn verify_minimal_metadata_chat_author(
         store,
         secure_store.as_ref(),
         realm_id,
+        authority,
         self_actor,
         self_device,
         &group_id,
@@ -1458,7 +1488,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     realm_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Option<ChatMessage> {
     let candidates = message_candidates(event);
     let is_redaction_tombstone = message_is_redaction_tombstone(&candidates);
@@ -1574,8 +1608,8 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             state_store,
             encrypted_content_value.as_ref(),
         ) {
-            (Some((actor_id, device_id)), Some(store), Some(encrypted)) => {
-                Some((store, actor_id, device_id, encrypted))
+            (Some((authority, actor_id, device_id)), Some(store), Some(encrypted)) => {
+                Some((store, authority, actor_id, device_id, encrypted))
             }
             _ => None,
         }
@@ -1583,21 +1617,23 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         None
     };
     let decrypt_was_attempted = decrypt_context.is_some();
-    let decrypted_content = decrypt_context.and_then(|(store, actor_id, device_id, encrypted)| {
-        decrypt_chat_encrypted_content_value(
-            store,
-            message_realm,
-            actor_id,
-            device_id,
-            effective_scope.as_ref(),
-            encrypted,
-            verified_sender_domain.as_deref(),
-        )
-        .and_then(|content_value| {
-            display_body_from_value(&content_value)
-                .map(|body| (body, content_format_from_value(&content_value)))
-        })
-    });
+    let decrypted_content =
+        decrypt_context.and_then(|(store, authority, actor_id, device_id, encrypted)| {
+            decrypt_chat_encrypted_content_value(
+                store,
+                message_realm,
+                authority,
+                actor_id,
+                device_id,
+                effective_scope.as_ref(),
+                encrypted,
+                verified_sender_domain.as_deref(),
+            )
+            .and_then(|content_value| {
+                display_body_from_value(&content_value)
+                    .map(|body| (body, content_format_from_value(&content_value)))
+            })
+        });
     let body_was_decrypted = decrypted_content.is_some();
     let (body, content_format) = if is_redaction_tombstone || late_recovery_rejection.is_some() {
         (String::new(), None)
@@ -1706,7 +1742,11 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
     realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<ChatMessage> {
     chat_messages_from_event_list_with_sidecar(realm_id, events, state_store, decrypt_identity)
 }
@@ -1762,7 +1802,11 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::<crate::messaging::polls::PollCard>::new();
     let mut by_poll_id = std::collections::BTreeMap::<String, usize>::new();
@@ -1808,10 +1852,11 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
                             .and_then(|content| content.get("encrypted_content"))
                     })
                 })?;
-                let (store, (actor_id, device_id)) = (state_store?, decrypt_identity?);
+                let (store, (authority, actor_id, device_id)) = (state_store?, decrypt_identity?);
                 decrypt_chat_encrypted_content_value(
                     store,
                     message_realm,
+                    authority,
                     actor_id,
                     device_id,
                     effective_scope.as_ref(),
@@ -1946,7 +1991,11 @@ pub(crate) fn apply_shared_pin_event(
 pub(crate) fn chat_messages_from_sync_realms_with_sidecar(
     realms: &std::collections::BTreeMap<String, Value>,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     for (realm_id, body) in realms {
@@ -2095,7 +2144,11 @@ pub(crate) fn moderation_appeal_prompts_from_sync_realms(
 pub(crate) fn poll_cards_from_sync_realms_with_sidecar(
     realms: &std::collections::BTreeMap<String, Value>,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::new();
     for (realm_id, body) in realms {
@@ -2126,9 +2179,9 @@ pub(crate) struct TypingActorSnapshot {
 pub(crate) fn typing_actors_from_signals(
     bodies: &[Value],
     strand_id: &str,
-    account_did: &str,
+    principal_id: &str,
 ) -> Vec<String> {
-    typing_actor_snapshot_from_signals(bodies, strand_id, account_did).actors
+    typing_actor_snapshot_from_signals(bodies, strand_id, principal_id).actors
 }
 
 /// Active typing actors from the decrypted `ak.typing` Signal projection.
@@ -2141,7 +2194,7 @@ pub(crate) fn typing_actors_from_signals(
 pub(crate) fn typing_actor_snapshot_from_signals(
     bodies: &[Value],
     strand_id: &str,
-    account_did: &str,
+    principal_id: &str,
 ) -> TypingActorSnapshot {
     let mut actors = std::collections::BTreeSet::<String>::new();
     let mut next_expires_at_ms: Option<i64> = None;
@@ -2167,7 +2220,7 @@ pub(crate) fn typing_actor_snapshot_from_signals(
         let actor = value_string_at(body, &["actor_id"])
             .unwrap_or_default()
             .trim();
-        if !actor.is_empty() && !same_principal_core(actor, account_did) {
+        if !actor.is_empty() && !same_principal_core(actor, principal_id) {
             actors.insert(actor.to_owned());
             let expires_at_ms = expires_at.timestamp_millis();
             next_expires_at_ms = Some(match next_expires_at_ms {
@@ -2280,7 +2333,7 @@ pub(crate) fn presence_projection_refresh_key(
 pub(crate) fn presence_maps_from_sync_events(
     events: &[Value],
     participants: &[String],
-    account_did: &str,
+    principal_id: &str,
     account_label: &str,
 ) -> Option<PresenceMaps> {
     if events.is_empty() {
@@ -2292,7 +2345,7 @@ pub(crate) fn presence_maps_from_sync_events(
             principal_core_key(participant).map(|core| (core, participant.clone()))
         })
         .collect::<std::collections::BTreeMap<_, _>>();
-    let account_core = principal_core_key(account_did);
+    let account_core = principal_core_key(principal_id);
     let mut states = std::collections::BTreeMap::<String, String>::new();
     let mut labels = std::collections::BTreeMap::<String, String>::new();
     let mut status_messages = std::collections::BTreeMap::<String, String>::new();
@@ -2374,7 +2427,11 @@ pub(crate) fn presence_maps_from_sync_events(
 pub(crate) fn chat_messages_from_local_state_with_sidecar(
     state: &ClientLocalState,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<ChatMessage> {
     let events = state
         .raw_operations
@@ -2404,7 +2461,11 @@ pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
     seed: Vec<ChatMessage>,
     state: &ClientLocalState,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<ChatMessage> {
     let events = state
         .raw_operations
@@ -2426,7 +2487,11 @@ pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
 pub(crate) fn poll_cards_from_local_state_with_sidecar(
     state: &ClientLocalState,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&str, &str)>,
+    decrypt_identity: Option<(
+        &arkret_sdk::PrincipalAuthorityKey,
+        &str,
+        &arkret_sdk::DeviceId,
+    )>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let events = state
         .raw_operations

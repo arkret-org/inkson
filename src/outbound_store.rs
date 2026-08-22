@@ -1,8 +1,9 @@
 //! Product storage adapter for Garth's durable outbound queue.
 //!
 //! Each queue item carries the authoritative `(realm_id, actor_id)` authoring
-//! partition. Actor-keyed files are storage containers used by account-level
-//! drain; they do not provide or derive authoring sequence state. Native
+//! partition. Physical queues are additionally partitioned by the exact
+//! [`arkret_sdk::PrincipalAuthorityKey`] that owns the authenticated session;
+//! actor ids never serve as account-storage coordinates. Native
 //! clients use Garth's atomic `FileStore`; web clients persist the same SDK
 //! `SendQueueSnapshot` shape in origin storage until the IndexedDB contract
 //! adapter replaces this fallback.
@@ -76,9 +77,42 @@ pub(crate) struct InksonOutboundStore {
     storage_key: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutboundLane {
+    Standard,
+    MlsDurablePostAccept,
+    MlsHostOnly,
+}
+
+impl OutboundLane {
+    fn suffix(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::MlsDurablePostAccept => "mls-durable-post-accept",
+            Self::MlsHostOnly => "mls-host-only",
+        }
+    }
+}
+
+fn outbound_storage_scope(
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    lane: OutboundLane,
+) -> arkret_sdk::Result<String> {
+    let authority_digest = crate::secure_key_store::principal_authority_storage_digest(authority)
+        .map_err(|error| {
+        arkret_sdk::Error::Protocol(format!(
+            "derive durable outbound authority namespace: {error}"
+        ))
+    })?;
+    Ok(format!("{authority_digest}.{}", lane.suffix()))
+}
+
 impl InksonOutboundStore {
-    pub(crate) fn open(actor_id: &str) -> arkret_sdk::Result<Self> {
-        let scope = crate::canonical::sha256_hex(actor_id.as_bytes());
+    pub(crate) fn open(
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+        lane: OutboundLane,
+    ) -> arkret_sdk::Result<Self> {
+        let scope = outbound_storage_scope(authority, lane)?;
         #[cfg(not(target_arch = "wasm32"))]
         {
             let path = crate::state::app_data_dir()
@@ -145,9 +179,9 @@ impl OutboundQueueStore for InksonOutboundStore {
                 if let Err(initial_error) = storage.set_item(&self.storage_key, &encoded) {
                     // Browser localStorage has a small per-origin quota. Preserve
                     // every pending/dependency item. First discard unreferenced
-                    // terminal history in this actor queue, then compact sibling
-                    // actor queues left by earlier Agent identities. A new actor
-                    // otherwise cannot persist its first item when an old actor's
+                    // terminal history in this authority lane, then compact sibling
+                    // authority/lane queues left by earlier sessions. A new authority
+                    // otherwise cannot persist its first item when an old authority's
                     // terminal history consumes the shared origin quota.
                     let removed = queue.prune_terminal_before(chrono::Utc::now());
                     if removed > 0 {
@@ -177,6 +211,15 @@ impl OutboundQueueStore for InksonOutboundStore {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    use super::*;
+
+    fn authority(server: &str) -> arkret_sdk::PrincipalAuthorityKey {
+        arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:zPrincipal".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
+        )
+    }
+
     #[test]
     fn legacy_kind_content_snapshot_is_rejected() {
         let legacy = serde_json::json!({
@@ -184,5 +227,24 @@ mod tests {
             "next_sequence": 0
         });
         assert!(serde_json::from_value::<garth::SendQueueSnapshot>(legacy).is_err());
+    }
+
+    #[test]
+    fn same_principal_on_different_servers_has_distinct_outbound_scope() {
+        let first = authority("ak:did_core:webvh:zServerA");
+        let second = authority("ak:did_core:webvh:zServerB");
+        assert_ne!(
+            outbound_storage_scope(&first, OutboundLane::Standard).unwrap(),
+            outbound_storage_scope(&second, OutboundLane::Standard).unwrap()
+        );
+    }
+
+    #[test]
+    fn mls_and_standard_lanes_are_distinct_within_one_authority() {
+        let authority = authority("ak:did_core:webvh:zServerA");
+        assert_ne!(
+            outbound_storage_scope(&authority, OutboundLane::Standard).unwrap(),
+            outbound_storage_scope(&authority, OutboundLane::MlsDurablePostAccept).unwrap()
+        );
     }
 }

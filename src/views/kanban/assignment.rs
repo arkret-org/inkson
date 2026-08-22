@@ -139,7 +139,7 @@ pub(super) fn card_assignment_mutations(
     }
 
     let mut mutations = Vec::new();
-    // `actor_id` (the acting user / event author, an account_did) signs the
+    // `actor_id` (the acting user / event author, an principal_id) signs the
     // assignment events; `assignee_id` is the person being assigned/unassigned
     // and only appears as the relation target.
     for assignee_id in selected_actor_ids.difference(&current_actor_ids) {

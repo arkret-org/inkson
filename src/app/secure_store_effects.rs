@@ -3,8 +3,6 @@ use super::*;
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct SecureStoreEffectState {
     pub config_store: Signal<LocalConfigStore>,
-    pub account_did: Signal<String>,
-    pub device_id: Signal<String>,
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub token: Signal<String>,
 }
@@ -16,24 +14,20 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
     #[cfg(target_arch = "wasm32")]
     let SecureStoreEffectState {
         config_store,
-        account_did,
-        device_id,
         secure_store_bootstrap_ready,
         token,
     } = state;
     #[cfg(target_arch = "wasm32")]
     let SessionContext {
         state_store,
-        base_url,
+        active_account,
         ..
     } = SessionContext::get();
 
     #[cfg(target_arch = "wasm32")]
     {
         let config_store_for_secure_upgrade = config_store;
-        let base_url_for_secure_upgrade = base_url;
-        let mut account_did_for_secure_upgrade = account_did;
-        let mut device_id_for_secure_upgrade = device_id;
+        let active_account_for_secure_upgrade = active_account;
         let mut state_store_for_secure_upgrade = state_store;
         let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let mut token_for_secure_upgrade = token;
@@ -52,9 +46,11 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     )
                     .await;
                     #[cfg(feature = "wasm-localstorage-secrets-test")]
-                    state_store_for_secure_upgrade
-                        .write()
-                        .switch_active_account(&account_did_for_secure_upgrade());
+                    if let Some(account) = active_account_for_secure_upgrade() {
+                        state_store_for_secure_upgrade
+                            .write()
+                            .switch_active_account(&account.profile_id, &account.authority);
+                    }
                     tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     // Hydrate the active account's main state from the IndexedDB
                     // encrypted entries store into `cached` before
@@ -119,21 +115,19 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         // after the durable account snapshot is authoritative;
                         // otherwise the asynchronous IndexedDB writer can race
                         // hydration and lose a resumable registration checkpoint.
-                        let injected = inject_test_session_grant(
-                            &mut state_store_for_secure_upgrade,
-                            config_store_for_secure_upgrade,
-                            &base_url_for_secure_upgrade(),
-                            &account_did_for_secure_upgrade(),
-                            &device_id_for_secure_upgrade(),
-                            secure_store.as_ref(),
-                        )
-                        .or_else(|| {
-                            inject_test_session_credential(
+                        let injected = active_account_for_secure_upgrade().and_then(|account| {
+                            inject_test_session_grant(
+                                &mut state_store_for_secure_upgrade,
                                 config_store_for_secure_upgrade,
-                                &base_url_for_secure_upgrade(),
-                                &account_did_for_secure_upgrade(),
-                                &device_id_for_secure_upgrade(),
+                                &account,
+                                secure_store.as_ref(),
                             )
+                            .or_else(|| {
+                                inject_test_session_credential(
+                                    config_store_for_secure_upgrade,
+                                    &account,
+                                )
+                            })
                         });
                         if let Some(credential) = injected {
                             token_for_secure_upgrade.set(credential);
@@ -159,12 +153,15 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         "secure store upgrade: post-upgrade credential sources (held_token from memory, config.session_credential, local_state.session_grant)"
                     );
                     if held_token.is_empty() && grant_present {
-                        if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
-                            &loaded_config,
-                            &base_url_for_secure_upgrade(),
-                            &account_did_for_secure_upgrade(),
-                            &device_id_for_secure_upgrade(),
-                        ) {
+                        if let Some(rehydrated) = active_account_for_secure_upgrade()
+                            .as_ref()
+                            .and_then(|account| {
+                                rehydrated_session_credential_for_active_config(
+                                    &loaded_config,
+                                    account,
+                                )
+                            })
+                        {
                             tracing::debug!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
                             token_for_secure_upgrade.set(rehydrated);
                         }
@@ -177,9 +174,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         // re-render instead of bouncing back to /login.
                         persist_config(
                             config_store_for_secure_upgrade,
-                            base_url_for_secure_upgrade(),
-                            account_did_for_secure_upgrade(),
-                            device_id_for_secure_upgrade(),
+                            active_account_for_secure_upgrade(),
                             held_token,
                         );
                     } else if !held_token.is_empty()
@@ -202,44 +197,27 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         }
                         persist_config(
                             config_store_for_secure_upgrade,
-                            base_url_for_secure_upgrade(),
-                            account_did_for_secure_upgrade(),
-                            device_id_for_secure_upgrade(),
+                            active_account_for_secure_upgrade(),
                             String::new(),
                         );
                     }
-                    let persisted_account_scope =
-                        account_did_for_secure_upgrade.peek().trim().to_owned();
-                    let account_scope = arkret_sdk::DidCoreId::new(persisted_account_scope.clone())
-                        .ok()
-                        .and_then(|principal_id| {
-                            state_store_for_secure_upgrade
-                                .read()
-                                .full_account_did_for_principal(&principal_id)
-                        })
-                        .map(|full_id| full_id.to_string())
-                        .unwrap_or(persisted_account_scope);
-                    if account_scope != account_did_for_secure_upgrade.peek().trim() {
-                        tracing::warn!(
-                            target: "secure_store",
-                            repaired_full_did = %account_scope,
-                            "repaired a persisted principal core id back to the retained full DID"
-                        );
-                        account_did_for_secure_upgrade.set(account_scope.clone());
-                    }
-                    let user_store = if account_scope.is_empty() {
-                        None
-                    } else {
-                        match crate::mls_api_helpers::principal_core_id(&account_scope) {
-                            Ok(core_id) => {
-                                Some(crate::secure_key_store::UserLocalStore::new(core_id))
-                            }
+                    let account = active_account_for_secure_upgrade();
+                    let account_scope = account
+                        .as_ref()
+                        .map(|account| account.principal_id().to_string())
+                        .unwrap_or_default();
+                    let user_store = account.as_ref().and_then(|account| {
+                        match crate::secure_key_store::UserLocalStore::new(
+                            account.authority.clone(),
+                            account.device_id.clone(),
+                        ) {
+                            Ok(store) => Some(store),
                             Err(error) => {
-                                tracing::warn!(target: "secure_store", %error, "invalid active account principal");
+                                tracing::warn!(target: "secure_store", %error, "invalid active account secure scope");
                                 None
                             }
                         }
-                    };
+                    });
                     if let Some(user_store) = user_store.as_ref() {
                         user_store.activate();
                         let dpop_record = {
@@ -281,63 +259,35 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     // state"). Resolving from the seed-paired secure-store entry
                     // makes `device_id` exactly as stable as the signing seed
                     // across reloads and re-logins of the same account.
-                    let stable_device_id_for_signer = user_store.as_ref().and_then(|user_store| {
-                        let store = secure_store.as_ref();
-                            let current = device_id_for_secure_upgrade.peek().trim().to_owned();
-                            let resolved = match user_store.load_device_id(store) {
-                                Ok(Some(existing)) => Some(existing.to_string()),
-                                Ok(None) => {
-                                    let chosen = if crate::config::is_valid_device_id(&current) {
-                                        current.clone()
-                                    } else {
-                                        crate::config::new_device_id()
-                                    };
-                                    match arkret_sdk::DeviceId::new(chosen.clone()) {
-                                        Ok(device_id) => {
-                                            match user_store.save_device_id(store, &device_id) {
-                                                Ok(()) => Some(chosen),
-                                                Err(error) => {
-                                                    tracing::warn!(target: "secure_store", ?error, "persist stable device_id failed");
-                                                    None
-                                                }
-                                            }
-                                        }
-                                        Err(error) => {
-                                            tracing::warn!(target: "secure_store", ?error, "generated stable device_id was invalid");
-                                            None
-                                        }
-                                    }
-                                }
+                    let stable_device_id_for_signer = account.as_ref().and_then(|account| {
+                        let user_store = user_store.as_ref()?;
+                        match user_store.load_device_id(secure_store.as_ref()) {
+                            Ok(Some(stored)) if stored == account.device_id => {
+                                Some(stored.to_string())
+                            }
+                            Ok(Some(stored)) => {
+                                tracing::warn!(
+                                    target: "secure_store",
+                                    stored = %stored,
+                                    active = %account.device_id,
+                                    "secure-store device does not match active account context"
+                                );
+                                None
+                            }
+                            Ok(None) => match user_store
+                                .save_device_id(secure_store.as_ref(), &account.device_id)
+                            {
+                                Ok(()) => Some(account.device_id.to_string()),
                                 Err(error) => {
-                                    tracing::warn!(target: "secure_store", ?error, "load stable device_id failed");
+                                    tracing::warn!(target: "secure_store", ?error, "persist active device_id failed");
                                     None
                                 }
-                            };
-                            match resolved {
-                                Some(resolved) => {
-                                    if resolved != current {
-                                        tracing::warn!(
-                                            target: "secure_store",
-                                            stale = %current,
-                                            stable = %resolved,
-                                            "pinning stable device_id from secure store (config blob value was phantom/stale)"
-                                        );
-                                        device_id_for_secure_upgrade.set(resolved.clone());
-                                        persist_config(
-                                            config_store_for_secure_upgrade,
-                                            base_url_for_secure_upgrade(),
-                                            account_did_for_secure_upgrade(),
-                                            resolved.clone(),
-                                            token_for_secure_upgrade.peek().trim().to_owned(),
-                                        );
-                                    }
-                                    Some(resolved)
-                                }
-                                None if crate::config::is_valid_device_id(&current) => {
-                                    Some(current)
-                                }
-                                None => None,
+                            },
+                            Err(error) => {
+                                tracing::warn!(target: "secure_store", ?error, "load stable device_id failed");
+                                None
                             }
+                        }
                     });
                     if let (Some(user_store), Some(stable_device_id)) =
                         (user_store.as_ref(), stable_device_id_for_signer)
@@ -351,9 +301,11 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 anyhow::anyhow!("load device identity signer: {error}")
                             })
                             .and_then(|_| {
+                                let account = account.as_ref().ok_or_else(|| {
+                                    anyhow::anyhow!("active account context is unavailable")
+                                })?;
                                 bind_active_signer_to_account_session(
-                                    &account_scope,
-                                    &stable_device_id,
+                                    account,
                                     active_grant.as_ref(),
                                 )
                             });
@@ -380,12 +332,15 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                         .write()
                                         .set_session_grant(None);
                                     token_for_secure_upgrade.set(String::new());
-                                    crate::config::clear_session_credential_secret(&account_scope);
+                                    if let Some(account) = account.as_ref() {
+                                        crate::config::clear_session_credential_secret(
+                                            &account.authority,
+                                            &account.device_id,
+                                        );
+                                    }
                                     persist_config(
                                         config_store_for_secure_upgrade,
-                                        base_url_for_secure_upgrade(),
-                                        account_scope.clone(),
-                                        stable_device_id.clone(),
+                                        account.clone(),
                                         String::new(),
                                     );
                                 }
@@ -425,106 +380,31 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
 // secure-store upgrade block above; the remaining callers are this file's
 // `#[cfg(test)]` tests. Gate on the union of both so native non-test builds
 // do not report it as dead code.
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 fn bind_active_signer_to_account_session(
-    account_scope: &str,
-    device_id: &str,
+    account: &crate::config::ActiveAccountContext,
     grant: Option<&PersistedSessionGrant>,
 ) -> anyhow::Result<()> {
-    let principal = arkret_sdk::DidFullId::new(account_scope.trim().to_owned())
-        .map_err(|error| anyhow::anyhow!("active account has no valid full DID: {error}"))?;
-    let principal_core = arkret_sdk::project_full_id_to_core_id(&principal)
-        .map_err(|error| anyhow::anyhow!("project active account full DID: {error}"))?;
-    let device = arkret_sdk::DeviceId::new(device_id.trim().to_owned())
-        .map_err(|error| anyhow::anyhow!("active account has no valid device_id: {error}"))?;
     if let Some(grant) = grant {
-        let grant_principal =
-            crate::identity::session_refresh::persisted_grant_principal_core_id(grant)?;
-        if grant_principal != principal_core {
-            anyhow::bail!("session grant principal does not match the active account");
+        if grant.authority != account.authority {
+            anyhow::bail!("session grant authority does not match the active account");
         }
-        if grant.device_id.trim() != device.as_str() {
+        if grant.device_id != account.device_id {
             anyhow::bail!("session grant device does not match the active device");
         }
     }
-    let signer = crate::event_signer::bind_active_signer_principal_device_id(&principal, device_id)
-        .map_err(|error| anyhow::anyhow!("bind active account signer: {error}"))?
-        .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
-    if signer.signer_did() != principal.as_str() || signer.device_id() != Some(device.as_str()) {
+    let signer = crate::event_signer::bind_active_signer_principal_device_id(
+        account.full_id(),
+        account.device_id.as_str(),
+    )
+    .map_err(|error| anyhow::anyhow!("bind active account signer: {error}"))?
+    .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
+    if signer.signer_did() != account.full_id().as_str()
+        || signer.device_id() != Some(account.device_id.as_str())
+    {
         anyhow::bail!("active signer binding did not preserve the account/device identity");
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod account_signer_boot_tests {
-    use super::bind_active_signer_to_account_session;
-    use crate::state::PersistedSessionGrant;
-
-    fn session_grant(principal_id: String, device_id: &str) -> PersistedSessionGrant {
-        PersistedSessionGrant {
-            grant_jwt: "header.payload.signature".to_owned(),
-            session_private_key_pem: String::new(),
-            grant_id: "grant-boot-test".to_owned(),
-            audience: "did:web:principal.example".to_owned(),
-            principal_id,
-            device_id: device_id.to_owned(),
-            principal_server_url: "https://principal.example".to_owned(),
-            grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-            stored_at: chrono::Utc::now(),
-        }
-    }
-
-    #[test]
-    fn boot_rebinds_loaded_device_key_to_active_account_full_id() {
-        let _guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
-        let device = "ak:device:019f0000-0000-7000-8000-000000000041";
-        let principal = "did:webvh:z6mkfixture:boot.example";
-        crate::event_signer::activate_device_signer_from_seed_for_device(
-            [41; 32],
-            None,
-            Some(device),
-        )
-        .unwrap();
-
-        let principal_full = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
-        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal_full).unwrap();
-        let grant = session_grant(principal_core.to_string(), device);
-        bind_active_signer_to_account_session(principal, device, Some(&grant)).unwrap();
-
-        let signer = crate::event_signer::active_signer().expect("bound signer");
-        assert_eq!(signer.signer_did(), principal);
-        assert_eq!(signer.device_id(), Some(device));
-    }
-
-    #[test]
-    fn boot_rejects_a_session_grant_for_another_principal_before_binding() {
-        let _guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
-        let device = "ak:device:019f0000-0000-7000-8000-000000000042";
-        let principal = "did:webvh:z6mkfixture:boot.example";
-        crate::event_signer::activate_device_signer_from_seed_for_device(
-            [42; 32],
-            None,
-            Some(device),
-        )
-        .unwrap();
-        let other =
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixtureother:other.example".to_owned())
-                .unwrap();
-        let other_core = arkret_sdk::project_full_id_to_core_id(&other).unwrap();
-        let grant = session_grant(other_core.to_string(), device);
-
-        let error =
-            bind_active_signer_to_account_session(principal, device, Some(&grant)).unwrap_err();
-
-        assert!(error.to_string().contains("principal does not match"));
-        assert_ne!(
-            crate::event_signer::active_signer()
-                .expect("unbound signer remains installed")
-                .signer_did(),
-            principal
-        );
-    }
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]

@@ -67,8 +67,8 @@ pub(crate) fn next_kanban_projection_refresh_key(
     Some(key)
 }
 
-pub(crate) fn actor_is_current_account(actor_id: &str, account_did: &str) -> bool {
-    let account = account_did.trim();
+pub(crate) fn actor_is_current_account(actor_id: &str, principal_id: &str) -> bool {
+    let account = principal_id.trim();
     !account.is_empty() && actor_id.trim() == account
 }
 

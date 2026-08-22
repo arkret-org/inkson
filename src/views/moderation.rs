@@ -166,7 +166,7 @@ pub fn project_moderation_queues(raw_ops: &[Value]) -> (Vec<StandingDecision>, V
 
 #[component]
 pub fn ModerationWorkbench(
-    account_did: String,
+    principal_id: String,
     token: Signal<String>,
     selected_realm_id: String,
 ) -> Element {
@@ -233,7 +233,7 @@ pub fn ModerationWorkbench(
                             onclick: {
                                 let base = base_url.clone();
                                 let realm = selected_realm_id.clone();
-                                let actor = account_did.clone();
+                                let actor = principal_id.clone();
                                 move |_| {
                                     let base = base.clone();
                                     let realm = realm.clone();
@@ -289,7 +289,7 @@ pub fn ModerationWorkbench(
                         {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
                             let decision_ref_label = short_protocol_id(&decision.decision_ref);
                             let target_label = short_protocol_id(&decision.target_ref);
                             let decision_ref = decision.decision_ref.clone();
@@ -363,7 +363,7 @@ pub fn ModerationWorkbench(
                     for appeal in open_appeals.iter().cloned() {
                         AppealReviewRow {
                             key: "{appeal.appeal_id}",
-                            account_did: account_did.clone(),
+                            principal_id: principal_id.clone(),
                             token,
                             selected_realm_id: selected_realm_id.clone(),
                             appeal: appeal.clone(),
@@ -380,7 +380,7 @@ pub fn ModerationWorkbench(
 /// correct (possibly atomic-batch) submit path per §5.5.1.1.
 #[component]
 fn AppealReviewRow(
-    account_did: String,
+    principal_id: String,
     token: Signal<String>,
     selected_realm_id: String,
     appeal: OpenAppeal,
@@ -418,7 +418,7 @@ fn AppealReviewRow(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
                             let appeal_id = appeal.appeal_id.clone();
                             move |_| {
                                 let base = base.clone();
@@ -470,7 +470,7 @@ fn AppealReviewRow(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
                             let appeal_id = appeal.appeal_id.clone();
                             let decision_ref = appeal.decision_ref.clone();
                             let target_ref = appeal.target_ref.clone();
@@ -537,7 +537,7 @@ fn AppealReviewRow(
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = account_did.clone();
+                            let actor = principal_id.clone();
                             let appeal_id = appeal.appeal_id.clone();
                             move |_| {
                                 let base = base.clone();

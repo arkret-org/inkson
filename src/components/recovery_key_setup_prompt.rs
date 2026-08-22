@@ -23,7 +23,7 @@ use crate::views::recovery::RecoveryKeyBackupOutcome;
 /// phrase; no plaintext or encrypted copy is persisted as ordinary device
 /// state while confirmation is pending.
 fn begin_recovery_key_setup(
-    account_did: Signal<String>,
+    active_account: Signal<Option<crate::config::ActiveAccountContext>>,
     mut generated_recovery_key: Signal<String>,
     mut confirmation_input: Signal<String>,
     mut status: Signal<String>,
@@ -32,7 +32,7 @@ fn begin_recovery_key_setup(
     mut generation_failed: Signal<bool>,
 ) {
     generation_failed.set(false);
-    if account_did().trim().is_empty() {
+    if active_account().is_none() {
         status.set(crate::i18n::tr("recovery_setup.err_requires_account"));
         return;
     }
@@ -56,15 +56,12 @@ fn begin_recovery_key_setup(
 #[component]
 pub fn RecoveryKeySetupPrompt(
     token: Signal<String>,
-    account_did: Signal<String>,
-    device_id: Signal<String>,
     open: Signal<bool>,
     account_primary_handle: Signal<String>,
     #[props(default)] on_server_configured: Option<EventHandler<()>>,
 ) -> Element {
-    // A4 — base_url / state_store from session context instead of props.
     let session = crate::app::SessionContext::get();
-    let base_url = session.base_url;
+    let active_account = session.active_account;
     let mut state_store = session.state_store;
     let mut generated_recovery_key = use_signal(String::new);
     let mut status = use_signal(String::new);
@@ -92,14 +89,14 @@ pub fn RecoveryKeySetupPrompt(
         }
         if auto_generate_started()
             || !generated_recovery_key().trim().is_empty()
-            || account_did().trim().is_empty()
+            || active_account().is_none()
         {
             return;
         }
         auto_generate_started.set(true);
         status.set(crate::i18n::tr("recovery_setup.generating"));
         begin_recovery_key_setup(
-            account_did,
+            active_account,
             generated_recovery_key,
             confirmation_input,
             status,
@@ -264,7 +261,7 @@ pub fn RecoveryKeySetupPrompt(
                                     auto_generate_started.set(true);
                                     status.set(crate::i18n::tr("recovery_setup.generating"));
                                     begin_recovery_key_setup(
-                                        account_did,
+                                        active_account,
                                         generated_recovery_key,
                                         confirmation_input,
                                         status,
@@ -298,7 +295,7 @@ pub fn RecoveryKeySetupPrompt(
                                 auto_generate_started.set(true);
                                 status.set(crate::i18n::tr("recovery_setup.generating_replacement"));
                                 begin_recovery_key_setup(
-                                    account_did,
+                                    active_account,
                                     generated_recovery_key,
                                     confirmation_input,
                                     status,
@@ -339,19 +336,23 @@ pub fn RecoveryKeySetupPrompt(
                                             return;
                                         }
                                     }
-                                    let actor = account_did();
-                                    if actor.trim().is_empty()
-                                        || saved_recovery_key.trim().is_empty()
-                                    {
+                                    let Some(account) = active_account() else {
+                                        status.set(crate::i18n::tr(
+                                            "recovery_setup.err_requires_account",
+                                        ));
+                                        return;
+                                    };
+                                    if saved_recovery_key.trim().is_empty() {
                                         status.set(crate::i18n::tr(
                                             "recovery_setup.err_requires_account",
                                         ));
                                         return;
                                     }
+                                    let principal_id = account.principal_id().to_string();
                                     status.set(crate::i18n::tr("recovery_setup.publishing"));
                                     publishing.set(true);
                                     let accepted_key = saved_recovery_key.clone();
-                                    let accepted_actor = actor.clone();
+                                    let accepted_principal_id = principal_id.clone();
                                     let on_outcome = EventHandler::new(
                                         move |outcome: RecoveryKeyBackupOutcome| match outcome {
                                             RecoveryKeyBackupOutcome::Established => {
@@ -359,7 +360,7 @@ pub fn RecoveryKeySetupPrompt(
                                                 let Some((fingerprint, _)) =
                                                     crate::views::recovery::save_generated_recovery_key_metadata(
                                                         &mut store_signal,
-                                                        &accepted_actor,
+                                                        &accepted_principal_id,
                                                         &accepted_key,
                                                     )
                                                     else {
@@ -371,12 +372,12 @@ pub fn RecoveryKeySetupPrompt(
                                                 };
                                                 let mut store = state_store.write();
                                                 store.save_private_data(
-                                                    &accepted_actor,
+                                                    &accepted_principal_id,
                                                     crate::app::RECOVERY_AUTO_PROMPT_SHOWN_KEY,
                                                     "1".to_owned(),
                                                 );
                                                 store.save_private_data(
-                                                    &accepted_actor,
+                                                    &accepted_principal_id,
                                                     crate::app::RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
                                                     fingerprint,
                                                 );
@@ -394,10 +395,8 @@ pub fn RecoveryKeySetupPrompt(
                                         },
                                     );
                                     crate::views::recovery::upload_recovery_key_account_backup(
-                                        base_url(),
                                         token,
-                                        account_did,
-                                        device_id,
+                                        account,
                                         state_store,
                                         saved_recovery_key.clone(),
                                         status,
