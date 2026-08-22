@@ -592,11 +592,7 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
             TEST_REALM_ID,
             TEST_ACTOR_ID,
             arkret_sdk::DigestSuite::Sha256,
-            arkret_sdk::StatePayload {
-                value: Some(serde_json::json!("invite")),
-                state: None,
-                reason: None,
-            },
+            arkret_sdk::RealmJoinRulePayload::new(arkret_sdk::RealmJoinRuleValue::Invite),
         )
         .expect("build_realm_state_event(join_rule) succeeds");
     let envelope = wire_envelope(envelope);
