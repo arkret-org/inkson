@@ -302,7 +302,7 @@ pub fn clear_prepared_identity_creation_request_for_checkpoint(
     clear_prepared_identity_creation_request(
         &device_id,
         account_subject,
-        &checkpoint.did,
+        checkpoint.full_id.as_str(),
         &checkpoint.lease_id,
     )
 }

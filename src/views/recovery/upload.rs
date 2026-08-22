@@ -82,6 +82,7 @@ pub(crate) fn upload_recovery_key_account_backup(
         Some(state_store.read().private_plaintext_snapshot_json())
     };
     let recovery_material_evidence = state_store.read().recovery_material_evidence();
+    let governance_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
     let needs_mls_backup_signal = crate::components::try_needs_mls_backup_signal();
     // `tr()` reads the i18n signal out of Dioxus context, which is not
     // available inside the spawned task below — the same constraint
@@ -105,20 +106,22 @@ pub(crate) fn upload_recovery_key_account_backup(
             let evidence = recovery_material_evidence.ok_or_else(|| {
                 anyhow::anyhow!("frozen PCR authority evidence is required for recovery setup")
             })?;
-            let actor_id = crate::mls_api_helpers::principal_core_id(&actor)?;
-            if arkret_sdk::project_full_id_to_core_id(&evidence.principal_id)? != actor_id
-                || evidence.device_id.as_str() != device
-            {
+            let actor_full_id = arkret_sdk::DidFullId::new(actor.clone())?;
+            if evidence.principal_id != actor_full_id || evidence.device_id.as_str() != device {
                 anyhow::bail!("recovery authority evidence does not match the active session");
             }
             crate::recovery_strand::verify_recovery_authority_evidence(&api, &evidence).await?;
-            let principal_control_realm_id = evidence.principal_control_realm_id;
-            let recovery_principal_id = evidence.principal_id;
+            crate::recovery_strand::ensure_principal_bootstrap_governance_checkpoint(
+                &api,
+                &governance_state_store,
+                &evidence.bootstrap_seal,
+            )
+            .await?;
             crate::recovery_strand::ensure_recovery_policy(
                 &api,
-                recovery_principal_id.as_str(),
-                &device,
-                &principal_control_realm_id,
+                &evidence.principal_id,
+                &evidence.device_id,
+                &evidence.principal_control_realm_id,
                 &recovery_secret,
             )
             .await?;

@@ -111,7 +111,7 @@ fn reconcile_snapshot(
             // Downstream signer, secure-store and recovery scopes require the
             // method-full DID. Persisting only the stable core id makes the
             // same founding device look like an unknown replacement device.
-            handoff.bound_principal_id = Some(full_id.to_string());
+            handoff.bound_principal_id = Some(full_id);
         }
         arkret_sdk::AccountHandoffBinding::IdentityCreationBusy { .. } => {
             anyhow::bail!("onboarding snapshot no longer grants this holder the active lease");
@@ -273,13 +273,10 @@ pub(crate) fn checkpoint_continues_bound_creation(
     checkpoint: &crate::state::PendingPrincipalRegistration,
     handoff: &PendingAccountHandoff,
 ) -> bool {
-    let Some(bound) = handoff.bound_principal_id.as_deref() else {
+    let Some(bound) = handoff.bound_principal_id.as_ref() else {
         return false;
     };
-    let Ok(bound_full_id) = arkret_sdk::DidFullId::new(bound.to_owned()) else {
-        return false;
-    };
-    checkpoint.did == bound_full_id.as_str()
+    checkpoint.full_id == *bound
         && checkpoint.device_id == handoff.device_id
         && checkpoint.principal_server_url == handoff.principal_server_url
         && checkpoint.gate_account_base == handoff.gate_account_base
@@ -396,7 +393,7 @@ mod tests {
         handoff.lease_fence = None;
         handoff.lease_expires_at = None;
         handoff.identity_creation_state = None;
-        handoff.bound_principal_id = Some(checkpoint.did.clone());
+        handoff.bound_principal_id = Some(checkpoint.full_id.clone());
         (
             crate::state::isolated_store_for_tests("bound-onboarding-continuation"),
             handoff,
@@ -435,7 +432,7 @@ mod tests {
     fn bound_snapshot_keeps_the_method_full_principal_id() {
         let (_store, handoff, checkpoint) =
             bound_continuation_fixture(PendingPrincipalRegistrationStage::RegisterRequestPrepared);
-        let full_id = arkret_sdk::DidFullId::new(checkpoint.did.clone()).unwrap();
+        let full_id = checkpoint.full_id.clone();
         let core_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
         let snapshot = arkret_sdk::AccountOnboardingSnapshot {
             handoff_request_id: arkret_sdk::RequestId::new(handoff.request_id.clone()).unwrap(),
@@ -450,10 +447,7 @@ mod tests {
 
         let reconciled = reconcile_snapshot(handoff, snapshot).unwrap();
 
-        assert_eq!(
-            reconciled.bound_principal_id.as_deref(),
-            Some(full_id.as_str())
-        );
+        assert_eq!(reconciled.bound_principal_id.as_ref(), Some(&full_id));
         assert!(reconciled.lease_id.is_none());
         assert!(reconciled.identity_creation_state.is_none());
     }
@@ -622,7 +616,9 @@ mod tests {
         bound_elsewhere.lease_fence = None;
         bound_elsewhere.lease_expires_at = None;
         bound_elsewhere.identity_creation_state = None;
-        bound_elsewhere.bound_principal_id = Some("did:webvh:z6mkfixture:other.example".to_owned());
+        bound_elsewhere.bound_principal_id = Some(
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:other.example".to_owned()).unwrap(),
+        );
         assert_eq!(
             registration_checkpoint_disposition(
                 &checkpoint,
