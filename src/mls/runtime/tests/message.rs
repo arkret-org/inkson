@@ -316,7 +316,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
 /// `encrypt_values_with_device_snapshot`.
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
-async fn authoring_exporter_aead_content_retains_history_secret() {
+async fn authoring_exporter_aead_content_requires_accepted_transition_evidence() {
     let mut state = temp_state_store("author-retains-history-secret");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
@@ -379,7 +379,7 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
     // No secret is retained before any content is authored.
     assert!(state.history_secret_for(&scope, &group_id, 0).is_none());
 
-    let encrypted = encrypt_values_with_device_snapshot(
+    let error = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
         realm,
@@ -389,23 +389,12 @@ async fn authoring_exporter_aead_content_retains_history_secret() {
         "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
-    .unwrap();
-    let pending = encrypted
-        .5
-        .expect("exporter-aead authoring must prepare history secret");
-    assert_eq!(
-        encrypted.2[0]["scheme"],
-        serde_json::Value::String("mls_exporter_aead_v1".to_owned())
-    );
-    pending.persist(&secure).await.unwrap();
-    state.publish_history_secrets(pending);
-
-    // The epoch-0 history_secret is now retained and non-empty, so it can be
-    // retained locally for a later history-key response.
-    let retained = state
-        .history_secret_for(&scope, &group_id, 0)
-        .expect("authoring exporter-aead content must retain the epoch history_secret");
-    assert!(!retained.is_empty());
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        MlsRuntimeError::EncryptionTransitionPending
+    ));
+    assert!(state.history_secret_for(&scope, &group_id, 0).is_none());
     let _ = history_store.delete_secret(&history_key);
 }
 

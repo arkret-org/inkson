@@ -533,11 +533,35 @@ fn secure_cache_bootstrap_persists_live_values_when_no_entry_exists_yet() {
 
 #[test]
 fn history_secret_is_never_written_to_plaintext_state() {
+    use base64::Engine as _;
+
+    let effective_scope = arkret_sdk::HistoryEffectiveScope::Realm {
+        realm_id: arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+            .unwrap(),
+    };
     let mut by_epoch = BTreeMap::new();
-    by_epoch.insert(7, b"history-secret".to_vec());
+    by_epoch.insert(
+        7,
+        arkret_sdk::LocalAuthoritativeHistorySecret {
+            mls_group_id: effective_scope.canonical_mls_group_id().unwrap(),
+            effective_scope,
+            epoch: 7,
+            mls_ciphersuite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
+            local_state_ref: "inkson.mls_snapshot.v1:test-7".to_owned(),
+            transition_ref: arkret_sdk::EventId::new(
+                "ak:event:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            )
+            .unwrap(),
+            transition_event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
+                .unwrap(),
+            mls_transition_digest: arkret_sdk::Hash::new(format!("sha256:{}", "2".repeat(64)))
+                .unwrap(),
+            secret_b64u: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"history-secret"),
+        },
+    );
     let mut state = ClientLocalState::default();
     state.history_secrets.insert(
-        "ak:realm:ALhIwwaNjUcFQjbGbqhUXDMd7TmMAySErYupzwj-6Fdk".to_owned(),
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
         by_epoch,
     );
 

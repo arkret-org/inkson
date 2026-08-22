@@ -121,14 +121,22 @@ fn projection_mls_genesis_event_ids(
         .collect()
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct AcceptedMlsTransitionEvidence {
+    pub(crate) effective_scope: arkret_sdk::HistoryEffectiveScope,
+    pub(crate) local_state_ref: String,
+    pub(crate) transition_ref: arkret_sdk::EventId,
+    pub(crate) transition_event_digest: arkret_sdk::Hash,
+    pub(crate) mls_transition_digest: arkret_sdk::Hash,
+}
+
 /// A history-secret update assembled but not yet published. The owned value
 /// survives while the durable secure-store write is in flight without making
 /// the secret observable through `LocalStateStore` prematurely.
 #[derive(Clone, Debug)]
 pub(crate) struct PendingHistorySecrets {
     scope_group_key: String,
-    by_epoch: BTreeMap<u64, Vec<u8>>,
-    cipher_suite: String,
+    by_epoch: BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>,
 }
 
 impl PendingHistorySecrets {
@@ -151,7 +159,16 @@ impl PendingHistorySecrets {
             .as_deref()
             .map(crate::secure_key_store::decode_history_secrets_json)
             .unwrap_or_default();
-        merged.extend(self.by_epoch.clone());
+        for (epoch, record) in &self.by_epoch {
+            if let Some(existing) = merged.get(epoch)
+                && existing != record
+            {
+                return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                    format!("conflicting local-authoritative history records for epoch {epoch}"),
+                ));
+            }
+            merged.insert(*epoch, record.clone());
+        }
         crate::secure_key_store::persist_history_secrets(
             secure_store,
             &self.scope_group_key,
@@ -293,6 +310,105 @@ impl LocalStateStore {
 
     // ── Local-authoritative MLS history-secret persistence ─────────
 
+    /// Resolve the exact accepted transition tuple for a durable local MLS
+    /// snapshot. Only the locally verified governance checkpoint is accepted;
+    /// a projection row or current Event id alone cannot manufacture
+    /// `local_authoritative` status.
+    pub(crate) fn accepted_mls_transition_evidence(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+    ) -> Result<AcceptedMlsTransitionEvidence, String> {
+        let history_scope = arkret_sdk::HistoryEffectiveScope::try_from(effective_scope.clone())
+            .map_err(|error| error.to_string())?;
+        if history_scope
+            .canonical_mls_group_id()
+            .map_err(|error| error.to_string())?
+            != group_id
+        {
+            return Err("local MLS snapshot group id is not canonical for its scope".to_owned());
+        }
+        let snapshot = self
+            .mls_snapshot_for_scope_and_group(effective_scope, group_id)
+            .ok_or_else(|| "local-authoritative export has no durable MLS snapshot".to_owned())?;
+        if snapshot.epoch != epoch {
+            return Err(
+                "local-authoritative export epoch differs from durable MLS state".to_owned(),
+            );
+        }
+        let transition_ref = snapshot.group_state_event_id.clone().ok_or_else(|| {
+            "local-authoritative export has no accepted transition reference".to_owned()
+        })?;
+        let realm_id = effective_scope
+            .realm_id_opt()
+            .ok_or_else(|| "history export requires Realm or Circle scope".to_owned())?;
+        let checkpoint = self
+            .trusted_mls_governance_checkpoint(realm_id.as_str())
+            .ok_or_else(|| {
+                "local-authoritative export has no verified governance checkpoint".to_owned()
+            })?;
+        checkpoint
+            .validate_checkpoint()
+            .map_err(|error| error.to_string())?;
+        let event = checkpoint
+            .accepted_events
+            .iter()
+            .find(|event| event.event_id == transition_ref)
+            .ok_or_else(|| {
+                "accepted transition is absent from the verified governance checkpoint".to_owned()
+            })?;
+        let transition_event_digest =
+            arkret_sdk::signed_event_digest_claim(event).map_err(|error| error.to_string())?;
+        let payload_value =
+            serde_json::to_value(&event.payload).map_err(|error| error.to_string())?;
+        let mls_transition_digest = match event.kind.as_str() {
+            arkret_wire::event_kind_str::MLS_GENESIS => {
+                let payload =
+                    serde_json::from_value::<arkret_sdk::MlsGenesisPayload>(payload_value)
+                        .map_err(|error| format!("invalid accepted MLS Genesis: {error}"))?;
+                if epoch != 0
+                    || payload.mls_group_id.as_str() != group_id
+                    || payload.effective_scope != *effective_scope
+                {
+                    return Err(
+                        "accepted MLS Genesis does not match the durable local state".to_owned(),
+                    );
+                }
+                payload
+                    .transition_digest()
+                    .map_err(|error| error.to_string())?
+            }
+            arkret_wire::event_kind_str::MLS_COMMIT => {
+                let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(payload_value)
+                    .map_err(|error| format!("invalid accepted MLS Commit: {error}"))?;
+                if payload.next_epoch() != epoch
+                    || payload.mls_group_id() != group_id
+                    || payload.governance_binding().effective_scope() != effective_scope
+                {
+                    return Err(
+                        "accepted MLS Commit does not match the durable local state".to_owned()
+                    );
+                }
+                payload.commit_digest().clone()
+            }
+            _ => {
+                return Err(
+                    "durable MLS group-state reference names a non-transition Event".to_owned(),
+                );
+            }
+        };
+        let snapshot_digest = arkret_sdk::canonical::canonical_sha256(&snapshot)
+            .map_err(|error| error.to_string())?;
+        Ok(AcceptedMlsTransitionEvidence {
+            effective_scope: history_scope,
+            local_state_ref: format!("inkson.mls_snapshot.v1:{snapshot_digest}"),
+            transition_ref,
+            transition_event_digest,
+            mls_transition_digest,
+        })
+    }
+
     /// Assemble an aggregated update without publishing it. The caller must
     /// await [`PendingHistorySecrets::persist`] and only then call
     /// [`Self::publish_history_secrets`].
@@ -301,11 +417,14 @@ impl LocalStateStore {
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         effective_scope: &arkret_sdk::ScopeRef,
         group_id: &str,
-        cipher_suite: &str,
-        secrets: impl IntoIterator<Item = (u64, Vec<u8>)>,
+        records: impl IntoIterator<Item = arkret_sdk::LocalAuthoritativeHistorySecret>,
     ) -> Result<Option<PendingHistorySecrets>, crate::secure_key_store::SecureKeyStoreError> {
         let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id)
             .map_err(crate::secure_key_store::SecureKeyStoreError::Backend)?;
+        let history_scope = arkret_sdk::HistoryEffectiveScope::try_from(effective_scope.clone())
+            .map_err(|error| {
+                crate::secure_key_store::SecureKeyStoreError::Backend(error.to_string())
+            })?;
         let key = crate::secure_key_store::mls_history_secret_store_key(&scope_group_key);
         let mut by_epoch = secure_store
             .get_secret(&key)?
@@ -320,34 +439,55 @@ impl LocalStateStore {
             );
         }
         let mut new_secret_count = 0;
-        for (epoch, secret) in secrets {
-            if !secret.is_empty() {
-                by_epoch.insert(epoch, secret);
+        for record in records {
+            record.validate().map_err(|error| {
+                crate::secure_key_store::SecureKeyStoreError::Backend(error.to_string())
+            })?;
+            if record.effective_scope != history_scope || record.mls_group_id != group_id {
+                return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                    "local-authoritative history record crosses its scope/group partition"
+                        .to_owned(),
+                ));
+            }
+            if let Some(existing) = by_epoch.get(&record.epoch) {
+                if existing != &record {
+                    return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                        format!(
+                            "conflicting local-authoritative history records for epoch {}",
+                            record.epoch
+                        ),
+                    ));
+                }
+            } else {
+                by_epoch.insert(record.epoch, record);
                 new_secret_count += 1;
             }
         }
         Ok((new_secret_count > 0).then_some(PendingHistorySecrets {
             scope_group_key,
             by_epoch,
-            cipher_suite: cipher_suite.to_owned(),
         }))
     }
 
     /// Publish an update after its secure-store write succeeds.
     pub(crate) fn publish_history_secrets(&mut self, pending: PendingHistorySecrets) {
-        let epochs = pending.by_epoch.keys().copied().collect::<Vec<_>>();
+        let suites = pending
+            .by_epoch
+            .iter()
+            .map(|(epoch, record)| (*epoch, record.mls_ciphersuite.clone()))
+            .collect::<Vec<_>>();
         self.cached
             .history_secrets
             .entry(pending.scope_group_key.clone())
             .or_default()
             .extend(pending.by_epoch);
-        let suites = self
+        let by_epoch_suite = self
             .cached
             .history_epoch_cipher_suites
             .entry(pending.scope_group_key)
             .or_default();
-        for epoch in epochs {
-            suites.insert(epoch, pending.cipher_suite.clone());
+        for (epoch, cipher_suite) in suites {
+            by_epoch_suite.insert(epoch, cipher_suite);
         }
         let _ = self.flush();
     }
@@ -365,7 +505,7 @@ impl LocalStateStore {
         else {
             return Vec::new();
         };
-        let mut merged: BTreeMap<u64, Vec<u8>> =
+        let mut merged: BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret> =
             crate::secure_key_store::load_history_secrets(&scope_group_key).unwrap_or_default();
         if let Some(inline) = self.load().history_secrets.get(&scope_group_key) {
             for (epoch, secret) in inline {
@@ -376,7 +516,47 @@ impl LocalStateStore {
                 merged.insert(*epoch, secret.clone());
             }
         }
-        merged.into_iter().collect()
+        merged
+            .into_iter()
+            .filter_map(|(epoch, record)| {
+                let secret = arkret_sdk::base64url_decode(record.secret_b64u.as_bytes()).ok()?;
+                Some((epoch, secret))
+            })
+            .collect()
+    }
+
+    /// Closed records eligible for portable `mls_history` backup. External
+    /// candidates never enter this map, so the SDK packer cannot be fed a
+    /// response/RRK/portable candidate through this boundary.
+    pub(crate) fn local_authoritative_history_records_for(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+    ) -> Vec<arkret_sdk::LocalAuthoritativeHistorySecret> {
+        let Ok(history_scope) =
+            arkret_sdk::HistoryEffectiveScope::try_from(effective_scope.clone())
+        else {
+            return Vec::new();
+        };
+        let Ok(scope_group_key) = mls_scope_snapshot_key_for_group(effective_scope, group_id)
+        else {
+            return Vec::new();
+        };
+        let mut merged =
+            crate::secure_key_store::load_history_secrets(&scope_group_key).unwrap_or_default();
+        if let Some(inline) = self.load().history_secrets.get(&scope_group_key) {
+            for (epoch, record) in inline {
+                merged.insert(*epoch, record.clone());
+            }
+        }
+        merged
+            .into_values()
+            .filter(|record| {
+                record.effective_scope == history_scope
+                    && record.mls_group_id == group_id
+                    && record.validate().is_ok()
+            })
+            .collect()
     }
 
     /// The local-authoritative `history_secret` for an exact
@@ -398,12 +578,12 @@ impl LocalStateStore {
             .get(&scope_group_key)
             .and_then(|by_epoch| by_epoch.get(&epoch))
         {
-            return Some(secret.clone());
+            return arkret_sdk::base64url_decode(secret.secret_b64u.as_bytes()).ok();
         }
         if let Some(by_epoch) = crate::secure_key_store::load_history_secrets(&scope_group_key)
             && let Some(secret) = by_epoch.get(&epoch)
         {
-            return Some(secret.clone());
+            return arkret_sdk::base64url_decode(secret.secret_b64u.as_bytes()).ok();
         }
         None
     }

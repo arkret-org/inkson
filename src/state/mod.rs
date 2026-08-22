@@ -68,7 +68,9 @@ pub(crate) use mls_sidecar::{
 };
 
 mod history_candidates;
+mod history_outbox;
 mod history_runtime;
+pub(crate) use history_outbox::{InksonHistorySourceBlobStore, history_source_outbox};
 mod identity_links;
 pub(crate) use history_runtime::{InksonHistoryRuntimeStore, history_runtime};
 

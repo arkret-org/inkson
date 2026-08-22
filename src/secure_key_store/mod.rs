@@ -160,13 +160,16 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
         || key.ends_with(&format!(".{GRANT_BINDING_SEED_KEY}"))
 }
 
-/// SecureKeyStore key prefix for per-realm aggregated MLS `history_secret`s
-/// (E2EE-at-rest hardening spec T1). The value is JSON
-/// `{ "<epoch>": "<base64url(secret)>" }` and the full key is
-/// `inkson.mls_history_secret.v1.<base64(realm_id)>`. This is raw exporter key
-/// material — it MUST live only in the IndexedDB + non-extractable SubtleCrypto
-/// tier (same protection level as the account MLS secret).
+/// SecureKeyStore key prefix for one scope/group's device-local
+/// `local_authoritative` history records. The value is the closed SDK record
+/// map keyed by epoch; raw exporter material therefore remains coupled to its
+/// exact durable local-state reference and winning transition tuple.
 pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secret.v1.";
+
+/// Durable staged history-response attempt bodies. These blobs can contain
+/// encrypted history material and therefore must never use the browser
+/// localStorage fallback tier.
+pub(crate) const HISTORY_SOURCE_OUTBOX_BLOB_KEY_PREFIX: &str = "arkret/history-source-outbox/v1/";
 
 /// Account-scoped cache for decrypted MLS application plaintext and the
 /// author's private plaintext sidecar. On wasm this key is IndexedDB-only so
@@ -237,6 +240,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
         || key.starts_with("arkret/history-candidate/v1/")
         || key.starts_with("arkret/history-response-capability/v1/")
+        || key.starts_with(HISTORY_SOURCE_OUTBOX_BLOB_KEY_PREFIX)
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
 }
@@ -258,35 +262,33 @@ pub(crate) fn mls_history_secret_store_key(scope_group_key: &str) -> String {
     )
 }
 
-/// E2EE-at-rest T1 — encode a per-realm `epoch -> secret` map to the stored
-/// JSON shape `{ "<epoch>": "<base64url(secret)>" }`. `u64` epoch keys are
-/// emitted as decimal strings so the map round-trips through `serde_json`
-/// (which rejects non-string map keys).
+/// Encode the closed per-epoch `local_authoritative` record map. This is a
+/// direct storage-shape replacement: legacy raw `epoch -> bytes` blobs are not
+/// accepted or migrated.
 pub(crate) fn encode_history_secrets_json(
-    by_epoch: &std::collections::BTreeMap<u64, Vec<u8>>,
+    by_epoch: &std::collections::BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>,
 ) -> String {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let map: std::collections::BTreeMap<String, String> = by_epoch
-        .iter()
-        .map(|(epoch, secret)| (epoch.to_string(), URL_SAFE_NO_PAD.encode(secret)))
-        .collect();
-    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_owned())
+    serde_json::to_string(by_epoch).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// E2EE-at-rest T1 — inverse of [`encode_history_secrets_json`]. Malformed
-/// entries (unparseable epoch or base64) are dropped rather than failing the
-/// whole decode, so a single bad entry cannot shadow the rest.
-pub(crate) fn decode_history_secrets_json(json: &str) -> std::collections::BTreeMap<u64, Vec<u8>> {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let map: std::collections::BTreeMap<String, String> =
-        serde_json::from_str(json).unwrap_or_default();
-    map.into_iter()
-        .filter_map(|(epoch, b64)| {
-            let epoch = epoch.parse::<u64>().ok()?;
-            let secret = URL_SAFE_NO_PAD.decode(b64.as_bytes()).ok()?;
-            Some((epoch, secret))
-        })
-        .collect()
+/// Decode only the current closed record shape. A record whose map coordinate
+/// disagrees with its signed/local evidence is rejected with the whole blob;
+/// callers never recover a selectively weakened subset from corrupt storage.
+pub(crate) fn decode_history_secrets_json(
+    json: &str,
+) -> std::collections::BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret> {
+    let Ok(map) = serde_json::from_str::<
+        std::collections::BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>,
+    >(json) else {
+        return std::collections::BTreeMap::new();
+    };
+    if map
+        .iter()
+        .any(|(epoch, record)| record.epoch != *epoch || record.validate().is_err())
+    {
+        return std::collections::BTreeMap::new();
+    }
+    map
 }
 
 /// True once the wasm IndexedDB + SubtleCrypto tier has
@@ -303,7 +305,7 @@ pub(crate) fn wasm_secure_store_ready() -> bool {
 /// `Some(empty)` when upgraded but no secrets are stored for the realm.
 pub(crate) fn load_history_secrets(
     scope_group_key: &str,
-) -> Option<std::collections::BTreeMap<u64, Vec<u8>>> {
+) -> Option<std::collections::BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>> {
     #[cfg(target_arch = "wasm32")]
     if !wasm_secure_store_ready() {
         return None;
@@ -327,7 +329,7 @@ pub(crate) fn load_history_secrets(
 pub(crate) async fn persist_history_secrets(
     store: &dyn SecureKeyStore,
     scope_group_key: &str,
-    by_epoch: &std::collections::BTreeMap<u64, Vec<u8>>,
+    by_epoch: &std::collections::BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>,
 ) -> Result<(), SecureKeyStoreError> {
     #[cfg(target_arch = "wasm32")]
     if !wasm_secure_store_ready() {

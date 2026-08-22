@@ -4311,6 +4311,7 @@ dependencies = [
  "arkret-retry",
  "arkret-schema",
  "arkret-signatures",
+ "arkret-state",
  "arkret-wire",
  "base64",
  "bip39",

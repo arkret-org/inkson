@@ -1,15 +1,29 @@
 use super::*;
 
-fn test_user(device_suffix: &str) -> UserLocalStore {
-    UserLocalStore::new(
-        arkret_sdk::PrincipalAuthorityKey::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
-        ),
-        arkret_sdk::DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{device_suffix}"))
+fn test_local_history_record(
+    epoch: u64,
+    secret: &[u8],
+) -> arkret_sdk::LocalAuthoritativeHistorySecret {
+    use base64::Engine as _;
+    let effective_scope = arkret_sdk::HistoryEffectiveScope::Realm {
+        realm_id: arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
             .unwrap(),
-    )
-    .unwrap()
+    };
+    arkret_sdk::LocalAuthoritativeHistorySecret {
+        mls_group_id: effective_scope.canonical_mls_group_id().unwrap(),
+        effective_scope,
+        epoch,
+        mls_ciphersuite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
+        local_state_ref: format!("inkson.mls_snapshot.v1:test-{epoch}"),
+        transition_ref: arkret_sdk::EventId::new(
+            "ak:event:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        )
+        .unwrap(),
+        transition_event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
+            .unwrap(),
+        mls_transition_digest: arkret_sdk::Hash::new(format!("sha256:{}", "2".repeat(64))).unwrap(),
+        secret_b64u: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret),
+    }
 }
 
 /// T5.2 — store / load signing seed round-trips through a
@@ -214,6 +228,9 @@ fn wasm_indexeddb_required_key_classifier_covers_high_value_secrets() {
     // prefix; they must never fall back to the localStorage-backed tier.
     assert!(is_wasm_indexeddb_required_secret_key(
         "arkret/history-response-capability/v1/ak:history_request:test"
+    ));
+    assert!(is_wasm_indexeddb_required_secret_key(
+        "arkret/history-source-outbox/v1/sha256:test"
     ));
 
     assert!(!is_wasm_indexeddb_required_secret_key(
@@ -561,10 +578,13 @@ impl HostSecretBridge for TestHostSecretBridge {
 #[test]
 fn history_secrets_json_round_trips() {
     use std::collections::BTreeMap;
-    let mut by_epoch: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
-    by_epoch.insert(0, vec![0u8; 32]);
-    by_epoch.insert(7, (0u8..32).collect());
-    by_epoch.insert(4096, vec![0xABu8; 32]);
+    let mut by_epoch = BTreeMap::new();
+    by_epoch.insert(0, test_local_history_record(0, &[0_u8; 32]));
+    by_epoch.insert(
+        7,
+        test_local_history_record(7, &(0_u8..32).collect::<Vec<_>>()),
+    );
+    by_epoch.insert(4096, test_local_history_record(4096, &[0xAB_u8; 32]));
 
     let json = encode_history_secrets_json(&by_epoch);
     let decoded = decode_history_secrets_json(&json);
@@ -579,8 +599,8 @@ fn history_secrets_json_does_not_leak_raw_bytes() {
     // A secret whose bytes spell an ASCII marker we can search for.
     let marker = b"SUPER-SECRET-EXPORTER-KEY-32BYTE";
     assert_eq!(marker.len(), 32);
-    let mut by_epoch: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
-    by_epoch.insert(3, marker.to_vec());
+    let mut by_epoch = BTreeMap::new();
+    by_epoch.insert(3, test_local_history_record(3, marker));
 
     let json = encode_history_secrets_json(&by_epoch);
     assert!(
@@ -588,16 +608,26 @@ fn history_secrets_json_does_not_leak_raw_bytes() {
         "raw secret bytes leaked into stored JSON: {json}"
     );
     // ...but it still round-trips back to the exact bytes.
-    assert_eq!(decode_history_secrets_json(&json).get(&3).unwrap(), marker);
+    assert_eq!(
+        arkret_sdk::base64url_decode(
+            decode_history_secrets_json(&json)
+                .get(&3)
+                .unwrap()
+                .secret_b64u
+                .as_bytes()
+        )
+        .unwrap(),
+        marker
+    );
 }
 
-/// Malformed entries (bad epoch / bad base64) are dropped, not fatal.
+/// Legacy raw epoch maps and malformed current records are rejected as a
+/// whole; there is no compatibility read-through.
 #[test]
 fn history_secrets_json_drops_malformed_entries() {
     let json = r#"{"5":"AAAA","not-a-number":"AAAA","9":"!!!not-base64!!!"}"#;
     let decoded = decode_history_secrets_json(json);
-    assert_eq!(decoded.len(), 1);
-    assert!(decoded.contains_key(&5));
+    assert!(decoded.is_empty());
 }
 
 /// The SecureKeyStore key for a scope/group pair is the hardened prefix plus a

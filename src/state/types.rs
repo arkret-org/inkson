@@ -1184,10 +1184,8 @@ pub struct ClientLocalState {
     /// persists only in the hardened E2EE cache.
     #[serde(default, skip_serializing)]
     pub(crate) authenticated_identity_links: BTreeMap<String, LocallyAuthenticatedIdentityLink>,
-    /// Per-(effective scope, MLS group, epoch) locally authoritative MLS
-    /// `history_secret`s derived from a verified and durably persisted local
-    /// MLS post-state. Each value is a 32-byte exporter-derived secret for
-    /// `mls_exporter_aead_v1` content.
+    /// Per-(effective scope, MLS group, epoch) closed local-authoritative
+    /// records exported by the SDK from a verified local MLS post-state.
     ///
     /// Keyed `canonical scope/group key -> epoch -> secret`. Durable persistence
     /// must go through the hardened secure store; this inline field is only a transient memory
@@ -1201,7 +1199,8 @@ pub struct ClientLocalState {
     /// a tuple key would silently fail to persist. `u64` epoch keys serialize as
     /// strings, which round-trips cleanly.
     #[serde(default, skip_serializing)]
-    pub history_secrets: BTreeMap<String, BTreeMap<u64, Vec<u8>>>,
+    pub history_secrets:
+        BTreeMap<String, BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>>,
     /// Replay-verified MLS ciphersuite for each retained history-secret epoch.
     /// The minimal encrypted envelope intentionally carries no algorithm
     /// selector, so group-free history decryption must use this exact frozen
@@ -1217,6 +1216,10 @@ pub struct ClientLocalState {
     /// tasks so ACK high-water and exact retries cannot be rolled back.
     #[serde(default)]
     pub(crate) history_runtime_state: garth::VersionedHistoryRuntimeSnapshot,
+    /// Crash-safe source-side manifest/chunk attempt markers. Canonical record
+    /// bytes live separately in the hardened content-addressed blob store.
+    #[serde(default)]
+    pub(crate) history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1547,6 +1550,7 @@ impl Default for ClientLocalState {
             history_epoch_cipher_suites: BTreeMap::new(),
             history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger::default(),
             history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
+            history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot::default(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             accepted_human_contact_principals: BTreeSet::new(),

@@ -336,7 +336,7 @@ impl EventOutboundSubmitter<'_> {
                 };
                 *stage = MlsAdmissionStage::WelcomesAuthored;
                 Ok(OutboundSubmitOutcome::Prepared {
-                    record: QueuedRecord::SdkEvent(queued),
+                    record: QueuedRecord::SdkEvent(Box::new(queued)),
                 })
             }
             MlsAdmissionStage::WelcomesAuthored => {
@@ -377,7 +377,7 @@ impl EventOutboundSubmitter<'_> {
                 };
                 *stage = MlsAdmissionStage::WelcomesAcceptedWaitingSeal;
                 Ok(OutboundSubmitOutcome::Prepared {
-                    record: QueuedRecord::SdkEvent(queued),
+                    record: QueuedRecord::SdkEvent(Box::new(queued)),
                 })
             }
             MlsAdmissionStage::WelcomesAcceptedWaitingSeal => {
@@ -534,7 +534,7 @@ impl EventOutboundSubmitter<'_> {
                         let prepared =
                             direct.with_direct_conversation_founding_finality_confirmed()?;
                         return Ok(OutboundSubmitOutcome::Prepared {
-                            record: QueuedRecord::RealmBootstrap(prepared),
+                            record: QueuedRecord::RealmBootstrap(Box::new(prepared)),
                         });
                     }
                     let event_id = outcome.event_ids[0].clone();
@@ -562,7 +562,7 @@ impl EventOutboundSubmitter<'_> {
                     Ok(outcome) => {
                         let prepared = direct.with_direct_conversation_accepted_outcome(outcome)?;
                         Ok(OutboundSubmitOutcome::Prepared {
-                            record: QueuedRecord::RealmBootstrap(prepared),
+                            record: QueuedRecord::RealmBootstrap(Box::new(prepared)),
                         })
                     }
                     Err(error) => {
@@ -650,9 +650,9 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
     ) -> BoxOutboundFuture<'a, OutboundSubmitOutcome> {
         Box::pin(async move {
             let mut queued = match item.record.clone() {
-                QueuedRecord::SdkEvent(queued) => queued,
+                QueuedRecord::SdkEvent(queued) => *queued,
                 QueuedRecord::RealmBootstrap(queued) => {
-                    return self.submit_realm_bootstrap(item, queued).await;
+                    return self.submit_realm_bootstrap(item, *queued).await;
                 }
             };
             if queued.mark_scheduled_submission_uncertain() {
@@ -661,7 +661,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                 // bytes carried by the record; it cannot consult or rebuild the
                 // editable scheduled-send plan.
                 return Ok(OutboundSubmitOutcome::Prepared {
-                    record: QueuedRecord::SdkEvent(queued),
+                    record: QueuedRecord::SdkEvent(Box::new(queued)),
                 });
             }
             if queued.authored_attempt.is_none() {
@@ -677,7 +677,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                     canonical_body_bytes: attempt.canonical_body_bytes,
                 });
                 return Ok(OutboundSubmitOutcome::Prepared {
-                    record: QueuedRecord::SdkEvent(queued),
+                    record: QueuedRecord::SdkEvent(Box::new(queued)),
                 });
             }
             if matches!(
@@ -716,7 +716,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                         *commit_was_duplicate =
                             result.status == arkret_sdk::EventsSubmitStatus::Duplicate;
                         return Ok(OutboundSubmitOutcome::Prepared {
-                            record: QueuedRecord::SdkEvent(queued),
+                            record: QueuedRecord::SdkEvent(Box::new(queued)),
                         });
                     }
                     let event_id =
@@ -812,7 +812,7 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                         return Ok(OutboundSubmitOutcome::Supersede {
                             transaction_id,
                             realm_id,
-                            record: QueuedRecord::SdkEvent(replacement),
+                            record: QueuedRecord::SdkEvent(Box::new(replacement)),
                             depends_on: item.depends_on,
                         });
                     }
@@ -1172,7 +1172,7 @@ impl EventSubmitter {
                 Some(local_operation_id.clone()),
                 realm_id,
                 actor_id,
-                QueuedRecord::RealmBootstrap(queued),
+                QueuedRecord::RealmBootstrap(Box::new(queued)),
                 Vec::new(),
             )
             .await?;
@@ -1308,7 +1308,7 @@ impl EventSubmitter {
                     Some(local_operation_id.clone()),
                     realm_id,
                     actor_id,
-                    QueuedRecord::RealmBootstrap(queued),
+                    QueuedRecord::RealmBootstrap(Box::new(queued)),
                     Vec::new(),
                 )
                 .await?;
@@ -2422,7 +2422,7 @@ impl EventSubmitter {
                             Some(transaction_id.clone()),
                             realm_id.clone(),
                             actor_id.clone(),
-                            QueuedRecord::SdkEvent(repaired),
+                            QueuedRecord::SdkEvent(Box::new(repaired)),
                             Vec::new(),
                         )
                         .await?;
@@ -2440,7 +2440,7 @@ impl EventSubmitter {
                     Some(transaction_id.clone()),
                     realm_id.clone(),
                     actor_id.clone(),
-                    QueuedRecord::SdkEvent(queued),
+                    QueuedRecord::SdkEvent(Box::new(queued)),
                     Vec::new(),
                 )
                 .await?;
@@ -3972,7 +3972,7 @@ mod tests {
             .enqueue(
                 Some("pending-operation".to_owned()),
                 realm.clone(),
-                QueuedRecord::SdkEvent(
+                QueuedRecord::SdkEvent(Box::new(
                     QueuedSdkEvent::unauthored(
                         fixture_queued_intent(EventIntent::from_authored(&pending)),
                         "pending-operation".to_owned(),
@@ -3982,7 +3982,7 @@ mod tests {
                         None,
                     )
                     .unwrap(),
-                ),
+                )),
                 Vec::new(),
             )
             .unwrap();
@@ -4001,7 +4001,7 @@ mod tests {
             .enqueue(
                 Some("other-operation".to_owned()),
                 realm.clone(),
-                QueuedRecord::SdkEvent(
+                QueuedRecord::SdkEvent(Box::new(
                     QueuedSdkEvent::unauthored(
                         fixture_queued_intent(EventIntent::from_authored(&other_conversation)),
                         "other-operation".to_owned(),
@@ -4011,7 +4011,7 @@ mod tests {
                         None,
                     )
                     .unwrap(),
-                ),
+                )),
                 Vec::new(),
             )
             .unwrap();
@@ -4027,7 +4027,7 @@ mod tests {
             .enqueue(
                 Some(sent_transaction.clone()),
                 realm.clone(),
-                QueuedRecord::SdkEvent(
+                QueuedRecord::SdkEvent(Box::new(
                     QueuedSdkEvent::unauthored(
                         fixture_queued_intent(EventIntent::from_authored(&sent)),
                         "sent-operation".to_owned(),
@@ -4037,7 +4037,7 @@ mod tests {
                         None,
                     )
                     .unwrap(),
-                ),
+                )),
                 Vec::new(),
             )
             .unwrap();
@@ -4821,7 +4821,7 @@ mod tests {
             app_messages_observed: 1,
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
-        let record = QueuedRecord::SdkEvent(
+        let record = QueuedRecord::SdkEvent(Box::new(
             QueuedSdkEvent::unauthored(
                 fixture_queued_intent(EventIntent::from_authored(&event)),
                 "mls-operation".to_owned(),
@@ -4834,7 +4834,7 @@ mod tests {
                 }),
             )
             .unwrap(),
-        );
+        ));
         let realm = arkret_sdk::RealmId::new(realm_id).unwrap();
         let mut queue = garth::SendQueue::new();
         let item = queue

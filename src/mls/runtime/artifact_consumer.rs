@@ -11,7 +11,7 @@ struct ExternalHistoryDecryptTask {
 
 #[derive(Clone)]
 struct AcceptedCommit {
-    event_id: arkret_sdk::EventId,
+    event: arkret_sdk::Event,
     payload: arkret_sdk::MlsCommitPayload,
 }
 
@@ -36,24 +36,17 @@ fn accepted_commits(
             if kind != Some(arkret_wire::event_kind_str::MLS_COMMIT) {
                 continue;
             }
-            let event_id = event
-                .get("event_id")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| "accepted MLS Commit has no event_id".to_owned())?;
-            let event_id = arkret_sdk::EventId::new(event_id.to_owned())
-                .map_err(|error| format!("accepted MLS Commit event_id is invalid: {error}"))?;
-            let payload_value = event
-                .get("payload")
-                .or_else(|| event.get("content"))
-                .ok_or_else(|| format!("accepted MLS Commit {event_id} has no payload"))?;
-            let payload =
-                serde_json::from_value::<arkret_sdk::MlsCommitPayload>(payload_value.clone())
-                    .map_err(|error| {
-                        format!("accepted MLS Commit {event_id} is invalid: {error}")
-                    })?;
-            let accepted = AcceptedCommit { event_id, payload };
+            let event = serde_json::from_value::<arkret_sdk::Event>(event.clone())
+                .map_err(|error| format!("accepted MLS Commit Event is invalid: {error}"))?;
+            let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
+                serde_json::to_value(&event.payload).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| {
+                format!("accepted MLS Commit {} is invalid: {error}", event.event_id)
+            })?;
+            let accepted = AcceptedCommit { event, payload };
             if let Some(existing) =
-                by_event_id.insert(accepted.event_id.to_string(), accepted.clone())
+                by_event_id.insert(accepted.event.event_id.to_string(), accepted.clone())
                 && existing.payload != accepted.payload
             {
                 return Err("accepted MLS Commit changed under the same Event id".to_owned());
@@ -89,7 +82,12 @@ fn exact_next_commit(
         left.payload
             .next_epoch()
             .cmp(&right.payload.next_epoch())
-            .then_with(|| left.event_id.as_str().cmp(right.event_id.as_str()))
+            .then_with(|| {
+                left.event
+                    .event_id
+                    .as_str()
+                    .cmp(right.event.event_id.as_str())
+            })
     });
     if let Some(candidate) = exact.first() {
         let scope = candidate.payload.governance_binding().effective_scope();
@@ -228,30 +226,37 @@ pub(crate) async fn converge_accepted_mls_commits(
             &snapshot_secret,
             &salt,
         );
-        next_snapshot.group_state_event_id = Some(accepted.event_id.clone());
+        next_snapshot.group_state_event_id = Some(accepted.event.event_id.clone());
 
         let pending_history = if history_capable {
-            let retained = group
-                .export_history_secret_range(post_state.epoch, post_state.epoch)
-                .into_iter()
-                .map(|(epoch, secret)| (epoch, secret.to_vec()))
-                .collect::<Vec<_>>();
-            if retained.is_empty() {
-                None
-            } else {
-                state_store
-                    .read()
-                    .prepare_history_secrets(
-                        secure_store.as_ref(),
-                        &scope,
-                        &post_state.group_id,
-                        group.group_ciphersuite_canonical_id().map_err(|error| {
-                            format!("resolve accepted Commit ciphersuite: {error}")
-                        })?,
-                        retained,
-                    )
-                    .map_err(|error| format!("prepare accepted Commit history secret: {error}"))?
-            }
+            let history_scope = arkret_sdk::HistoryEffectiveScope::try_from(scope.clone())
+                .map_err(|error| format!("accepted Commit history scope: {error}"))?;
+            let local_state_ref = format!(
+                "inkson.mls_snapshot.v1:{}",
+                arkret_sdk::canonical::canonical_sha256(&next_snapshot)
+                    .map_err(|error| format!("digest accepted Commit snapshot: {error}"))?
+            );
+            let transition_event_digest = arkret_sdk::signed_event_digest_claim(&accepted.event)
+                .map_err(|error| format!("accepted Commit Event digest: {error}"))?;
+            let record = group
+                .export_local_authoritative_history_secret(
+                    &history_scope,
+                    post_state.epoch,
+                    &local_state_ref,
+                    &accepted.event.event_id,
+                    &transition_event_digest,
+                    accepted.payload.commit_digest(),
+                )
+                .map_err(|error| format!("export accepted Commit history secret: {error}"))?;
+            state_store
+                .read()
+                .prepare_history_secrets(
+                    secure_store.as_ref(),
+                    &scope,
+                    &post_state.group_id,
+                    [record],
+                )
+                .map_err(|error| format!("prepare accepted Commit history secret: {error}"))?
         } else {
             None
         };
@@ -267,7 +272,7 @@ pub(crate) async fn converge_accepted_mls_commits(
                 &scope,
                 &post_state.group_id,
                 post_state.epoch,
-                accepted.event_id,
+                accepted.event.event_id,
             )?;
             store.save_mls_snapshot_for_scope(&scope, next_snapshot)?;
             if let Some(pending) = pending_history {

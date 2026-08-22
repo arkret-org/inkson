@@ -959,6 +959,31 @@ type RetainedRealmHistorySecret = (
     crate::state::PendingHistorySecrets,
 );
 
+fn prepare_local_authoritative_history_secret(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    group: &arkret_sdk::ArkretMlsGroup,
+    epoch: u64,
+) -> Result<Option<crate::state::PendingHistorySecrets>, MlsRuntimeError> {
+    let evidence = state_store
+        .accepted_mls_transition_evidence(effective_scope, &group.group_id(), epoch)
+        .map_err(MlsRuntimeError::Encrypt)?;
+    let record = group
+        .export_local_authoritative_history_secret(
+            &evidence.effective_scope,
+            epoch,
+            &evidence.local_state_ref,
+            &evidence.transition_ref,
+            &evidence.transition_event_digest,
+            &evidence.mls_transition_digest,
+        )
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+    state_store
+        .prepare_history_secrets(secure_store, effective_scope, &group.group_id(), [record])
+        .map_err(MlsRuntimeError::DeviceSecret)
+}
+
 pub(crate) fn derive_and_retain_realm_history_secret(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -984,21 +1009,17 @@ pub(crate) fn derive_and_retain_realm_history_secret(
     if history_secret.is_empty() {
         return Ok(None);
     }
-    let Some(pending) = state_store
-        .prepare_history_secrets(
-            secure_store,
-            &arkret_sdk::ScopeRef::Realm {
-                realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
-                    MlsRuntimeError::Serialize(format!("invalid Realm id: {error:?}"))
-                })?,
-            },
-            &snapshot.group_id,
-            group
-                .group_ciphersuite_canonical_id()
-                .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?,
-            [(epoch, history_secret.to_vec())],
-        )
-        .map_err(MlsRuntimeError::DeviceSecret)?
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())
+            .map_err(|error| MlsRuntimeError::Serialize(format!("invalid Realm id: {error:?}")))?,
+    };
+    let Some(pending) = prepare_local_authoritative_history_secret(
+        state_store,
+        secure_store,
+        &effective_scope,
+        &group,
+        epoch,
+    )?
     else {
         return Ok(None);
     };
@@ -2002,17 +2023,13 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
                 "MLS history-secret derivation returned an empty secret".to_owned(),
             ));
         }
-        state_store
-            .prepare_history_secrets(
-                secure_store,
-                &effective_scope,
-                &group.group_id(),
-                group
-                    .group_ciphersuite_canonical_id()
-                    .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?,
-                [(group.epoch(), history_secret.to_vec())],
-            )
-            .map_err(MlsRuntimeError::DeviceSecret)?
+        prepare_local_authoritative_history_secret(
+            state_store,
+            secure_store,
+            &effective_scope,
+            &group,
+            group.epoch(),
+        )?
     } else {
         None
     };
@@ -2201,17 +2218,13 @@ pub(crate) fn encrypt_message_with_device_snapshot(
                 "MLS history-secret derivation returned an empty secret".to_owned(),
             ));
         }
-        state_store
-            .prepare_history_secrets(
-                secure_store,
-                &effective_scope,
-                &group.group_id(),
-                group
-                    .group_ciphersuite_canonical_id()
-                    .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?,
-                [(group.epoch(), history_secret.to_vec())],
-            )
-            .map_err(MlsRuntimeError::DeviceSecret)?
+        prepare_local_authoritative_history_secret(
+            state_store,
+            secure_store,
+            &effective_scope,
+            &group,
+            group.epoch(),
+        )?
     } else {
         None
     };

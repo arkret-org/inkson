@@ -26,21 +26,27 @@ impl garth::HistoryRuntimeStore for InksonHistoryRuntimeStore {
         snapshot: &'a garth::HistoryRuntimeSnapshot,
     ) -> impl Future<Output = garth::Result<bool>> + garth::MaybeSend + 'a {
         async move {
-            let mut state_store = self.state_store;
-            let mut store = state_store.write();
-            store.ensure_cached_loaded();
-            if store.cached.history_runtime_state.revision != expected_revision {
-                return Ok(false);
-            }
-            let revision = expected_revision.checked_add(1).ok_or_else(|| {
-                garth::Error::Protocol("history runtime revision overflow".to_owned())
-            })?;
-            store.cached.history_runtime_state = garth::VersionedHistoryRuntimeSnapshot {
-                revision,
-                snapshot: snapshot.clone(),
+            let barrier = {
+                let mut state_store = self.state_store;
+                let mut store = state_store.write();
+                store.ensure_cached_loaded();
+                if store.cached.history_runtime_state.revision != expected_revision {
+                    return Ok(false);
+                }
+                let revision = expected_revision.checked_add(1).ok_or_else(|| {
+                    garth::Error::Protocol("history runtime revision overflow".to_owned())
+                })?;
+                store.cached.history_runtime_state = garth::VersionedHistoryRuntimeSnapshot {
+                    revision,
+                    snapshot: snapshot.clone(),
+                };
+                store
+                    .begin_durable_flush()
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?
             };
-            store
-                .flush()
+            barrier
+                .wait()
+                .await
                 .map_err(|error| garth::Error::Protocol(error.to_string()))?;
             Ok(true)
         }

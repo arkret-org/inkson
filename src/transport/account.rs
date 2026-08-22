@@ -691,7 +691,7 @@ pub async fn direct_conversation_found(
     {
         garth::DirectConversationFoundingAction::Submit(unit) => {
             submitter
-                .submit_direct_conversation_founding_durable(unit)
+                .submit_direct_conversation_founding_durable(*unit)
                 .await
         }
         _ => Err(anyhow::anyhow!(
