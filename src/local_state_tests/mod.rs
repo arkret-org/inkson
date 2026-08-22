@@ -160,7 +160,7 @@ pub(super) fn snapshot_manifest_for_items(
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
     let built = arkret_sdk::build_snapshot_chunks(
         &snapshot_id,
-        arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+        arkret_sdk::CORE_REDUCER_PROFILE,
         items,
         4096,
     )
@@ -177,7 +177,7 @@ pub(super) fn snapshot_manifest_for_items(
     let mut manifest = arkret_sdk::SnapshotManifest {
         id: snapshot_id,
         realm_id,
-        reducer_profile: arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
+        reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
         schema_profile_refs: vec!["ak.profile.core_event_store.v1".to_owned()],
         state_digest,
         frontier: arkret_sdk::SnapshotFrontier {

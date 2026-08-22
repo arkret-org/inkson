@@ -520,7 +520,7 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
         }]
     });
     let rows = realm_member_roster(Some(&projection));
-    let mut store = temp_state_store("synthesis-primary-handle");
+    let mut store = isolated_store_for_tests("synthesis-primary-handle");
     store.save_member_handle_lookup(
         subject,
         Some(TEST_REALM_ID.to_owned()),
@@ -564,7 +564,7 @@ fn late_join_synthesis_author_resolves_handle_from_roster_actor_did() {
         }]
     });
     let rows = realm_member_roster(Some(&projection));
-    let mut store = temp_state_store("late-join-synthesis-author");
+    let mut store = isolated_store_for_tests("late-join-synthesis-author");
     store.save_member_handle_lookup(
         actor,
         Some(TEST_REALM_ID.to_owned()),
@@ -603,7 +603,7 @@ fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
         }]
     });
     let rows = realm_member_roster(Some(&projection));
-    let mut store = temp_state_store("synthesis-current-account-handle");
+    let mut store = isolated_store_for_tests("synthesis-current-account-handle");
     store.switch_active_account(actor);
     store.set_primary_handle_for_did(actor, "alice:local.host");
     let context = CardAuthorDisplayContext {

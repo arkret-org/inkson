@@ -2517,7 +2517,7 @@ mod tests {
         )
         .unwrap();
         event.proofs.push(
-            arkret_sdk::Proof {
+            arkret_sdk::ProducerEventProof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
                 verification_method: arkret_sdk::DidUrl::new(format!(
                     "{EXCHANGE_AGENT}#ak:device:01964137-0000-7000-8000-000000000002"

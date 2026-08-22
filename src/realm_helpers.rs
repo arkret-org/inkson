@@ -1,6 +1,6 @@
 use arkret_wire::ServiceOperationId;
 
-use crate::models::{RealmJoinCandidate, ResolveRealmOutcome};
+use crate::models::{DirectoryRealmResolutionOutcome, RealmJoinCandidate};
 use crate::operation::trim_realm_id;
 
 pub(crate) fn validate_join_rule_v1(join_rule: &str) -> anyhow::Result<&str> {
@@ -15,7 +15,7 @@ pub(crate) fn validate_join_rule_v1(join_rule: &str) -> anyhow::Result<&str> {
 }
 
 pub(crate) fn select_join_candidate(
-    resolved: &ResolveRealmOutcome,
+    resolved: &DirectoryRealmResolutionOutcome,
     join_method: arkret_models_discovery::RealmJoinMethod,
 ) -> anyhow::Result<&RealmJoinCandidate> {
     let realm_id = trim_realm_id(resolved.realm_preview.realm_id.as_str());

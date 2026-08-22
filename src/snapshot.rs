@@ -112,7 +112,7 @@ where
     let report = arkret_sdk::verify_snapshot_manifest(
         manifest,
         chunks,
-        &arkret_sdk::SnapshotVerifyOptions::standard(now, arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1),
+        &arkret_sdk::SnapshotVerifyOptions::standard(now, arkret_sdk::CORE_REDUCER_PROFILE),
     )
     .map_err(SnapshotFallbackReason::from_validation)?;
     let trust_state = match manifest.security_class {

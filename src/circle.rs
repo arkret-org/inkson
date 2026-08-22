@@ -136,7 +136,7 @@ impl CircleSummary {
 /// `schema_violation` sub-code) to a typed enum the UI can translate.
 ///
 /// One Circle-adjacent code is the top-level
-/// [`arkret_sdk::error_codes::ErrorCode::DELIVERY_BINDING_HANDED_OVER`]
+/// [`arkret_sdk::error_codes_codes::ErrorCode::DELIVERY_BINDING_HANDED_OVER`]
 /// already registered in AKP-0006; we surface it through the same
 /// pipeline so a single Toast component handles all Circle-adjacent
 /// failures.

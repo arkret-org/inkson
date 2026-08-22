@@ -357,7 +357,7 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
     public_key: &PublicKeyMaterial,
     digest_suite: arkret_sdk::canonical::DigestSuite,
 ) -> Result<(), String> {
-    let proof: arkret_sdk::Proof = serde_json::from_value(proof_value.clone())
+    let proof: arkret_sdk::ProducerEventProof = serde_json::from_value(proof_value.clone())
         .map_err(|error| format!("decode Event proof: {error}"))?;
     if !verification_method_controller_matches_signer(&proof.verification_method, signer_id) {
         return Err("Event proof verification-method controller differs from signer".to_owned());

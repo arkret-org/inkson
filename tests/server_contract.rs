@@ -58,7 +58,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
     let built = arkret_sdk::build_snapshot_chunks(
         &snapshot_id,
-        arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+        arkret_sdk::CORE_REDUCER_PROFILE,
         items,
         4096,
     )
@@ -67,7 +67,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let mut manifest = arkret_sdk::SnapshotManifest {
         id: snapshot_id,
         realm_id,
-        reducer_profile: arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1.to_owned(),
+        reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
         schema_profile_refs: vec!["ak.profile.core_event_store.v1".to_owned()],
         state_digest,
         frontier: arkret_sdk::SnapshotFrontier {
@@ -169,7 +169,7 @@ fn inkson_accepts_server_contract_payloads() {
         Some("/_arkret")
     );
 
-    let identity: inkson::models::IdentityDescribeOutcome = serde_json::from_value(json!({
+    let identity: inkson::models::IdentityDescription = serde_json::from_value(json!({
         "service_id": "ak:did_core:web:server.local",
         "registry_mode": "development_local",
         "supported_receipts": ["local"],
@@ -278,7 +278,7 @@ fn inkson_accepts_server_contract_payloads() {
         "ak.profile.directory_service.v1"
     );
 
-    let resolved: inkson::models::ResolveRealmOutcome = serde_json::from_value(json!({
+    let resolved: inkson::models::DirectoryRealmResolutionOutcome = serde_json::from_value(json!({
         "realm_preview": {
             "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
             "title": "Arkret Demo Realm",
@@ -343,7 +343,7 @@ fn inkson_accepts_server_contract_payloads() {
         serde_json::from_value(snapshot_contract_manifest_payload()).unwrap();
     assert_eq!(
         snapshot_head.reducer_profile,
-        arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1
+        arkret_sdk::CORE_REDUCER_PROFILE
     );
     assert_eq!(
         snapshot_head.created_by.as_str(),

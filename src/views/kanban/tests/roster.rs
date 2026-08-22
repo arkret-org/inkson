@@ -169,7 +169,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         handle_claims: Vec::new(),
         handle_claims_limited: false,
     };
-    assert_eq!(member_display_label(&row, Some(&identity), None), "Alice");
+    assert_eq!(member_label(&row, Some(&identity), None), "Alice");
 
     // Decryption-pending / no MemberIdentity → fall back to compact DID.
     let bare = RealmMemberRow {
@@ -181,7 +181,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         handle_claims: Vec::new(),
         handle_claims_limited: false,
     };
-    let label = member_display_label(&bare, None, None);
+    let label = member_label(&bare, None, None);
     assert!(label.starts_with("did:webvh:"));
     assert!(label.contains("..."));
 }
@@ -211,7 +211,7 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
         handle_claims_limited: false,
     };
 
-    assert_eq!(member_display_label(&row, None, None), "alice:acme.example");
+    assert_eq!(member_label(&row, None, None), "alice:acme.example");
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
         handle_claims_limited: false,
     };
 
-    assert!(member_inline_handle_label(&row).is_none());
+    assert!(verified_inline_handle(&row).is_none());
 
     let undisclosed = RealmMemberRow {
         subject_id: None,
@@ -248,7 +248,7 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
         })],
         ..row
     };
-    assert!(member_inline_handle_label(&undisclosed).is_none());
+    assert!(verified_inline_handle(&undisclosed).is_none());
 }
 
 #[test]
@@ -264,7 +264,7 @@ fn member_display_label_uses_cached_directory_primary_handle() {
     };
 
     assert_eq!(
-        member_display_label(&row, None, Some("Alice:Example.COM")),
+        member_label(&row, None, Some("Alice:Example.COM")),
         "alice:example.com"
     );
 }
@@ -281,7 +281,7 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
         handle_claims: Vec::new(),
         handle_claims_limited: false,
     };
-    let mut store = temp_state_store("member-display-current-account");
+    let mut store = isolated_store_for_tests("member-display-current-account");
     store.switch_active_account(actor);
     store.set_primary_handle_for_did(actor, "alice:local.host");
 
@@ -305,7 +305,7 @@ fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidat
 
     assert!(crate::views::member_display::member_lookup_subject(&row, None).is_none());
 
-    let store = temp_state_store("actor-subject-handle-candidate");
+    let store = isolated_store_for_tests("actor-subject-handle-candidate");
     let requests = crate::views::member_display::missing_member_handle_lookups(
         &store,
         TEST_REALM_ID,

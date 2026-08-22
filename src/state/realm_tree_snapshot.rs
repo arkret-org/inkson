@@ -95,7 +95,7 @@ impl LocalStateStore {
             chunks,
             &arkret_sdk::SnapshotVerifyOptions::standard(
                 Utc::now(),
-                arkret_sdk::SNAPSHOT_REDUCER_PROFILE_V1,
+                arkret_sdk::CORE_REDUCER_PROFILE,
             ),
         )
         .map_err(|error| anyhow::anyhow!("{}: {}", error.code.as_str(), error.message))?;

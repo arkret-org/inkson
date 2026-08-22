@@ -17,7 +17,7 @@ use arkret_sdk::{
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
     AgentSigningKeyBinding, CapabilityActionId, DidCoreId, DidFullId, DidUrl, GrantConstraint,
     GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
-    NonEmptyString, OpaqueLocalId, Proof, RealmId, RequestId, ServiceOperationId,
+    NonEmptyString, OpaqueLocalId, ProducerEventProof, RealmId, RequestId, ServiceOperationId,
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -522,7 +522,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
             .map_err(anyhow::Error::msg)?,
         issued_at,
         expires_at,
-        proofs: vec![Proof {
+        proofs: vec![ProducerEventProof {
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
             event_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,

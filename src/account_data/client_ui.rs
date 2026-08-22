@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::i18n::Locale;
+use crate::i18n::UiLocale;
 
 // ─────────────────────────────────────────────────────────────────────────
 // A4a — `ak.client.ui_state` payload (theme, sidebar collapsed, per-Realm view).
@@ -109,10 +109,10 @@ pub fn theme_from_client_ui(value: &Value) -> Option<String> {
 /// decrypted `ak.client.ui_state` body, preserving every other field already
 /// present (theme, recent_realms, avatar_blob_ref, ...).
 ///
-/// The stored tag is [`Locale::code`] — the canonical base language, never a
+/// The stored tag is [`UiLocale::code`] — the canonical base language, never a
 /// region variant. A device that writes `zh` and a device that reads it agree
 /// without either needing a fallback chain.
-pub fn set_client_ui_language(body: &mut Value, locale: Locale) {
+pub fn set_client_ui_language(body: &mut Value, locale: UiLocale) {
     if let Value::Object(map) = body {
         map.insert(
             "language".to_owned(),
@@ -128,11 +128,11 @@ pub fn set_client_ui_language(body: &mut Value, locale: Locale) {
 /// this build cannot render — an older client may have written `ja` back when
 /// the enum still carried it, and selecting a dictionary that no longer exists
 /// would render raw keys. Falling through leaves the local value in charge.
-pub fn language_from_client_ui(value: &Value) -> Option<Locale> {
+pub fn language_from_client_ui(value: &Value) -> Option<UiLocale> {
     value
         .get("language")
         .and_then(Value::as_str)
-        .and_then(Locale::from_tag)
+        .and_then(UiLocale::from_tag)
 }
 
 /// Merge the `language` field of a remote `ak.client.ui_state` payload into
@@ -141,7 +141,7 @@ pub fn language_from_client_ui(value: &Value) -> Option<Locale> {
 /// Returns `Some(remote)` when the device should switch, `None` when it is
 /// already correct or the remote payload carries nothing usable. Mirrors
 /// [`merge_client_ui_theme`], which solves the same problem for the theme.
-pub fn merge_client_ui_language(local: Locale, remote_value: &Value) -> Option<Locale> {
+pub fn merge_client_ui_language(local: UiLocale, remote_value: &Value) -> Option<UiLocale> {
     let remote = language_from_client_ui(remote_value)?;
     (remote != local).then_some(remote)
 }

@@ -22,7 +22,6 @@
 /// Stable label registered on the `ak.profile.media_service_binding.v1`
 /// profile for the SFrame frame key derivation (`media-service-binding.md
 /// §8.1`). Re-exported from the SDK so the renderer pins exactly one value.
-pub use arkret_crypto::sframe::FRAME_KEY_LABEL as SFRAME_FRAME_KEY_LABEL;
 use arkret_crypto::sframe::{FrameKeyContext, MlsExporterSource, derive_frame_key};
 use arkret_sdk::{
     CallId, CallMediaDesiredMedia, CallMediaParticipantBinding, CallMediaTokenExchangeOutcome,
@@ -1106,7 +1105,10 @@ mod tests {
 
     #[test]
     fn frame_key_label_matches_spec() {
-        assert_eq!(SFRAME_FRAME_KEY_LABEL, "ak.rtc-frame-key/v1");
+        assert_eq!(
+            arkret_crypto::sframe::FRAME_KEY_LABEL,
+            "ak.rtc-frame-key/v1"
+        );
         assert_eq!(MEDIA_TOKEN_TTL_MAX_SECS, 600);
     }
 

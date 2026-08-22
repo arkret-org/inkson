@@ -32,7 +32,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use garth::{
-    Backoff, RunOptions, SignalReceiveHandlers, SignalRejection, SignalSink, SyncLoopControl,
+    RetrySchedule, RunOptions, SignalReceiveHandlers, SignalRejection, SignalSink, SyncLoopControl,
     TransportProvider,
 };
 use serde_json::Value;
@@ -391,8 +391,10 @@ impl InksonSignalSink {
     fn apply_live_body(&self, plaintext: &garth::SignalPlaintext) -> garth::Result<()> {
         let body = live_body_value(plaintext)?;
         let target = match &plaintext.payload {
-            garth::SdkSignalPlaintext::Presence(_) => "",
-            garth::SdkSignalPlaintext::Typing(typing) => typing.strand_id.as_str(),
+            arkret_models_collaboration::signal_plaintext::SignalPlaintext::Presence(_) => "",
+            arkret_models_collaboration::signal_plaintext::SignalPlaintext::Typing(typing) => {
+                typing.strand_id.as_str()
+            }
             _ => {
                 return Err(garth::Error::Protocol(
                     "live Signal projection requires a presence or typing payload".to_owned(),
@@ -428,11 +430,21 @@ impl InksonSignalSink {
 /// consume JSON. Dispatch remains on the typed union; no raw body is retained.
 fn decrypted_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
     let body = match &plaintext.payload {
-        garth::SdkSignalPlaintext::Presence(payload) => serde_json::to_value(payload),
-        garth::SdkSignalPlaintext::Typing(payload) => serde_json::to_value(payload),
-        garth::SdkSignalPlaintext::ReadReceipt(payload) => serde_json::to_value(payload),
-        garth::SdkSignalPlaintext::CallSignal(payload) => serde_json::to_value(payload),
-        garth::SdkSignalPlaintext::MessageStream(payload) => serde_json::to_value(payload),
+        arkret_models_collaboration::signal_plaintext::SignalPlaintext::Presence(payload) => {
+            serde_json::to_value(payload)
+        }
+        arkret_models_collaboration::signal_plaintext::SignalPlaintext::Typing(payload) => {
+            serde_json::to_value(payload)
+        }
+        arkret_models_collaboration::signal_plaintext::SignalPlaintext::ReadReceipt(payload) => {
+            serde_json::to_value(payload)
+        }
+        arkret_models_collaboration::signal_plaintext::SignalPlaintext::CallSignal(payload) => {
+            serde_json::to_value(payload)
+        }
+        arkret_models_collaboration::signal_plaintext::SignalPlaintext::MessageStream(payload) => {
+            serde_json::to_value(payload)
+        }
     };
     body.map_err(|error| {
         garth::Error::Protocol(format!("serialize admitted Signal plaintext: {error}"))
@@ -510,7 +522,7 @@ pub async fn run_signal_receive_engine(
         products: ctx.products.clone(),
         live: Mutex::new(LivePresenceProjection::default()),
     };
-    let mut restart_backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
+    let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     while provider.is_active() {
         let result = ctx
             .client_runtime

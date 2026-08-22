@@ -10,7 +10,7 @@
 
 use std::collections::BTreeSet;
 
-use inkson::i18n::{Locale, chinese_translations, english_translations, translate};
+use inkson::i18n::{UiLocale, chinese_translations, english_translations, translate};
 
 /// Namespaces whose Chinese coverage must be complete. Grow this list as
 /// modules are migrated; it mirrors `tests/ui_text_gate.rs::MIGRATED_ROOTS`.
@@ -82,7 +82,7 @@ fn migrated_keys_resolve_to_real_text_in_both_locales() {
 
     for prefix in ENFORCED_PREFIXES {
         for key in keys_with_prefix(&en, prefix) {
-            for locale in [Locale::En, Locale::Zh] {
+            for locale in [UiLocale::En, UiLocale::Zh] {
                 let text = translate(locale, &dicts, &key);
                 if text == key {
                     unresolved.push(format!("{key} ({})", locale.code()));

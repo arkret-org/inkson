@@ -1249,7 +1249,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
             .first_error
             .as_deref()
             .unwrap_or_default()
-            .contains(arkret_sdk::error::ReasonCode::KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
+            .contains(arkret_sdk::error_codes::ReasonCode::KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH)
     );
 }
 

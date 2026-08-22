@@ -104,7 +104,7 @@ pub(crate) fn localized_error_copy(key: &str) -> String {
 /// when the error carries no server envelope and is not a connection-level
 /// failure (caller keeps the local message).
 pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static str> {
-    use arkret_sdk::error::{ErrorCode, ReasonCode};
+    use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
 
     let Some((status, envelope)) = api_error_status_and_envelope(error) else {
         // No server envelope: only connection-level failures get mapped;
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn user_facing_key_maps_known_error_codes() {
-        let rate_limited = sdk_api_error(429, arkret_sdk::error::ErrorCode::RATE_LIMITED);
+        let rate_limited = sdk_api_error(429, arkret_sdk::error_codes::ErrorCode::RATE_LIMITED);
         assert_eq!(
             user_facing_error_key(&rate_limited),
             Some("error.rate_limited")
@@ -388,16 +388,16 @@ mod tests {
             english("error.rate_limited")
         );
 
-        let device = sdk_api_error(403, arkret_sdk::error::ErrorCode::DEVICE_UNAUTHORIZED);
+        let device = sdk_api_error(403, arkret_sdk::error_codes::ErrorCode::DEVICE_UNAUTHORIZED);
         assert_eq!(
             user_facing_error_key(&device),
             Some("error.device_not_authorized")
         );
 
-        let missing = sdk_api_error(404, arkret_sdk::error::ErrorCode::NOT_FOUND);
+        let missing = sdk_api_error(404, arkret_sdk::error_codes::ErrorCode::NOT_FOUND);
         assert_eq!(user_facing_error_key(&missing), Some("error.not_found"));
 
-        let expired = sdk_api_error(401, arkret_sdk::error::ErrorCode::AUTH_EXPIRED);
+        let expired = sdk_api_error(401, arkret_sdk::error_codes::ErrorCode::AUTH_EXPIRED);
         assert_eq!(
             user_facing_error_key(&expired),
             Some("error.session_expired")
@@ -407,12 +407,14 @@ mod tests {
     #[test]
     fn user_facing_key_maps_typed_reason_codes() {
         let envelope = ErrorEnvelope::new(
-            arkret_sdk::error::ErrorCode::FAILED_PRECONDITION,
+            arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
             "security_frontier_digest is stale",
         )
         .with_detail(
             "reason_code",
-            Value::String(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned()),
+            Value::String(
+                arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned(),
+            ),
         );
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
@@ -466,7 +468,10 @@ mod tests {
 
     #[test]
     fn revocation_pending_is_typed_and_never_terminal() {
-        let error = sdk_api_error(409, arkret_sdk::error::ErrorCode::DEVICE_REVOCATION_PENDING);
+        let error = sdk_api_error(
+            409,
+            arkret_sdk::error_codes::ErrorCode::DEVICE_REVOCATION_PENDING,
+        );
 
         assert!(is_device_revocation_pending_error(&error));
         assert!(!is_device_revoked_error(&error));
@@ -476,7 +481,7 @@ mod tests {
 
     #[test]
     fn sealed_device_revocation_is_terminal_for_session_refresh() {
-        let error = sdk_api_error(409, arkret_sdk::error::ErrorCode::DEVICE_REVOKED);
+        let error = sdk_api_error(409, arkret_sdk::error_codes::ErrorCode::DEVICE_REVOKED);
 
         assert!(is_device_revoked_error(&error));
         assert!(!is_device_revocation_pending_error(&error));
@@ -486,8 +491,11 @@ mod tests {
 
     #[test]
     fn revocation_classifiers_require_registered_conflict_status() {
-        let pending = sdk_api_error(503, arkret_sdk::error::ErrorCode::DEVICE_REVOCATION_PENDING);
-        let revoked = sdk_api_error(403, arkret_sdk::error::ErrorCode::DEVICE_REVOKED);
+        let pending = sdk_api_error(
+            503,
+            arkret_sdk::error_codes::ErrorCode::DEVICE_REVOCATION_PENDING,
+        );
+        let revoked = sdk_api_error(403, arkret_sdk::error_codes::ErrorCode::DEVICE_REVOKED);
 
         assert!(!is_device_revocation_pending_error(&pending));
         assert!(!is_device_revoked_error(&revoked));
@@ -495,9 +503,12 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_missing_requires_structured_not_found() {
-        let missing = sdk_api_error(404, arkret_sdk::error::ErrorCode::NOT_FOUND);
-        let unavailable = sdk_api_error(503, arkret_sdk::error::ErrorCode::NOT_FOUND);
-        let unrelated = sdk_api_error(404, arkret_sdk::error::ErrorCode::UNRECOGNIZED_ENDPOINT);
+        let missing = sdk_api_error(404, arkret_sdk::error_codes::ErrorCode::NOT_FOUND);
+        let unavailable = sdk_api_error(503, arkret_sdk::error_codes::ErrorCode::NOT_FOUND);
+        let unrelated = sdk_api_error(
+            404,
+            arkret_sdk::error_codes::ErrorCode::UNRECOGNIZED_ENDPOINT,
+        );
 
         assert!(is_account_viewer_projection_missing_error(&missing));
         assert!(!is_account_viewer_projection_missing_error(&unavailable));
@@ -507,12 +518,14 @@ mod tests {
     #[test]
     fn mls_stale_classifier_accepts_canonical_typed_reason() {
         let envelope = ErrorEnvelope::new(
-            arkret_sdk::error::ErrorCode::FAILED_PRECONDITION,
+            arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
             "security_frontier_digest is stale",
         )
         .with_detail(
             "reason_code",
-            Value::String(arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned()),
+            Value::String(
+                arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned(),
+            ),
         );
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
@@ -525,8 +538,8 @@ mod tests {
     #[test]
     fn mls_stale_classifier_rejects_wrong_outer_code() {
         let envelope = ErrorEnvelope::new(
-            arkret_sdk::error::ErrorCode::POLICY_VIOLATION,
-            arkret_sdk::error::ReasonCode::MLS_GOVERNANCE_BINDING_STALE,
+            arkret_sdk::error_codes::ErrorCode::POLICY_VIOLATION,
+            arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE,
         );
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
@@ -539,7 +552,7 @@ mod tests {
     #[test]
     fn mls_stale_classifier_rejects_unrelated_policy_violation() {
         let envelope = ErrorEnvelope::new(
-            arkret_sdk::error::ErrorCode::POLICY_VIOLATION,
+            arkret_sdk::error_codes::ErrorCode::POLICY_VIOLATION,
             "ordinary policy denial",
         );
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
@@ -555,7 +568,7 @@ mod tests {
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
             error: Box::new(ErrorEnvelope::new(
-                arkret_sdk::error::ErrorCode::FAILED_PRECONDITION,
+                arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
                 "reason_code=identity_creation_challenge_expired; lease, fence, reservation, or challenge is stale",
             )),
         });

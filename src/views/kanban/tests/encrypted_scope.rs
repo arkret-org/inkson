@@ -117,7 +117,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
-    let mut state = temp_state_store("encrypted-scope-allows-encrypted-value");
+    let mut state = isolated_store_for_tests("encrypted-scope-allows-encrypted-value");
     state.save_realm_tree_projection(
         TEST_REALM_ID,
         creator_realm_projection(TEST_REALM_ID, &actor_id, "mls_rfc9420"),
@@ -248,7 +248,7 @@ fn private_patch_replacement_keeps_description_and_synthesis_separate() {
 
 #[test]
 fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
-    let mut state = temp_state_store("missing-mls");
+    let mut state = isolated_store_for_tests("missing-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let patch = json!({
         "content": {"$op": "set", "value": {
@@ -299,7 +299,7 @@ fn encrypted_private_patch_rejects_pending_welcome_without_claim_envelope() {
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
 
-    let mut state = temp_state_store("pending-local-welcome");
+    let mut state = isolated_store_for_tests("pending-local-welcome");
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
         "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e1",
         "kind": "ak.mls.welcome",
@@ -374,7 +374,7 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
 
-    let mut state = temp_state_store("pending-local-welcome-with-state");
+    let mut state = isolated_store_for_tests("pending-local-welcome-with-state");
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
         "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e2",
         "kind": "ak.mls.welcome",
@@ -467,7 +467,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
-    let mut state = temp_state_store("creator-bootstrap-mls");
+    let mut state = isolated_store_for_tests("creator-bootstrap-mls");
     state.save_realm_tree_projection(
         realm,
         creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
@@ -541,7 +541,7 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
-    let mut state = temp_state_store("creator-persisted-epoch-zero");
+    let mut state = isolated_store_for_tests("creator-persisted-epoch-zero");
     state.save_realm_tree_projection(
         realm,
         creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
@@ -608,7 +608,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let actor = "did:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let mut state = temp_state_store("ready-mls");
+    let mut state = isolated_store_for_tests("ready-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let secret = crate::mls::runtime::load_or_create_account_mls_secret(&secure, actor).unwrap();
     let identity = ArkretMlsIdentity::new_basic(
@@ -782,7 +782,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
 
 #[test]
 fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
-    let mut state = temp_state_store("metadata-only");
+    let mut state = isolated_store_for_tests("metadata-only");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let patch = json!({
         "summary": {"$op": "set", "value": "metadata summary"},
@@ -948,7 +948,7 @@ fn encrypted_scope_allows_strand_summary_metadata_update() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
-    let mut state = temp_state_store("sidecar-track-circle-encrypt");
+    let mut state = isolated_store_for_tests("sidecar-track-circle-encrypt");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";
     let device = "ak:device:0196419b-0000-7000-8000-000000000021";

@@ -69,7 +69,7 @@ pub(super) struct RouteSurfaceState {
     pub(super) device_authorization_check_complete: Signal<bool>,
     pub(super) can_list_handles_for_subject: bool,
     pub(super) push_state: Signal<String>,
-    pub(super) locale: Signal<Locale>,
+    pub(super) locale: Signal<UiLocale>,
     pub(super) theme: Signal<String>,
     pub(super) base_url: Signal<String>,
 }

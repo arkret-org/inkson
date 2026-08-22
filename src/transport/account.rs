@@ -25,9 +25,7 @@ use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
-use crate::models::{
-    ContactListView, CurrentAccount, IdentityDescribeOutcome, IdentityResolveOutcome,
-};
+use crate::models::{ContactList, CurrentAccount, IdentityDescription, IdentityResolveOutcome};
 
 pub(crate) fn did_for_request_field(
     field: &str,
@@ -606,7 +604,7 @@ fn did_document_assertion_method_contains(
         })
 }
 
-pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactListView> {
+pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactList> {
     http.contacts_list().await.map_err(anyhow::Error::from)
 }
 
@@ -1007,7 +1005,7 @@ pub async fn consent_cells(
 
 pub async fn identity_describe(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<IdentityDescribeOutcome> {
+) -> anyhow::Result<IdentityDescription> {
     http.identity_describe()
         .await
         .map_err(|error| anyhow::anyhow!("identity describe: {error}"))

@@ -3,9 +3,8 @@ use std::collections::BTreeMap;
 use arkret_sdk::EventPayloadExt as _;
 use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
-    ClaimedProfileEntry, ContactAgentProjection as ContactAgentRow, ContactList as ContactListView,
-    ContactListRow, DirectConversationSummary, InteropSurfaceEntry, ServiceDescribe,
-    VerifiedProfileEntry,
+    ClaimedProfileEntry, ContactAgentProjection, ContactList, ContactListRow,
+    DirectConversationSummary, InteropSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
 };
 use arkret_wire::ProfileId;
 use serde::{Deserialize, Serialize};
@@ -99,7 +98,7 @@ pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
 /// the required `schema`/`subject_id`, typed enums, and the trust lists, so
 /// a GET→edit→SET cycle preserves fields the U4 form does not touch.
 pub use arkret_models_collaboration::governance::invite_addressing::{
-    DisclosureLevel, DisclosurePolicy as InviteDisclosurePolicy, InviteReceivePolicy,
+    DisclosureLevel, DisclosurePolicy, InviteReceivePolicy,
 };
 pub use arkret_wire::{InviteReceiveAction, UnknownInviteAction};
 
@@ -197,7 +196,7 @@ pub fn service_is_v1_principal_server_ready(description: &ServiceDescribe) -> bo
 
 // R35: `ak.identity.describe` body. The SDK's canonical type is
 // `IdentityDescription` (same fields, with `service_id: DidCoreId` validated on
-// construction); the SDK's own `IdentityDescribeOutcome` is a transparent
+// construction); the SDK's own `IdentityDescription` is a transparent
 // newtype around it. We re-export the inner struct under the inkson-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
@@ -313,12 +312,8 @@ pub(crate) fn project_default_strand_from_sdk_events<'a>(
 // `public`/`title` on the preview node, a non-optional `join_rule`) and broke
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
-pub use arkret_models_discovery::{
-    DirectoryRealmResolutionOutcome as ResolveRealmOutcome, RealmJoinCandidate,
-};
-pub use arkret_models_identity::{
-    IdentityDescription as IdentityDescribeOutcome, IdentityResolveOutcome,
-};
+pub use arkret_models_discovery::{DirectoryRealmResolutionOutcome, RealmJoinCandidate};
+pub use arkret_models_identity::{IdentityDescription, IdentityResolveOutcome};
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
 /// Space. Wire signal is either the `ak.schema.{realm,space}.v1` schema

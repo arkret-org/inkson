@@ -18,8 +18,8 @@ fn every_shipped_locale_has_a_dictionary() {
     // show raw keys, so the two sets must not drift apart.
     let signal_dicts = {
         let mut dicts = HashMap::new();
-        dicts.insert(Locale::En.code().to_owned(), english_translations());
-        dicts.insert(Locale::Zh.code().to_owned(), chinese_translations());
+        dicts.insert(UiLocale::En.code().to_owned(), english_translations());
+        dicts.insert(UiLocale::Zh.code().to_owned(), chinese_translations());
         dicts
     };
     for locale in arkret_locale::SUPPORTED {
@@ -35,14 +35,14 @@ fn every_shipped_locale_has_a_dictionary() {
 #[test]
 fn translate_chain_walks_region_then_base_then_english() {
     // Region-tagged dictionaries are not shipped, but the chain still has to
-    // handle a raw BCP 47 tag: `set_locale` stores a `Locale`, while a caller
+    // handle a raw BCP 47 tag: `set_locale` stores a `UiLocale`, while a caller
     // holding a tag from the wire can reach `translate_chain` directly.
     let mut dicts = HashMap::new();
-    let mut zh_cn = TranslationDict::new(Locale::Zh);
+    let mut zh_cn = TranslationDict::new(UiLocale::Zh);
     zh_cn.set("region.specific", "zh-CN value");
-    let mut zh = TranslationDict::new(Locale::Zh);
+    let mut zh = TranslationDict::new(UiLocale::Zh);
     zh.set("base.value", "zh value");
-    let mut en = TranslationDict::new(Locale::En);
+    let mut en = TranslationDict::new(UiLocale::En);
     en.set("english.only", "en value");
     dicts.insert("zh-CN".to_owned(), zh_cn);
     dicts.insert("zh".to_owned(), zh);
@@ -72,8 +72,8 @@ fn translate_chain_walks_region_then_base_then_english() {
 fn locale_direction_matches_layout_expectations() {
     // Both shipped locales are left-to-right. `TextDirection` is kept so the
     // shell's mirrored-layout branch stays wired up for a future RTL locale.
-    assert_eq!(Locale::En.direction(), TextDirection::Ltr);
-    assert_eq!(Locale::Zh.direction(), TextDirection::Ltr);
+    assert_eq!(UiLocale::En.direction(), TextDirection::Ltr);
+    assert_eq!(UiLocale::Zh.direction(), TextDirection::Ltr);
     assert_eq!(TextDirection::Ltr.as_str(), "ltr");
     assert_eq!(TextDirection::Rtl.as_str(), "rtl");
 }
@@ -82,16 +82,16 @@ fn locale_direction_matches_layout_expectations() {
 fn a_stored_device_preference_survives_a_restart() {
     // The device cache is the only tier available before sign-in, so a user
     // who picked Chinese must still get Chinese on the next launch.
-    assert_eq!(resolve_locale(None, Some("zh")), Locale::Zh);
-    assert_eq!(resolve_locale(None, Some("en")), Locale::En);
+    assert_eq!(resolve_locale(None, Some("zh")), UiLocale::Zh);
+    assert_eq!(resolve_locale(None, Some("en")), UiLocale::En);
 }
 
 #[test]
 fn the_account_preference_overrides_a_stale_device_cache() {
     // This is the whole point of the account tier: signing in on a device that
     // was left in English must switch to the account's language.
-    assert_eq!(resolve_locale(Some("zh"), Some("en")), Locale::Zh);
-    assert_eq!(resolve_locale(Some("en"), Some("zh")), Locale::En);
+    assert_eq!(resolve_locale(Some("zh"), Some("en")), UiLocale::Zh);
+    assert_eq!(resolve_locale(Some("en"), Some("zh")), UiLocale::En);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn an_unrenderable_stored_value_does_not_pin_the_ui() {
     // must fall through instead of selecting a dictionary that no longer
     // exists.
     for stale in ["ar", "ja-JP", "fr", "", "garbage"] {
-        assert_eq!(resolve_locale(None, Some(stale)), Locale::En, "{stale}");
+        assert_eq!(resolve_locale(None, Some(stale)), UiLocale::En, "{stale}");
     }
 }
 
@@ -110,25 +110,25 @@ fn translation_lookup_fallback() {
     dicts.insert("en".to_owned(), english_translations());
     dicts.insert("zh".to_owned(), chinese_translations());
 
-    assert_eq!(translate(Locale::Zh, &dicts, "login.server"), "服务器");
+    assert_eq!(translate(UiLocale::Zh, &dicts, "login.server"), "服务器");
 
     // Fallback to English for a key the Chinese dictionary is missing.
     let partial_dicts = {
         let mut partial = HashMap::new();
-        let mut zh_partial = TranslationDict::new(Locale::Zh);
+        let mut zh_partial = TranslationDict::new(UiLocale::Zh);
         zh_partial.set("login.server", "服务器");
         partial.insert("en".to_owned(), english_translations());
         partial.insert("zh".to_owned(), zh_partial);
         partial
     };
     assert_eq!(
-        translate(Locale::Zh, &partial_dicts, "login.passkey"),
+        translate(UiLocale::Zh, &partial_dicts, "login.passkey"),
         "Passkey Login"
     );
 
     // Fallback to the key itself when it is nowhere.
     assert_eq!(
-        translate(Locale::En, &HashMap::new(), "nonexistent.key"),
+        translate(UiLocale::En, &HashMap::new(), "nonexistent.key"),
         "nonexistent.key"
     );
 }
@@ -140,15 +140,15 @@ fn locale_formatters_are_stable() {
         .with_timezone(&Utc);
 
     assert_eq!(
-        format_datetime(Locale::En, timestamp),
+        format_datetime(UiLocale::En, timestamp),
         "Apr 29, 2026 07:08 UTC"
     );
     assert_eq!(
-        format_datetime(Locale::Zh, timestamp),
+        format_datetime(UiLocale::Zh, timestamp),
         "2026年04月29日 07:08 UTC"
     );
-    assert_eq!(format_number(Locale::En, 1234567), "1,234,567");
-    assert_eq!(format_number(Locale::Zh, 1234567), "1 234 567");
+    assert_eq!(format_number(UiLocale::En, 1234567), "1,234,567");
+    assert_eq!(format_number(UiLocale::Zh, 1234567), "1 234 567");
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn chinese_translation_is_complete() {
     let en = english_translations();
     let zh = chinese_translations();
     let report = translation_completeness(&en, &zh);
-    assert_eq!(report.locale, Locale::Zh);
+    assert_eq!(report.locale, UiLocale::Zh);
     assert_eq!(report.total_keys, en.strings.len());
     assert!(
         report.is_complete(),

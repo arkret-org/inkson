@@ -1421,7 +1421,7 @@ pub(super) fn connect(
                                             let local_locale = store
                                                 .device_pref("locale")
                                                 .as_deref()
-                                                .and_then(crate::i18n::Locale::from_tag)
+                                                .and_then(crate::i18n::UiLocale::from_tag)
                                                 .unwrap_or_default();
                                             if let Some(remote_locale) =
                                                 crate::account_data::merge_client_ui_language(

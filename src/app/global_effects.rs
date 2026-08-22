@@ -5,7 +5,7 @@ use super::*;
 /// order in which these effects were registered.
 #[component]
 pub(super) fn GlobalEffects(
-    mut locale: Signal<Locale>,
+    mut locale: Signal<UiLocale>,
     mut i18n_signal: crate::i18n::I18nSignal,
     base_url: Signal<String>,
     token: Signal<String>,
@@ -35,7 +35,7 @@ pub(super) fn GlobalEffects(
             .read()
             .device_pref("locale")
             .as_deref()
-            .and_then(Locale::from_tag)
+            .and_then(UiLocale::from_tag)
         else {
             return;
         };

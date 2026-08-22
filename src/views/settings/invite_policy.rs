@@ -33,9 +33,7 @@ use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 
 use crate::i18n::tr;
-use crate::models::{
-    DisclosureLevel, InviteDisclosurePolicy, InviteReceiveAction, InviteReceivePolicy,
-};
+use crate::models::{DisclosureLevel, DisclosurePolicy, InviteReceiveAction, InviteReceivePolicy};
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::checkbox::Checkbox;
@@ -373,7 +371,7 @@ fn InvitePolicySettingsCardBody(
                         checked: high_trust_outcome,
                         on_checked_change: move |checked: bool| {
                             let mut next = policy.read().clone();
-                            let mut disclosure = next.disclosure.unwrap_or(InviteDisclosurePolicy {
+                            let mut disclosure = next.disclosure.unwrap_or(DisclosurePolicy {
                                 high_trust: None,
                                 discovery_trust: None,
                                 low_trust: None,
@@ -395,7 +393,7 @@ fn InvitePolicySettingsCardBody(
                         checked: discovery_trust_outcome,
                         on_checked_change: move |checked: bool| {
                             let mut next = policy.read().clone();
-                            let mut disclosure = next.disclosure.unwrap_or(InviteDisclosurePolicy {
+                            let mut disclosure = next.disclosure.unwrap_or(DisclosurePolicy {
                                 high_trust: None,
                                 discovery_trust: None,
                                 low_trust: None,

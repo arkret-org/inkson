@@ -36,7 +36,7 @@ use widgets::*;
 
 use crate::components::{HelpTip, QrSharePanel, UiIcon};
 use crate::config::LocalConfigStore;
-use crate::i18n::Locale;
+use crate::i18n::UiLocale;
 use crate::notification_rules::WatchLevel;
 use crate::routes::Route;
 use crate::transport::auth::{with_authed_sdk_client, with_event_submitter};
@@ -84,10 +84,10 @@ pub(crate) fn push_client_ui_account_data(
 
 /// A locale's name written in that locale, so a user who cannot read the
 /// current UI language can still find their own.
-fn locale_display_name(locale: Locale) -> &'static str {
+fn locale_display_name(locale: UiLocale) -> &'static str {
     match locale {
-        Locale::En => "English",
-        Locale::Zh => "中文",
+        UiLocale::En => "English",
+        UiLocale::Zh => "中文",
     }
 }
 
@@ -101,8 +101,8 @@ fn locale_display_name(locale: Locale) -> &'static str {
 /// 3. the `language` field of the `ak.client.ui_state` account-data entry (spec
 ///    `discovery/client-preferences.md` §3.4), which is how the user's other devices find out.
 fn select_locale(
-    choice: Locale,
-    mut locale: Signal<Locale>,
+    choice: UiLocale,
+    mut locale: Signal<UiLocale>,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     base_url: String,
     api_token: String,
@@ -132,7 +132,7 @@ fn select_locale(
 pub(crate) fn push_client_language_account_data(
     base_url: String,
     api_token: String,
-    locale: Locale,
+    locale: UiLocale,
 ) {
     if api_token.trim().is_empty() {
         return;
@@ -510,7 +510,7 @@ pub fn SettingsPanel(
     can_list_handles_for_subject: bool,
     config_store: Signal<LocalConfigStore>,
     push_state: Signal<String>,
-    mut locale: Signal<Locale>,
+    mut locale: Signal<UiLocale>,
     mut theme: Signal<String>,
 ) -> Element {
     let session = crate::app::SessionContext::get();

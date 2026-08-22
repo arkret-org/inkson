@@ -50,7 +50,7 @@ enum OidcCallbackOutcome {
     /// typed handoff decides between first creation and existing-account
     /// recovery; Inkson does not infer either state locally.
     Onboarding {
-        preferred_locale: Option<crate::i18n::Locale>,
+        preferred_locale: Option<crate::i18n::UiLocale>,
     },
     /// The authenticated handoff and exact signed session request remain
     /// durable. Reloading this same callback resumes that request without
@@ -107,27 +107,29 @@ fn classify_returning_session_exchange_error(error: garth::Error) -> ReturningSe
         garth::Error::Api { status, error }
             if *status >= 500
                 || error.error.error_code()
-                    == Some(arkret_sdk::error::ErrorCode::SessionGrantReplayIndeterminate) =>
+                    == Some(
+                        arkret_sdk::error_codes::ErrorCode::SessionGrantReplayIndeterminate,
+                    ) =>
         {
             ReturningSessionExchangeError::Retryable(message)
         }
         garth::Error::Api { error, .. }
             if error.error.error_code()
-                == Some(arkret_sdk::error::ErrorCode::DeviceUnauthorized) =>
+                == Some(arkret_sdk::error_codes::ErrorCode::DeviceUnauthorized) =>
         {
             ReturningSessionExchangeError::DeviceSetupRequired(message)
         }
         garth::Error::Api { error, .. } => match error.error.error_code() {
-            Some(arkret_sdk::error::ErrorCode::DeviceRevocationPending) => {
+            Some(arkret_sdk::error_codes::ErrorCode::DeviceRevocationPending) => {
                 ReturningSessionExchangeError::Blocked(
                     ReturningDeviceBlockReason::RevocationPending,
                     message,
                 )
             }
-            Some(arkret_sdk::error::ErrorCode::DeviceRevoked) => {
+            Some(arkret_sdk::error_codes::ErrorCode::DeviceRevoked) => {
                 ReturningSessionExchangeError::Blocked(ReturningDeviceBlockReason::Revoked, message)
             }
-            Some(arkret_sdk::error::ErrorCode::DeviceGenerationFenced) => {
+            Some(arkret_sdk::error_codes::ErrorCode::DeviceGenerationFenced) => {
                 ReturningSessionExchangeError::Blocked(
                     ReturningDeviceBlockReason::GenerationFenced,
                     message,
@@ -288,7 +290,7 @@ thread_local! {
 pub fn LoginPanel(
     token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
-    mut locale: Signal<crate::i18n::Locale>,
+    mut locale: Signal<crate::i18n::UiLocale>,
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
     on_onboarding: EventHandler<()>,
@@ -1962,9 +1964,9 @@ fn persisted_session_grant_from_state(
 }
 
 fn apply_authenticated_account_locale(
-    preferred_locale: Option<crate::i18n::Locale>,
+    preferred_locale: Option<crate::i18n::UiLocale>,
     mut state_store: SyncSignal<LocalStateStore>,
-    locale: &mut Signal<crate::i18n::Locale>,
+    locale: &mut Signal<crate::i18n::UiLocale>,
 ) {
     let Some(preferred_locale) = preferred_locale else {
         return;
@@ -2208,21 +2210,21 @@ mod tests {
         assert!(matches!(
             classify_returning_session_exchange_error(api_exchange_error(
                 503,
-                arkret_sdk::error::ErrorCode::SESSION_GRANT_REPLAY_INDETERMINATE,
+                arkret_sdk::error_codes::ErrorCode::SESSION_GRANT_REPLAY_INDETERMINATE,
             )),
             ReturningSessionExchangeError::Retryable(_)
         ));
         assert!(matches!(
             classify_returning_session_exchange_error(api_exchange_error(
                 403,
-                arkret_sdk::error::ErrorCode::DEVICE_UNAUTHORIZED,
+                arkret_sdk::error_codes::ErrorCode::DEVICE_UNAUTHORIZED,
             )),
             ReturningSessionExchangeError::DeviceSetupRequired(_)
         ));
         assert!(matches!(
             classify_returning_session_exchange_error(api_exchange_error(
                 409,
-                arkret_sdk::error::ErrorCode::DEVICE_REVOCATION_PENDING,
+                arkret_sdk::error_codes::ErrorCode::DEVICE_REVOCATION_PENDING,
             )),
             ReturningSessionExchangeError::Blocked(
                 ReturningDeviceBlockReason::RevocationPending,
@@ -2232,21 +2234,21 @@ mod tests {
         assert!(matches!(
             classify_returning_session_exchange_error(api_exchange_error(
                 403,
-                arkret_sdk::error::ErrorCode::DEVICE_REVOKED,
+                arkret_sdk::error_codes::ErrorCode::DEVICE_REVOKED,
             )),
             ReturningSessionExchangeError::Blocked(ReturningDeviceBlockReason::Revoked, _)
         ));
         assert!(matches!(
             classify_returning_session_exchange_error(api_exchange_error(
                 403,
-                arkret_sdk::error::ErrorCode::DEVICE_GENERATION_FENCED,
+                arkret_sdk::error_codes::ErrorCode::DEVICE_GENERATION_FENCED,
             )),
             ReturningSessionExchangeError::Blocked(ReturningDeviceBlockReason::GenerationFenced, _)
         ));
         assert!(matches!(
             classify_returning_session_exchange_error(api_exchange_error(
                 401,
-                arkret_sdk::error::ErrorCode::SIGNATURE_INVALID,
+                arkret_sdk::error_codes::ErrorCode::SIGNATURE_INVALID,
             )),
             ReturningSessionExchangeError::Fatal(_)
         ));

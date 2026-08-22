@@ -5,7 +5,7 @@ use super::*;
 /// effects that must be torn down when the shell itself is unmounted.
 #[component]
 pub(super) fn SessionShell(
-    locale: Signal<Locale>,
+    locale: Signal<UiLocale>,
     i18n_signal: crate::i18n::I18nSignal,
     base_url: Signal<String>,
     token: Signal<String>,

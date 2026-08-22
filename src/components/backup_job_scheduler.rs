@@ -14,13 +14,13 @@
 //! The per-account private-plaintext sidecar job debounces only and does not
 //! retry a failed upload; strictly newer material re-arms it.
 //!
-//! Backoff note: `garth::Backoff` is a *stateful* ladder that advances on each
+//! Backoff note: `garth::RetrySchedule` is a *stateful* ladder that advances on each
 //! `next_delay()` call. This scheduler instead recomputes the wait each loop
 //! iteration from the stored `consecutive_failures` counter — the same counter
 //! the park threshold needs — and folds in the debounce and min-interval
 //! floors. The stateless-recompute model is what the loop-top delay computation
 //! and the exact retry ladder (asserted in unit tests) require, so the doubling
-//! is kept here rather than delegated to `garth::Backoff`.
+//! is kept here rather than delegated to `garth::RetrySchedule`.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};

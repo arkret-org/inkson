@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use super::UiIcon;
-use crate::models::IdentityDescribeOutcome;
+use crate::models::IdentityDescription;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidResolutionHealthReason {
@@ -52,7 +52,7 @@ impl DidResolutionHealth {
         }
     }
 
-    pub fn from_identity_description(description: &IdentityDescribeOutcome) -> Self {
+    pub fn from_identity_description(description: &IdentityDescription) -> Self {
         if description.protocol_version.trim() == "1.0" {
             Self::Healthy
         } else {
@@ -195,8 +195,8 @@ mod tests {
 
     use super::*;
 
-    fn identity_description(protocol_version: &str) -> IdentityDescribeOutcome {
-        IdentityDescribeOutcome {
+    fn identity_description(protocol_version: &str) -> IdentityDescription {
+        IdentityDescription {
             service_id: crate::mls_api_helpers::principal_core_id("did:web:identity.example")
                 .expect("valid did"),
             registry_mode: "local".to_owned(),

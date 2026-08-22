@@ -41,17 +41,17 @@ pub(crate) fn to_device_message_expiry(message: &Value) -> Option<DateTime<Utc>>
         .map(|expires_at| expires_at.with_timezone(&Utc))
 }
 
-pub(crate) fn read_scope_for_cursor(_realm_id: &str, topic_id: Option<&str>) -> ReadScope {
+pub(crate) fn read_scope_for_cursor(_realm_id: &str, topic_id: Option<&str>) -> ReadCursorScope {
     match topic_id.map(str::trim).filter(|topic| !topic.is_empty()) {
-        Some(topic) if topic.starts_with("ak:thread:") => ReadScope::thread(topic),
+        Some(topic) if topic.starts_with("ak:thread:") => ReadCursorScope::thread(topic),
         Some(topic) if topic.starts_with("ak:strand:") => {
-            ReadScope::strand(topic, Some("discussion"))
+            ReadCursorScope::strand(topic, Some("discussion"))
         }
         // A Realm id and its default Strand id are independently derived from
         // different accepted Events. When no authoritative topic coordinate is
         // available, retain the Realm scope instead of fabricating a Strand by
         // retyping the Realm token.
-        _ => ReadScope::realm(),
+        _ => ReadCursorScope::realm(),
     }
 }
 
@@ -82,7 +82,7 @@ pub(crate) fn new_read_cursor_id() -> String {
     format!("ak:read_cursor:{}", crate::operation::uuid_v7())
 }
 
-pub(crate) fn read_cursor_key(realm_id: &str, read_scope: &ReadScope) -> String {
+pub(crate) fn read_cursor_key(realm_id: &str, read_scope: &ReadCursorScope) -> String {
     format!(
         "{}\n{}\n{}\n{}",
         realm_id,

@@ -10,7 +10,7 @@
 
 use crate::directory_helpers::{ResolveHandleContext, resolve_handle_request_body};
 use crate::models::{
-    ResolveHandleView, ResolveRealmOutcome, SearchActorsView, SearchOrganizationsView,
+    DirectoryRealmResolutionOutcome, ResolveHandleView, SearchActorsView, SearchOrganizationsView,
 };
 use crate::wire_helpers::validate_cursor;
 
@@ -50,7 +50,7 @@ pub async fn search_realms(
 pub async fn resolve_realm(
     http: &arkret_sdk::http_client::Client,
     realm_id_or_alias: &str,
-) -> anyhow::Result<ResolveRealmOutcome> {
+) -> anyhow::Result<DirectoryRealmResolutionOutcome> {
     resolve_realm_with_invite_token(http, realm_id_or_alias, None).await
 }
 
@@ -58,7 +58,7 @@ pub async fn resolve_realm_with_invite_token(
     http: &arkret_sdk::http_client::Client,
     realm_id_or_alias: &str,
     invite_token: Option<&str>,
-) -> anyhow::Result<ResolveRealmOutcome> {
+) -> anyhow::Result<DirectoryRealmResolutionOutcome> {
     let input = realm_id_or_alias.trim();
     let (realm_id, alias) = match arkret_sdk::RealmId::new(input) {
         Ok(realm) => (Some(realm), None),

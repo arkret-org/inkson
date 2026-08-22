@@ -11,7 +11,7 @@ use crate::api_error::is_auth_expired_error;
 use crate::components::{SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_server_url};
 use crate::conformance::profile_ready;
-use crate::i18n::{Locale, TextDirection};
+use crate::i18n::{TextDirection, UiLocale};
 use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_principal_server_requirements,
     projection_realm_id_for_known_node, service_supports_event_envelope_write_plane,

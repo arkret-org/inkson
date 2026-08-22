@@ -4,11 +4,7 @@
 //! backup bodies can be hashed and signed against a single canonical encoder
 //! instead of relying on `serde_json`'s default object-key order.
 
-pub use arkret_sdk::canonical::{
-    canonical_json_bytes as sdk_canonical_json_bytes,
-    canonical_json_string as sdk_canonical_json_string, canonical_sha256 as sdk_canonical_sha256,
-    sha256_digest as sdk_sha256_digest, sha256_hex as sdk_sha256_hex, validate_timestamp_canonical,
-};
+pub use arkret_sdk::canonical::validate_timestamp_canonical;
 use serde::Serialize;
 
 /// Wire-canonical JSON bytes — sorted object keys, integer-only numbers per
@@ -16,27 +12,30 @@ use serde::Serialize;
 /// the rest of inkson's error surface without dragging `arkret_sdk::Error`
 /// across module boundaries.
 pub fn canonical_json_bytes<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
-    sdk_canonical_json_bytes(value).map_err(|e| anyhow::anyhow!("canonical encode failed: {e:?}"))
+    arkret_sdk::canonical::canonical_json_bytes(value)
+        .map_err(|e| anyhow::anyhow!("canonical encode failed: {e:?}"))
 }
 
 pub fn canonical_json_string<T: Serialize>(value: &T) -> anyhow::Result<String> {
-    sdk_canonical_json_string(value).map_err(|e| anyhow::anyhow!("canonical encode failed: {e:?}"))
+    arkret_sdk::canonical::canonical_json_string(value)
+        .map_err(|e| anyhow::anyhow!("canonical encode failed: {e:?}"))
 }
 
 /// `sha256:<hex>` digest over the canonical bytes of `value`.
 pub fn canonical_sha256<T: Serialize>(value: &T) -> anyhow::Result<String> {
-    sdk_canonical_sha256(value).map_err(|e| anyhow::anyhow!("canonical hash failed: {e:?}"))
+    arkret_sdk::canonical::canonical_sha256(value)
+        .map_err(|e| anyhow::anyhow!("canonical hash failed: {e:?}"))
 }
 
 /// `sha256:<hex>` digest over `bytes` directly. Useful for hashing canonical
 /// bytes that have already been built by another path (e.g. SDK Move
 /// canonicalization).
 pub fn sha256_digest(bytes: impl AsRef<[u8]>) -> String {
-    sdk_sha256_digest(bytes)
+    arkret_sdk::canonical::sha256_digest(bytes)
 }
 
 pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
-    sdk_sha256_hex(bytes.as_ref())
+    arkret_sdk::canonical::sha256_hex(bytes.as_ref())
 }
 
 pub fn hex_encode(bytes: &[u8]) -> String {
@@ -58,7 +57,7 @@ pub fn canonical_event_digest<T: Serialize>(body: &T) -> anyhow::Result<String> 
 // F-CANONICAL-1 (2026-05-19): named entry points for the three
 // wire-shaped canonicalizations that inkson actually emits / verifies.
 // The SDK already enforces field ordering / integer-only numbers /
-// UTF-8 byte order through `sdk_canonical_json_bytes`; these wrappers
+// UTF-8 byte order through `arkret_sdk::canonical::canonical_json_bytes`; these wrappers
 // make the call-site intent explicit (so an audit reader sees
 // "signing the move canonical bytes" instead of an ambiguous
 // "canonical_json_bytes(&move)") and give us a single throat to choke
@@ -170,7 +169,7 @@ mod tests {
 
         assert_eq!(
             bytes,
-            sdk_canonical_json_bytes(&event.digest_payload().unwrap()).unwrap()
+            arkret_sdk::canonical::canonical_json_bytes(&event.digest_payload().unwrap()).unwrap()
         );
         assert!(!as_text.contains("proofs"));
         assert!(!as_text.contains("unsigned"));

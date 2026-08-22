@@ -265,7 +265,7 @@ impl AccountEndpoints<'_> {
         crate::transport::account::account_viewer(self.transport.http()).await
     }
 
-    pub async fn contacts(&self) -> anyhow::Result<crate::models::ContactListView> {
+    pub async fn contacts(&self) -> anyhow::Result<crate::models::ContactList> {
         crate::transport::account::contacts(self.transport.http()).await
     }
 }

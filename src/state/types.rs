@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use arkret_sdk::EncryptedPayload;
-pub use arkret_sdk::{
-    PresencePreference, PresenceVisibility, ReadCursorPosition, ReadCursorScope as ReadScope,
-};
+pub use arkret_sdk::{PresencePreference, PresenceVisibility, ReadCursorPosition, ReadCursorScope};
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
@@ -209,7 +207,7 @@ pub struct ReadMarkerBody {
     pub id: String,
     pub schema: String,
     pub realm_id: String,
-    pub read_scope: ReadScope,
+    pub read_scope: ReadCursorScope,
     pub position: ReadCursorPosition,
 }
 

@@ -324,7 +324,9 @@ mod tests {
     /// so a scope-varying test exercises the real routing input.
     fn receipt_of(plaintext: &garth::SignalPlaintext) -> &arkret_sdk::ReadReceipt {
         match &plaintext.payload {
-            garth::SdkSignalPlaintext::ReadReceipt(receipt) => receipt,
+            arkret_models_collaboration::signal_plaintext::SignalPlaintext::ReadReceipt(
+                receipt,
+            ) => receipt,
             other => unreachable!("the fixture builds a read receipt, not {other:?}"),
         }
     }
@@ -356,7 +358,9 @@ mod tests {
         garth::SignalPlaintext {
             // The parsed profile is what the routing reads, so it has to carry
             // the same `read_scope` the test body varies rather than a fixed one.
-            payload: garth::SdkSignalPlaintext::ReadReceipt(typed_receipt(&body)),
+            payload: arkret_models_collaboration::signal_plaintext::SignalPlaintext::ReadReceipt(
+                typed_receipt(&body),
+            ),
             kind: "ak.receipt.read".to_owned(),
             actor_id: crate::mls_api_helpers::principal_core_id("did:web:a").unwrap(),
             payload_sequence: 3,

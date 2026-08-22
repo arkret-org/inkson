@@ -3,11 +3,11 @@
 //! locale; helpers live alongside it so all `dict.set` calls stay in one
 //! module.
 
-use super::{Locale, TranslationDict};
+use super::{TranslationDict, UiLocale};
 
 /// Build the default English translation dictionary.
 pub fn english_translations() -> TranslationDict {
-    let mut dict = TranslationDict::new(Locale::En);
+    let mut dict = TranslationDict::new(UiLocale::En);
 
     // Navigation & Shell
     dict.set("app.title", "inkson");

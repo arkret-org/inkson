@@ -8,11 +8,11 @@ use crate::operation::trim_realm_id;
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::views::helpers::actor_display_label;
 #[cfg(test)]
-pub(super) use crate::views::member_display::member_label as member_display_label;
+pub(super) use crate::views::member_display::member_label;
 #[cfg(test)]
-pub(super) use crate::views::member_display::verified_inline_handle as member_inline_handle_label;
+pub(super) use crate::views::member_display::verified_inline_handle;
 pub(super) use crate::views::member_display::{
-    RealmMemberRow, owned_agent_slug as owned_agent_slug_for_row, realm_member_roster,
+    RealmMemberRow, owned_agent_slug, realm_member_roster,
 };
 
 pub(super) fn card_member_is_current_account(row: &RealmMemberRow, principal_id: &str) -> bool {

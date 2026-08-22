@@ -166,7 +166,8 @@ impl LocalStateStore {
         let Some(position_value) = content.get("position") else {
             return false;
         };
-        let Ok(read_scope) = serde_json::from_value::<ReadScope>(read_scope_value.clone()) else {
+        let Ok(read_scope) = serde_json::from_value::<ReadCursorScope>(read_scope_value.clone())
+        else {
             return false;
         };
         let Ok(position) = serde_json::from_value::<ReadCursorPosition>(position_value.clone())

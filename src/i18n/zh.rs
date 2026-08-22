@@ -2,7 +2,7 @@
 //! string sets. The localized string values are intentionally non-ASCII;
 //! only identifiers and comments stay in English.
 
-use super::{Locale, TranslationDict};
+use super::{TranslationDict, UiLocale};
 
 /// R3 spec sync — Chinese error toast strings.
 fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
@@ -157,7 +157,7 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
 
 /// Build Chinese translation dictionary.
 pub fn chinese_translations() -> TranslationDict {
-    let mut dict = TranslationDict::new(Locale::Zh);
+    let mut dict = TranslationDict::new(UiLocale::Zh);
 
     dict.set("app.title", "inkson");
     dict.set("nav.dashboard", "主页");

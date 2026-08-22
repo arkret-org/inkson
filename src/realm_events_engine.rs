@@ -33,14 +33,14 @@
 use std::time::Duration;
 
 use garth::{
-    Backoff, ClientEvent, ClientProjector, DurableInboxStore, RunOptions, ScanCatchupOptions,
+    ClientEvent, ClientProjector, DurableInboxStore, RetrySchedule, RunOptions, ScanCatchupOptions,
     SyncLoopControl, TransportProvider,
 };
 
 use crate::config::MultiProfileConfig;
 
 /// Floor / ceiling for the failure backoff. Mirrors the account engine's
-/// human-scale recovery cadence. The doubling ladder is [`garth::Backoff`];
+/// human-scale recovery cadence. The doubling ladder is [`garth::RetrySchedule`];
 /// these are just its bounds, kept as `Duration` so the account and realm
 /// engines share one unit (F-10).
 const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
@@ -348,7 +348,7 @@ pub async fn run_realm_events_engine(
         start_profile_id,
         realm_id: realm_id.clone(),
     };
-    let mut restart_backoff = Backoff::new(BACKOFF_FLOOR, BACKOFF_CEILING);
+    let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     while provider.is_active() {
         let Some(checkpoint) = ctx
             .state_store
@@ -544,7 +544,7 @@ mod tests {
         )
         .unwrap();
         event.proofs.push(
-            arkret_sdk::Proof {
+            arkret_sdk::ProducerEventProof {
                 kind: "detached_jws".to_owned(),
                 verification_method: arkret_sdk::DidUrl::new(format!(
                     "{ACTOR_CONTROLLER}#{DEVICE_ID}"

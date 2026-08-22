@@ -92,7 +92,7 @@ fn private_strand_display_text_blanks_undecryptable_envelope() {
     // Envelope + no ctx must render blank rather than leaking the raw
     // envelope JSON through strand_body_display_text.
     assert_eq!(private_strand_display_text(None, Some(&envelope)), "");
-    let store = temp_state_store("private-strand-blank");
+    let store = isolated_store_for_tests("private-strand-blank");
     let ctx = MlsDecryptCtx {
         state_store: &store,
         realm_id: "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
@@ -109,7 +109,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
     // the builder must still render the plaintext.
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let strand = "ak:strand:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
-    let mut store = temp_state_store("private-strand-sidecar");
+    let mut store = isolated_store_for_tests("private-strand-sidecar");
     // The writer stores the JSON-serialized patch value (a bare string).
     store.save_private_plaintext(
         realm,
@@ -154,7 +154,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
 fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let strand = "ak:strand:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
-    let mut store = temp_state_store("private-strand-empty-sidecar");
+    let mut store = isolated_store_for_tests("private-strand-empty-sidecar");
     store.save_private_plaintext(realm, strand, KANBAN_ENCRYPTED_CONTENT_PATH, "\"\"");
     let ctx = MlsDecryptCtx {
         state_store: &store,
@@ -193,7 +193,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
     // own content with zero decryption).
     let realm = "ak:realm:ARuquux-GRSwGPPZ0lJor6JUmVSERFPzPWlj1mjx8JCX";
     let strand = "ak:strand:ARKSHgBichO7ZjwprTMf4UrKn7x1GHkl16zz6U4xm586";
-    let mut store = temp_state_store("card-builder-sidecar");
+    let mut store = isolated_store_for_tests("card-builder-sidecar");
     // The writer stores the JSON-serialized patch VALUE, i.e. the ContentBlock.
     store.save_private_plaintext(
         realm,
@@ -289,7 +289,7 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
         };
 
     // Locked: an envelope with no sidecar and no group to decrypt with.
-    let locked_store = temp_state_store("encrypted-card-locked");
+    let locked_store = isolated_store_for_tests("encrypted-card-locked");
     let locked_ctx = MlsDecryptCtx {
         state_store: &locked_store,
         realm_id: realm,
@@ -301,7 +301,7 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
     assert_eq!(locked.security_encrypted, Some(true));
 
     // Unlocked: the same envelope, now with the author's local plaintext.
-    let mut unlocked_store = temp_state_store("encrypted-card-unlocked");
+    let mut unlocked_store = isolated_store_for_tests("encrypted-card-unlocked");
     unlocked_store.save_private_plaintext(
         realm,
         strand,

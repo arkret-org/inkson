@@ -81,7 +81,10 @@ impl std::future::Future for BrowserTimeout {
 /// still active. Keeping this decision shared prevents an ended HTTP body from
 /// permanently killing a Signal or Realm rail, while profile/session/route
 /// cancellation still terminates immediately.
-pub(crate) fn next_reconnect_delay(active: bool, backoff: &mut garth::Backoff) -> Option<Duration> {
+pub(crate) fn next_reconnect_delay(
+    active: bool,
+    backoff: &mut garth::RetrySchedule,
+) -> Option<Duration> {
     active.then(|| backoff.next_delay())
 }
 
@@ -91,7 +94,7 @@ mod tests {
 
     #[test]
     fn reconnect_ladder_retries_active_engines_but_never_cancelled_ones() {
-        let mut backoff = garth::Backoff::new(Duration::from_secs(1), Duration::from_secs(4));
+        let mut backoff = garth::RetrySchedule::new(Duration::from_secs(1), Duration::from_secs(4));
         assert_eq!(
             next_reconnect_delay(true, &mut backoff),
             Some(Duration::from_secs(1))

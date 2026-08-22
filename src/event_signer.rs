@@ -58,7 +58,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signer as _, SigningKey};
 
-use crate::operation::{AuthoredEvent, EventProofAudience, ProofMode, current_proof_mode};
+use crate::operation::{Audience, AuthoredEvent, ProofMode, current_proof_mode};
 
 /// Errors produced by the active-write signing pipeline.
 #[derive(Debug, thiserror::Error)]
@@ -89,7 +89,7 @@ pub enum EventSignerError {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EventProofContext {
     pub domain: Option<String>,
-    pub audience: Option<EventProofAudience>,
+    pub audience: Option<Audience>,
     pub digest_suite: arkret_sdk::canonical::DigestSuite,
 }
 
@@ -103,7 +103,7 @@ impl EventProofContext {
         self
     }
 
-    pub fn with_audience(mut self, audience: EventProofAudience) -> Self {
+    pub fn with_audience(mut self, audience: Audience) -> Self {
         self.audience = Some(audience);
         self
     }
@@ -1140,7 +1140,7 @@ mod tests {
 
     use super::*;
     use crate::canonical::canonical_json_bytes;
-    use crate::operation::{EventProofAudience, TypedOperationBuilder, set_proof_mode};
+    use crate::operation::{Audience, TypedOperationBuilder, set_proof_mode};
 
     const TEST_REALM_ID: &str = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
@@ -1516,9 +1516,7 @@ mod tests {
 
         let context = EventProofContext::new()
             .with_domain("ak:trust_domain:server.example")
-            .with_audience(EventProofAudience::Single(
-                "did:web:server.example".to_owned(),
-            ));
+            .with_audience(Audience::Single("did:web:server.example".to_owned()));
         signer
             .sign_envelope_with_context(&mut event, context)
             .expect("sign");
@@ -1530,9 +1528,7 @@ mod tests {
         );
         assert_eq!(
             proof.audience,
-            Some(EventProofAudience::Single(
-                "did:web:server.example".to_owned()
-            ))
+            Some(Audience::Single("did:web:server.example".to_owned()))
         );
 
         assert_eq!(
@@ -1566,9 +1562,7 @@ mod tests {
         );
         let context = EventProofContext::new()
             .with_domain("did:web:server.example")
-            .with_audience(EventProofAudience::Single(
-                "did:web:server.example".to_owned(),
-            ))
+            .with_audience(Audience::Single("did:web:server.example".to_owned()))
             .with_digest_suite(arkret_sdk::canonical::DigestSuite::Blake3);
 
         signer

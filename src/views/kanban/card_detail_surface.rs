@@ -2557,7 +2557,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         let mut members = Vec::new();
                                                                         let mut agents = Vec::new();
                                                                         for row in &realm_member_rows {
-                                                                            if let Some(slug) = owned_agent_slug_for_row(row, owned_agent_slugs) {
+                                                                            if let Some(slug) = owned_agent_slug(row, owned_agent_slugs) {
                                                                                 agents.push((row, slug));
                                                                             } else {
                                                                                 members.push(row);

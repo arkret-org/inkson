@@ -877,7 +877,7 @@ pub fn validate_realm_history_content_scheme_for_profile(
     {
         anyhow::bail!(
             "{}: mls_rfc9420 requires history_access=since_join",
-            arkret_sdk::error::ReasonCode::HISTORY_ACCESS_REQUIRES_HISTORY_CAPABLE_SCHEME
+            arkret_sdk::error_codes::ReasonCode::HISTORY_ACCESS_REQUIRES_HISTORY_CAPABLE_SCHEME
         );
     }
     Ok(())
@@ -1537,7 +1537,7 @@ pub struct DeviceVerificationTranscript {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SignedDeviceVerificationProof {
     pub device_envelope: DeviceVerificationTranscript,
-    pub signature: arkret_sdk::Proof,
+    pub signature: arkret_sdk::ProducerEventProof,
 }
 
 impl SignedDeviceVerificationProof {

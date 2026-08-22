@@ -42,7 +42,7 @@ mod device_identity_proof_tests {
         let verification_method =
             arkret_sdk::DidUrl::new(signer.verification_method().to_owned()).unwrap();
         // Build the proof binding via the SDK's authoritative
-        // `Proof::canonical_binding_bytes` (which folds in the
+        // `ProducerEventProof::canonical_binding_bytes` (which folds in the
         // `context = "ak.event-proof-v1"` domain tag) — the SAME transcript both
         // the production signer and the verifier use, so this test can never drift
         // from the on-wire binding again.
@@ -50,7 +50,7 @@ mod device_identity_proof_tests {
             .unwrap()
             .with_timezone(&chrono::Utc);
         let did = arkret_sdk::DidFullId::new(actor_full_id.to_owned()).unwrap();
-        let mut proof = arkret_sdk::Proof {
+        let mut proof = arkret_sdk::ProducerEventProof {
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
             event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),

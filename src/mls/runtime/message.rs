@@ -1250,7 +1250,7 @@ pub(super) fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -
         .map(|error| {
             format!(
                 "{}: {error}",
-                arkret_sdk::error::ReasonCode::KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH
+                arkret_sdk::error_codes::ReasonCode::KEYPACKAGE_WELCOME_ENVELOPE_MISMATCH
             )
         })
 }

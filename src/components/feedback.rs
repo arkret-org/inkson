@@ -208,8 +208,8 @@ pub fn push_policy_deny_toast(
 }
 
 pub fn is_policy_deny_code(code: &str) -> bool {
-    code == arkret_sdk::error::ErrorCode::POLICY_DENIED
-        || code == arkret_sdk::error::ErrorCode::CAPABILITY_DENIED
+    code == arkret_sdk::error_codes::ErrorCode::POLICY_DENIED
+        || code == arkret_sdk::error_codes::ErrorCode::CAPABILITY_DENIED
         || matches!(
             code,
             "policy_blocked"

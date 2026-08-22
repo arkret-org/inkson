@@ -19,7 +19,7 @@
 //! * **Lifecycle via generation counter**: callers (login / logout / server-switch) bump the
 //!   engine's `generation` Signal; the loop notices on the next iteration and exits cleanly. A
 //!   fresh engine spawn picks up the next generation.
-//! * **Backoff**: transient network errors double the sleep via [`garth::Backoff`] (capped at
+//! * **Backoff**: transient network errors double the sleep via [`garth::RetrySchedule`] (capped at
 //!   `BACKOFF_CEILING`); a successful response resets it. Auth-expired errors stop the engine and
 //!   let the refresh poller
 //!   + login strand take over. Cursor-invalid errors clear the cursor and immediately retry as a
@@ -87,7 +87,7 @@ impl ConnectionState {
 }
 
 /// Failure-backoff bounds for the account subscribe loop. The doubling ladder
-/// itself is [`garth::Backoff`]; these are just its floor/ceiling. A 1s floor
+/// itself is [`garth::RetrySchedule`]; these are just its floor/ceiling. A 1s floor
 /// keeps recovery noticeable to the user; a 60s ceiling stops a wedged server
 /// from being hammered by retries. Kept as `Duration` so there is a single unit
 /// (F-10: the old seconds-vs-milliseconds split across engines is gone).

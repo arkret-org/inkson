@@ -343,7 +343,7 @@ fn projection_pending(error: &http_client::Error) -> bool {
                 && error.message().to_ascii_lowercase().contains("bottom")
         }
         http_client::Error::Api { status: 503, error } => {
-            error.code() == arkret_sdk::error::ErrorCode::FRONTIER_UNAVAILABLE
+            error.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
         }
         _ => false,
     }
@@ -353,7 +353,7 @@ fn limit_exceeded(error: &http_client::Error) -> bool {
     matches!(
         error,
         http_client::Error::Api { error, .. }
-            if error.code() == arkret_sdk::error::ErrorCode::LIMIT_EXCEEDED
+            if error.code() == arkret_sdk::error_codes::ErrorCode::LIMIT_EXCEEDED
     )
 }
 

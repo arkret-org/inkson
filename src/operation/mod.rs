@@ -15,10 +15,9 @@ use std::sync::{OnceLock, RwLock};
 
 pub use arkret_sdk::events::kinds::EventKind;
 pub use arkret_sdk::{
-    Audience as EventProofAudience, AuthoredEvent, CriticalExtension, Event, EventIntent,
-    EventRef as SemanticRef, EventRequirements, LatticeOp, LatticeOpType, Precondition, Predicate,
-    PredicateOp, ProducerEventProof as EventProof, ProjectedCellWrite, ProjectionEffect, ScopeRef,
-    SealBasis,
+    Audience, AuthoredEvent, CriticalExtension, Event, EventIntent, EventRef, EventRequirements,
+    LatticeOp, LatticeOpType, Precondition, Predicate, PredicateOp, ProducerEventProof,
+    ProjectedCellWrite, ProjectionEffect, ScopeRef, SealBasis,
 };
 use serde_json::Value;
 
@@ -544,7 +543,7 @@ impl TypedOperationBuilder {
         })
     }
 
-    pub fn refs(self, refs: Vec<SemanticRef>) -> Self {
+    pub fn refs(self, refs: Vec<EventRef>) -> Self {
         self.map_intent(|intent| Ok(intent.with_refs(refs)))
     }
 
@@ -594,7 +593,7 @@ pub trait EventExt {
     fn local_operation_id(&self) -> &str;
     fn local_target_ref(&self) -> Option<&str>;
     fn canonical_digest(&self, digest_suite: arkret_sdk::DigestSuite) -> anyhow::Result<String>;
-    fn require_proof(&self) -> anyhow::Result<&EventProof>;
+    fn require_proof(&self) -> anyhow::Result<&ProducerEventProof>;
 }
 
 /// Signing helper for an Event that has finished authoring.
@@ -656,7 +655,7 @@ impl EventExt for Event {
             .map_err(|err| anyhow::anyhow!("SDK Event digest failed: {err}"))
     }
 
-    fn require_proof(&self) -> anyhow::Result<&EventProof> {
+    fn require_proof(&self) -> anyhow::Result<&ProducerEventProof> {
         self.proofs
             .iter()
             .find_map(arkret_sdk::EventProof::as_producer)
