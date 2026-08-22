@@ -167,7 +167,7 @@ pub struct RenderedMention {
 pub fn render_actor_mention(
     subject_id: &str,
     claim_set_snapshot: &[arkret_models_identity::HandleClaim],
-    accepted_issuers: &[String],
+    handle_issuer_policy: &[arkret_sdk::identity::HandleIssuerPolicyEntry],
     context: Option<&str>,
     cached_handle: Option<&arkret_sdk::Handle>,
     display_name_at_time: Option<&str>,
@@ -184,15 +184,11 @@ pub fn render_actor_mention(
         };
     };
 
-    let accepted_issuers = accepted_issuers
-        .iter()
-        .filter_map(|issuer| arkret_sdk::DidCoreId::new(issuer.clone()).ok())
-        .collect::<Vec<_>>();
     let selection = PrimaryHandleSelectInput {
         subject_id: subject.as_str(),
         context,
         claim_set_snapshot,
-        accepted_issuers: &accepted_issuers,
+        handle_issuer_policy,
         // TODO(R3.2.1): resolve `metadata.primary_handle` at as_of via a
         // DID Document snapshot resolver (NoHolderPreferenceResolver
         // until the resolver is wired).

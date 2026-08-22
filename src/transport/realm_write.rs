@@ -19,7 +19,7 @@ use crate::event_builders::{
     build_realm_authority_basis_update_control_intent, build_realm_authority_reset_control_intent,
     build_realm_bootstrap_steps, build_realm_destroy_event,
     build_realm_owner_transfer_control_intent, build_realm_state_event, build_space_create_event,
-    build_space_lifecycle_event, parse_realm_bootstrap_members,
+    build_space_lifecycle_event, parse_realm_bootstrap_members, parse_wire_enum,
     recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
@@ -424,11 +424,10 @@ pub async fn set_realm_policy_events(
         realm_id,
         actor_id,
         digest_suite,
-        arkret_sdk::StatePayload {
-            value: Some(serde_json::to_value(join_rule)?),
-            state: None,
-            reason: None,
-        },
+        arkret_sdk::RealmJoinRulePayload::new(parse_wire_enum::<arkret_sdk::RealmJoinRuleValue>(
+            "join_rule",
+            join_rule,
+        )?),
     )?];
     if tighten_history_access {
         events.push(build_realm_state_event::<
