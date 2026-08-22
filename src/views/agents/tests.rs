@@ -315,7 +315,6 @@ mod personal_agent_tests {
             .unwrap(),
             requested_scope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
                 .unwrap(),
-            pcr_recovery: arkret_sdk::AgentProvisionPcrRecovery::default(),
             pairing_request_id: arkret_sdk::OpaqueLocalId::new("0197-req").unwrap(),
             pairing_code: Some("123456".to_owned()),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
@@ -367,7 +366,6 @@ mod personal_agent_tests {
             .unwrap(),
             requested_scope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
                 .unwrap(),
-            pcr_recovery: arkret_sdk::AgentProvisionPcrRecovery::default(),
             pairing_request_id: arkret_sdk::OpaqueLocalId::new("0197-req").unwrap(),
             pairing_code: Some("123456".to_owned()),
             expires_at: chrono::DateTime::parse_from_rfc3339("2026-06-26T00:00:00.000Z")
@@ -506,7 +504,6 @@ mod personal_agent_tests {
             "controller_id": controller_actor_id,
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
-            "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
             "pairing_expires_at": expires_at,
@@ -689,7 +686,6 @@ mod personal_agent_tests {
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "status": "active",
             "runtime_state": "pending_runtime_key",
-            "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000123Z",
@@ -735,7 +731,6 @@ mod personal_agent_tests {
             "controller_id": controller_actor_id,
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
-            "pcr_recovery": {"status": "pending"},
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000Z",

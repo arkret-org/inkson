@@ -378,8 +378,6 @@ mod directory_refresh_tests {
                     "did:web:agents.example:summary#managed-controller",
                 )
                 .unwrap(),
-                pcr_recovery:
-                    arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Pending,
                 requested_scope: scope,
                 requested_scope_digest: scope_digest,
                 pairing_request_id: matches!(
@@ -428,27 +426,6 @@ mod directory_refresh_tests {
             principal_control_realm_id: key_state.principal_control_realm_id,
             controller_authorization_ref: key_state.controller_authorization_ref,
             requested_scope_digest: key_state.requested_scope_digest,
-            pcr_recovery: arkret_models_collaboration::agent_operations::AgentPcrRecoveryState::Ready {
-                backup_id: arkret_sdk::BackupId::new(
-                    "ak:backup:01964137-0000-7000-8000-000000000002".to_owned(),
-                )
-                .unwrap(),
-                series_id: arkret_sdk::BackupSeriesId::new(
-                    "ak:backup_series:01964137-0000-7000-8000-000000000003".to_owned(),
-                )
-                .unwrap(),
-                series_seq: 0,
-                managed_frontier_ref: arkret_sdk::ManagedFrontierRef {
-                    frontier_digest: arkret_sdk::Hash::new(
-                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    )
-                    .unwrap(),
-                    seal_ref:
-                        "ak:seal:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                            .to_owned(),
-                    mls_epoch: 0,
-                },
-            },
             pairing_mode: mode,
             pairing_request_id: arkret_sdk::OpaqueLocalId::new("pairing-request-2").unwrap(),
             pairing_code: Some("fresh-code".to_owned()),
@@ -480,7 +457,6 @@ mod directory_refresh_tests {
             AgentRuntimeState::PendingRuntimeKey
         );
         assert_eq!(key_state.pairing_code.as_deref(), Some("fresh-code"));
-        assert!(key_state.pcr_recovery.is_ready());
     }
 
     #[test]
@@ -581,7 +557,6 @@ fn apply_renewed_pairing(
             return Err("replacement pairing response conflicts with the loaded Agent key state");
         }
     };
-    key_state.pcr_recovery = outcome.pcr_recovery.clone();
     key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
     key_state.pairing_mode = Some(outcome.pairing_mode);
     key_state.pairing_code = outcome.pairing_code.clone();
