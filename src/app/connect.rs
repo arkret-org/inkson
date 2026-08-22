@@ -880,9 +880,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 };
                 let current_account = active_account.peek().clone();
                 let did_cache_snapshot = ctx.did_cache.peek().clone();
-                let accepted_account = match accepted_account_context(
+                let mut accepted_account = match accepted_account_context(
                     &authed,
-                    canonical_principal_id,
+                    canonical_principal_id.clone(),
                     description,
                     &did_cache_snapshot,
                     current_account.as_ref(),
@@ -902,25 +902,58 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         return;
                     }
                 };
-                let canonical_actor = accepted_account.full_id().to_string();
-                active_account.set(Some(accepted_account.clone()));
-                let authenticated_config = ClientConfig::authenticated(
-                    accepted_account.clone(),
-                    session_credential.clone(),
-                );
-                config_store.write().save(authenticated_config);
-                let mut profiles = config_store.read().load_profiles();
-                if let Err(error) =
-                    profiles.upsert_and_activate(crate::config::AccountProfile::new(
-                        accepted_account.clone(),
-                        session_credential.clone(),
-                    ))
-                {
-                    tracing::error!(?error, "active account profile update rejected");
+                if accepted_account.principal_id() != &canonical_principal_id {
+                    invalidate_bootstrap_session(
+                        &session,
+                        "accepted principal resolution does not match the authenticated principal",
+                        session_boot_state,
+                        sync_bootstrap_complete,
+                    );
                     return;
                 }
-                if let Err(error) = config_store.write().save_profiles(&profiles) {
-                    tracing::error!(?error, "active account profile persist failed");
+                let canonical_actor = accepted_account.full_id().to_string();
+                let mut profiles = config_store.read().load_profiles();
+                let profile_id =
+                    match profiles.upsert_and_activate(crate::config::AccountProfile::new(
+                        accepted_account.clone(),
+                        session_credential.clone(),
+                    )) {
+                        Ok(profile_id) => profile_id,
+                        Err(error) => {
+                            invalidate_bootstrap_session(
+                                &session,
+                                format!("accepted account profile update rejected: {error}"),
+                                session_boot_state,
+                                sync_bootstrap_complete,
+                            );
+                            return;
+                        }
+                    };
+                accepted_account.profile_id = profile_id;
+                {
+                    let mut store = config_store.write();
+                    store.save(ClientConfig::authenticated(
+                        accepted_account.clone(),
+                        session_credential.clone(),
+                    ));
+                    if let Some(error) = store.persist_error() {
+                        invalidate_bootstrap_session(
+                            &session,
+                            format!("accepted account config persist failed: {error}"),
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
+                        return;
+                    }
+                    if let Err(error) = store.save_profiles(&profiles) {
+                        invalidate_bootstrap_session(
+                            &session,
+                            format!("accepted account profile persist failed: {error}"),
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
+                        return;
+                    }
                 }
                 let account_changed =
                     match state_store.write().switch_active_account(&accepted_account) {
@@ -935,15 +968,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             return;
                         }
                     };
-                if canonical_actor != actor {
-                    invalidate_bootstrap_session(
-                        &session,
-                        "account viewer returned a different principal than the active authority",
-                        session_boot_state,
-                        sync_bootstrap_complete,
-                    );
-                    return;
-                }
+                active_account.set(Some(accepted_account.clone()));
                 if account_changed {
                     account_primary_handle.set(String::new());
                     personal_handles.set(Vec::new());
