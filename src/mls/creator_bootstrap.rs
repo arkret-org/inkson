@@ -198,7 +198,6 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                 &mut store,
                 realm_id,
                 actor_id,
-                device_id,
                 summary.as_ref(),
             )
             .map_err(|error| format!("building ak.mls.genesis event failed: {error}"))?

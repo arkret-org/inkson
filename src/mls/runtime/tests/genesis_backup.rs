@@ -39,16 +39,11 @@ fn build_mls_genesis_payload_has_required_fields() {
         .unwrap()
         .expect("creator snapshot should be created");
     let binding = genesis_governance_binding(&summary.group_id);
-    let typed_payload = build_mls_genesis_payload(&summary, actor, device, &binding).unwrap();
+    let typed_payload = build_mls_genesis_payload(&summary, &binding).unwrap();
     let payload = serde_json::to_value(&typed_payload).unwrap();
 
     // epoch MUST be the literal 0 the schema/reducer require.
     assert_eq!(payload["epoch"].as_u64(), Some(0));
-    assert_eq!(
-        payload["creator_principal_id"].as_str(),
-        Some("ak:did_core:web:alice.example")
-    );
-    assert_eq!(payload["creator_device_id"].as_str(), Some(device));
     assert_eq!(
         payload["mls_group_id"].as_str(),
         Some(summary.group_id.as_str())

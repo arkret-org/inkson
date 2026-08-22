@@ -181,7 +181,6 @@ pub(crate) fn build_creator_mls_genesis_event(
     state_store: &mut LocalStateStore,
     realm_id: &str,
     actor_id: &str,
-    device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_effective_scope(
@@ -189,7 +188,6 @@ pub(crate) fn build_creator_mls_genesis_event(
         realm_id,
         None,
         actor_id,
-        device_id,
         fresh_summary,
     )
 }
@@ -199,7 +197,6 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_effective_scope_with_binding(
@@ -207,7 +204,6 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
         realm_id,
         circle_id,
         actor_id,
-        device_id,
         fresh_summary,
         None,
     )
@@ -218,7 +214,6 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    device_id: &str,
     fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
@@ -272,13 +267,8 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
             "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
         );
     }
-    let payload = crate::mls::runtime::build_mls_genesis_payload(
-        summary,
-        actor_id,
-        device_id,
-        &governance_binding,
-    )
-    .map_err(|err| err.user_message())?;
+    let payload = crate::mls::runtime::build_mls_genesis_payload(summary, &governance_binding)
+        .map_err(|err| err.user_message())?;
     let event = crate::operation::ak_ops::mls_genesis_with_governance(
         realm_id,
         actor_id,

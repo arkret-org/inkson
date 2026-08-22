@@ -97,8 +97,10 @@ mod tests {
     fn commit_preconditions_bind_both_cas_predecessors_by_composite_subject() {
         let previous_binding = governance_binding();
         let scope = arkret_sdk::ScopeRef::Realm {
-            realm_id: arkret_sdk::RealmId::new("ak:realm:AYw-PHWIOTuZhm-EenZx-cCbOziC8pNCrh10oRfqiEmN")
-                .unwrap(),
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AYw-PHWIOTuZhm-EenZx-cCbOziC8pNCrh10oRfqiEmN",
+            )
+            .unwrap(),
         };
         let group_id = scope.canonical_mls_group_id().unwrap();
         let preconditions =

@@ -310,8 +310,6 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
 /// builder stamps on SDK events.
 pub fn build_mls_genesis_payload(
     summary: &InitialMlsSnapshotSummary,
-    actor_id: &str,
-    device_id: &str,
     governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<arkret_sdk::MlsGenesisPayload, MlsRuntimeError> {
     let group_info_digest = crate::canonical::sha256_digest(&summary.group_info_bytes);
@@ -323,12 +321,6 @@ pub fn build_mls_genesis_payload(
             .map_err(|error| MlsRuntimeError::Genesis(format!("invalid MLS group id: {error}")))?,
         effective_scope: governance_binding.effective_scope().clone(),
         epoch: arkret_sdk::MlsGenesisEpoch,
-        creator_principal_id: crate::mls_api_helpers::principal_core_id(actor_id).map_err(
-            |error| MlsRuntimeError::Genesis(format!("invalid creator principal id: {error}")),
-        )?,
-        creator_device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).map_err(|error| {
-            MlsRuntimeError::Genesis(format!("invalid creator device id: {error}"))
-        })?,
         cipher_suite: arkret_sdk::NonEmptyString::new(summary.cipher_suite.clone()).map_err(
             |error| MlsRuntimeError::Genesis(format!("invalid MLS cipher suite: {error}")),
         )?,

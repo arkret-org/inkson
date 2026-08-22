@@ -2281,7 +2281,6 @@ async fn ensure_mls_genesis_frontier_for_invite(
             &mut store,
             realm_id,
             actor_id,
-            device_id,
             Some(&summary),
         )
         .map_err(|err| anyhow::anyhow!(err))?

@@ -531,11 +531,8 @@ async fn publish_recovery_policy(
     };
     recovery_payload.validate()?;
     let payload = arkret_sdk::PolicySetStatePayload {
-        policy_id: arkret_sdk::NonEmptyString::new(recovery_payload.policy_id.as_str().to_owned())
-            .map_err(anyhow::Error::msg)?,
-        value: Some(serde_json::to_value(recovery_payload.value)?),
-        state: None,
-        reason: None,
+        policy_id: recovery_payload.policy_id,
+        value: arkret_sdk::PolicyDocument::RecoveryPolicy(recovery_payload.value),
     };
     let event = crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::PolicySet>(
         principal_control_realm_id.to_string(),

@@ -429,7 +429,6 @@ pub(crate) async fn bootstrap_provisioned_agent(
                 &mut store,
                 realm_id,
                 agent_id,
-                &device_id,
                 Some(&summary),
             )
             .map_err(anyhow::Error::msg)?

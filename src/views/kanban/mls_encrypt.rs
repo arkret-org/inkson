@@ -284,18 +284,11 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
             realm_id,
             None,
             actor_id,
-            device_id,
             fresh_summary.as_ref(),
             sidecar.binding.clone(),
         )?
     } else {
-        build_creator_mls_genesis_event(
-            state_store,
-            realm_id,
-            actor_id,
-            device_id,
-            fresh_summary.as_ref(),
-        )?
+        build_creator_mls_genesis_event(state_store, realm_id, actor_id, fresh_summary.as_ref())?
     };
     let snapshot = state_store
         .mls_snapshot_for_scope(&effective_scope)

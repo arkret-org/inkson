@@ -530,10 +530,6 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     );
     assert_eq!(genesis.kind().as_str(), "ak.mls.genesis");
     assert_eq!(genesis.payload()["epoch"].as_u64(), Some(0));
-    assert_eq!(
-        genesis.payload()["creator_principal_id"].as_str(),
-        Some(actor_id.as_str())
-    );
     assert!(genesis.payload().contains_key("governance_binding"));
     assert_registered_payload_valid(&genesis);
 }
