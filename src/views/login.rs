@@ -350,13 +350,29 @@ pub fn LoginPanel(
         let result = finish_oidc_callback(callback_device, state_store_write).await;
         match result {
             Ok(OidcCallbackOutcome::Login(completed)) => {
-                let principal_server_url =
-                    normalize_server_url(completed.account.server_url.as_str());
-                let actor = completed.account.full_id().to_string();
+                let mut account = completed.account.clone();
+                let mut profiles = config_store.read().load_profiles();
+                let profile_id =
+                    match profiles.upsert_and_activate(crate::config::AccountProfile::new(
+                        account.clone(),
+                        completed.session_credential.clone(),
+                    )) {
+                        Ok(profile_id) => profile_id,
+                        Err(error) => {
+                            auth_status.set(format!(
+                                "Could not prepare the accepted account profile: {error}"
+                            ));
+                            is_busy.set(false);
+                            return;
+                        }
+                    };
+                account.profile_id = profile_id;
+                let principal_server_url = normalize_server_url(account.server_url.as_str());
+                let actor = account.full_id().to_string();
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                 let prepared_keys = match prepare_completed_login_dpop_key(
                     secure_store.as_ref(),
-                    &completed.account,
+                    &account,
                     completed.pending_device_id.as_str(),
                     &completed.dpop_device_key,
                 )
@@ -371,63 +387,63 @@ pub fn LoginPanel(
                         return;
                     }
                 };
-                let mut persist_error = None::<String>;
                 {
-                    let mut store = state_store_write.write();
-                    if let Err(error) = commit_completed_login_dpop_key(
-                        &mut store,
-                        secure_store.as_ref(),
-                        &completed.account,
-                        &completed.dpop_device_key,
-                        prepared_keys,
-                    ) {
-                        persist_error = Some(format!(
-                            "Could not persist the returning-device session key: {error}"
+                    let mut store = config_store.write();
+                    store.save(crate::config::ClientConfig::authenticated(
+                        account.clone(),
+                        completed.session_credential.clone(),
+                    ));
+                    if let Some(error) = store.persist_error() {
+                        auth_status.set(format!(
+                            "Could not persist the accepted account configuration: {error}"
                         ));
-                    } else {
-                        if let Some(handle) = completed.personal_handle.as_deref() {
-                            store.set_primary_handle(handle);
-                        }
-                        store.set_session_grant(Some(completed.session_grant.clone()));
-                        if let Err(error) =
-                            crate::identity::account_auth::clear_account_handoff_grant(
-                                &completed.consumed_handoff,
-                            )
-                        {
-                            persist_error = Some(format!(
-                                "Could not clear the consumed account handoff: {error}"
-                            ));
-                        } else if let Err(error) =
-                            crate::identity::account_auth::clear_prepared_returning_session_request(
-                                &completed.consumed_handoff,
-                            )
-                        {
-                            persist_error = Some(format!(
-                                "Could not clear the completed session replay checkpoint: {error}"
-                            ));
-                        } else if let Err(error) = store.set_pending_account_handoff(None) {
-                            persist_error = Some(format!(
-                                "Could not clear the completed account handoff checkpoint: {error}"
-                            ));
-                        }
+                        is_busy.set(false);
+                        return;
+                    }
+                    if let Err(error) = store.save_profiles(&profiles) {
+                        auth_status.set(format!(
+                            "Could not persist the accepted account profile: {error}"
+                        ));
+                        is_busy.set(false);
+                        return;
                     }
                 }
-                if let Some(error) = persist_error {
-                    auth_status.set(error);
+                if let Err(error) = promote_completed_login_state(
+                    &mut state_store_write.write(),
+                    secure_store.as_ref(),
+                    &account,
+                    &completed.dpop_device_key,
+                    prepared_keys,
+                    completed.personal_handle.as_deref(),
+                    completed.session_grant.clone(),
+                ) {
+                    auth_status.set(format!("Could not commit the accepted account: {error}"));
                     is_busy.set(false);
                     return;
                 }
+                if let Err(error) = crate::identity::account_auth::clear_account_handoff_grant(
+                    &completed.consumed_handoff,
+                ) {
+                    tracing::warn!(
+                        %error,
+                        "clear consumed account handoff after accepted account commit failed"
+                    );
+                }
+                if let Err(error) =
+                    crate::identity::account_auth::clear_prepared_returning_session_request(
+                        &completed.consumed_handoff,
+                    )
+                {
+                    tracing::warn!(
+                        %error,
+                        "clear returning-session replay checkpoint after accepted account commit failed"
+                    );
+                }
+                active_account.set(Some(account.clone()));
                 base_url.set(principal_server_url.clone());
                 principal_id.set(actor.clone());
-                device_id.set(completed.account.device_id.to_string());
+                device_id.set(account.device_id.to_string());
                 token.set(completed.session_credential.clone());
-                persist_config(
-                    config_store,
-                    completed.account.server_url.to_string(),
-                    completed.account.full_id().to_string(),
-                    completed.account.device_id.to_string(),
-                    completed.session_credential.clone(),
-                );
                 auth_status.set("Signed in on this authorized device.".to_owned());
                 on_login.call(());
             }
@@ -1266,6 +1282,30 @@ pub(crate) fn commit_completed_login_dpop_key(
     Ok(())
 }
 
+fn promote_completed_login_state(
+    store: &mut LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    account: &crate::config::ActiveAccountContext,
+    record: &crate::state::DpopDeviceKeyRecord,
+    prepared: PreparedCompletedLoginKeys,
+    personal_handle: Option<&str>,
+    session_grant: PersistedSessionGrant,
+) -> Result<(), String> {
+    commit_completed_login_dpop_key(store, secure_store, account, record, prepared)
+        .map_err(|error| format!("persist returning-device session key: {error}"))?;
+    if let Some(handle) = personal_handle {
+        store.set_primary_handle(handle);
+    }
+    store.set_session_grant(Some(session_grant));
+    store
+        .set_pending_account_handoff(None)
+        .map_err(|error| format!("clear completed account handoff checkpoint: {error}"))?;
+    store
+        .switch_active_account(account)
+        .map_err(|error| format!("activate accepted account namespace: {error}"))?;
+    Ok(())
+}
+
 /// Compute the value of the `session-status` testid. The four states
 /// the cotest harness asserts against:
 ///
@@ -2026,7 +2066,7 @@ mod tests {
         let full_id = arkret_sdk::DidFullId::new(full_id.to_owned()).unwrap();
         let authority = arkret_sdk::PrincipalAuthorityKey::new(
             arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
-            arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );
         crate::config::ActiveAccountContext::new(
             "ak:profile:test".to_owned(),
@@ -2449,7 +2489,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completed_login_dpop_key_preserves_returning_account_key_material() {
+    async fn completed_login_promotes_verified_authority_and_preserves_device_key() {
         let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let _signer = crate::event_signer::ActiveSignerTestGuard::replace(None);
         let mut store = crate::state::isolated_store_for_tests("completed-login-dpop-key");
@@ -2457,6 +2497,7 @@ mod tests {
         let device = "ak:device:01964137-0000-7000-8000-000000000001";
         let account = test_active_account("did:web:alice.example", device);
         let pending_device = "ak:device:01964137-0000-7000-8000-000000000002";
+        let pending_device_id = arkret_sdk::DeviceId::new(pending_device.to_owned()).unwrap();
         let old_seed = [3_u8; 32];
         let new_record = dpop_record_for_seed([7_u8; 32]);
 
@@ -2468,6 +2509,7 @@ mod tests {
         user_store
             .save_signing_seed(&secure_store, &old_seed)
             .expect("old account seed");
+        store.begin_pending_login(&pending_device_id, Some(&new_record.jkt));
 
         let prepared =
             prepare_completed_login_dpop_key(&secure_store, &account, pending_device, &new_record)
@@ -2477,9 +2519,28 @@ mod tests {
             store.active_principal_id().is_none(),
             "fallible secure preparation must not switch the public account"
         );
-        store.promote_accepted_context_for_test(account.full_id());
-        commit_completed_login_dpop_key(&mut store, &secure_store, &account, &new_record, prepared)
-            .expect("commit completed login dpop");
+        let mut grant = dummy_grant();
+        grant.principal_id = account.authority.principal_id.clone();
+        grant.device_id = account.device_id.clone();
+        promote_completed_login_state(
+            &mut store,
+            &secure_store,
+            &account,
+            &new_record,
+            prepared,
+            Some("alice"),
+            grant.clone(),
+        )
+        .expect("promote completed login");
+
+        assert_eq!(store.active_authority(), Some(account.authority.clone()));
+        assert_eq!(
+            store.known_profile_id_for_authority(&account.authority),
+            Some(account.profile_id.clone())
+        );
+        assert_eq!(store.load().primary_handle, "alice");
+        assert_eq!(store.session_grant(), Some(grant));
+        assert!(store.pending_login().is_none());
 
         let loaded_seed = user_store
             .load_signing_seed(&secure_store)
