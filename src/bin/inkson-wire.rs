@@ -328,7 +328,6 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
                 .context("construct proposal placeholder digest")?,
             created_at: received_at,
             jws: String::new(),
-            extra: Default::default(),
         },
     };
     let signing_bytes = member

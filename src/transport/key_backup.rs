@@ -222,7 +222,7 @@ impl crate::transport::TransportClient {
     }
 
     /// 6.3 — submit a recovery proof (e.g. from
-    /// [`crate::recovery_proof::build_principal_signing_proof`]) for a pending
+    /// signed by the recovering device) for a pending
     /// session. `body` is `{ "proof": <proof> }`.
     pub async fn submit_recovery_proof(
         &self,
@@ -234,63 +234,6 @@ impl crate::transport::TransportClient {
                 &format!("/_arkret/root/identity/recovery-sessions/{recovery_session_id}/proofs"),
                 body,
             )
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    pub async fn get_recovery_session(
-        &self,
-        recovery_session_id: &str,
-    ) -> anyhow::Result<arkret_sdk::RecoverySessionState> {
-        self.sdk_http_client()?
-            .get(&format!(
-                "/_arkret/root/identity/recovery-sessions/{recovery_session_id}"
-            ))
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
-    /// AKP B-C / spec head 37ce729 — `LIST?series_id=` query path the
-    /// recovery strand uses to rebuild a backup series by sequence. When
-    /// `series_id` is `None` and `backup_kind` is `None`, this lists all
-    /// key backups.
-    ///
-    /// Soland P2 (aa76b91) added the `?series_id=` + `?backup_kind=`
-    /// query parameters; the chain reconstruction MUST decrypt only
-    /// from the tail and surface `backup_frontier_stale` /
-    /// `backup_post_reset_stale` errors per AKP B-C §3.3.
-    ///
-    /// TODO(P3-impl): the deep series-chain decryption / frontier
-    /// validation lives in `key_backup` / `recovery_crypto` and is out
-    /// of scope for the wire-contract pass.
-    pub async fn list_key_backups_by_series(
-        &self,
-        series_id: Option<&str>,
-        backup_kind: Option<&str>,
-    ) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
-        let series_id = series_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| arkret_sdk::BackupSeriesId::new(value.to_owned()))
-            .transpose()
-            .map_err(|err| anyhow::anyhow!("invalid backup series id: {err}"))?;
-        let backup_kind = backup_kind
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| match value {
-                "secret_storage" => Ok(arkret_sdk::BackupKind::SecretStorage),
-                "mls_history" => Ok(arkret_sdk::BackupKind::MlsHistory),
-                other => Err(anyhow::anyhow!("unknown backup_kind `{other}`")),
-            })
-            .transpose()?;
-        let query = arkret_sdk::KeyBackupsListQuery {
-            series_id,
-            backup_kind,
-            cursor: None,
-            limit: None,
-        };
-        self.sdk_http_client()?
-            .list_key_backups(&query)
             .await
             .map_err(anyhow::Error::from)
     }

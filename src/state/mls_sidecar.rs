@@ -492,73 +492,6 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// All local-authoritative `history_secret`s for an exact scope/group, as
-    /// `(epoch, secret)`
-    /// pairs ordered by epoch. Used by the tier-3 history decrypt retry to
-    /// try every granted epoch key against a pre-join ciphertext.
-    pub fn history_secrets_for(
-        &self,
-        effective_scope: &arkret_sdk::ScopeRef,
-        group_id: &str,
-    ) -> Vec<(u64, Vec<u8>)> {
-        let Ok(scope_group_key) = mls_scope_snapshot_key_for_group(effective_scope, group_id)
-        else {
-            return Vec::new();
-        };
-        let mut merged: BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret> =
-            crate::secure_key_store::load_history_secrets(&scope_group_key).unwrap_or_default();
-        if let Some(inline) = self.load().history_secrets.get(&scope_group_key) {
-            for (epoch, secret) in inline {
-                // The in-process copy is the value most recently accepted by
-                // this client. It must override a stale durable value when the
-                // preceding secure-store write failed after an older value had
-                // already been persisted.
-                merged.insert(*epoch, secret.clone());
-            }
-        }
-        merged
-            .into_iter()
-            .filter_map(|(epoch, record)| {
-                let secret = arkret_sdk::base64url_decode(record.secret_b64u.as_bytes()).ok()?;
-                Some((epoch, secret))
-            })
-            .collect()
-    }
-
-    /// Closed records eligible for portable `mls_history` backup. External
-    /// candidates never enter this map, so the SDK packer cannot be fed a
-    /// response/RRK/portable candidate through this boundary.
-    pub(crate) fn local_authoritative_history_records_for(
-        &self,
-        effective_scope: &arkret_sdk::ScopeRef,
-        group_id: &str,
-    ) -> Vec<arkret_sdk::LocalAuthoritativeHistorySecret> {
-        let Ok(history_scope) =
-            arkret_sdk::HistoryEffectiveScope::try_from(effective_scope.clone())
-        else {
-            return Vec::new();
-        };
-        let Ok(scope_group_key) = mls_scope_snapshot_key_for_group(effective_scope, group_id)
-        else {
-            return Vec::new();
-        };
-        let mut merged =
-            crate::secure_key_store::load_history_secrets(&scope_group_key).unwrap_or_default();
-        if let Some(inline) = self.load().history_secrets.get(&scope_group_key) {
-            for (epoch, record) in inline {
-                merged.insert(*epoch, record.clone());
-            }
-        }
-        merged
-            .into_values()
-            .filter(|record| {
-                record.effective_scope == history_scope
-                    && record.mls_group_id == group_id
-                    && record.validate().is_ok()
-            })
-            .collect()
-    }
-
     /// The local-authoritative `history_secret` for an exact
     /// `(effective_scope, group_id, epoch)`, if any.
     pub fn history_secret_for(
@@ -688,27 +621,6 @@ impl LocalStateStore {
         // The decrypted-plaintext cache is keyed to ciphertext minted under
         // the dropped group state; it stays readable history (same lifetime
         // policy as the author sidecar) and is NOT wiped here.
-        if dropped_snapshot || dropped_recovery {
-            let _ = self.flush();
-            self.persist_e2ee_plaintext_cache_if_ready();
-        }
-    }
-
-    pub fn drop_mls_snapshot_for_scope_and_group(
-        &mut self,
-        effective_scope: &arkret_sdk::ScopeRef,
-        group_id: &str,
-    ) {
-        self.absorb_mls_receive_overlay();
-        let Ok(key) = mls_scope_snapshot_key_for_group(effective_scope, group_id) else {
-            return;
-        };
-        let dropped_snapshot = self.cached.mls_snapshots.remove(&key).is_some();
-        let dropped_recovery = self
-            .cached
-            .mls_receive_recovery_snapshots
-            .remove(&key)
-            .is_some();
         if dropped_snapshot || dropped_recovery {
             let _ = self.flush();
             self.persist_e2ee_plaintext_cache_if_ready();

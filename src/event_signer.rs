@@ -176,9 +176,6 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
                 &signature, None,
             )
             .map_err(|error| WireError::Protocol(error.to_string()))?,
-            // `seal.schema.json#/$defs/signature` is `additionalProperties:
-            // true`; inkson emits no extension members.
-            extra: Default::default(),
         })
     }
 }
@@ -687,18 +684,6 @@ pub fn install_device_signer_from_material(
     install_device_signer(signer)
 }
 
-pub fn install_device_signer_from_material_for_device(
-    material: &crate::secure_key_store::SigningSeedMaterial,
-    device_id: &str,
-) -> Arc<InksonEventSigner> {
-    let signer = Arc::new(build_ed25519_device_signer(
-        material.seed,
-        material.local_signing_did.clone(),
-        device_id,
-    ));
-    install_device_signer(signer)
-}
-
 fn install_device_signer(signer: Arc<InksonEventSigner>) -> Arc<InksonEventSigner> {
     let installed = install_active_signer(signer.clone());
     crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
@@ -707,19 +692,6 @@ fn install_device_signer(signer: Arc<InksonEventSigner>) -> Arc<InksonEventSigne
     } else {
         active_signer().unwrap_or(signer)
     }
-}
-
-/// Make `seed` the active session-device signer, replacing any stale signer.
-///
-/// Separated-lifecycle boot paths pass the durable device identity signing seed
-/// used for events, device authorization, KeyPackage claims, and MLS Welcome
-/// claim envelopes. Grant-binding (DPoP) seeds have a separate lifecycle and
-/// are installed in the auth DPoP store instead.
-pub fn activate_device_signer_from_seed(
-    seed: [u8; 32],
-    persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
-) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
-    activate_device_signer_from_seed_for_device(seed, persist_store, None)
 }
 
 pub fn activate_device_signer_from_seed_for_device(
@@ -767,15 +739,6 @@ pub fn activate_device_signer_from_seed_for_device(
     };
     crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
     Ok(active)
-}
-
-/// Decode a base64url-no-pad Ed25519 seed, then install it as the active
-/// session-device signer.
-pub fn activate_device_signer_from_seed_b64url(
-    seed_b64url: &str,
-    persist_store: Option<&dyn crate::secure_key_store::SecureKeyStore>,
-) -> Result<Arc<InksonEventSigner>, anyhow::Error> {
-    activate_device_signer_from_seed_b64url_for_device(seed_b64url, persist_store, None)
 }
 
 pub fn activate_device_signer_from_seed_b64url_for_device(
@@ -1012,29 +975,6 @@ impl Drop for ActiveSignerTestGuard {
 pub fn should_auto_sign() -> bool {
     let mode = current_proof_mode();
     matches!(mode, ProofMode::RealEd25519 | ProofMode::ExternalSigner) && active_signer().is_some()
-}
-
-/// Sign `event` with the currently-installed active signer, returning
-/// `MissingSigner` when none is installed. The submit guard calls this
-/// just before sending to the wire so envelopes built with placeholder
-/// dev proofs (or no proofs at all) get a real signature attached when
-/// the proof mode expects one.
-pub fn sign_with_active(event: &mut AuthoredEvent) -> Result<(), EventSignerError> {
-    let signer = active_signer().ok_or(EventSignerError::MissingSigner {
-        mode: current_proof_mode().label_en(),
-    })?;
-    signer.sign_envelope(event)
-}
-
-/// Sign `event` with the active signer and explicit EventProof context.
-pub fn sign_with_active_context(
-    event: &mut AuthoredEvent,
-    context: EventProofContext,
-) -> Result<(), EventSignerError> {
-    let signer = active_signer().ok_or(EventSignerError::MissingSigner {
-        mode: current_proof_mode().label_en(),
-    })?;
-    signer.sign_envelope_with_context(event, context)
 }
 
 pub fn sign_sdk_event_with_active_context(
@@ -1675,81 +1615,6 @@ mod tests {
             format!("{did}#device")
         );
         assert!(should_auto_sign());
-    }
-
-    #[test]
-    fn activate_device_signer_from_seed_b64url_persists_and_replaces_stale_signer() {
-        // Seed persistence resolves its namespace through the process-global
-        // device-seed scope; the scope guard comes before the signer guard,
-        // matching the crate-wide lock order.
-        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
-        let _g = reset();
-        let user_store = crate::secure_key_store::UserLocalStore::new(
-            arkret_sdk::PrincipalAuthorityKey::new(
-                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-            ),
-            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
-                .unwrap(),
-        )
-        .unwrap();
-        user_store.activate();
-        let stale = Arc::new(build_ed25519_signer([8u8; 32], "did:web:stale.example"));
-        assert!(install_active_signer(stale));
-
-        let seed = [12u8; 32];
-        let seed_b64url = URL_SAFE_NO_PAD.encode(seed);
-        let verifying = SigningKey::from_bytes(&seed).verifying_key();
-        let did = crate::identity::did_key::did_key_from_verifying_key(&verifying);
-        let store = crate::secure_key_store::MemorySecureKeyStore::new();
-
-        let signer = activate_device_signer_from_seed_b64url(&seed_b64url, Some(&store)).unwrap();
-
-        assert_eq!(signer.signer_did(), did);
-        assert_eq!(
-            active_signer()
-                .expect("active signer")
-                .verification_method(),
-            format!("{did}#device")
-        );
-        let persisted = user_store
-            .load_signing_seed(&store)
-            .unwrap()
-            .expect("persisted seed");
-        assert_eq!(persisted.seed, seed);
-        assert!(should_auto_sign());
-    }
-
-    #[test]
-    fn sign_with_active_uses_installed_signer() {
-        let _g = reset();
-        let signer = Arc::new(build_ed25519_device_signer(
-            [2u8; 32],
-            "did:web:dave.example",
-            TEST_DEVICE_ID,
-        ));
-        install_active_signer(signer);
-
-        let mut event = message_event("did:web:dave.example", "auto");
-        sign_with_active(&mut event).expect("auto sign");
-
-        let proof = producer_proof(&event);
-        assert_eq!(
-            proof.verification_method,
-            format!("did:web:dave.example#{TEST_DEVICE_ID}")
-        );
-        // Submit guard accept-shape: header..signature, non-empty sig.
-        assert!(proof.jws.contains(".."));
-        let sig_segment = proof.jws.split("..").nth(1).unwrap();
-        assert!(!sig_segment.is_empty());
-    }
-
-    #[test]
-    fn sign_with_active_returns_missing_signer_when_none_installed() {
-        let _g = reset();
-        let mut event = message_event("did:web:eve.example", "no");
-        let err = sign_with_active(&mut event).unwrap_err();
-        assert!(matches!(err, EventSignerError::MissingSigner { .. }));
     }
 
     #[test]

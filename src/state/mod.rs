@@ -800,7 +800,7 @@ impl LocalStateStore {
             let secure_store_ready = true;
             if secure_store_ready {
                 // Restoring an account-local session requires the accepted
-                // PrincipalAuthorityKey. The legacy root retains only a DID,
+                // PrincipalAuthorityKey. The root retains only a DID,
                 // so fail closed instead of guessing a secure-store scope from
                 // a core/full string. Authority-scoped restore is wired only
                 // after the root/profile context can be reconstructed.

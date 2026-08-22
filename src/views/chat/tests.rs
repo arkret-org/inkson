@@ -351,42 +351,6 @@ fn sign_chat_fixtures(values: &mut [Value]) {
     }
 }
 
-/// The Welcome-receive shuttle iterates `events[]` from
-/// `DeviceMessagesGetOutcome` and surfaces only
-/// `ak.mls.welcome` payloads.
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn collect_welcome_entries_filters_cx_mls_welcome_and_drops_other_kinds() {
-    let value = json!({
-        "events": [
-            {"type": "ak.mls.welcome", "content": {"welcome_envelope_id": "w-1"}},
-            {"type": "ak.key.verify.request", "content": {"ignore_me": true}},
-            {"type": "ak.mls.welcome", "content": {"welcome_envelope_id": "w-2"}},
-            {"type": "ak.mls.welcome", "content": {"welcome_envelope_id": "w-3"}},
-            {"type": "ak.device.message", "content": {"ignore_me": true}},
-        ]
-    });
-    let welcomes = crate::mls::runtime::collect_welcome_entries(&value);
-    let ids: Vec<&str> = welcomes
-        .iter()
-        .filter_map(|w| w.get("welcome_envelope_id").and_then(|v| v.as_str()))
-        .collect();
-    assert_eq!(ids.len(), 3);
-    assert!(ids.contains(&"w-1"));
-    assert!(ids.contains(&"w-2"));
-    assert!(ids.contains(&"w-3"));
-}
-
-/// Empty / missing `events` envelope returns no welcomes — the
-/// shuttle silently returns instead of panicking.
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn collect_welcome_entries_tolerates_missing_events_envelope() {
-    assert!(crate::mls::runtime::collect_welcome_entries(&json!({})).is_empty());
-    assert!(crate::mls::runtime::collect_welcome_entries(&json!({"events": null})).is_empty());
-    assert!(crate::mls::runtime::collect_welcome_entries(&json!({"events": []})).is_empty());
-}
-
 #[test]
 fn parses_message_event_with_operation_body_shape() {
     let event = json!({
@@ -2706,52 +2670,6 @@ fn rebuild_restores_author_body_from_event_derived_sidecar_key() {
 }
 
 #[test]
-fn rebuild_restores_author_body_from_legacy_local_id_sidecar_key() {
-    // Backwards compatibility: records written before the sidecar key was
-    // aligned with the event-derived protocol id stored the plaintext under
-    // the pre-submit local id in the record's `message_id` field. With a
-    // VALID event id the derived id wins candidate selection, so the reader
-    // must fall back to the legacy key to keep older messages readable.
-    let temp = std::env::temp_dir().join(format!("inkson-legacy-sidecar-key-{}", uuid_v7()));
-    let mut store = LocalStateStore::with_path(temp);
-    let event_id = "ak:event:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu";
-    store.save_private_plaintext(
-        "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-        "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-        "message:local-message:legacy",
-        "legacy discussion body",
-    );
-
-    let mut state = ClientLocalState {
-        raw_operations: vec![crate::state::RawOperationRecord {
-            operation_id: "ak:operation:enc-legacy".to_owned(),
-            realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: json!({
-                "event_id": event_id,
-                "kind": "ak.message.create",
-                "actor_id": "ak:did_core:web:alice.example",
-                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
-                "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
-                "message_id": "local-message:legacy",
-                "encrypted_content": true,
-                "status": "accepted"
-            }),
-        }],
-        ..ClientLocalState::default()
-    };
-    sign_chat_fixture(&mut state.raw_operations[0].payload);
-
-    let restored = chat_messages_from_local_state_with_sidecar(&state, Some(&store), None);
-    assert_eq!(restored.len(), 1);
-    assert_eq!(restored[0].body, "legacy discussion body");
-    assert!(matches!(
-        restored[0].crypto_state,
-        MessageCryptoState::Plaintext
-    ));
-}
-
-#[test]
 fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
     let temp = std::env::temp_dir().join(format!("inkson-poll-content-sidecar-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
@@ -4524,109 +4442,6 @@ fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
     assert_eq!(
         status_messages.get("did:web:bob.example"),
         Some(&"Available soon".to_owned())
-    );
-}
-
-/// Restates the pre-v1 pair of `*_from_sync_realms` tests.
-///
-/// Their premise died with the plaintext rail: `ak.typing` was a wire envelope
-/// in `body.ephemeral.events[]` on each Realm sync entry, and v1 sync has no
-/// such bucket. `strand_id` / `typing` are now AEAD plaintext, so the input is
-/// the decrypted Signal body list and the assertion moves with it. `expires_at`
-/// is stamped onto each body from the envelope when the Signal is decrypted.
-#[test]
-fn typing_actor_snapshot_filters_expired_and_self_entries() {
-    let now = chrono::Utc::now();
-    let expired = now - chrono::Duration::seconds(30);
-    let future = now + chrono::Duration::seconds(5);
-    let bodies = vec![
-        json!({
-            "kind": "ak.typing",
-            "actor_id": "ak:did_core:web:alice.example",
-            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
-            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-            "typing": true
-        }),
-        json!({
-            "kind": "ak.typing",
-            "actor_id": "ak:did_core:web:bob.example",
-            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expired),
-            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-            "typing": true
-        }),
-        json!({
-            "kind": "ak.typing",
-            "actor_id": "ak:did_core:web:self.example",
-            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(future),
-            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-            "typing": true
-        }),
-    ];
-
-    let snapshot = typing_actor_snapshot_from_signals(
-        &bodies,
-        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-        "did:web:self.example",
-    );
-
-    assert_eq!(
-        snapshot.actors,
-        vec!["ak:did_core:web:alice.example".to_owned()]
-    );
-    assert_eq!(snapshot.next_expires_at_ms, Some(future.timestamp_millis()));
-    assert_eq!(
-        typing_actors_from_signals(
-            &bodies,
-            "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-            "did:web:self.example"
-        ),
-        vec!["ak:did_core:web:alice.example".to_owned()]
-    );
-}
-
-/// A body that is not `ak.typing`, or that says `typing:false`, must never
-/// light up the indicator. The kind lives in the ciphertext now, so a header
-/// selector cannot be used to pre-filter these.
-#[test]
-fn typing_actor_snapshot_reads_decrypted_signal_bodies() {
-    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(5);
-    let bodies = vec![
-        json!({
-            "kind": "ak.typing",
-            "actor_id": "ak:did_core:web:alice.example",
-            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-            "typing": true
-        }),
-        json!({
-            "kind": "ak.typing",
-            "actor_id": "ak:did_core:web:bob.example",
-            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-            "typing": false
-        }),
-        json!({
-            "kind": "ak.presence",
-            "actor_id": "ak:did_core:web:carol.example",
-            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(expires_at),
-            "strand_id": "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-            "typing": true
-        }),
-    ];
-
-    let snapshot = typing_actor_snapshot_from_signals(
-        &bodies,
-        "ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q",
-        "did:web:self.example",
-    );
-
-    assert_eq!(
-        snapshot.actors,
-        vec!["ak:did_core:web:alice.example".to_owned()]
-    );
-    assert_eq!(
-        snapshot.next_expires_at_ms,
-        Some(expires_at.timestamp_millis())
     );
 }
 

@@ -221,15 +221,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_kind_content_snapshot_is_rejected() {
-        let legacy = serde_json::json!({
-            "items": [],
-            "next_sequence": 0
-        });
-        assert!(serde_json::from_value::<garth::SendQueueSnapshot>(legacy).is_err());
-    }
-
-    #[test]
     fn same_principal_on_different_servers_has_distinct_outbound_scope() {
         let first = authority("ak:did_core:webvh:zServerA");
         let second = authority("ak:did_core:webvh:zServerB");

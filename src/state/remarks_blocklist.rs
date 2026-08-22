@@ -124,12 +124,6 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    pub fn remove_contact_remark(&mut self, actor_id: &str) {
-        self.ensure_cached_loaded();
-        self.cached.contact_remarks.remove(actor_id);
-        let _ = self.flush();
-    }
-
     /// Apply an opaque physical-delete tombstone received from another device.
     /// The server cannot name the principal, so match the slot by recomputing
     /// keys only over the holder's bounded local Contact remark set.

@@ -1,4 +1,3 @@
-pub mod native;
 pub mod registration;
 
 mod binding;

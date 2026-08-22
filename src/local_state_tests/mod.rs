@@ -101,18 +101,6 @@ impl LocalStateStore {
         !was_known
     }
 
-    pub(super) fn last_selected_test_principal_id(&self) -> Option<String> {
-        let root = self.read_root();
-        root.active_profile_id
-            .as_deref()
-            .and_then(|profile_id| root.authority_for_profile(profile_id))
-            .map(|authority| authority.principal_id.to_string())
-    }
-
-    pub(super) fn known_test_principal_ids(&self) -> Vec<String> {
-        self.known_principal_ids()
-    }
-
     pub(super) fn primary_handle_for_test_principal(&self, principal: &str) -> Option<String> {
         self.primary_handle_for_did(principal)
     }

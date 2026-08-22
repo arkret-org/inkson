@@ -180,45 +180,6 @@ pub fn decrypt_application_payload(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn decrypt_application_payload_from_verified_sender(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    authority: &PrincipalAuthorityKey,
-    actor_id: &str,
-    device_id: &DeviceId,
-    verified_sender_domain: &[u8],
-    payload: &arkret_sdk::EncryptedPayload,
-) -> Option<Vec<u8>> {
-    let effective_scope = arkret_sdk::ScopeRef::Realm {
-        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
-    };
-    let plaintext = decrypt_application_payload_for_effective_scope_internal(
-        state_store,
-        secure_store,
-        realm_id,
-        authority,
-        actor_id,
-        device_id,
-        payload,
-        None,
-        Some(verified_sender_domain),
-    )?;
-    authenticate_received_identity_link(
-        state_store,
-        secure_store,
-        authority,
-        actor_id,
-        device_id,
-        &effective_scope,
-        payload,
-        verified_sender_domain,
-        &plaintext,
-    )?;
-    Some(plaintext)
-}
-
 pub fn decrypt_application_payload_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -321,29 +282,6 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
         )
         .ok()?;
     arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(envelope, header).ok()
-}
-
-pub fn decrypt_application_payload_for_scope(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    authority: &PrincipalAuthorityKey,
-    actor_id: &str,
-    device_id: &DeviceId,
-    payload: &arkret_sdk::EncryptedPayload,
-    effective_scope: &arkret_sdk::ScopeRef,
-) -> Option<Vec<u8>> {
-    decrypt_application_payload_for_scope_internal(
-        state_store,
-        secure_store,
-        realm_id,
-        authority,
-        actor_id,
-        device_id,
-        payload,
-        effective_scope,
-        None,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1131,16 +1069,6 @@ fn welcome_consume_candidate(
         epoch: payload.epoch,
         welcome_digest: payload.claim_envelope.welcome_digest,
     })
-}
-
-pub fn collect_welcome_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
-    // Spec form is `{ messages: [ { kind, content, unsigned, ... } ] }`
-    // (`DeviceMessagesGetOutcome` / `DeviceMessageEnvelope`); the discriminator
-    // is `kind` and the payload lives under `content`.
-    collect_welcome_message_entries(value)
-        .into_iter()
-        .map(|entry| entry.content)
-        .collect()
 }
 
 pub fn mls_group_id_for_realm(realm_id: &str) -> Result<String, String> {

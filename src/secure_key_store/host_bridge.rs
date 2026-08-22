@@ -74,31 +74,6 @@ pub trait HostSecretBridge: Send + Sync {
         "host-bridge"
     }
 
-    /// Phase A.6 #5: iOS Keychain `kSecAttrAccessGroup` identifier.
-    ///
-    /// On iOS, Keychain items default to the calling app's private
-    /// access group (the `application-identifier` entitlement). When
-    /// inkson ships extensions (Notification Service Extension for
-    /// silent-push key unwrap, share extension, etc.) the extension and
-    /// the main app need to share Keychain entries; the OS enforces
-    /// that via a matching `kSecAttrAccessGroup` value on both sides
-    /// of the boundary.
-    ///
-    /// The host runtime is the only place that knows the app-bundle's
-    /// access-group identifier (it's a `$(AppIdentifierPrefix).<group>`
-    /// string burned into the entitlements plist). Bridges return
-    /// `Some(group)` to opt in, or `None` to keep the
-    /// per-app-private default. Implementations that don't carry an
-    /// access group (Android, desktop fallbacks, test stubs) should
-    /// return `None`.
-    ///
-    /// The trait's default is `None` so existing implementations
-    /// compile unchanged — they keep the private-access-group default
-    /// which is the safe choice when no entitlement is configured.
-    fn access_group_identifier(&self) -> Option<&str> {
-        None
-    }
-
     /// True when the bridge has been asked (typically by the user via a
     /// host-side setting toggle) to require a biometric / device-credential
     /// challenge before [`HostBridgeSecureKeyStore::store_secret`] and

@@ -134,25 +134,6 @@ impl DpopHandle {
             .map_err(|err| AuthDpopError::SessionGrantProof(format!("device key pkcs8 pem: {err}")))
     }
 
-    /// Mint a fresh DPoP proof JWS for the given `(htm, htu)` pair.
-    /// `ath` carries the raw authorization credential when the proof
-    /// accompanies a protected call; this helper hashes it into the
-    /// RFC 9449 `ath` claim. Pass `None` for grant issuance.
-    pub fn mint_proof(
-        &self,
-        htm: &str,
-        htu: &str,
-        ath: Option<&str>,
-    ) -> Result<String, AuthDpopError> {
-        let mut request = arkret_sdk::dpop::DpopProofRequest::new(htm, htu);
-        if let Some(ath) = ath {
-            request = request.access_token(ath);
-        }
-        arkret_sdk::dpop::build_dpop_proof(&request, &self.signing_key)
-            .map(|proof| proof.header_value)
-            .map_err(|error| AuthDpopError::Mint(error.to_string()))
-    }
-
     /// Sign one `challenge_dpop_session_v1` proof for
     /// `ak.profile.binding.websocket.v1`.
     ///
@@ -210,31 +191,6 @@ impl DpopHandle {
     pub fn sign_protocol_bytes(&self, bytes: &[u8]) -> arkret_sdk::Result<String> {
         Ok(URL_SAFE_NO_PAD.encode(self.signing_key.sign(bytes).to_bytes()))
     }
-
-    /// Sign the one-shot proof that soland forwards to coauth when it
-    /// introspects a session grant. It uses the same private key as the
-    /// DPoP proof that coauth bound into the grant's `cnf.jkt`.
-    pub fn mint_session_grant_introspection_proof(
-        &self,
-        grant_id: &str,
-        grant_jwt: &str,
-        audience: &str,
-    ) -> Result<arkret_sdk::SessionGrantIntrospectionProof, AuthDpopError> {
-        crate::identity::account_auth::build_session_grant_introspection_proof_bundle(
-            grant_id,
-            grant_jwt,
-            audience,
-            &self.signing_key,
-        )
-        .map_err(|error| AuthDpopError::SessionGrantProof(error.to_string()))
-    }
-}
-
-/// RFC 9449 `ath` hash:
-/// `base64url-no-pad(sha256(authorization_credential))`.
-#[cfg(test)]
-pub fn dpop_authorization_credential_hash(authorization_credential: &str) -> String {
-    arkret_sdk::dpop::dpop_access_token_hash(authorization_credential)
 }
 
 /// Generate or load the device DPoP key. Calls return the same handle
@@ -582,20 +538,6 @@ fn decode_record(record: &DpopDeviceKeyRecord) -> Result<DpopHandle, AuthDpopErr
     })
 }
 
-/// Convenience wrapper — generate-if-missing and mint a proof in one
-/// call. Useful from view code where the caller doesn't want to thread
-/// a `DpopHandle` through every spawn.
-#[cfg(test)]
-pub fn mint_dpop_proof(
-    store: &mut LocalStateStore,
-    htu: &str,
-    htm: &str,
-    ath: Option<&str>,
-) -> Result<String, AuthDpopError> {
-    let handle = ensure_device_key(store)?;
-    handle.mint_proof(htm, htu, ath)
-}
-
 /// Reconstruct a [`DpopDeviceKeyRecord`] from a base64url-no-pad 32-byte
 /// ed25519 seed, deriving the RFC 7638 thumbprint from the seed's public key.
 ///
@@ -660,85 +602,10 @@ mod tests {
         assert_eq!(first.jkt(), second.jkt());
     }
 
-    #[test]
-    fn handle_mints_three_segment_proof() {
-        let mut store = isolated_store("mint");
-        let handle = ensure_device_key(&mut store).unwrap();
-        let proof = handle
-            .mint_proof(
-                "POST",
-                "https://example.test/_arkret/gate/account/session-grants",
-                None,
-            )
-            .unwrap();
-        let parts: Vec<&str> = proof.split('.').collect();
-        assert_eq!(parts.len(), 3);
-        for p in &parts {
-            assert!(!p.is_empty());
-        }
-    }
-
-    #[test]
-    fn handle_mints_session_grant_introspection_proof() {
-        let mut store = isolated_store("session-grant-proof");
-        let handle = ensure_device_key(&mut store).unwrap();
-        let proof = handle
-            .mint_session_grant_introspection_proof(
-                "grant-1",
-                "eyJ.mock.jwt",
-                "did:web:soland.example",
-            )
-            .unwrap();
-
-        assert!(!proof.challenge.is_empty());
-        assert_eq!(proof.proof_jwt.split('.').count(), 3);
-    }
-
     fn proof_payload(proof: &str) -> serde_json::Value {
         let payload_b64 = proof.split('.').nth(1).expect("payload segment");
         let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).expect("payload b64");
         serde_json::from_slice(&payload_bytes).expect("payload json")
-    }
-
-    #[test]
-    fn authorization_credential_hash_matches_rfc9449_ath_encoding() {
-        assert_eq!(
-            dpop_authorization_credential_hash("session-credential-1"),
-            arkret_sdk::dpop::dpop_access_token_hash("session-credential-1")
-        );
-    }
-
-    #[test]
-    fn handle_mints_ath_when_authorization_credential_supplied() {
-        let mut store = isolated_store("mint-ath");
-        let handle = ensure_device_key(&mut store).unwrap();
-        let proof = handle
-            .mint_proof(
-                "POST",
-                "https://example.test/_arkret/gate/account/session-grants",
-                Some("session-credential-1"),
-            )
-            .unwrap();
-        let payload = proof_payload(&proof);
-        assert_eq!(
-            payload["ath"],
-            dpop_authorization_credential_hash("session-credential-1")
-        );
-    }
-
-    #[test]
-    fn handle_omits_ath_when_no_authorization_credential_supplied() {
-        let mut store = isolated_store("mint-no-ath");
-        let handle = ensure_device_key(&mut store).unwrap();
-        let proof = handle
-            .mint_proof(
-                "POST",
-                "https://example.test/_arkret/gate/account/session-grants",
-                None,
-            )
-            .unwrap();
-        let payload = proof_payload(&proof);
-        assert!(payload.get("ath").is_none());
     }
 
     #[test]
@@ -790,19 +657,6 @@ mod tests {
         let created = ensure_device_key(&mut store).unwrap();
         let loaded = load_device_key(&store).unwrap().expect("handle");
         assert_eq!(loaded.jkt(), created.jkt());
-    }
-
-    #[test]
-    fn convenience_helper_mints_without_handle() {
-        let mut store = isolated_store("convenience");
-        let proof = mint_dpop_proof(
-            &mut store,
-            "https://example.test/_arkret/gate/account/session-grants",
-            "POST",
-            None,
-        )
-        .unwrap();
-        assert_eq!(proof.split('.').count(), 3);
     }
 
     #[test]

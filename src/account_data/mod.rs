@@ -23,7 +23,6 @@ mod client_ui;
 mod crypto;
 mod keys;
 mod notification_inbox;
-mod private_view;
 mod productivity;
 mod remark;
 
@@ -32,7 +31,6 @@ pub use client_ui::*;
 pub use crypto::*;
 pub use keys::*;
 pub use notification_inbox::*;
-pub use private_view::*;
 pub use productivity::*;
 pub use remark::*;
 

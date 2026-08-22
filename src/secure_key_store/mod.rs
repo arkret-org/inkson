@@ -202,12 +202,10 @@ pub(crate) fn device_storage_digest(device_id: &arkret_sdk::DeviceId) -> String 
     arkret_sdk::canonical::sha256_base64url(device_id.as_str().as_bytes())
 }
 
-/// Per-account main `ClientLocalState` blob. Historically this lived in
-/// near-plaintext `localStorage`; phase 2 of the E2EE-local-state work moved it
-/// into the IndexedDB + non-extractable SubtleCrypto encrypted entries store.
-/// The semantic key is `inkson.local_state.v1.account.<authority_digest>`; ambiguous prior data is
-/// intentionally ignored rather than migrated or read through compatibility
-/// fallbacks. Classifying the prefix as IndexedDB-only makes the localStorage secure tier
+/// Per-account main `ClientLocalState` blob stored in the IndexedDB +
+/// non-extractable SubtleCrypto encrypted entries store. The semantic key is
+/// `inkson.local_state.v1.account.<authority_digest>`. Classifying the prefix
+/// as IndexedDB-only makes the localStorage secure tier
 /// refuse it — so it fails closed before the wrapping key is ready and is never
 /// mirrored back to localStorage.
 #[cfg(any(target_arch = "wasm32", test))]
@@ -262,9 +260,7 @@ pub(crate) fn mls_history_secret_store_key(scope_group_key: &str) -> String {
     )
 }
 
-/// Encode the closed per-epoch `local_authoritative` record map. This is a
-/// direct storage-shape replacement: legacy raw `epoch -> bytes` blobs are not
-/// accepted or migrated.
+/// Encode the closed per-epoch `local_authoritative` record map.
 pub(crate) fn encode_history_secrets_json(
     by_epoch: &std::collections::BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>,
 ) -> String {

@@ -157,7 +157,7 @@ enum AccountLogoutRunOutcome {
 /// Authority hard logout (T1.Y3). Success — or a "grant already gone" error —
 /// clears the record. A still-live failure keeps the record so a later boot
 /// retries it; the [`RECORD_TTL_HOURS`] bound (checked by
-/// [`run_pending_logout_if_any`]) prevents an immortal poison entry.
+/// [`execute_pending_logout`]) prevents an immortal poison entry.
 pub async fn execute_pending_logout(
     record: &PendingLogout,
     store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -303,17 +303,7 @@ pub fn clear_pending_logout(
     Ok(())
 }
 
-/// Boot / background entry point: if a logout intent is journalled, run it.
-///
-/// Expired records are dropped without a network call (the grant is dead
-/// by its own TTL). Live records are executed; the record is cleared on
-/// success and retained on transient failure for the next attempt.
-pub async fn run_pending_logout_if_any(now: DateTime<Utc>) {
-    let store = crate::secure_key_store::default_secure_key_store("inkson");
-    run_pending_logout_with_store(now, store.as_ref()).await;
-}
-
-/// Store-injectable core of [`run_pending_logout_if_any`].
+/// Store-injectable core of the pending-logout retry.
 pub async fn run_pending_logout_with_store(
     now: DateTime<Utc>,
     store: &dyn crate::secure_key_store::SecureKeyStore,

@@ -79,13 +79,6 @@ pub enum LateRecoveryDecision {
 }
 
 impl LateRecoveryDecision {
-    pub const fn is_accept(self) -> bool {
-        match self {
-            Self::Accept => true,
-            Self::Reject(_) => false,
-        }
-    }
-
     pub const fn rejection_reason_code(self) -> Option<&'static str> {
         match self {
             Self::Accept => None,
@@ -120,10 +113,6 @@ pub enum LateRecoveryTransitionDecision {
 impl LateRecoveryTransitionDecision {
     pub const fn allows_plaintext(self) -> bool {
         matches!(self, Self::NotLateRecovery | Self::LateRecovered)
-    }
-
-    pub const fn is_late_recovery(self) -> bool {
-        !matches!(self, Self::NotLateRecovery)
     }
 
     pub const fn rejection_reason_code(self) -> Option<&'static str> {
@@ -380,15 +369,6 @@ impl LateRecoveredEvent {
     }
 }
 
-/// Defensive client-side filter for late-recovered content. The server
-/// already rejects late-recovery decrypts whose actor was revoked /
-/// removed before the recovery completed (`late_recovery_rejected_membership`).
-/// This helper enforces the same boundary client-side so a misconfigured
-/// or compromised server cannot surface the recovered content anyway.
-pub fn should_filter_recovered_event(event: &LateRecoveredEvent) -> bool {
-    event.actor_revoked_at_recovery
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
@@ -426,14 +406,6 @@ mod tests {
     }
 
     #[test]
-    fn revoked_actor_is_filtered() {
-        let revoked = ev(0, 30, true);
-        let allowed = ev(0, 30, false);
-        assert!(should_filter_recovered_event(&revoked));
-        assert!(!should_filter_recovered_event(&allowed));
-    }
-
-    #[test]
     fn from_audit_policy_access_carries_late_recovery_original_event_id() {
         use arkret_sdk::{AccessKind, AuditPolicyAccessPayload, EventId, RealmId};
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
@@ -453,7 +425,6 @@ mod tests {
             "ak:event:ATFrN4sYtiDvJD5G4wKxYY3xMKfo-Xqa_o9Xkb-XnzFN"
         );
         assert_eq!(ev.lag_minutes(), 30);
-        assert!(!should_filter_recovered_event(&ev));
     }
 
     #[test]
@@ -496,7 +467,7 @@ mod tests {
     #[test]
     fn late_recovery_accepts_when_all_guards_pass() {
         let decision = evaluate_late_recovery_guards(base_guard_input());
-        assert!(decision.is_accept());
+        assert_eq!(decision, LateRecoveryDecision::Accept);
         assert_eq!(decision.rejection_reason_code(), None);
     }
 

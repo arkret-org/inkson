@@ -112,7 +112,6 @@ pub mod realm_events_engine;
 pub(crate) mod realm_helpers;
 pub(crate) mod realm_tree;
 pub mod recovery_crypto;
-pub mod recovery_proof;
 pub mod recovery_strand;
 pub mod routes;
 pub mod rtc_transport;

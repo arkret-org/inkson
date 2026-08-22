@@ -451,11 +451,6 @@ impl RealmTreeNode {
     }
 }
 
-pub fn projection_realm_id_for_node(nodes: &[RealmTreeNode], node_id: &str) -> String {
-    let requested = node_id.trim();
-    projection_realm_id_for_known_node(nodes, requested).unwrap_or_else(|| requested.to_owned())
-}
-
 pub fn projection_realm_id_for_known_node(
     nodes: &[RealmTreeNode],
     node_id: &str,
@@ -493,10 +488,7 @@ mod tests {
     use arkret_sdk::contact_operations::ContactScope;
     use arkret_wire::SchemaId;
 
-    use super::{
-        RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node,
-        projection_realm_id_for_node,
-    };
+    use super::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
 
     #[test]
     fn submit_event_outcome_decodes_new_events_submit_wire() {
@@ -619,52 +611,6 @@ mod tests {
                 realm_id.to_owned()
             },
         }
-    }
-
-    #[test]
-    fn projection_realm_id_uses_space_home_realm() {
-        let spaces = vec![
-            preview(
-                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
-                RealmTreeNodeKind::Realm,
-                "",
-                None,
-            ),
-            preview(
-                "ak:space:child",
-                RealmTreeNodeKind::Space,
-                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
-                Some("ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"),
-            ),
-        ];
-
-        assert_eq!(
-            projection_realm_id_for_node(&spaces, "ak:space:child"),
-            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
-        );
-    }
-
-    #[test]
-    fn projection_realm_id_climbs_parent_links_to_realm() {
-        let spaces = vec![
-            preview(
-                "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
-                RealmTreeNodeKind::Realm,
-                "",
-                None,
-            ),
-            preview(
-                "ak:space:child",
-                RealmTreeNodeKind::Space,
-                "",
-                Some("ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"),
-            ),
-        ];
-
-        assert_eq!(
-            projection_realm_id_for_node(&spaces, "ak:space:child"),
-            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"
-        );
     }
 
     #[test]
@@ -792,14 +738,6 @@ impl BackfillView {
     /// completeness verification, and cryptographic operations.
     pub fn complete_events(&self, purpose: &str) -> anyhow::Result<Vec<arkret_sdk::Event>> {
         require_complete_event_rows(&self.events, purpose)
-    }
-
-    /// Require and serialize complete Events before feeding JSON projection code.
-    pub fn complete_event_values(&self, purpose: &str) -> anyhow::Result<Vec<Value>> {
-        self.complete_events(purpose)?
-            .into_iter()
-            .map(|event| serde_json::to_value(event).map_err(anyhow::Error::from))
-            .collect()
     }
 }
 
@@ -994,21 +932,6 @@ pub struct RealmPolicyResult {
     pub realm_id: String,
     pub join_rule: String,
     pub history_access_tightened: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TypingResult {
-    pub ok: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PresenceResult {
-    pub ok: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReceiptResult {
-    pub ok: bool,
 }
 
 // ── Device & Crypto ─────────────────────────────────────────────

@@ -160,79 +160,6 @@ pub fn accepted_history_request_ids(
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-/// Pack one exporter scope's device-local authoritative records into the SDK's
-/// closed portable `mls_history` keybag. Candidate-ledger material is not an
-/// input to this function and cannot cross the backup boundary.
-pub fn pack_local_history_backup(
-    state_store: &LocalStateStore,
-    effective_scope: &arkret_sdk::ScopeRef,
-    mls_group_id: &str,
-    kdf_nh: usize,
-) -> anyhow::Result<arkret_models_crypto::KeyBackupKeybag> {
-    let history_scope = arkret_sdk::HistoryEffectiveScope::try_from(effective_scope.clone())?;
-    let records =
-        state_store.local_authoritative_history_records_for(effective_scope, mls_group_id);
-    arkret_state::history_backup::pack_local_authoritative_history_backup(
-        &history_scope,
-        &records,
-        kdf_nh,
-    )
-    .map_err(|error| anyhow::anyhow!(error.to_string()))
-}
-
-/// Install a decrypted portable `mls_history` keybag as bounded external
-/// candidates. Restore never writes the local-authoritative ledger and never
-/// reconstructs active MLS state, leaf identity, ratchet or counters.
-pub async fn install_portable_history_backup(
-    state_store: &mut LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    plaintext: &arkret_models_crypto::KeyBackupPlaintext,
-    producer_actor_id: &arkret_sdk::DidCoreId,
-    mls_ciphersuite: &str,
-    kdf_nh: usize,
-    first_observed_at: chrono::DateTime<chrono::Utc>,
-) -> anyhow::Result<usize> {
-    let restored = arkret_state::history_backup::restore_history_backup_candidates(
-        plaintext,
-        producer_actor_id,
-        kdf_nh,
-        first_observed_at,
-    )?;
-    let (effective_scope, mls_group_id) = match &plaintext.keybag {
-        arkret_models_crypto::KeyBackupKeybag::MlsHistory {
-            effective_scope, ..
-        } => (
-            arkret_sdk::ScopeRef::from(effective_scope.clone()),
-            effective_scope.canonical_mls_group_id()?,
-        ),
-        _ => anyhow::bail!("portable history restore requires an mls_history keybag"),
-    };
-    let mut installed = 0;
-    for candidate in restored {
-        let epoch = candidate.attribution.material_key().epoch;
-        state_store
-            .record_history_epoch_cipher_suite(
-                &effective_scope,
-                &mls_group_id,
-                epoch,
-                mls_ciphersuite,
-            )
-            .map_err(anyhow::Error::msg)?;
-        if state_store
-            .receive_history_candidate(
-                secure_store,
-                &candidate.secret,
-                candidate.attribution,
-                first_observed_at,
-            )
-            .await?
-        {
-            installed += 1;
-        }
-    }
-    Ok(installed)
-}
-
 fn http_client(api: &crate::transport::TransportClient) -> anyhow::Result<arkret_sdk::Client> {
     api.sdk_http_client()
         .map_err(|error| anyhow::anyhow!(error.to_string()))
@@ -814,48 +741,5 @@ pub async fn acquire_and_verify_traversal(
     runtime(state_store)
         .acquire_receipt_bound_traversal(&ReceiptTraversal { api, state_store }, request_id)
         .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-}
-
-/// Stage a complete manifest plus every named chunk. All canonical bytes land
-/// in the hardened content-addressed store before the durable attempt marker
-/// is published.
-pub async fn stage_response_attempt(
-    state_store: SyncSignal<LocalStateStore>,
-    bundle: garth::HistorySourceAttemptBundle,
-) -> anyhow::Result<garth::HistorySourceAttemptIdentity> {
-    crate::state::history_source_outbox(state_store)
-        .stage_attempt(&crate::state::InksonHistorySourceBlobStore, bundle)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-}
-
-/// Replay one ready attempt from its exact staged bytes. Direct and relayed
-/// records are closed variants inside the bundle; callers cannot bypass the
-/// complete-attempt marker with a singular send.
-pub async fn replay_response_attempt(
-    state_store: SyncSignal<LocalStateStore>,
-    api: &crate::transport::TransportClient,
-    identity: &garth::HistorySourceAttemptIdentity,
-    now: chrono::DateTime<chrono::Utc>,
-) -> anyhow::Result<garth::DurableHistorySourceAttempt> {
-    let http = http_client(api)?;
-    crate::state::history_source_outbox(state_store)
-        .replay_attempt(
-            &http,
-            &crate::state::InksonHistorySourceBlobStore,
-            identity,
-            now,
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-}
-
-/// Remove blobs left by a crash before their ready marker committed.
-pub fn reconcile_history_source_outbox(
-    state_store: SyncSignal<LocalStateStore>,
-) -> anyhow::Result<usize> {
-    crate::state::history_source_outbox(state_store)
-        .reconcile_orphan_blobs(&crate::state::InksonHistorySourceBlobStore)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }

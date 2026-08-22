@@ -299,53 +299,6 @@ impl MultiProfileConfig {
                 .map(|profile| profile.account.profile_id.clone());
         }
     }
-
-    /// Build a single-profile `ClientConfig` view of the active
-    /// profile. Returns `None` when no profile is active (e.g. fresh
-    /// install).
-    pub fn active_as_client_config(&self) -> Option<ClientConfig> {
-        let active = self.active()?;
-        Some(ClientConfig::authenticated(
-            active.account.clone(),
-            active.session_credential.clone(),
-        ))
-    }
-
-    /// Build the typed [`ProfileSwitchEvent`] payload that callers
-    /// (account switcher, login strand, server change) emit when the
-    /// active profile rotates. Returns `None` if the requested
-    /// profile is not in the store.
-    pub fn build_switch_event(&self, target_profile_id: &str) -> Option<ProfileSwitchEvent> {
-        let prior = self.active_profile_id.clone();
-        let target = self
-            .profiles
-            .iter()
-            .find(|profile| profile.account.profile_id == target_profile_id)?
-            .clone();
-        Some(ProfileSwitchEvent {
-            prior_profile_id: prior,
-            next_profile: target,
-        })
-    }
-}
-
-/// Typed payload published when the active profile rotates.
-///
-/// AKP-0007 P3B.4.3 — the sync engine, push registration, offline
-/// drain worker, and chat subscription paths each subscribe to this
-/// event so they can rotate per-profile cursors / session credentials /
-/// gateway registrations atomically. The previous "each subsystem
-/// peeks at `ClientConfig`" pattern raced when two of them refreshed
-/// out of order across a single user click.
-#[derive(Clone, Debug)]
-pub struct ProfileSwitchEvent {
-    /// `profile_id` that was active before the switch. `None` on the
-    /// first activation after a fresh install.
-    pub prior_profile_id: Option<String>,
-    /// Profile the shell is switching into. Carries the resolved
-    /// `(server_url, principal_id, device_id, session_credential)` tuple so
-    /// reactors don't need a follow-up store read.
-    pub next_profile: AccountProfile,
 }
 
 /// SecureKeyStore key for the current session credential of `principal_id`.

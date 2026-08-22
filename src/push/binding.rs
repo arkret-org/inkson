@@ -123,13 +123,6 @@ impl PushTokenBinding {
         &self.device_id
     }
 
-    /// Ensure the wrapping seed exists. Returns `Ok(())` whether the
-    /// seed was already present or freshly generated.
-    pub fn ensure_wrap_seed(&self) -> Result<(), SecureKeyStoreError> {
-        let _ = load_or_create_push_token_wrap_seed(self.store.as_ref())?;
-        Ok(())
-    }
-
     /// Persist `push_key` under this binding's device id. Overwrites
     /// silently. The on-disk form is `wrap_secret(push_key, seed)` —
     /// a ChaCha20-Poly1305 ciphertext with a random nonce prefix.

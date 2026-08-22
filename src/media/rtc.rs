@@ -179,24 +179,6 @@ impl RtcClientError {
     }
 }
 
-/// Canonical list of accepted media focus backend types
-/// (`zh/crypto-media/bindings/`). Any focus whose `type` field is not in
-/// this set must be rejected with [`RtcClientError::UnknownFocusType`].
-pub const ALLOWED_FOCUS_TYPES: &[&str] = &[
-    "livekit",
-    "mediasoup",
-    "janus",
-    "arkret_native",
-    "moq_relay",
-];
-
-/// Returns `true` iff `focus_type` is one of the canonical backend
-/// types. The check is intentionally case-sensitive to match the spec's
-/// wire form.
-pub fn is_known_focus_type(focus_type: &str) -> bool {
-    ALLOWED_FOCUS_TYPES.contains(&focus_type)
-}
-
 /// What media tracks the joining device intends to publish. Forwarded to
 /// soland in the token-exchange request so the focus can pre-allocate
 /// publisher slots.
@@ -852,17 +834,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-
-    #[test]
-    fn focus_type_enum_matches_spec() {
-        assert!(is_known_focus_type("livekit"));
-        assert!(is_known_focus_type("mediasoup"));
-        assert!(is_known_focus_type("janus"));
-        assert!(is_known_focus_type("arkret_native"));
-        assert!(is_known_focus_type("moq_relay"));
-        assert!(!is_known_focus_type("LiveKit")); // case-sensitive
-        assert!(!is_known_focus_type("zoom"));
-    }
 
     #[test]
     fn participant_identity_cross_check_fails_closed_on_unknown() {

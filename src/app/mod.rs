@@ -3135,7 +3135,6 @@ fn AppBootstrap() -> Element {
                         }
                     }
                 }
-
             }
 
             if sidebar_is_resizing {
@@ -3746,7 +3745,7 @@ fn AppBootstrap() -> Element {
                                                 // F7 — journal the logout intent durably BEFORE the
                                                 // local wipe. If the tab closes mid-flight or coauth is
                                                 // briefly unreachable, the next boot
-                                                // (`run_pending_logout_if_any`) retries the server-side
+                                                // (`pending_logout::execute_pending_logout`) retries the server-side
                                                 // termination so the rotation chain can't outlive the
                                                 // "logout". The record stashes the device seed (the live
                                                 // key is wiped below) purely to mint the revoke DPoP

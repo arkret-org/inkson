@@ -80,61 +80,6 @@ pub fn strand_tracks_update(
     )
 }
 
-/// Convenience wrapper: enable `track` on `strand_id`. Emits the unified
-/// `ak.strand.tracks.update` event with a `ak.patch.v1` set-op against
-/// `tracks.<name>.enabled`.
-pub fn strand_tracks_update_enable(
-    realm_id: &str,
-    actor: &str,
-    strand_id: &str,
-    track: &str,
-) -> anyhow::Result<TypedOperationBuilder> {
-    let key = format!("tracks.{track}.enabled");
-    let patch = json!({ key: { "$op": "set", "value": true } });
-    strand_tracks_update(realm_id, actor, strand_id, patch)
-}
-
-/// Convenience wrapper: disable `track` on `strand_id`.
-pub fn strand_tracks_update_disable(
-    realm_id: &str,
-    actor: &str,
-    strand_id: &str,
-    track: &str,
-) -> anyhow::Result<TypedOperationBuilder> {
-    let key = format!("tracks.{track}.enabled");
-    let patch = json!({ key: { "$op": "set", "value": false } });
-    strand_tracks_update(realm_id, actor, strand_id, patch)
-}
-
-/// Disable the current primary track and select its enabled replacement in one
-/// atomic `ak.patch.v1` operation.
-pub fn strand_tracks_update_disable_primary(
-    realm_id: &str,
-    actor: &str,
-    strand_id: &str,
-    current_primary: &str,
-    replacement_primary: &str,
-) -> anyhow::Result<TypedOperationBuilder> {
-    if current_primary == replacement_primary {
-        anyhow::bail!("replacement primary track must differ from the disabled track");
-    }
-    let disabled = format!("tracks.{current_primary}.enabled");
-    let old_primary = format!("tracks.{current_primary}.is_primary");
-    let replacement_enabled = format!("tracks.{replacement_primary}.enabled");
-    let replacement_primary_path = format!("tracks.{replacement_primary}.is_primary");
-    strand_tracks_update(
-        realm_id,
-        actor,
-        strand_id,
-        json!({
-            (disabled): { "$op": "set", "value": false },
-            (old_primary): { "$op": "set", "value": false },
-            (replacement_enabled): { "$op": "set", "value": true },
-            (replacement_primary_path): { "$op": "set", "value": true },
-        }),
-    )
-}
-
 /// Convenience wrapper: mark `track` as the Strand's primary track.
 /// Carries a single set-op against `tracks.<name>.is_primary`. The reducer
 /// is responsible for clearing the previous primary cell.

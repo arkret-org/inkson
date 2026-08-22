@@ -28,14 +28,6 @@ pub struct Debouncer {
     delay_ms: u32,
 }
 
-/// Create a [`Debouncer`] that fires `delay_ms` after the last `call`.
-pub fn use_debouncer(delay_ms: u32) -> Debouncer {
-    Debouncer {
-        generation: use_signal(|| 0u64),
-        delay_ms,
-    }
-}
-
 impl Debouncer {
     /// Schedule `action` to run after `delay_ms` of no further calls.
     pub fn call<F>(&self, action: F)

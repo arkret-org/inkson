@@ -257,11 +257,6 @@ mod tests;
 pub use en::english_translations;
 pub use zh::chinese_translations;
 
-/// Initialize the i18n system with default translations.
-pub fn init_i18n() -> I18nSignal {
-    init_i18n_with_locale(UiLocale::En)
-}
-
 /// Initialize i18n preloaded with a specific locale.
 ///
 /// One dictionary per shipped locale, keyed by [`UiLocale::code`]. There used to

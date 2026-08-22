@@ -69,21 +69,6 @@ impl LocalStateStore {
         store.current_identity(realm_id, actor_id)
     }
 
-    /// R3.1 MID-6 — `true` when the actor has at least one identity
-    /// event but every effective event is `decryption_pending` (the
-    /// MLS group state needed to decrypt the carrier has not yet
-    /// arrived). UI surfaces a muted placeholder rather than the raw
-    /// DID in this state.
-    pub fn is_member_decryption_pending(&self, realm_id: &str, actor_id: &str) -> bool {
-        let envelopes = self.member_identity_envelopes(realm_id, actor_id);
-        if envelopes.is_empty() {
-            return false;
-        }
-        let mut store = crate::identity::member_identity_store::MemberIdentityStore::new();
-        store.ingest_inline(realm_id, actor_id, &envelopes);
-        store.is_decryption_pending(realm_id, actor_id)
-    }
-
     /// Return a fresh cached primary handle lookup for a subject in a Realm
     /// display context. `Some(entry)` with `entry.primary_handle == None` is
     /// a fresh negative cache entry; callers should not immediately re-query.

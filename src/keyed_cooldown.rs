@@ -49,16 +49,6 @@ impl KeyedCooldown {
             .map(|until| until.saturating_sub(now_ms))
     }
 
-    /// Whether `key` is still cooling at `now_ms`. Does not mutate the table.
-    pub fn is_cooling(&self, key: &str, now_ms: u64) -> bool {
-        self.until_ms.get(key).is_some_and(|until| *until > now_ms)
-    }
-
-    /// Drop `key`'s cooldown (e.g. after a success clears the backoff).
-    pub fn clear_key(&mut self, key: &str) {
-        self.until_ms.remove(key);
-    }
-
     /// Forget every cooldown.
     pub fn clear(&mut self) {
         self.until_ms.clear();
@@ -167,22 +157,10 @@ mod tests {
     fn cooldown_reports_and_prunes_by_expiry() {
         let mut cooldown = KeyedCooldown::new(8);
         cooldown.note_until("a", 1_000);
-        assert!(cooldown.is_cooling("a", 500));
         assert_eq!(cooldown.remaining_ms("a", 400), Some(600));
         // At/after the deadline the entry is not cooling and gets pruned.
-        assert!(!cooldown.is_cooling("a", 1_000));
         assert_eq!(cooldown.remaining_ms("a", 1_000), None);
         assert!(cooldown.is_empty());
-    }
-
-    #[test]
-    fn cooldown_clear_key_removes_only_that_entry() {
-        let mut cooldown = KeyedCooldown::new(8);
-        cooldown.note_until("a", 1_000);
-        cooldown.note_until("b", 1_000);
-        cooldown.clear_key("a");
-        assert!(!cooldown.is_cooling("a", 500));
-        assert!(cooldown.is_cooling("b", 500));
     }
 
     #[test]
@@ -193,9 +171,9 @@ mod tests {
         cooldown.note_until("latest", 30);
         // "soonest" is evicted; the two later deadlines survive.
         assert_eq!(cooldown.len(), 2);
-        assert!(!cooldown.is_cooling("soonest", 0));
-        assert!(cooldown.is_cooling("mid", 0));
-        assert!(cooldown.is_cooling("latest", 0));
+        assert_eq!(cooldown.remaining_ms("soonest", 0), None);
+        assert_eq!(cooldown.remaining_ms("mid", 0), Some(20));
+        assert_eq!(cooldown.remaining_ms("latest", 0), Some(30));
     }
 
     #[test]

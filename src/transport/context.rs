@@ -22,14 +22,6 @@ impl RequestContext {
         }
     }
 
-    pub fn with_dpop(
-        mut self,
-        dpop: crate::identity::account_auth::grant_dpop::DpopHandle,
-    ) -> Self {
-        self.dpop = Some(dpop);
-        self
-    }
-
     pub fn with_cursor(mut self, cursor: impl Into<String>) -> Self {
         let cursor = cursor.into();
         self.cursor = (!cursor.trim().is_empty()).then_some(cursor);

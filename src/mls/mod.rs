@@ -20,4 +20,3 @@ pub(crate) mod governance_proof;
 pub(crate) mod group_events;
 pub mod persistence;
 pub mod runtime;
-pub mod secret_share;

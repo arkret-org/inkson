@@ -22,7 +22,6 @@ pub(super) use crate::payload::strand_id_value;
 // surface as a recoverable error — on wasm a panic kills the whole page.
 
 mod account_profile;
-mod applet;
 mod calendar;
 mod capability;
 mod circle;
@@ -39,7 +38,6 @@ mod space;
 mod strand;
 
 pub use account_profile::*;
-pub use applet::*;
 pub use calendar::*;
 pub use capability::*;
 pub use circle::*;

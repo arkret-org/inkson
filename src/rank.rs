@@ -144,55 +144,6 @@ pub fn rank_for_drop(prev: Option<&str>, next: Option<&str>) -> Result<String, R
     rank_between(prev.unwrap_or(""), next.unwrap_or(""))
 }
 
-/// Deterministic rebalance assignment per encoding.md §9. Given an
-/// ordered list of `n` items, return the rank each item SHOULD claim
-/// after a `ak.container.rebalance` Move. The result is a fixed-width
-/// base62 encoding chosen so that `alphabet_length^w >= 2 * (n + 1)`.
-/// Returns `Exhausted` if `n` is large enough that even `w == 128`
-/// can't accommodate the spacing.
-pub fn rebalance_ranks(n: usize) -> Result<Vec<String>, RankError> {
-    if n == 0 {
-        return Ok(Vec::new());
-    }
-    // Smallest w such that 62^w >= 2 * (n + 1).
-    let target = 2u128
-        .checked_mul((n as u128) + 1)
-        .ok_or(RankError::Exhausted)?;
-    let mut w: usize = 1;
-    let mut capacity: u128 = BASE as u128;
-    while capacity < target {
-        w += 1;
-        if w > MAX_RANK_LEN {
-            return Err(RankError::Exhausted);
-        }
-        capacity = capacity
-            .checked_mul(BASE as u128)
-            .ok_or(RankError::Exhausted)?;
-    }
-    let denom = (n as u128) + 1;
-    let mut out = Vec::with_capacity(n);
-    for i in 1..=(n as u128) {
-        // floor(i * capacity / (n + 1))
-        let value = i * capacity / denom;
-        out.push(base62_encode_fixed(value, w));
-    }
-    Ok(out)
-}
-
-/// Encode `value` as a fixed-width base62 string, left-padded with the
-/// alphabet's first character (`0`).
-fn base62_encode_fixed(mut value: u128, width: usize) -> String {
-    let mut bytes = vec![ALPHABET[0]; width];
-    let mut idx = width;
-    while value > 0 && idx > 0 {
-        idx -= 1;
-        let digit = (value % (BASE as u128)) as usize;
-        bytes[idx] = ALPHABET[digit];
-        value /= BASE as u128;
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,37 +259,5 @@ mod tests {
         let r = rank_for_drop(Some("0"), Some("z")).unwrap();
         assert!(r.as_str() > "0");
         assert!(r.as_str() < "z");
-    }
-
-    #[test]
-    fn rebalance_zero_items_returns_empty() {
-        assert!(rebalance_ranks(0).unwrap().is_empty());
-    }
-
-    #[test]
-    fn rebalance_three_items_are_strictly_increasing_within_capacity() {
-        let ranks = rebalance_ranks(3).unwrap();
-        assert_eq!(ranks.len(), 3);
-        assert!(ranks[0].as_str() < ranks[1].as_str());
-        assert!(ranks[1].as_str() < ranks[2].as_str());
-        // All same width — fixed-width base62 encoding.
-        assert_eq!(ranks[0].len(), ranks[1].len());
-        assert_eq!(ranks[1].len(), ranks[2].len());
-        // All chars in alphabet.
-        for r in &ranks {
-            validate(r).unwrap();
-        }
-    }
-
-    #[test]
-    fn rebalance_large_n_picks_wider_width() {
-        let ranks = rebalance_ranks(1_000).unwrap();
-        assert_eq!(ranks.len(), 1_000);
-        // 62^2 = 3844 >= 2 * 1001 = 2002, so w = 2 is sufficient.
-        assert_eq!(ranks[0].len(), 2);
-        // Strictly increasing.
-        for w in ranks.windows(2) {
-            assert!(w[0].as_str() < w[1].as_str());
-        }
     }
 }

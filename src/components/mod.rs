@@ -279,32 +279,3 @@ pub fn ErrorBanner(message: String) -> Element {
         }
     }
 }
-
-/// Cross-Space lazy_link badge.
-///
-/// Protocol rule (`models/relation.md`, `lazy_link` reference state): a cross-Space
-/// Relation's `from_ref` / `to_ref` may point at objects in other Spaces, but
-/// only the reference fact is published — content is not copied and read
-/// access is not granted. The sync / projection layer must not backfill the
-/// target Space's data merely because the source Space is visible. This
-/// component renders a consistent UI indicator for that boundary.
-#[component]
-pub fn LazyLinkBadge(
-    /// Opaque reference to the target Space (sha256 digest, ak:space:… ID,
-    /// or omitted).
-    target_ref: Option<String>,
-    /// Short reason: locked / external / restricted / quarantined.
-    reason: Option<String>,
-) -> Element {
-    let reason_text = reason.unwrap_or_else(|| "locked".to_owned());
-    let target_full = target_ref.unwrap_or_else(|| "opaque".to_owned());
-    let target_text = yoface::utils::text::short_protocol_id(&target_full);
-    rsx! {
-        span {
-            class: "badge amber",
-            "data-testid": "lazy-link-badge",
-            "title": "relation.md lazy_link — cross-Space lazy link: {target_full}",
-            "🔒 lazy_link · {reason_text} · {target_text}"
-        }
-    }
-}

@@ -112,10 +112,6 @@ pub fn strand_projection_security_state(value: &Value) -> Option<bool> {
         .find_map(direct_security_state)
 }
 
-pub fn strand_projection_is_encrypted(value: &Value, inherited_realm_encrypted: bool) -> bool {
-    strand_projection_security_state(value).unwrap_or(inherited_realm_encrypted)
-}
-
 pub fn projection_for_scope_id<'a>(
     projections: &'a BTreeMap<String, Value>,
     scope_id: &str,
@@ -580,30 +576,6 @@ mod tests {
             None,
             "an incomplete Realm projection is unknown, not known-plaintext"
         );
-    }
-
-    #[test]
-    fn strand_projection_uses_explicit_security_before_inheritance() {
-        assert_eq!(
-            strand_projection_security_state(&json!({"fields": {"encrypted": true}})),
-            Some(true)
-        );
-        assert_eq!(
-            strand_projection_security_state(&json!({"object": {"encryption_profile": "none"}})),
-            Some(false)
-        );
-        assert_eq!(
-            strand_projection_security_state(
-                &json!({"tracks": {"discussion": {"encryption_profile": "none"}}})
-            ),
-            None
-        );
-        assert!(strand_projection_is_encrypted(
-            &json!({"tracks": {"discussion": {"encryption_profile": "none"}}}),
-            true
-        ));
-        assert!(strand_projection_is_encrypted(&json!({}), true));
-        assert!(!strand_projection_is_encrypted(&json!({}), false));
     }
 
     #[test]

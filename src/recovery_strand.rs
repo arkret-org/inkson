@@ -12,15 +12,13 @@
 use arkret_models_crypto::{
     RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
     RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
-    RecoveryPolicyActiveOutcome, RecoveryPolicyRef, RecoveryPolicySummary, RecoveryProofKind,
-    RecoveryPublicationAuthorizationRule, RecoverySessionCreateRequestBody,
-    RecoverySessionProofSubmitRequestBody, UnsignedRecoveryPolicy, UnsignedRecoveryPolicyBody,
+    RecoveryPolicyActiveOutcome, RecoveryPolicySummary, RecoveryProofKind,
+    RecoveryPublicationAuthorizationRule, UnsignedRecoveryPolicy, UnsignedRecoveryPolicyBody,
 };
 use arkret_sdk::{DidUrl, NonEmptyString, PolicyId, TrustDomainId};
 use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole, event_kind_str};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use ed25519_dalek::SigningKey;
 use serde_json::Value;
 
 use crate::transport::TransportClient;
@@ -41,15 +39,6 @@ impl AccountRecoveryState {
     /// for DID recovery.
     pub fn server_recovery_configured(&self) -> bool {
         self.active_policy.is_some()
-    }
-
-    /// Local fingerprints prove only that this browser once saw a recovery key.
-    /// They do not prove that the account has a server-side recovery backup.
-    pub fn local_only_recovery_key(&self) -> bool {
-        self.local_recovery_key_fingerprint
-            .as_deref()
-            .is_some_and(|fingerprint| !fingerprint.trim().is_empty())
-            && !self.server_recovery_configured()
     }
 }
 
@@ -335,30 +324,6 @@ pub async fn fetch_active_recovery_policy(
     // serializing the already-validated transport DTO back to its wire shape.
     let response = serde_json::to_value(&api.get_recovery_policy().await?)?;
     Ok(parse_active_recovery_policy(&response))
-}
-
-pub fn build_signed_genesis_recovery_policy(
-    principal_id: &arkret_sdk::DidFullId,
-    trust_domain: &str,
-    key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
-) -> anyhow::Result<Value> {
-    if let Some(signer) = crate::event_signer::active_signer()
-        && let Ok(verification_method) =
-            principal_scoped_recovery_policy_verification_method(principal_id, &signer)
-    {
-        return build_signed_genesis_recovery_policy_with_raw_signer(
-            principal_id,
-            trust_domain,
-            key_material,
-            verification_method,
-            |bytes| signer.sign_raw(bytes),
-        );
-    }
-
-    anyhow::bail!(
-        "active signer verification_method is not scoped to principal_id `{principal_id}`; \
-         pass the current session device_id for genesis device signing"
-    )
 }
 
 pub fn build_signed_genesis_recovery_policy_for_session_device(
@@ -825,20 +790,6 @@ pub fn build_recovery_unlock_proof_from_words(
     .map_err(anyhow::Error::from)
 }
 
-pub async fn submit_recovery_unlock_proof(
-    api: &TransportClient,
-    session: &arkret_sdk::RecoverySessionState,
-    policy: &RecoveryPolicySummary,
-    recovery_words: &str,
-) -> anyhow::Result<arkret_sdk::RecoverySessionProofSubmitOutcome> {
-    let proof = build_recovery_unlock_proof_from_words(session, policy, recovery_words)?;
-    api.submit_recovery_proof(
-        session.recovery_session_id.as_str(),
-        &RecoverySessionProofSubmitRequestBody { proof },
-    )
-    .await
-}
-
 pub async fn ensure_recovery_policy(
     api: &TransportClient,
     principal_id: &arkret_sdk::DidFullId,
@@ -859,73 +810,4 @@ pub async fn ensure_recovery_policy(
         &key_material,
     )
     .await
-}
-
-/// Build the `recovery-session.schema.json` `create_request` body.
-pub fn create_session_body(
-    principal_id: &arkret_sdk::DidFullId,
-    requesting_device_id: &arkret_sdk::DeviceId,
-    trust_domain: &arkret_sdk::TrustDomainId,
-    expected_recovery_policy_ref: Option<(&str, u64)>,
-) -> anyhow::Result<RecoverySessionCreateRequestBody> {
-    Ok(RecoverySessionCreateRequestBody {
-        principal_authority: arkret_sdk::PrincipalAuthorityKey::new(
-            arkret_sdk::project_full_id_to_core_id(principal_id)?,
-            crate::operation::authoring_principal_server_id()?,
-        ),
-        requesting_device_id: requesting_device_id.clone(),
-        trust_domain: trust_domain.clone(),
-        expected_recovery_policy_ref: match expected_recovery_policy_ref {
-            Some((policy_id, policy_version)) => Some(RecoveryPolicyRef {
-                policy_id: PolicyId::new(policy_id.trim().to_owned())?,
-                policy_version,
-            }),
-            None => None,
-        },
-    })
-}
-
-/// 6.3 — open a recovery session. Returns the session JSON (carries the
-/// challenge + every binding field the proof transcript needs).
-pub async fn open_recovery_session(
-    api: &TransportClient,
-    principal_id: &arkret_sdk::DidFullId,
-    requesting_device_id: &arkret_sdk::DeviceId,
-    trust_domain: &arkret_sdk::TrustDomainId,
-    expected_recovery_policy_ref: Option<(&str, u64)>,
-) -> anyhow::Result<Value> {
-    let body = create_session_body(
-        principal_id,
-        requesting_device_id,
-        trust_domain,
-        expected_recovery_policy_ref,
-    )?;
-    // Callers read `recovery_session_id` from the session via lenient `Value`
-    // accessors; serialize the typed session state back to its wire JSON.
-    Ok(serde_json::to_value(
-        &api.create_recovery_session(&body).await?,
-    )?)
-}
-
-/// 6.3 — sign a `principal_signing` proof for `session` (with the principal
-/// control key) and submit it. Returns the `proof_submit_response`.
-pub async fn submit_principal_signing_proof(
-    api: &TransportClient,
-    session: &Value,
-    verification_method: &str,
-    identity_root_signing_key: &SigningKey,
-) -> anyhow::Result<Value> {
-    let proof = crate::recovery_proof::build_principal_signing_proof(
-        session,
-        verification_method,
-        identity_root_signing_key,
-    )?;
-    let session_id = session
-        .get("recovery_session_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("session missing recovery_session_id"))?;
-    let body = RecoverySessionProofSubmitRequestBody { proof };
-    Ok(serde_json::to_value(
-        &api.submit_recovery_proof(session_id, &body).await?,
-    )?)
 }

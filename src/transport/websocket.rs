@@ -89,26 +89,8 @@ impl WebSocketTransportSelector {
         self.policy.on_handshake_failure(failure)
     }
 
-    /// The ordered handoff §8 requires: stop the old owner, persist its durable
-    /// cursors, only then start the new one. Holding both is what the rule
-    /// exists to prevent.
-    pub fn switch_owner(&mut self, owner: WebSocketConsumerOwner) -> garth::Result<()> {
-        self.handoff.stop();
-        self.handoff.persist_cursors();
-        self.handoff
-            .switch_to(owner)
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
-    }
-
     pub fn owner(&self) -> WebSocketConsumerOwner {
         self.handoff.owner()
-    }
-
-    /// Start the first owner of this session's stream consumers.
-    pub fn start_owner(&mut self, owner: WebSocketConsumerOwner) -> garth::Result<()> {
-        self.handoff
-            .start(owner)
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 }
 
@@ -555,18 +537,5 @@ pub(crate) mod tests {
         // §8.1 only bans the binding outright for 1002 / 1009; a policy failure
         // may succeed again once the grant is refreshed.
         assert!(selector.descriptor().is_some());
-    }
-
-    #[test]
-    fn the_owner_switch_is_ordered() {
-        let mut selector = WebSocketTransportSelector::from_describe(&describe_with(Vec::new()));
-        selector
-            .start_owner(WebSocketConsumerOwner::WebSocket)
-            .unwrap();
-        selector
-            .start_owner(WebSocketConsumerOwner::Http)
-            .expect_err("a second owner must not start");
-        selector.switch_owner(WebSocketConsumerOwner::Http).unwrap();
-        assert_eq!(selector.owner(), WebSocketConsumerOwner::Http);
     }
 }

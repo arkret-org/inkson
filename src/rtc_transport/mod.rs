@@ -34,14 +34,6 @@ pub mod native;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
-/// Direction of a local media track relative to the peer/SFU.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TrackKind {
-    Audio,
-    Video,
-    Screen,
-}
-
 /// A remote participant the transport has observed connecting. The
 /// `identity` is the SFU-local participant identity; before a remote is
 /// surfaced to the UI it MUST be cross-checked against

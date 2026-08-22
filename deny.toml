@@ -25,11 +25,6 @@ ignore = [
     { id = "RUSTSEC-2024-0436", reason = "transitive image/rav1e dependency with no compatible replacement" },
     { id = "RUSTSEC-2024-0370", reason = "transitive GTK3 macro dependency with no compatible replacement" },
     { id = "RUSTSEC-2026-0173", reason = "transitive OpenMLS hax macro dependency with no compatible replacement" },
-    # tauri-winrt-notification 0.7.2 uses quick-xml only for `escape`; it never
-    # invokes Reader, NsReader, or attribute iteration. notify-rust does not
-    # yet accept tauri-winrt-notification 0.8.
-    { id = "RUSTSEC-2026-0194", reason = "affected quick-xml parser APIs are unreachable" },
-    { id = "RUSTSEC-2026-0195", reason = "affected quick-xml NsReader API is unreachable" },
 ]
 
 [licenses]

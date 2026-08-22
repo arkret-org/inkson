@@ -33,19 +33,6 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
 
-/// True when a `key` event should be treated as the global search
-/// trigger (`Ctrl+F` on Win/Linux, `Cmd+F` on macOS). The `meta` flag
-/// reflects the macOS Command modifier; `ctrl` reflects the Control
-/// modifier. The browser's native page-find UI is suppressed at the
-/// app level by the calling key handler (via `event.prevent_default`)
-/// so the bound chord opens the in-app panel instead.
-///
-/// Pure function so the `app.rs` keydown handler can call this without
-/// pulling in dioxus state.
-pub fn key_event_is_search_trigger(key: &str, ctrl: bool, meta: bool) -> bool {
-    matches!(key, "f" | "F") && (ctrl || meta)
-}
-
 /// Type alias for the panel's result list to keep the component
 /// signature compact.
 type ResultRows = Vec<Value>;
@@ -477,20 +464,6 @@ mod tests {
 
     fn device(value: &str) -> arkret_sdk::DeviceId {
         arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
-    }
-
-    #[test]
-    fn cmd_f_triggers_search() {
-        assert!(key_event_is_search_trigger("f", false, true));
-        assert!(key_event_is_search_trigger("F", false, true));
-        assert!(key_event_is_search_trigger("f", true, false));
-        assert!(key_event_is_search_trigger("F", true, false));
-        // Plain `f` without a modifier MUST not trigger — otherwise we'd
-        // collide with normal typing.
-        assert!(!key_event_is_search_trigger("f", false, false));
-        // Other keys, even with modifiers, MUST not trigger.
-        assert!(!key_event_is_search_trigger("k", true, false));
-        assert!(!key_event_is_search_trigger("Escape", true, true));
     }
 
     #[test]

@@ -88,57 +88,6 @@ pub fn fingerprint_recovery_key(recovery_key: &str) -> String {
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OobCodeKind {
-    DirectHandle,
-    Lookup,
-}
-
-pub const OOB_DIRECT_HANDLE_ALPHABET: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
-pub const OOB_DIRECT_HANDLE_MIN_LEN: usize = 22;
-
-pub fn classify_oob_code(input: &str) -> Option<OobCodeKind> {
-    let normalized = input
-        .chars()
-        .filter(|character| !character.is_whitespace() && *character != '-')
-        .map(|character| character.to_ascii_uppercase())
-        .collect::<String>();
-    if normalized.len() >= OOB_DIRECT_HANDLE_MIN_LEN
-        && normalized
-            .bytes()
-            .all(|byte| OOB_DIRECT_HANDLE_ALPHABET.contains(&byte))
-    {
-        return Some(OobCodeKind::DirectHandle);
-    }
-    (normalized.len() >= 4
-        && normalized
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric()))
-    .then_some(OobCodeKind::Lookup)
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct OobCodeAttemptTracker {
-    pub wrong_attempts: u8,
-}
-
-impl OobCodeAttemptTracker {
-    pub const MAX_ATTEMPTS: u8 = 3;
-
-    pub fn note_wrong(&mut self) -> bool {
-        self.wrong_attempts = self.wrong_attempts.saturating_add(1);
-        self.is_locked_to_generic_error()
-    }
-
-    pub fn is_locked_to_generic_error(&self) -> bool {
-        self.wrong_attempts >= Self::MAX_ATTEMPTS
-    }
-
-    pub fn reset(&mut self) {
-        self.wrong_attempts = 0;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,15 +121,5 @@ mod tests {
             recovery_key_confirmation_diff(&key, &words.join(" ")),
             RecoveryKeyConfirmationDiff::MismatchAt { index: 7 }
         );
-    }
-
-    #[test]
-    fn oob_tracker_locks_after_three_failures() {
-        let mut tracker = OobCodeAttemptTracker::default();
-        assert!(!tracker.note_wrong());
-        assert!(!tracker.note_wrong());
-        assert!(tracker.note_wrong());
-        tracker.reset();
-        assert!(!tracker.is_locked_to_generic_error());
     }
 }

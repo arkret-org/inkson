@@ -1,16 +1,10 @@
-//! R3.3 (AKP-0011, arkret-spec @ cced4b8) — client-side shareable object
-//! links.
+//! R3.3 (AKP-0011) — client-side shareable object links (inbound half).
 //!
-//! A user can share a Realm / Strand / Message as a link. This module is the
+//! A user can paste a shared Realm / Strand / Message link. This module is the
 //! inkson-side glue on top of the SDK's client-agnostic addressing grammar
-//! ([`arkret_wire::parse_address`] / [`build_address`] /
-//! [`build_https_landing`]) plus the [`target_digest`] invite / preview token binding:
+//! ([`arkret_wire::parse_address`] / [`build_address`]):
 //!
-//! * [`ShareTarget`] — a typed "thing I want to share" (realm / strand / message) plus routing
-//!   hints. [`ShareTarget::build_links`] produces both output forms.
-//! * [`ShareLinks`] — the HTTPS landing form (default copy-paste) and the `web+arkret:` "open in
-//!   app" form.
-//! * [`OpenedLink`] — the result of parsing + resolving a pasted link, routed to a local
+//! * [`OpenedLink`] — the result of parsing a pasted link, routed to a local
 //!   [`crate::routes::Route`] by `target_kind`.
 //!
 //! ## Privacy / fail-closed posture
@@ -19,223 +13,18 @@
 //!   using the fragment.
 //! * The open-link path never distinguishes `not_found` from `unauthorized`: any resolve failure
 //!   collapses to a single friendly `object_link.error.unavailable` message (anti-enumeration).
-//! * Reference links carry no authorization. Invite and preview links bind the [`TargetDescriptor`]
+//! * Reference links carry no authorization. Invite and preview links bind a `TargetDescriptor`
 //!   digest so a token minted for object A cannot be replayed onto object B (scope-confusion
 //!   defence lives in the SDK's [`arkret_wire::verify_token_target`]).
-//!
-//! ## Web protocol-handler registration — design choice
-//! inkson deliberately ships the **HTTPS-fragment-only** landing path and does
-//! NOT register a `web+arkret:` web protocol handler by default. Rationale:
-//! `navigator.registerProtocolHandler('web+arkret', template)` is only privacy
-//! safe if the template substitutes `%s` INSIDE its own fragment
-//! (`https://app.example/open#%s`); a template that puts `%s` in the path or
-//! query would leak the substituted object id / invite token to the handler
-//! host. [`web_protocol_handler_template`] enforces that invariant for callers
-//! who explicitly opt in, and [`register_web_protocol_handler`] performs the
-//! fragment-only registration on wasm. The default UI strand simply hands out the
-//! HTTPS-fragment link, which is leak-proof without any registration.
-//!
-//! Native OS deep-link registration (Info.plist `CFBundleURLTypes` /
-//! AndroidManifest `<intent-filter>` / freedesktop `.desktop` `MimeType` /
-//! Windows `HKCR\web+arkret` registry) is out of scope here.
-// TODO(R3.3.1): native OS deep-link registration for the `web+arkret:` scheme.
+//! * inkson never registers a `web+arkret:` web protocol handler:
+//!   `navigator.registerProtocolHandler` is only privacy safe when the template substitutes `%s`
+//!   INSIDE its own fragment, and the HTTPS-fragment landing link is leak-proof with no
+//!   registration at all.
 
 use arkret_models_discovery::TargetKind;
-use arkret_wire::{
-    AddressAction, AddressLinkKind, ParsedAddress, RealmRef, TargetDescriptor, build_address,
-    build_https_landing, parse_address, target_digest,
-};
+use arkret_wire::{ParsedAddress, RealmRef, build_address, parse_address};
 
 use crate::routes::Route;
-
-/// The local object a user is sharing. Mirrors the SDK address hierarchy
-/// `realm ⊃ strand ⊃ message`. `realm` is a bare event-derived identity
-/// token or a domain-style alias (the `ak:realm:` sigil is stripped);
-/// `strand`/`message` are bare typed-token bodies.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ShareTarget {
-    Realm {
-        realm: String,
-    },
-    Strand {
-        realm: String,
-        strand: String,
-    },
-    Message {
-        realm: String,
-        strand: String,
-        message: String,
-    },
-}
-
-impl ShareTarget {
-    /// Build a [`ShareTarget`] from possibly-`ak:`-prefixed ids, stripping the
-    /// sigil so the SDK grammar receives the bare path segments it expects.
-    pub fn realm(realm_id: &str) -> Self {
-        ShareTarget::Realm {
-            realm: strip_sigil(realm_id),
-        }
-    }
-
-    pub fn strand(realm_id: &str, strand_id: &str) -> Self {
-        ShareTarget::Strand {
-            realm: strip_sigil(realm_id),
-            strand: strip_sigil(strand_id),
-        }
-    }
-
-    pub fn message(realm_id: &str, strand_id: &str, message_id: &str) -> Self {
-        ShareTarget::Message {
-            realm: strip_sigil(realm_id),
-            strand: strip_sigil(strand_id),
-            message: strip_sigil(message_id),
-        }
-    }
-
-    fn realm_seg(&self) -> &str {
-        match self {
-            ShareTarget::Realm { realm }
-            | ShareTarget::Strand { realm, .. }
-            | ShareTarget::Message { realm, .. } => realm,
-        }
-    }
-
-    fn strand_seg(&self) -> Option<&str> {
-        match self {
-            ShareTarget::Realm { .. } => None,
-            ShareTarget::Strand { strand, .. } => Some(strand),
-            ShareTarget::Message { strand, .. } => Some(strand),
-        }
-    }
-
-    fn message_seg(&self) -> Option<&str> {
-        match self {
-            ShareTarget::Message { message, .. } => Some(message),
-            _ => None,
-        }
-    }
-
-    /// Lower the target into a [`ParsedAddress`] with the supplied routing
-    /// hints. Current SDK grammar treats Strand and Message ids as globally
-    /// typed targets under their Realm path, so relay `via` hints are not
-    /// serialized into reference links.
-    pub fn to_parsed_address(
-        &self,
-        _via: &[String],
-        action: AddressAction,
-        address_link_kind: AddressLinkKind,
-        token: Option<String>,
-    ) -> ParsedAddress {
-        ParsedAddress {
-            realm: RealmRef::parse(self.realm_seg()),
-            strand: self.strand_seg().map(str::to_owned),
-            message: self.message_seg().map(str::to_owned),
-            action,
-            // A stray token on a reference link is dropped by the SDK builder.
-            address_link_kind,
-            token: if matches!(
-                address_link_kind,
-                AddressLinkKind::Invite | AddressLinkKind::Preview
-            ) {
-                token
-            } else {
-                None
-            },
-        }
-    }
-
-    /// Build both shareable link forms for this target.
-    ///
-    /// `landing` is the configured HTTPS landing host (e.g.
-    /// `https://share.arkret.example`); the target + token always live in the
-    /// fragment so the host never sees them. `via` is accepted for older
-    /// callers but is not serialized by the current SDK address grammar.
-    pub fn build_links(
-        &self,
-        landing: &str,
-        via: &[String],
-        action: AddressAction,
-        address_link_kind: AddressLinkKind,
-        token: Option<String>,
-    ) -> ShareLinks {
-        let parsed = self.to_parsed_address(via, action, address_link_kind, token);
-        ShareLinks {
-            https_landing: build_https_landing(landing, &parsed),
-            web_arkret: build_address(&parsed),
-            address_link_kind,
-        }
-    }
-
-    /// Build a `reference` link pair (no token). This is the default share
-    /// action — references carry no authorization.
-    pub fn build_reference_links(
-        &self,
-        landing: &str,
-        via: &[String],
-        action: AddressAction,
-    ) -> ShareLinks {
-        self.build_links(landing, via, action, AddressLinkKind::Reference, None)
-    }
-
-    /// Build a `preview` link pair. Preview tokens are policy-limited by
-    /// `ak.realm.preview_policy`; they do not grant membership, write access or
-    /// join routing.
-    pub fn build_preview_links(
-        &self,
-        landing: &str,
-        via: &[String],
-        action: AddressAction,
-        token: String,
-    ) -> ShareLinks {
-        self.build_links(landing, via, action, AddressLinkKind::Preview, Some(token))
-    }
-
-    /// Compute the [`TargetDescriptor`] digest this target would bind into an
-    /// `invite` token's signed payload. The digest covers ONLY the identity
-    /// tuple + `address_link_kind`, never the via/action hints, so a server can mint a
-    /// token bound to this exact object.
-    ///
-    /// Fails closed when the realm segment is an alias (the digest is
-    /// meaningless over an alias — the caller must resolve the alias to a
-    /// canonical `ak:realm:<event-token>` first).
-    // TODO(R3.3.1): once an alias-bearing share is supported, resolve the alias
-    // via the directory before digesting (TargetDescriptor::set_realm_id).
-    pub fn invite_target_digest(&self) -> anyhow::Result<String> {
-        self.target_digest_for_address_link_kind(AddressLinkKind::Invite)
-    }
-
-    /// Compute the target descriptor digest a `preview` token must bind.
-    pub fn preview_target_digest(&self) -> anyhow::Result<String> {
-        self.target_digest_for_address_link_kind(AddressLinkKind::Preview)
-    }
-
-    fn target_digest_for_address_link_kind(
-        &self,
-        address_link_kind: AddressLinkKind,
-    ) -> anyhow::Result<String> {
-        let parsed = self.to_parsed_address(&[], AddressAction::View, address_link_kind, None);
-        let mut descriptor = TargetDescriptor::from_parsed(&parsed);
-        descriptor.address_link_kind = address_link_kind;
-        if !descriptor.realm_id.starts_with("ak:realm:") {
-            return Err(anyhow::anyhow!(
-                "cannot bind a token to an alias realm — resolve to a canonical realm_id first"
-            ));
-        }
-        target_digest(&descriptor).map_err(|err| anyhow::anyhow!("target_digest failed: {err}"))
-    }
-}
-
-/// The two output forms of a shareable object link.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ShareLinks {
-    /// Canonical HTTPS landing link — the default copy-paste form. Target +
-    /// token live in the `#` fragment and never reach the landing server.
-    pub https_landing: String,
-    /// `web+arkret:` URI — the "open in app" form for OS / browser handlers.
-    pub web_arkret: String,
-    /// The link type both forms encode.
-    pub address_link_kind: AddressLinkKind,
-}
 
 /// A parsed shareable link plus the local route it resolves to. `address` is
 /// the SDK [`ParsedAddress`]; `token` is lifted out for the resolve request
@@ -298,20 +87,6 @@ impl OpenedLink {
     }
 }
 
-/// Strip a leading `ak:<kind>:` sigil so the SDK grammar receives the bare
-/// path segment (typed-token body or alias). Idempotent on already-bare input.
-fn strip_sigil(id: &str) -> String {
-    let id = id.trim();
-    if let Some(rest) = id.strip_prefix("ak:") {
-        // `ak:realm:<event-token>` → `<event-token>`; aliases have no `ak:` prefix.
-        rest.split_once(':')
-            .map(|(_, v)| v.to_owned())
-            .unwrap_or_else(|| id.to_owned())
-    } else {
-        id.to_owned()
-    }
-}
-
 fn typed_realm(bare: &str) -> String {
     if bare.starts_with("ak:realm:") {
         bare.to_owned()
@@ -335,121 +110,12 @@ fn typed_strand(bare: &str) -> String {
     }
 }
 
-/// Build the privacy-safe web protocol-handler template for `web+arkret:`.
-///
-/// Returns `https://<landing>/open#%s` — the `%s` lives in the FRAGMENT, so
-/// the browser-substituted `web+arkret:` URI stays out of the path/query and
-/// never reaches the landing host. Callers who register a handler MUST use a
-/// template shaped like this; see the module-level design note.
-pub fn web_protocol_handler_template(landing: &str) -> String {
-    format!("{}/open#%s", landing.trim_end_matches('/'))
-}
-
-/// wasm-only: opt-in registration of the `web+arkret:` web protocol handler,
-/// using the fragment-only template from [`web_protocol_handler_template`].
-///
-/// This is NOT called by the default UI strand (inkson prefers the
-/// HTTPS-fragment landing link, which needs no registration). It exists for
-/// embedders that want the "open in app from the browser" affordance and have
-/// confirmed the privacy posture of the fragment-only template.
-#[cfg(target_arch = "wasm32")]
-pub fn register_web_protocol_handler(landing: &str) -> Result<(), String> {
-    let window = web_sys::window().ok_or_else(|| "no window".to_owned())?;
-    let navigator = window.navigator();
-    let template = web_protocol_handler_template(landing);
-    // This web-sys pin exposes the older 3-arg signature
-    // `registerProtocolHandler(scheme, url, title)`; the `title` arg was
-    // dropped from the living standard but is still required by the binding.
-    navigator
-        .register_protocol_handler("web+arkret", &template, "Arkret")
-        .map_err(|err| format!("registerProtocolHandler failed: {err:?}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const R: &str = "ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU";
     const F: &str = "Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc";
-    const VIA: &str = "did:web:relay.example";
-    const LANDING: &str = "https://share.arkret.example";
-
-    #[test]
-    fn strip_sigil_handles_typed_and_bare_ids() {
-        assert_eq!(
-            strip_sigil("ak:realm:AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg"),
-            "AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg"
-        );
-        assert_eq!(
-            strip_sigil("ak:strand:Aksewn8OlIRPgPdzRjVdGnLMpy8xmetAY6MQDUVpviH0"),
-            "Aksewn8OlIRPgPdzRjVdGnLMpy8xmetAY6MQDUVpviH0"
-        );
-        assert_eq!(strip_sigil("bare-token"), "bare-token");
-        assert_eq!(strip_sigil("team.example.com"), "team.example.com");
-    }
-
-    #[test]
-    fn realm_links_use_fragment_for_https() {
-        let target = ShareTarget::realm("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU");
-        let links = target.build_reference_links(LANDING, &[], AddressAction::View);
-        // HTTPS landing keeps the target in the fragment.
-        assert!(
-            links
-                .https_landing
-                .starts_with("https://share.arkret.example/#realm/")
-        );
-        assert!(links.https_landing.contains(R));
-        // The web+arkret: form is the canonical scheme.
-        assert_eq!(links.web_arkret, format!("web+arkret:realm/{R}"));
-        assert_eq!(links.address_link_kind, AddressLinkKind::Reference);
-    }
-
-    #[test]
-    fn strand_links_ignore_via_and_roundtrip() {
-        let target = ShareTarget::strand(
-            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU",
-            "ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc",
-        );
-        let links = target.build_reference_links(LANDING, &[VIA.to_owned()], AddressAction::View);
-        assert!(links.web_arkret.contains(&format!("realm/{R}/strand/{F}")));
-        assert!(!links.web_arkret.contains("via="));
-        // Both forms reparse to the same address.
-        let from_https = OpenedLink::parse(&links.https_landing).unwrap();
-        let from_web = OpenedLink::parse(&links.web_arkret).unwrap();
-        assert_eq!(from_https.address, from_web.address);
-        assert!(from_web.address.is_strand());
-    }
-
-    #[test]
-    fn message_link_routes_to_chat() {
-        let event_id =
-            arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
-                .unwrap();
-        let message_id = arkret_sdk::MessageId::from_event_id(&event_id);
-        let target = ShareTarget::message(
-            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU",
-            "ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc",
-            message_id.as_str(),
-        );
-        let links = target.build_links(
-            LANDING,
-            &[VIA.to_owned()],
-            AddressAction::Reply,
-            AddressLinkKind::Reference,
-            None,
-        );
-        let opened = OpenedLink::parse(&links.web_arkret).unwrap();
-        assert!(opened.address.is_message());
-        match opened.route_for(TargetKind::Message) {
-            Route::Chat { realm_id, .. } => {
-                assert_eq!(
-                    realm_id,
-                    format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU")
-                );
-            }
-            other => panic!("expected Chat route, got {other:?}"),
-        }
-    }
 
     #[test]
     fn realm_target_routes_to_realm() {
@@ -470,87 +136,9 @@ mod tests {
     }
 
     #[test]
-    fn invite_link_roundtrips_token_and_binds_digest() {
-        let target = ShareTarget::strand(
-            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU",
-            "ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc",
-        );
-        let links = target.build_links(
-            LANDING,
-            &[VIA.to_owned()],
-            AddressAction::Join,
-            AddressLinkKind::Invite,
-            Some("opaque-tok-123".to_owned()),
-        );
-        assert!(links.web_arkret.contains("lt=invite"));
-        assert!(links.web_arkret.contains("tok=opaque-tok-123"));
-        let opened = OpenedLink::parse(&links.web_arkret).unwrap();
-        assert_eq!(opened.token.as_deref(), Some("opaque-tok-123"));
-        // The digest is stable and prefixed.
-        let digest = target.invite_target_digest().unwrap();
-        assert!(digest.starts_with("sha256:"));
-    }
-
-    #[test]
-    fn preview_link_roundtrips_token_and_binds_digest() {
-        let target = ShareTarget::strand(
-            "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU",
-            "ak:strand:Ae5NKrBlFWIp8_rB4VWC0WK2l3QJSfUEOQ796BrZ7XPc",
-        );
-        let links = target.build_preview_links(
-            LANDING,
-            &[VIA.to_owned()],
-            AddressAction::View,
-            "preview-token-123".to_owned(),
-        );
-        assert!(links.web_arkret.contains("lt=preview"));
-        assert!(links.web_arkret.contains("tok=preview-token-123"));
-        let opened = OpenedLink::parse(&links.web_arkret).unwrap();
-        assert_eq!(opened.address.address_link_kind, AddressLinkKind::Preview);
-        assert_eq!(opened.token.as_deref(), Some("preview-token-123"));
-
-        let invite_digest = target.invite_target_digest().unwrap();
-        let preview_digest = target.preview_target_digest().unwrap();
-        assert!(preview_digest.starts_with("sha256:"));
-        assert_ne!(invite_digest, preview_digest);
-    }
-
-    #[test]
-    fn invite_digest_fails_closed_on_alias_realm() {
-        let target = ShareTarget::realm("team.example.com");
-        assert!(target.invite_target_digest().is_err());
-        assert!(target.preview_target_digest().is_err());
-    }
-
-    #[test]
-    fn reference_link_drops_stray_token() {
-        let target = ShareTarget::realm("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU");
-        // Even if a token is passed, a reference link must not carry it.
-        let links = target.build_links(
-            LANDING,
-            &[],
-            AddressAction::View,
-            AddressLinkKind::Reference,
-            Some("should-be-dropped".to_owned()),
-        );
-        assert!(!links.web_arkret.contains("tok="));
-        assert!(!links.web_arkret.contains("should-be-dropped"));
-    }
-
-    #[test]
     fn parse_fails_closed_on_garbage() {
         assert!(OpenedLink::parse("not-a-link").is_err());
         assert!(OpenedLink::parse(&format!("web+arkret:space/{R}")).is_err());
         assert!(OpenedLink::parse(&format!("web+arkret:realm/{R}/strand/{F}")).is_ok());
-    }
-
-    #[test]
-    fn protocol_handler_template_keeps_substitution_in_fragment() {
-        let template = web_protocol_handler_template(LANDING);
-        assert_eq!(template, "https://share.arkret.example/open#%s");
-        // The `%s` MUST be in the fragment, never the path/query.
-        let (before_fragment, fragment) = template.split_once('#').unwrap();
-        assert!(!before_fragment.contains("%s"));
-        assert!(fragment.contains("%s"));
     }
 }

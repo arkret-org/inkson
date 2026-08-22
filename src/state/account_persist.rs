@@ -471,9 +471,9 @@ mod wasm_bootstrap {
                 .session_grant
                 .as_ref()
                 .and_then(|grant| user_local_store_for_principal(&grant.principal_id).ok());
-            // The legacy root key cannot prove a PrincipalAuthorityKey, so it
-            // is not an acceptable source for restoring an account-local
-            // session secret. A freshly staged typed grant may still be
+            // The root key cannot prove a PrincipalAuthorityKey, so it is not
+            // an acceptable source for restoring an account-local session
+            // secret. A freshly staged typed grant may still be
             // persisted below; reload restoration remains fail-closed.
             let secure_grant = None;
             let Some(stored) = self.read_account_state(&effective_did) else {

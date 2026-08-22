@@ -64,16 +64,6 @@ pub fn canonical_event_digest<T: Serialize>(body: &T) -> anyhow::Result<String> 
 // when the spec adds new canonicalization rules for a specific
 // envelope type.
 
-/// F-CANONICAL-1: canonical bytes for a SDK [`arkret_sdk::Event`] payload —
-/// the input the signer hashes when producing the detached JWS over
-/// an inbound event. Matches `conformance/encoding.md §2` (event
-/// envelope canonicalization rules: sorted keys, integer-only
-/// numbers, no whitespace) and excludes `proofs` / `unsigned` exactly
-/// as [`arkret_sdk::Event::event_digest`] does.
-pub fn canonical_event_envelope_bytes(envelope: &arkret_sdk::Event) -> anyhow::Result<Vec<u8>> {
-    canonical_json_bytes(&envelope.digest_payload()?)
-}
-
 /// F-CANONICAL-1: canonical bytes for a Move body. Used at the move
 /// signer / verifier seam. Generic so callers can pass either the
 /// SDK's typed `Move` (when available in scope) or a `serde_json::Value`
@@ -143,35 +133,5 @@ mod tests {
             canonical_move_bytes(&a).unwrap(),
             canonical_move_bytes(&b).unwrap()
         );
-    }
-
-    #[test]
-    fn canonical_event_envelope_bytes_use_sdk_digest_payload() {
-        let event: arkret_sdk::Event = serde_json::from_value(json!({
-            "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "kind": "ak.message.create",
-            "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
-            "actor_id": "ak:did_core:web:alice.example",
-            "principal_server_id": "ak:did_core:web:principal.example",
-            "actor_seq": 1,
-            "created_at": "2026-05-19T00:00:00.000Z",
-            "hlc": "01970e589d21-0001-a13f9c2e",
-            "prev_refs": [],
-            "payload": {"kind": "ak.content.text", "body": "hi"},
-            "unsigned": {"local_only": true},
-            "proofs": []
-        }))
-        .unwrap();
-
-        let bytes = canonical_event_envelope_bytes(&event).unwrap();
-        let as_text = std::str::from_utf8(&bytes).unwrap();
-
-        assert_eq!(
-            bytes,
-            arkret_sdk::canonical::canonical_json_bytes(&event.digest_payload().unwrap()).unwrap()
-        );
-        assert!(!as_text.contains("proofs"));
-        assert!(!as_text.contains("unsigned"));
     }
 }

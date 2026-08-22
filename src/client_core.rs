@@ -425,9 +425,6 @@ where
     }
 }
 
-pub type MemoryClientCore<E> =
-    ClientCoreState<E, garth::MemoryStore, garth::MemoryStore, garth::MemorySecureKeyStore>;
-
 #[cfg(not(target_arch = "wasm32"))]
 type InksonSubscriptionEngine = garth::SubscriptionEngine<
     garth::NativeExecutor,
@@ -676,55 +673,11 @@ fn reconnect_result_from_interrupt(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub type DefaultClientCore = MemoryClientCore<garth::NativeExecutor>;
-
-#[cfg(target_arch = "wasm32")]
-pub type DefaultClientCore = MemoryClientCore<garth::WasmExecutor>;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn build_memory_client_core(http: arkret_sdk::http_client::Client) -> DefaultClientCore {
-    let secure_key_store = garth::MemorySecureKeyStore::new();
-    ClientCoreState::new(
-        http,
-        secure_key_store,
-        garth::ArkretClient::new(
-            garth::NativeExecutor,
-            garth::MemoryStore::new(),
-            garth::MemoryStore::new(),
-        ),
-    )
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn build_memory_client_core(http: arkret_sdk::http_client::Client) -> DefaultClientCore {
-    let secure_key_store = garth::MemorySecureKeyStore::new();
-    ClientCoreState::new(
-        http,
-        secure_key_store,
-        garth::ArkretClient::new(
-            garth::WasmExecutor,
-            garth::MemoryStore::new(),
-            garth::MemoryStore::new(),
-        ),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use garth::{
         CursorStore, EventCacheStore, RealmEventsFrameSource, RealmEventsTransport, SecureKeyStore,
     };
-
-    #[test]
-    fn memory_client_core_exposes_host_session_and_subscription_engines() {
-        let http = arkret_sdk::http_client::Client::new("https://service.example".parse().unwrap())
-            .unwrap();
-        let client = super::build_memory_client_core(http.clone());
-
-        let _session = garth::SessionEngine::new(http);
-        let _subscription = client.subscription_engine();
-    }
 
     #[test]
     fn realm_events_request_retains_initial_and_resumed_trace_context() {

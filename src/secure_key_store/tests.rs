@@ -633,15 +633,6 @@ fn history_secrets_json_does_not_leak_raw_bytes() {
     );
 }
 
-/// Legacy raw epoch maps and malformed current records are rejected as a
-/// whole; there is no compatibility read-through.
-#[test]
-fn history_secrets_json_drops_malformed_entries() {
-    let json = r#"{"5":"AAAA","not-a-number":"AAAA","9":"!!!not-base64!!!"}"#;
-    let decoded = decode_history_secrets_json(json);
-    assert!(decoded.is_empty());
-}
-
 /// The SecureKeyStore key for a scope/group pair is the hardened prefix plus a
 /// stable, character-safe base64 encoding and is classified as
 /// IndexedDB-only key material.

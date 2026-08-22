@@ -92,11 +92,6 @@ impl CircleScope {
             CircleScope::Circle { title, .. } => title.as_str(),
         }
     }
-
-    /// Whether the composer should render the colored Circle banner.
-    pub fn is_circle(&self) -> bool {
-        matches!(self, CircleScope::Circle { .. })
-    }
 }
 
 /// Lightweight projection of a Circle for sidebar / picker / modal
@@ -219,7 +214,7 @@ impl CircleErrorKind {
     }
 
     /// Fallback English string when the i18n dictionary doesn't carry
-    /// the key (e.g. during early boot before [`crate::i18n::init_i18n`]
+    /// the key (e.g. during early boot before [`crate::i18n::init_i18n_with_locale`]
     /// has populated translations).
     pub fn english_fallback(self) -> &'static str {
         match self {
@@ -258,44 +253,6 @@ impl CircleErrorKind {
 /// been deleted now that the SDK enum is available.
 pub use arkret_wire::ScopeRef;
 
-/// Classify the relationship between an envelope's
-/// [`ScopeRef`] and the payload-level `scope_circle_id`.
-///
-/// When the two disagree the message body is held in
-/// [`MessageCryptoState::NeedsVerification`] and the UI raises a
-/// warning badge (see [`crate::components::sync_badge`]). When they
-/// agree the body decrypts against the matching MLS group (Realm vs
-/// Circle).
-pub fn classify_scope_match(
-    effective: &ScopeRef,
-    payload_scope_circle_id: Option<&str>,
-) -> ScopeMatch {
-    match (effective.circle_id(), payload_scope_circle_id) {
-        (None, None) => ScopeMatch::Realm,
-        (Some(envelope_circle), Some(payload_circle))
-            if envelope_circle.as_str() == payload_circle =>
-        {
-            ScopeMatch::Circle
-        }
-        _ => ScopeMatch::Mismatch,
-    }
-}
-
-/// Outcome of [`classify_scope_match`]. Mirrors the three states the
-/// chat renderer cares about: Realm-scoped, Circle-scoped, or a
-/// mismatch that demands manual verification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScopeMatch {
-    /// Realm-scoped — decrypted against the parent Realm MLS group.
-    Realm,
-    /// Circle-scoped — decrypted against the Circle's independent MLS
-    /// group.
-    Circle,
-    /// `effective_scope` and payload `scope_circle_id` disagreed —
-    /// surface as `NeedsVerification` in the message card.
-    Mismatch,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,7 +270,6 @@ mod tests {
         let scope = CircleScope::default();
         assert_eq!(scope.label(), "Workspace");
         assert_eq!(scope.circle_id(), None);
-        assert!(!scope.is_circle());
     }
 
     #[test]
@@ -325,7 +281,6 @@ mod tests {
         };
         assert_eq!(scope.circle_id(), Some("ak:circle:abc"));
         assert_eq!(scope.label(), "Ops");
-        assert!(scope.is_circle());
     }
 
     #[test]

@@ -30,16 +30,8 @@
 use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use hkdf::Hkdf;
-use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
-use zeroize::{Zeroize, Zeroizing};
-
-/// HKDF info domain separator for deriving the recovery X25519 keypair from
-/// BIP-39 entropy (see [`derive_recovery_keypair_from_entropy`]). This is an
-/// opaque, stable domain tag — its byte value MUST NOT change or existing
-/// recovery keys would derive a different keypair.
-const HPKE_KEY_SCHEDULE_INFO: &[u8] = b"arkret-recovery-public-key-hpke-x25519-chacha20poly1305-v1";
+use zeroize::Zeroize as _;
 
 /// Output of [`hpke_seal`]: the RFC 9180 DHKEM encapsulated key (`enc`, the
 /// 32-byte ephemeral X25519 public key) and the AEAD ciphertext (`ct+tag`, no
@@ -86,23 +78,6 @@ pub fn derive_recovery_keypair_from_recovery_key(recovery_key: &str) -> Result<(
         key_material.backup_hpke_serialized_private_key.to_vec(),
         key_material.backup_hpke_public_key.to_vec(),
     ))
-}
-
-/// Deterministically derive the X25519 recovery keypair from BIP-39 entropy.
-pub fn derive_recovery_keypair_from_entropy(entropy: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-    if entropy.len() != crate::recovery_crypto::RECOVERY_KEY_BYTES {
-        return Err(anyhow!(
-            "recovery key entropy must be {} bytes",
-            crate::recovery_crypto::RECOVERY_KEY_BYTES
-        ));
-    }
-    let mut ikm = Zeroizing::new([0u8; 32]);
-    Hkdf::<Sha256>::new(None, entropy)
-        .expand(HPKE_KEY_SCHEDULE_INFO, ikm.as_mut_slice())
-        .map_err(|_| anyhow!("hpke recovery key hkdf expand failed"))?;
-    let secret = StaticSecret::from(*ikm);
-    let public = X25519PublicKey::from(&secret);
-    Ok((secret.to_bytes().to_vec(), public.as_bytes().to_vec()))
 }
 
 /// RFC 9180 base-mode seal `plaintext` to `recipient_public_key`, delegating to

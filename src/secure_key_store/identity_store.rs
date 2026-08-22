@@ -301,15 +301,6 @@ impl UserLocalStore {
         store_signing_seed_at_durable(store, &self.key(SIGNING_SEED_ENTRY), seed).await
     }
 
-    pub fn save_grant_binding_seed_b64url(
-        &self,
-        store: &dyn SecureKeyStore,
-        seed_b64url: &str,
-    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
-        let seed = decode_seed_b64url(seed_b64url)?;
-        store_signing_seed_at(store, &self.key(GRANT_BINDING_SEED_ENTRY), &seed)
-    }
-
     /// Persist the post-authentication grant-binding key before the account
     /// scope is made visible to the rest of the application.
     pub async fn save_grant_binding_seed_b64url_durable(

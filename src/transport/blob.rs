@@ -139,26 +139,6 @@ impl<'a> BlobEndpoints<'a> {
         .await
     }
 
-    pub async fn download_snapshot_chunk_verified(
-        &self,
-        descriptor: &arkret_sdk::SnapshotChunkDescriptor,
-    ) -> anyhow::Result<arkret_sdk::SnapshotChunkPayload> {
-        let max_bytes = download_max_bytes_for_declared_size(descriptor.size_bytes)?;
-        let bytes = self
-            .download_bytes(descriptor.chunk_ref.as_str(), "download", max_bytes)
-            .await?;
-        if bytes.len() as u64 > descriptor.size_bytes {
-            anyhow::bail!(
-                "{}: snapshot chunk response exceeded declared size",
-                arkret_sdk::SnapshotValidationCode::DigestMismatch.as_str()
-            );
-        }
-        arkret_sdk::verify_snapshot_chunk_bytes(descriptor, &bytes)
-            .map_err(snapshot_validation_error)?;
-        arkret_sdk::parse_verified_snapshot_chunk_bytes(descriptor, &bytes)
-            .map_err(snapshot_validation_error)
-    }
-
     pub async fn get_file_transfer_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         self.download_bytes(blob_ref, "file_transfer", DEFAULT_BLOB_DOWNLOAD_MAX_BYTES)
             .await
@@ -245,10 +225,6 @@ fn verify_content_addressed_blob_bytes(blob_ref: &str, bytes: &[u8]) -> anyhow::
         anyhow::bail!("blob content digest does not match content-addressed blob_ref");
     }
     Ok(())
-}
-
-fn snapshot_validation_error(error: arkret_sdk::SnapshotValidationError) -> anyhow::Error {
-    anyhow::anyhow!("{}: {}", error.code.as_str(), error.message)
 }
 
 fn download_max_bytes_for_declared_size(size_bytes: u64) -> anyhow::Result<usize> {

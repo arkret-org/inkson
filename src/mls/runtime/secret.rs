@@ -458,18 +458,6 @@ pub fn store_mls_key_package_publish_ref(
     store.store_secret(&key, key_package_ref)
 }
 
-pub fn load_mls_key_package_publish_ref(
-    store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-) -> Result<Option<String>, SecureKeyStoreError> {
-    let key = mls_key_package_publish_ref_key(authority, device_id)?;
-    Ok(store
-        .get_secret(&key)?
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty()))
-}
-
 pub fn delete_mls_key_package_publish_ref(
     store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,

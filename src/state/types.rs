@@ -1406,12 +1406,6 @@ impl RootIndex {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KnownProfileRef {
-    pub profile_id: String,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
-}
-
 /// G3.Y0 — persisted shape of the per-device DPoP signing key. The
 /// private seed is stored as base64url-no-pad of 32 raw ed25519 bytes.
 ///
