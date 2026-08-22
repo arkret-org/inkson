@@ -245,8 +245,9 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
 pub(crate) fn build_chat_reaction_add_operation(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor: &str,
-    device_id: &str,
+    device_id: &arkret_sdk::DeviceId,
     event_id: &str,
     emoji: &str,
     channel_encrypted: bool,
@@ -263,6 +264,7 @@ pub(crate) fn build_chat_reaction_add_operation(
         &mut state_store.write(),
         secure_store.as_ref(),
         &realm_id,
+        authority,
         actor,
         device_id,
         &target_ref,

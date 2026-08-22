@@ -760,12 +760,18 @@ mod tests {
         let mut claim_receipt = self_claim_receipt(&claim, realm, alice, claim_nonce);
         claim_receipt.request.target_principal_id =
             crate::mls_api_helpers::principal_core_id(alice).unwrap();
+        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            crate::mls_api_helpers::principal_core_id(alice).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        );
+        let alice_device = arkret_sdk::DeviceId::new(alice_device.to_owned()).unwrap();
         let error = build_realm_mls_admission_events_from_claim(
             &alice_state,
             &secure,
             realm,
+            &authority,
             alice,
-            alice_device,
+            &alice_device,
             &requester_device_authorize_event_id,
             &claim,
             claim_nonce,

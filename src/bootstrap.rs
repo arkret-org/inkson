@@ -324,6 +324,7 @@ pub(crate) fn mls_recovery_setup_missing(
     list_payload: &Value,
     state_store: &LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
     account_recovery_configured: Option<bool>,
 ) -> bool {
@@ -334,7 +335,7 @@ pub(crate) fn mls_recovery_setup_missing(
         return false;
     }
     if matches!(
-        crate::mls::runtime::load_account_mls_secret(secure_store, actor_id),
+        crate::mls::runtime::load_account_mls_secret(secure_store, authority),
         Ok(Some(_))
     ) {
         return false;
@@ -354,9 +355,9 @@ pub(crate) fn mls_recovery_setup_missing(
 pub(crate) fn mls_welcome_bootstrap_key(
     server_url: &url::Url,
     session_credential: &str,
-    principal_id: &str,
-    device_id: &str,
-    realm_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+    realm_id: &arkret_sdk::RealmId,
     e2ee_ready: bool,
     sync_bootstrap_complete: bool,
 ) -> Option<String> {
@@ -365,9 +366,10 @@ pub(crate) fn mls_welcome_bootstrap_key(
     }
     let base = server_key(server_url.as_str());
     let session = session_credential.trim();
-    let actor = principal_id.trim();
-    let device = device_id.trim();
-    let realm = realm_id.trim();
+    let principal = authority.principal_id.as_str();
+    let principal_server = authority.principal_server_id.as_str();
+    let device = device_id.as_str();
+    let realm = realm_id.as_str();
     if base.is_empty()
         || session.is_empty()
         || principal.is_empty()
@@ -389,8 +391,8 @@ pub(crate) fn mls_welcome_bootstrap_key(
 pub(crate) fn mls_key_package_publish_key(
     server_url: &url::Url,
     session_credential: &str,
-    principal_id: &str,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     e2ee_ready: bool,
     sync_bootstrap_complete: bool,
 ) -> Option<String> {
@@ -399,9 +401,15 @@ pub(crate) fn mls_key_package_publish_key(
     }
     let base = server_key(server_url.as_str());
     let session = session_credential.trim();
-    let actor = principal_id.trim();
-    let device = device_id.trim();
-    if base.is_empty() || session.is_empty() || actor.is_empty() || device.is_empty() {
+    let principal = authority.principal_id.as_str();
+    let principal_server = authority.principal_server_id.as_str();
+    let device = device_id.as_str();
+    if base.is_empty()
+        || session.is_empty()
+        || principal.is_empty()
+        || principal_server.is_empty()
+        || device.is_empty()
+    {
         return None;
     }
 
@@ -917,6 +925,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         crate::components::maybe_auto_backup_mls_after_encrypted_write(
             base_url.clone(),
             session_credential.clone(),
+            authority.clone(),
             actor_id.clone(),
             device_id.to_string(),
             state_store,

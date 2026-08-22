@@ -76,8 +76,7 @@ fn resolve_status(server_backup: bool, local_secret: bool) -> MlsRecoveryStatus 
 #[allow(clippy::too_many_arguments)]
 fn start_recovery_key_generation(
     token: Signal<String>,
-    principal_id: Signal<String>,
-    device_id: Signal<String>,
+    account: crate::config::ActiveAccountContext,
     mut state_store: SyncSignal<LocalStateStore>,
     mut generated_recovery_key: Signal<String>,
     mut generated_recovery_key_confirm: Signal<String>,
@@ -104,9 +103,10 @@ fn start_recovery_key_generation(
         return;
     };
     let base = account.server_url.to_string();
+    let authority = account.authority.clone();
     let session = token();
-    let actor = principal_id();
-    let device = device_id();
+    let actor = account.principal_id().to_string();
+    let device = account.device_id.to_string();
     let sidecar_json = if state_store.read().private_plaintext_is_empty() {
         None
     } else {
@@ -201,30 +201,34 @@ pub fn SettingsMlsRecoveryPanel(
     // On mount (and whenever session/actor change): fetch the server backup
     // list and recompute status. Independent of `needs_mls_backup`.
     {
-        use_resource(move || async move {
-            let base = base_url();
-            let session = token();
-            let actor = principal_id();
-            if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
-                status.set(MlsRecoveryStatus::NoLocalSecret);
-                return;
-            }
-            let local_secret = {
-                let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &actor)
-                    .ok()
-                    .flatten()
-                    .is_some()
-            };
-            let actor_for_fetch = actor.clone();
-            match with_authed_api(&base, session, |api| async move {
-                crate::mls::account_recovery::fetch_mls_restore_payload(&api, &actor_for_fetch)
-                    .await
-            })
-            .await
-            {
-                Ok(payload) => {
-                    let server_backup_body =
+        let account_for_status = account.clone();
+        use_resource(move || {
+            let account = account_for_status.clone();
+            async move {
+                let base = account.server_url.to_string();
+                let session = token();
+                let actor = account.principal_id().to_string();
+                let authority = account.authority.clone();
+                if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
+                    status.set(MlsRecoveryStatus::NoLocalSecret);
+                    return;
+                }
+                let local_secret = {
+                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                    crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &authority)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                };
+                let actor_for_fetch = actor.clone();
+                match with_authed_api(&base, session, |api| async move {
+                    crate::mls::account_recovery::fetch_mls_restore_payload(&api, &actor_for_fetch)
+                        .await
+                })
+                .await
+                {
+                    Ok(payload) => {
+                        let server_backup_body =
                         crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
                             &payload,
                         );
@@ -267,8 +271,7 @@ pub fn SettingsMlsRecoveryPanel(
     let on_submit = move |_| {
         start_recovery_key_generation(
             token,
-            principal_id,
-            device_id,
+            account_for_submit.clone(),
             state_store,
             generated_recovery_key,
             generated_recovery_key_confirm,
@@ -283,8 +286,7 @@ pub fn SettingsMlsRecoveryPanel(
     let on_regenerate = move |_| {
         start_recovery_key_generation(
             token,
-            principal_id,
-            device_id,
+            account_for_regenerate.clone(),
             state_store,
             generated_recovery_key,
             generated_recovery_key_confirm,

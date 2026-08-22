@@ -1006,6 +1006,18 @@ fn spawn_provision_agent(
     state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
 ) {
     spawn(async move {
+        let account = match crate::app::SessionContext::get().active_account() {
+            Some(account) => account,
+            None => {
+                last_op_status
+                    .set("Create failed: active controller account is unavailable".to_owned());
+                return;
+            }
+        };
+        if account.principal_id().as_str() != controller_id {
+            last_op_status.set("Create failed: active controller authority changed".to_owned());
+            return;
+        }
         let slug = normalize_agent_slug(&slug);
         if slug.is_empty() {
             last_op_status.set("Slug is required.".to_owned());
@@ -1464,10 +1476,12 @@ fn spawn_provision_agent(
         }
         let pcr_realm_for_seal = principal_control_realm_id.clone();
         let state_store_for_seal = state_store;
+        let account_for_seal = account.clone();
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
             super::bootstrap::seal_managed_agent_pcr_current(
                 &api,
                 state_store_for_seal,
+                &account_for_seal,
                 &pcr_realm_for_seal,
             )
             .await
@@ -1614,10 +1628,12 @@ fn spawn_provision_agent(
                 }
             };
         let bootstrap_outcome = outcome.clone();
+        let account_for_bootstrap = account;
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
             super::bootstrap::bootstrap_provisioned_agent(
                 &api,
                 state_store,
+                &account_for_bootstrap,
                 &bootstrap_outcome.agent_id,
                 &bootstrap_outcome.principal_control_realm_id,
                 &bootstrap_outcome.controller_authorization_ref,
@@ -2325,6 +2341,15 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                             let api_token = token();
                                                             let slug = slug.clone();
                                                             spawn(async move {
+                                                                let account = match crate::app::SessionContext::get().active_account() {
+                                                                    Some(account) => account,
+                                                                    None => {
+                                                                        pairing_action_agent_id.set(String::new());
+                                                                        pairing_action_phase.set(PairingActionPhase::Idle);
+                                                                        last_op_status.set("Agent recovery failed: active controller account is unavailable".to_owned());
+                                                                        return;
+                                                                    }
+                                                                };
                                                                 let bootstrap_agent_id = agent_id.clone();
                                                                 let result = with_authed_api(
                                                                     &base,
@@ -2333,6 +2358,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                                         super::bootstrap::bootstrap_provisioned_agent(
                                                                             &api,
                                                                             state_store,
+                                                                            &account,
                                                                             &bootstrap_agent_id,
                                                                             &realm_id,
                                                                             &authorization_ref,
@@ -2723,17 +2749,28 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                     let base = base.clone();
                                                     let api_token = token();
                                                     spawn(async move {
+                                                        let account = match crate::app::SessionContext::get().active_account() {
+                                                            Some(account) => account,
+                                                            None => {
+                                                                pairing_action_agent_id.set(String::new());
+                                                                pairing_action_phase.set(PairingActionPhase::Idle);
+                                                                last_op_status.set("Agent security refresh failed: active controller account is unavailable".to_owned());
+                                                                return;
+                                                            }
+                                                        };
                                                         let repaired_agent_id = agent_id.clone();
                                                         let result = with_authed_api(&base, api_token, move |api| async move {
                                                             let _seal = super::bootstrap::seal_managed_agent_pcr_current(
                                                                 &api,
                                                                 state_store,
+                                                                &account,
                                                                 &realm_id,
                                                             )
                                                             .await?;
                                                             let recovery_warning = super::bootstrap::bootstrap_provisioned_agent(
                                                                 &api,
                                                                 state_store,
+                                                                &account,
                                                                 &agent_id,
                                                                 &realm_id,
                                                                 authorization_ref.as_str(),

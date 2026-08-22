@@ -149,7 +149,11 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             else {
                 return;
             };
-            let device = device_id();
+            let Some(account) = active_account.peek().clone() else {
+                return;
+            };
+            let base = account.server_url.to_string();
+            let device = account.device_id.to_string();
             if cursor.trim().is_empty()
                 || base.trim().is_empty()
                 || session.trim().is_empty()
@@ -165,12 +169,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             spawn(async move {
                 let result =
                     crate::transport::auth::with_authed_api(&base, session, |api| async move {
-                        super::connect::probe_device_authorization(
-                            &typed_principal_id,
-                            &typed_device_id,
-                            &api,
-                        )
-                        .await
+                        super::connect::probe_device_authorization(&actor, &device, &api).await
                     })
                     .await;
                 match result {

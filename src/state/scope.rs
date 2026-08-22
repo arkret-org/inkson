@@ -47,6 +47,17 @@ impl LocalStateStore {
             .collect()
     }
 
+    pub fn known_profile_id_for_authority(
+        &self,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+    ) -> Option<String> {
+        self.read_root()
+            .known_profiles
+            .into_iter()
+            .find(|entry| &entry.authority == authority)
+            .map(|entry| entry.profile_id)
+    }
+
     /// Read a cross-account UI device preference (theme/locale/...), shared by
     /// every account on this browser. `None` when unset.
     pub fn device_pref(&self, key: &str) -> Option<String> {
@@ -348,40 +359,6 @@ impl LocalStateStore {
     }
 
     #[cfg(test)]
-    pub fn switch_test_account(&mut self, actor: &str) -> bool {
-        if actor == ANONYMOUS_ACCOUNT_NAMESPACE {
-            return false;
-        }
-        let full_id = arkret_sdk::DidFullId::new(actor.to_owned()).unwrap();
-        let principal_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
-        let account = crate::config::ActiveAccountContext::new(
-            actor.to_owned(),
-            arkret_sdk::PrincipalAuthorityKey::new(
-                principal_id,
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.test".to_owned()).unwrap(),
-            ),
-            arkret_sdk::PrincipalResolutionProjection {
-                full_id,
-                method_history_head: "test-head".to_owned(),
-                version_id: "1".to_owned(),
-                resolution_event_ref: "test-event".to_owned(),
-                updated_at: chrono::Utc::now(),
-            },
-            arkret_sdk::DeviceId::new("ak:device:019b0000-0000-7000-8000-000000000001".to_owned())
-                .unwrap(),
-            url::Url::parse("https://principal.test").unwrap(),
-        )
-        .unwrap();
-        let was_known = self
-            .read_root()
-            .known_profiles
-            .iter()
-            .any(|entry| entry.authority == account.authority);
-        self.switch_active_account(&account).unwrap();
-        !was_known
-    }
-
-    #[cfg(test)]
     pub fn active_authority_namespace_for_test(&self) -> String {
         account_storage_scope(&self.active_authority().unwrap()).unwrap()
     }
@@ -391,7 +368,8 @@ impl LocalStateStore {
         &mut self,
         principal_id: &arkret_sdk::DidFullId,
     ) -> bool {
-        self.switch_test_account(principal_id.as_str())
+        self.switch_active_account(&crate::state::tests::test_account_context(principal_id))
+            .unwrap()
     }
 
     pub fn pending_principal_registration(&self) -> Option<PendingPrincipalRegistration> {
@@ -454,9 +432,13 @@ impl LocalStateStore {
         &mut self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     ) {
-        if let Some(authority) = self.active_authority() {
-            let user_store =
-                crate::secure_key_store::UserLocalStore::new(authority.principal_id.clone());
+        if let (Some(authority), Some(scope)) = (
+            self.active_authority(),
+            crate::secure_key_store::active_device_seed_scope(),
+        ) && scope.authority == authority
+            && let Ok(user_store) =
+                crate::secure_key_store::UserLocalStore::new(authority, scope.device_id)
+        {
             let _ = user_store.delete_secret(secure_store, Self::SECURE_DPOP_DEVICE_KEY);
             let _ = user_store.delete_secret(secure_store, Self::SECURE_IDENTITY_KEY);
             let _ = user_store.delete_device_identity(secure_store);

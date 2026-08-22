@@ -480,9 +480,9 @@ fn ContactRow(
                                                     if local_blockers.is_empty() {
                                                         if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&outcome) {
                                                             let realm_id = coordinates.realm_id.clone();
-                                                            let actor = crate::secure_key_store::active_device_seed_scope()
-                                                                .filter(|value| !value.trim().is_empty())
-                                                                .and_then(|value| arkret_sdk::DidFullId::new(value).ok());
+                                                            let actor = crate::app::SessionContext::get()
+                                                                .active_account()
+                                                                .map(|account| account.full_id().clone());
                                                             match actor {
                                                                 Some(actor) => match with_authed_api(
                                                                     &base,
@@ -517,9 +517,9 @@ fn ContactRow(
                                                 // This user is the founder: the conversation is
                                                 // theirs to create.
                                                 DirectConversationEntry::ReadyToCreate => {
-                                                    let actor = crate::secure_key_store::active_device_seed_scope()
-                                                        .filter(|value| !value.trim().is_empty())
-                                                        .and_then(|value| arkret_sdk::DidFullId::new(value).ok());
+                                                    let actor = crate::app::SessionContext::get()
+                                                        .active_account()
+                                                        .map(|account| account.full_id().clone());
                                                     let peer_id = arkret_sdk::DidFullId::new(peer.clone()).ok();
                                                     match (actor, peer_id) {
                                                         (Some(actor), Some(peer_id)) => {

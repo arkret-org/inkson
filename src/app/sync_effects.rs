@@ -57,6 +57,7 @@ pub(super) fn SyncEffects(
         let ctx = crate::sync_engine::SyncEngineContext {
             token: runtime_adapter::value_reader(token),
             state_store: runtime_adapter::state_store_handle(state_store),
+            account: account.clone(),
             principal_id: principal_id(),
             device_id: device_id(),
             live_device_id: runtime_adapter::value_cell(device_id),
@@ -95,6 +96,10 @@ pub(super) fn SyncEffects(
     let signal_websocket_rail = runtime_services.websocket_rail.clone();
     use_effect(move || {
         let current_gen = sync_generation();
+        let Some(account) = active_account() else {
+            return;
+        };
+        let base = account.server_url.to_string();
         let session = token();
         let actor = principal_id();
         let device = device_id();
@@ -121,6 +126,7 @@ pub(super) fn SyncEffects(
         let ctx = crate::signal_receive_engine::SignalReceiveEngineContext {
             token: runtime_adapter::value_reader(token),
             state_store: runtime_adapter::state_store_handle(state_store),
+            account,
             principal_id: actor,
             device_id: device,
             profiles: runtime_adapter::value_reader(profiles),

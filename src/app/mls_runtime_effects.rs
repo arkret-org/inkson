@@ -56,7 +56,11 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         crypto_state,
         needs_mls_backup,
     } = state;
-    let SessionContext { state_store, .. } = SessionContext::get();
+    let SessionContext {
+        state_store,
+        active_account,
+        ..
+    } = SessionContext::get();
     let mls_admission_retry_attempt = use_signal(|| 0_u32);
     let mls_key_package_publish_retry_attempt = use_signal(|| 0_u32);
     let sidecar_background_basis_seen = use_signal(|| Option::<String>::None);
@@ -77,9 +81,13 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let mut convergence_error = last_error;
         let convergence_store = state_store;
         use_effect(move || {
+            let Some(account) = active_account() else {
+                return;
+            };
             let cursor = sync_freshness();
-            let actor = principal_id();
-            let device = device_id();
+            let actor = account.full_id().to_string();
+            let device = account.device_id.clone();
+            let authority = account.authority.clone();
             if !ready()
                 || !sync_ready()
                 || cursor.trim().is_empty()
@@ -108,6 +116,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         }
                         match crate::mls::runtime::converge_external_history_candidate_decryptions(
                             convergence_store,
+                            &authority,
                             &actor,
                             &device,
                             chrono::Utc::now(),
@@ -150,10 +159,15 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let mut response_stream_error = last_error;
         let response_stream_store = state_store;
         use_effect(move || {
+            let Some(account) = active_account() else {
+                return;
+            };
             let _ = poll_tick();
+            let base = account.server_url.to_string();
             let credential = token();
-            let actor = principal_id();
-            let device = device_id();
+            let actor = account.full_id().to_string();
+            let device = account.device_id.clone();
+            let authority = account.authority.clone();
             if !ready()
                 || !sync_ready()
                 || base.trim().is_empty()
@@ -247,9 +261,13 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             if !device_authorization_check_complete() || needs_device_authorization() {
                 return;
             }
+            let Some(account) = active_account() else {
+                return;
+            };
+            let base = account.server_url.to_string();
             let session = token();
-            let actor = principal_id();
-            let device = device_id();
+            let device = account.device_id.clone();
+            let authority = account.authority.clone();
             let description = server_description();
             let Some(publish_key) = mls_key_package_publish_key(
                 &account.server_url,
@@ -318,13 +336,18 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             if !ready() || !sync_ready() || *in_flight.peek() {
                 return;
             }
+            let Some(account) = active_account() else {
+                return;
+            };
+            let base = account.server_url.to_string();
             let credential = token();
-            let actor = principal_id();
-            let device = device_id();
+            let actor = account.full_id().to_string();
+            let device = account.device_id.clone();
+            let authority = account.authority.clone();
             if base.trim().is_empty()
                 || credential.trim().is_empty()
                 || actor.trim().is_empty()
-                || device.trim().is_empty()
+                || device.as_str().is_empty()
             {
                 return;
             }
@@ -405,6 +428,10 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             if !admit_route_enabled() {
                 return;
             }
+            let Some(account) = active_account() else {
+                return;
+            };
+            let base = account.server_url.to_string();
             let description = server_description();
             if !profile_ready(description.as_ref(), ProfileId::E2EE_CLIENT_V1)
                 || !sync_bootstrap_complete()
@@ -412,8 +439,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             }
             let session = token();
-            let actor = principal_id();
-            let device = device_id();
+            let actor = account.full_id().to_string();
+            let device = account.device_id.clone();
+            let authority = account.authority.clone();
             if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
                 return;
             }
@@ -523,9 +551,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                                 &api,
                                 admit_state_store,
                                 realm_id.clone(),
-                                authority.clone(),
                                 actor.clone(),
-                                device.clone(),
+                                device.to_string(),
                             )
                             .await
                             {
@@ -636,13 +663,21 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             if !bootstrap_route_uses_realm_context {
                 return;
             }
+            let Some(account) = active_account() else {
+                return;
+            };
+            let base = account.server_url.to_string();
+            let authority = account.authority.clone();
+            let device = account.device_id.clone();
             let bootstrap_realm_id = bootstrap_context_realm_id
                 .clone()
                 .filter(|space| !space.trim().is_empty())
                 .unwrap_or(selected);
+            let Ok(realm_id) = arkret_sdk::RealmId::new(bootstrap_realm_id.clone()) else {
+                return;
+            };
             let session = token();
-            let actor = principal_id();
-            let device = device_id();
+            let actor = account.full_id().to_string();
             let description = server_description();
             let Some(bootstrap_key) = mls_welcome_bootstrap_key(
                 &account.server_url,

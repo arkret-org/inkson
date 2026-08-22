@@ -20,6 +20,10 @@ pub fn FileTransferPanel(
     let base_url = session.base_url.read().clone();
     let state_store = session.state_store;
     let active_account = session.active_account;
+    let Some(account) = active_account() else {
+        return rsx! {};
+    };
+    let authority = account.authority;
     let mut items = use_signal(Vec::<FileTransferItem>::new);
     let mut status = use_signal(|| "Ready".to_owned());
     let refreshing = use_signal(|| false);
@@ -31,10 +35,12 @@ pub fn FileTransferPanel(
         let base_url = base_url.clone();
         let principal_id = principal_id.clone();
         let device_id = device_id.clone();
+        let authority = authority.clone();
         use_effect(move || {
             refresh_items(
                 base_url.clone(),
                 token(),
+                authority.clone(),
                 principal_id.clone(),
                 device_id.clone(),
                 items,
@@ -77,6 +83,7 @@ pub fn FileTransferPanel(
                             let base_url = base_url.clone();
                             let principal_id = principal_id.clone();
                             let device_id = device_id.clone();
+                            let authority = authority.clone();
                             move |evt: Event<FormData>| {
                                 let files = evt.files();
                                 if files.is_empty() {
@@ -87,6 +94,7 @@ pub fn FileTransferPanel(
                                 let base_url = base_url.clone();
                                 let actor = principal_id.clone();
                                 let device = device_id.clone();
+                                let authority = authority.clone();
                                 uploading.set(true);
                                 status.set("Uploading".to_owned());
                                 spawn(async move {
@@ -104,7 +112,7 @@ pub fn FileTransferPanel(
                                             return;
                                         }
                                     };
-                                    let crypto = match load_or_create_file_transfer_crypto_context(&actor) {
+                                    let crypto = match load_or_create_file_transfer_crypto_context(&authority) {
                                         Ok(crypto) => crypto,
                                         Err(error) => {
                                             status.set(format!("File key unavailable: {error}"));
@@ -160,6 +168,7 @@ pub fn FileTransferPanel(
                                             crate::components::maybe_auto_backup_mls_after_encrypted_write(
                                                 base_url.clone(),
                                                 api_token.clone(),
+                                                authority.clone(),
                                                 actor.clone(),
                                                 device.clone(),
                                                 state_store,
@@ -191,10 +200,12 @@ pub fn FileTransferPanel(
                             let base_url = base_url.clone();
                             let principal_id = principal_id.clone();
                             let device_id = device_id.clone();
+                            let authority = authority.clone();
                             move |_| {
                                 refresh_items(
                                     base_url.clone(),
                                     token(),
+                                    authority.clone(),
                                     principal_id.clone(),
                                     device_id.clone(),
                                     items,
@@ -332,6 +343,7 @@ fn FileTransferRow(
 fn refresh_items(
     base_url: String,
     api_token: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     actor_id: String,
     _device_id: String,
     mut items: Signal<Vec<FileTransferItem>>,
@@ -359,7 +371,7 @@ fn refresh_items(
                     return;
                 }
             };
-        let crypto = match load_file_transfer_crypto_context(&actor_id) {
+        let crypto = match load_file_transfer_crypto_context(&authority) {
             Ok(Some(crypto)) => crypto,
             Ok(None) => {
                 items.set(Vec::new());

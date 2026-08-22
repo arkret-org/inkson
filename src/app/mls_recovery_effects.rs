@@ -36,7 +36,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
     } = state;
     let SessionContext {
         state_store,
-        base_url,
+        active_account,
         ..
     } = SessionContext::get();
 
@@ -64,10 +64,14 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             if !secure_store_ready_for_detection() {
                 return;
             }
-            let base = base_url();
+            let Some(account) = active_account() else {
+                return;
+            };
+            let base = account.server_url.to_string();
             let session = token();
-            let actor = principal_id();
-            let device = device_id();
+            let actor = account.full_id().to_string();
+            let device = account.device_id.clone();
+            let authority = account.authority.clone();
             let generation = sync_generation();
             let account_recovery_configured_value = account_recovery_configured_for_detection();
             if !matches!(session_boot_state(), SessionBootState::Authenticated) {
@@ -323,6 +327,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                 crate::components::maybe_auto_backup_mls_after_encrypted_write(
                                     base.clone(),
                                     session.clone(),
+                                    authority.clone(),
                                     actor.clone(),
                                     device.to_string(),
                                     state_store_for_detection,
@@ -338,6 +343,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     &payload,
                                     &store,
                                     secure_store.as_ref(),
+                                    &authority,
                                     &actor,
                                     account_recovery_configured_value,
                                 )

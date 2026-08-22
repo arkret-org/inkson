@@ -147,6 +147,7 @@ pub(crate) fn recovery_key_filename_from_handles(handles: &[String]) -> String {
 struct MlsPrivatePlaintextBackupPayload {
     base_url: String,
     token: String,
+    authority: Option<arkret_sdk::PrincipalAuthorityKey>,
     actor_id: String,
     device_id: String,
     latest_sidecar_json: Vec<u8>,
@@ -181,6 +182,7 @@ fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
 pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     base_url: String,
     token: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     actor_id: String,
     device_id: String,
     state_store: SyncSignal<LocalStateStore>,
@@ -205,6 +207,7 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     let should_spawn = MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.schedule(&key, digest, |payload| {
         payload.base_url = base_url;
         payload.token = token;
+        payload.authority = Some(authority);
         payload.actor_id = actor_id;
         payload.device_id = device_id;
         payload.latest_sidecar_json = sidecar_json;
@@ -280,11 +283,14 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
     let MlsPrivatePlaintextBackupPayload {
         base_url,
         token,
+        authority,
         actor_id,
         device_id,
         latest_sidecar_json,
         cached_previous_body,
     } = job.payload;
+    let authority =
+        authority.ok_or_else(|| anyhow::anyhow!("MLS backup job omitted the active authority"))?;
     with_authed_api(&base_url, token, |api| async move {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let previous_body = match cached_previous_body {
@@ -299,6 +305,7 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
         crate::mls::account_recovery::upload_mls_private_plaintext_backup_with_previous(
             &api,
             secure_store.as_ref(),
+            &authority,
             &actor_id,
             &device_id,
             &latest_sidecar_json,
@@ -376,6 +383,7 @@ pub fn try_needs_mls_backup_signal() -> Option<Signal<bool>> {
 pub async fn maybe_auto_backup_mls_after_encrypted_write(
     base_url: String,
     token: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     actor_id: String,
     device_id: String,
     state_store: SyncSignal<LocalStateStore>,
@@ -384,6 +392,7 @@ pub async fn maybe_auto_backup_mls_after_encrypted_write(
     maybe_backup_or_flag_mls_backup_after_encrypted_write(
         base_url,
         token,
+        authority,
         actor_id,
         Some((device_id, state_store)),
         needs_mls_backup,
@@ -394,6 +403,7 @@ pub async fn maybe_auto_backup_mls_after_encrypted_write(
 async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     base_url: String,
     token: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     actor_id: String,
     auto_backup: Option<(String, SyncSignal<LocalStateStore>)>,
     needs_mls_backup: Signal<bool>,
@@ -413,7 +423,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     // there's nothing to back up yet.
     let has_local_secret = {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &actor_id)
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &authority)
             .map(|secret| secret.is_some())
             .unwrap_or(false)
     };
@@ -487,11 +497,13 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     {
         let actor_for_upload = actor_id.clone();
         let device_for_upload = device_id.clone();
+        let authority_for_upload = authority.clone();
         let upload_result = with_authed_api(&base_url, token.clone(), |api| async move {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_public_key(
                 &api,
                 secure_store.as_ref(),
+                &authority_for_upload,
                 &actor_for_upload,
                 &device_for_upload,
                 &recovery_public_key,
@@ -513,6 +525,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
                         crate::mls::account_recovery::upload_mls_private_plaintext_backup(
                             &api,
                             secure_store.as_ref(),
+                            &authority,
                             &actor,
                             &device,
                             &sidecar_json,
@@ -557,6 +570,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
 fn upload_mls_backup_with_recovery_key(
     base: String,
     session: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     actor: String,
     device: String,
     recovery_secret: String,
@@ -575,6 +589,7 @@ fn upload_mls_backup_with_recovery_key(
     status.set(crate::i18n::tr("mls_backup.status.uploading"));
     spawn(async move {
         let actor_for_sidecar = actor.clone();
+        let authority_for_sidecar = authority.clone();
         let device_for_sidecar = device.clone();
         let base_for_sidecar = base.clone();
         let session_for_sidecar = session.clone();
@@ -583,6 +598,7 @@ fn upload_mls_backup_with_recovery_key(
             crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                 &api,
                 secure_store.as_ref(),
+                &authority,
                 &actor,
                 &device,
                 &recovery_secret,
@@ -606,6 +622,7 @@ fn upload_mls_backup_with_recovery_key(
                             crate::mls::account_recovery::upload_mls_private_plaintext_backup(
                                 &api,
                                 secure_store.as_ref(),
+                                &authority_for_sidecar,
                                 &actor,
                                 &device,
                                 &sidecar_json,
@@ -647,6 +664,9 @@ pub fn MlsBackupPrompt(
     let session = crate::app::SessionContext::get();
     let base_url = session.base_url;
     let state_store = session.state_store;
+    let Some(account) = session.active_account() else {
+        return rsx! {};
+    };
     let mut generated_recovery_key = use_signal(String::new);
     let mut generated_recovery_key_confirm = use_signal(String::new);
     let mut recovery_key_input = use_signal(String::new);
@@ -704,14 +724,16 @@ pub fn MlsBackupPrompt(
         && !token().trim().is_empty()
         && !actor_id().trim().is_empty();
 
+    let account_for_backup = account.clone();
     let on_backup = move |_| {
         if busy() {
             return;
         }
         let base = base_url();
         let session = token();
-        let actor = actor_id();
-        let device = device_id();
+        let authority = account_for_backup.authority.clone();
+        let actor = account_for_backup.principal_id().to_string();
+        let device = account_for_backup.device_id.to_string();
         let local_recovery_key_configured =
             crate::views::recovery::local_recovery_key_fingerprint(&state_store.read(), &actor)
                 .is_some();
@@ -770,6 +792,7 @@ pub fn MlsBackupPrompt(
         upload_mls_backup_with_recovery_key(
             base,
             session,
+            authority,
             actor,
             device,
             recovery_secret,
@@ -784,14 +807,16 @@ pub fn MlsBackupPrompt(
         );
     };
 
+    let account_for_regenerate = account;
     let on_regenerate = move |_| {
         if busy() {
             return;
         }
         let base = base_url();
         let session = token();
-        let actor = actor_id();
-        let device = device_id();
+        let authority = account_for_regenerate.authority.clone();
+        let actor = account_for_regenerate.principal_id().to_string();
+        let device = account_for_regenerate.device_id.to_string();
         if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
             status.set(crate::i18n::tr("mls_backup.status.invalid_recovery_key"));
             return;
@@ -832,6 +857,7 @@ pub fn MlsBackupPrompt(
         upload_mls_backup_with_recovery_key(
             base,
             session,
+            authority,
             actor,
             device,
             recovery_secret,

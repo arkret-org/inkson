@@ -110,6 +110,7 @@ pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
                         feedback.set(RegistrationFeedback::Progress);
                         spawn(async move {
                             let result = async {
+                                let device = arkret_sdk::DeviceId::new(device)?;
                                 #[cfg(target_arch = "wasm32")]
                                 let secure_store = {
                                     tracing::info!(
@@ -130,9 +131,10 @@ pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
                                 };
                                 #[cfg(not(target_arch = "wasm32"))]
                                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                                state_store.write().begin_pending_login(device.trim(), None);
+                                state_store.write().begin_pending_login(&device, None);
                                 crate::secure_key_store::reset_device_seed_scope_for_signin(
                                     secure_store.as_ref(),
+                                    &device,
                                 )?;
                                 tracing::info!(
                                     target: "account_onboarding",
@@ -146,7 +148,7 @@ pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
                                     "create identity: pending login established"
                                 );
                                 let pending_store = crate::secure_key_store::PendingLocalStore::new(
-                                    arkret_sdk::DeviceId::new(device.trim().to_owned())?,
+                                    device.clone(),
                                 );
                                 pending_store.activate();
                                 pending_store
@@ -159,7 +161,7 @@ pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
                                 );
                                 crate::views::login::start_oidc_strand(
                                     &server,
-                                    device.trim(),
+                                    device.as_str(),
                                     crate::identity::account_auth::OidcEntryPoint::CreateIdentity,
                                     None,
                                     None,

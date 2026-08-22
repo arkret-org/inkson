@@ -1,5 +1,16 @@
 use super::*;
 
+fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    arkret_sdk::PrincipalAuthorityKey::new(
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+    )
+}
+
+fn test_device_id(value: &str) -> arkret_sdk::DeviceId {
+    arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
+}
+
 /// Seal an encrypted write against the epoch its own MLS Events establish.
 ///
 /// Production seals inside the submit lane, once the genesis or commit this write
@@ -323,7 +334,12 @@ fn encrypted_private_patch_rejects_pending_welcome_without_claim_envelope() {
     // A durable Welcome without its accepted claim envelope is not authorized,
     // irrespective of whether local KeyPackage private state is also absent.
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&secure, bob_actor, "snapshot-secret").unwrap();
+    crate::mls::runtime::store_account_mls_secret(
+        &secure,
+        &test_authority(bob_actor),
+        "snapshot-secret",
+    )
+    .unwrap();
     let patch = json!({
         "content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown",
@@ -396,11 +412,16 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     }))
     .unwrap()]);
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
-    crate::mls::runtime::store_account_mls_secret(&secure, bob_actor, "snapshot-secret").unwrap();
+    crate::mls::runtime::store_account_mls_secret(
+        &secure,
+        &test_authority(bob_actor),
+        "snapshot-secret",
+    )
+    .unwrap();
     crate::mls::runtime::store_mls_key_package_identity_state(
         &secure,
-        bob_actor,
-        bob_device,
+        &test_authority(bob_actor),
+        &test_device_id(bob_device),
         &bob_key_package.keypackage_id,
         &bob_private_state,
     )
@@ -448,8 +469,8 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     assert!(
         crate::mls::runtime::load_mls_key_package_identity_state(
             &secure,
-            bob_actor,
-            bob_device,
+            &test_authority(bob_actor),
+            &test_device_id(bob_device),
             &bob_key_package.keypackage_id,
         )
         .unwrap()
@@ -555,9 +576,15 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
         0,
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
-    crate::mls::runtime::ensure_creator_mls_snapshot(&mut state, &secure, realm, actor, device)
-        .unwrap()
-        .expect("fixture creates and persists epoch-0 MLS state");
+    crate::mls::runtime::ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device_id(device),
+    )
+    .unwrap()
+    .expect("fixture creates and persists epoch-0 MLS state");
     // Reproduce the broken state seen after first-Realm creation: the local
     // group exists and an incomplete path set the emitted bit, but no
     // accepted Event id was attached to the snapshot.
@@ -610,7 +637,9 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut state = isolated_store_for_tests("ready-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
-    let secret = crate::mls::runtime::load_or_create_account_mls_secret(&secure, actor).unwrap();
+    let secret =
+        crate::mls::runtime::load_or_create_account_mls_secret(&secure, &test_authority(actor))
+            .unwrap();
     let identity = ArkretMlsIdentity::new_basic(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
@@ -963,7 +992,9 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     let group = identity.create_group(circle.as_bytes()).unwrap();
     let post_state = group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
-    let secret = crate::mls::runtime::load_or_create_account_mls_secret(&secure, actor).unwrap();
+    let secret =
+        crate::mls::runtime::load_or_create_account_mls_secret(&secure, &test_authority(actor))
+            .unwrap();
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt).unwrap();
     let snapshot = crate::mls::persistence::encrypt_state(

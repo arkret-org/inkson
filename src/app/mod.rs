@@ -221,20 +221,6 @@ pub fn RouterView() -> Element {
 #[component]
 fn AppBootstrap() -> Element {
     let initial_config = LocalConfigStore::default().load();
-    let initial_active_account = initial_config.active_account.clone();
-    let initial_server_url = initial_active_account
-        .as_ref()
-        .map(|account| account.server_url.to_string())
-        .or_else(|| initial_config.principal_servers.first().cloned())
-        .unwrap_or_default();
-    let initial_principal_id = initial_active_account
-        .as_ref()
-        .map(|account| account.principal_id().to_string())
-        .unwrap_or_default();
-    let initial_device_id = initial_active_account
-        .as_ref()
-        .map(|account| account.device_id.to_string())
-        .unwrap_or_else(crate::config::new_device_id);
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
     let initial_session_credential = initial_session_credential_from_state(
@@ -310,13 +296,9 @@ fn AppBootstrap() -> Element {
     // Pin the active typed user store to the persisted server-authored
     // principal before async signer bootstrap begins.
     {
-        let boot_seed_scope = initial_active_account
-            .as_ref()
-            .map(|account| account.principal_id().clone());
+        let boot_account = initial_active_account.clone();
         use_hook(move || {
-            if let Some(core_id) = boot_seed_scope.clone() {
-                crate::secure_key_store::UserLocalStore::new(core_id).activate();
-            } else {
+            let Some(account) = boot_account.clone() else {
                 crate::secure_key_store::set_active_device_seed_scope(None);
                 return;
             };
@@ -349,7 +331,6 @@ fn AppBootstrap() -> Element {
         active_account,
         state_store,
         base_url,
-        active_account,
         owned_agents_rev,
     });
     let sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
@@ -3582,10 +3563,17 @@ fn AppBootstrap() -> Element {
                                                 let session = manual_refresh_session.clone();
                                                 move |_| {
                                                     let base = base.clone();
-                                                    let session = session.clone();
-                                                    let api_token = token();
-                                                    let actor = principal_id();
-                                                    let device = device_id();
+                                                let session = session.clone();
+                                                let api_token = token();
+                                                let actor = principal_id();
+                                                let device = device_id();
+                                                let Some(active) = active_account.peek().clone() else {
+                                                    account_session_state.set(
+                                                        "Session identity is unavailable; sign in again."
+                                                            .to_owned(),
+                                                    );
+                                                    return;
+                                                };
                                                     personal_handles_lookup_key.set(String::new());
                                                     account_identity_lookup_key.set(String::new());
                                                     account_session_state.set("Refreshing session".to_owned());
@@ -3629,7 +3617,9 @@ fn AppBootstrap() -> Element {
                                                                     principal_id.set(canonical_actor.clone());
                                                                     persist_config(
                                                                         config_store,
-                                                                        Some(active.clone()),
+                                                                        active.server_url.to_string(),
+                                                                        active.full_id().to_string(),
+                                                                        active.device_id.to_string(),
                                                                         api_token,
                                                                     );
                                                                     account_session_state.set(format!(
@@ -3734,6 +3724,13 @@ fn AppBootstrap() -> Element {
                                                 let actor = principal_id();
                                                 let device = device_id();
                                                 let api_token = token();
+                                                let Some(active) = active_account.peek().clone() else {
+                                                    last_error.set(Some(
+                                                        "active account context is unavailable"
+                                                            .to_owned(),
+                                                    ));
+                                                    return;
+                                                };
                                                 // Capture the grant + grant-binding key BEFORE the
                                                 // local wipe below: hard logout MUST also terminate
                                                 // the Auth Server session (revoke grant + finish
@@ -3757,6 +3754,8 @@ fn AppBootstrap() -> Element {
                                                 // gone (account-lifecycle §4.1).
                                                 let pending_logout =
                                                     crate::pending_logout::PendingLogout {
+                                                        authority: active.authority.clone(),
+                                                        device_id: active.device_id.clone(),
                                                         grant_jwt: logout_grant
                                                             .as_ref()
                                                             .map(|grant| grant.grant_jwt.clone()),
@@ -3768,15 +3767,13 @@ fn AppBootstrap() -> Element {
                                                             .map(|handle| handle.jkt().to_owned()),
                                                         principal_server_url: logout_grant
                                                             .as_ref()
-                                                            .map(|grant| {
-                                                                grant.principal_server_url.to_string()
-                                                            }),
+                                                            .map(|grant| grant.principal_server_url.clone()),
                                                         // T1.Y4 — re-resolved at
                                                         // logout time from the
                                                         // principal server's
                                                         // describe.auth_metadata.
                                                         gate_account_base: None,
-                                                        base_url: base.clone(),
+                                                        base_url: active.server_url.clone(),
                                                         session_credential: api_token.clone(),
                                                         principal_id: actor.clone(),
                                                         created_at: chrono::Utc::now(),
@@ -3968,9 +3965,9 @@ fn AppBootstrap() -> Element {
                 visible: shortcut_help_open,
             }
         }
-        } else {
-            {auth_shell_node}
         }
+        if !matches!(auth_surface, AuthSurface::AppShell) {
+            {auth_shell_node}
         }
     }
 }

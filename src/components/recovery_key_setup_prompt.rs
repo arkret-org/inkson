@@ -347,11 +347,17 @@ pub fn RecoveryKeySetupPrompt(
                                         ));
                                         return;
                                     }
-                                    let principal_id = account.principal_id().to_string();
+                                    let Some(account) = active_account() else {
+                                        status.set(crate::i18n::tr(
+                                            "recovery_setup.err_requires_account",
+                                        ));
+                                        return;
+                                    };
+                                    let account_principal_id = account.principal_id().to_string();
                                     status.set(crate::i18n::tr("recovery_setup.publishing"));
                                     publishing.set(true);
                                     let accepted_key = saved_recovery_key.clone();
-                                    let accepted_principal_id = principal_id.clone();
+                                    let accepted_principal_id = account_principal_id.clone();
                                     let on_outcome = EventHandler::new(
                                         move |outcome: RecoveryKeyBackupOutcome| match outcome {
                                             RecoveryKeyBackupOutcome::Established => {
@@ -397,6 +403,7 @@ pub fn RecoveryKeySetupPrompt(
                                         token,
                                         principal_id,
                                         device_id,
+                                        account,
                                         state_store,
                                         saved_recovery_key.clone(),
                                         status,

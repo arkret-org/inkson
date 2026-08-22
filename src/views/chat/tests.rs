@@ -1,5 +1,16 @@
 use super::*;
 
+fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    arkret_sdk::PrincipalAuthorityKey::new(
+        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+    )
+}
+
+fn test_device_id(value: &str) -> arkret_sdk::DeviceId {
+    arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
+}
+
 #[test]
 fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
     let key = "https://example.test\u{1f}did:web:alice\u{1f}ak:realm:one";
@@ -4680,12 +4691,15 @@ fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
         "ciphertext": "AAAA",
         "payload_digest": "sha256:0",
     });
+    let authority = test_authority("did:web:alice.example");
+    let device_id = test_device_id("ak:device:01964137-0000-7000-8000-000000000001");
     assert!(
         decrypt_chat_encrypted_content(
             &store,
             "ak:realm:AacL7ZYuTtiI1Wvq5aTmbQo8CihIcuFhJ4WKAZZMxlxY",
+            &authority,
             "did:web:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
+            &device_id,
             None,
             &envelope,
         )
@@ -4797,15 +4811,14 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
             },
         }
     });
+    let authority = test_authority("did:web:bob.example");
+    let device_id = test_device_id("ak:device:01964137-0000-7000-8000-000000000001");
 
     let msg = chat_message_from_event_with_sidecar(
         "ak:realm:AacL7ZYuTtiI1Wvq5aTmbQo8CihIcuFhJ4WKAZZMxlxY",
         &event,
         Some(&store),
-        Some((
-            "did:web:bob.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        )),
+        Some((&authority, "did:web:bob.example", &device_id)),
     )
     .expect("message");
 

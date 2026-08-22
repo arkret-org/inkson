@@ -16,6 +16,14 @@ mod device_identity_proof_tests {
         signed_message_envelope_inner(signer, actor_id, Some(device_id))
     }
 
+    fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+        let principal_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
+        arkret_sdk::PrincipalAuthorityKey {
+            principal_server_id: principal_id.clone(),
+            principal_id,
+        }
+    }
+
     fn signed_message_envelope_inner(
         signer: &crate::event_signer::InksonEventSigner,
         actor_full_id: &str,
@@ -210,6 +218,8 @@ mod device_identity_proof_tests {
         ));
         let envelope = signed_message_envelope(&signer, actor, device);
         let actor_core = core_id(actor);
+        let authority = authority(actor);
+        let device_id = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
         crate::identity::device_directory::invalidate_actor(&actor_core);
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
 
@@ -217,7 +227,7 @@ mod device_identity_proof_tests {
             "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
             &envelope,
             None,
-            Some((&actor_core, device)),
+            Some((&authority, &actor_core, &device_id)),
         )
         .expect("self-authored message must verify with its active device key");
         assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
@@ -232,6 +242,8 @@ mod device_identity_proof_tests {
         ));
         let envelope = signed_message_envelope(&signer, actor, device);
         let actor_core = core_id(actor);
+        let authority = authority(actor);
+        let device_id = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
         crate::identity::device_directory::seed_negative_for_test(&actor_core, device);
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
 
@@ -240,7 +252,7 @@ mod device_identity_proof_tests {
                 "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
                 &envelope,
                 None,
-                Some((&actor_core, device)),
+                Some((&authority, &actor_core, &device_id)),
             ),
             ChatProofVerdict::Rejected
         );

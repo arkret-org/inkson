@@ -258,13 +258,9 @@ pub(crate) async fn seal_self_principal_event_current(
 pub(crate) async fn seal_managed_agent_pcr_current(
     api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
+    account: &crate::config::ActiveAccountContext,
     realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::Seal> {
-    let controller_id = state_store
-        .read()
-        .active_principal_id()
-        .filter(|did| !did.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("active controller DID is unavailable"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
     let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
@@ -296,15 +292,11 @@ pub(crate) async fn seal_managed_agent_pcr_current(
 pub(crate) async fn bootstrap_provisioned_agent(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
+    account: &crate::config::ActiveAccountContext,
     agent_id: &arkret_sdk::DidCoreId,
     realm_id: &arkret_sdk::RealmId,
     controller_authorization_ref: &str,
 ) -> anyhow::Result<()> {
-    let controller_id = state_store
-        .read()
-        .active_principal_id()
-        .filter(|did| !did.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("active controller DID is unavailable"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
     let signer_account_scope = crate::secure_key_store::active_device_seed_scope();

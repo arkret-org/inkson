@@ -260,7 +260,7 @@ fn missing_creation_handoff_surface(
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 struct RepairedBoundCompletion {
     account: crate::config::ActiveAccountContext,
     session_credential: String,
@@ -271,10 +271,7 @@ fn profile_id_for_authority(
     authority: &arkret_sdk::PrincipalAuthorityKey,
 ) -> String {
     state_store
-        .known_profile_refs()
-        .into_iter()
-        .find(|known| &known.authority == authority)
-        .map(|known| known.profile_id)
+        .known_profile_id_for_authority(authority)
         .unwrap_or_else(|| format!("ak:profile:{}", crate::operation::uuid_v7()))
 }
 
@@ -282,13 +279,13 @@ async fn resolve_handoff_active_account(
     handoff: &crate::state::PendingAccountHandoff,
     full_id: &arkret_sdk::DidFullId,
     device_id: arkret_sdk::DeviceId,
-    state_store: &crate::state::LocalStateStore,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<crate::config::ActiveAccountContext> {
     let authority = arkret_sdk::PrincipalAuthorityKey::new(
         arkret_sdk::project_full_id_to_core_id(full_id)?,
         arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
     );
-    let profile_id = profile_id_for_authority(state_store, &authority);
+    let profile_id = profile_id_for_authority(&state_store.read(), &authority);
     let server_url = url::Url::parse(&crate::config::normalize_server_url(
         &handoff.principal_server_url,
     ))?;
@@ -401,18 +398,16 @@ async fn repair_pruned_bound_completion(
     crate::views::recovery::local_recovery_public_key_result(&state_store.read(), &actor)
         .map_err(|error| anyhow::anyhow!("verify repaired recovery metadata: {error}"))?;
     state_store.read().begin_durable_flush()?.wait().await?;
-    let store_snapshot = state_store.read().clone();
     let account = resolve_handoff_active_account(
         &handoff,
         &evidence.principal_id,
         evidence.device_id.clone(),
-        &store_snapshot,
+        state_store,
     )
     .await?;
     {
         let mut store = state_store.write();
-        store.adopt_pending_login(&account);
-        store.register_known_profile(&account.profile_id, &account.authority);
+        store.switch_active_account(&account)?;
     }
     clear_pending_principal_setup(state_store).await?;
 
@@ -477,8 +472,8 @@ pub fn OnboardingPanel(
                         let mut repaired_principal_id = principal_id;
                         let mut repaired_device_id = device_id;
                         repaired_token.set(repaired.session_credential);
-                        repaired_principal_id.set(repaired.principal_id);
-                        repaired_device_id.set(repaired.device_id);
+                        repaired_principal_id.set(repaired.account.full_id().to_string());
+                        repaired_device_id.set(repaired.account.device_id.to_string());
                         server_reconciliation.set(ServerReconciliationStatus::Ready);
                     }
                     Ok(None) => server_reconciliation.set(ServerReconciliationStatus::Ready),
@@ -613,6 +608,7 @@ pub fn OnboardingPanel(
         },
         OnboardingSurface::AccountSummary => {
             let did = principal_id();
+            let principal_label = short_protocol_id(&did);
             let complete = account_summary_complete(!token().trim().is_empty(), &did);
             rsx! {
                 div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
@@ -1304,9 +1300,13 @@ async fn issue_recovery_completion_grant(
     let dpop_record = crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
         holder.seed_b64().as_str(),
     )?;
-    let store_snapshot = state_store.read().clone();
-    let account =
-        resolve_handoff_active_account(handoff, &principal_id, device_id, &store_snapshot).await?;
+    let account = resolve_handoff_active_account(
+        handoff,
+        &principal_id,
+        persisted.device_id.clone(),
+        state_store,
+    )
+    .await?;
     {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let prepared_keys = crate::views::login::prepare_completed_login_dpop_key(
@@ -1829,10 +1829,10 @@ fn PendingAccountIdentityCreation(
                                 .await;
 
                                 match result {
-                                    Ok((actor, device, grant)) => {
-                                        principal_id.set(actor);
-                                        device_id.set(device);
-                                        token.set(grant);
+                                    Ok(completed) => {
+                                        principal_id.set(completed.account.full_id().to_string());
+                                        device_id.set(completed.account.device_id.to_string());
+                                        token.set(completed.session_credential);
                                         needs_device_authorization.set(false);
                                         device_authorization_check_complete.set(true);
                                         recovery_key.set(String::new());
@@ -2192,10 +2192,15 @@ async fn create_and_bind_identity(
         let device_public_key = format!("did:key:{device_public_key_multibase}");
         let hpke_key = {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            let authority = arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?,
+                arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+            );
+            let device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
             let (_, public_key) = crate::mls::runtime::load_or_create_device_hpke_keypair_durable(
                 secure_store.as_ref(),
-                checkpoint.full_id.as_str(),
-                device,
+                &authority,
+                &device_id,
             )
             .await?;
             crate::identity::did_key::encode_x25519_multibase(&public_key)
@@ -2306,12 +2311,11 @@ async fn create_and_bind_identity(
             anyhow::bail!("initial session grant principal does not match the registered identity");
         }
         let grant_jwt = completion.session_grant.grant_jwt.clone();
-        let store_snapshot = state_store.read().clone();
         let account = resolve_handoff_active_account(
             handoff,
             &principal_id,
             arkret_sdk::DeviceId::new(device.to_owned())?,
-            &store_snapshot,
+            state_store,
         )
         .await?;
         let persisted_grant = crate::state::PersistedSessionGrant {
@@ -2378,18 +2382,23 @@ async fn create_and_bind_identity(
             .ok_or_else(|| {
                 anyhow::anyhow!("the unfinished setup session is unavailable; sign in again")
             })?;
-        let store_snapshot = state_store.read().clone();
         let account = resolve_handoff_active_account(
             handoff,
             &checkpoint.full_id,
             arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
-            &store_snapshot,
+            state_store,
         )
         .await?;
         (checkpoint.clone(), account, persisted_grant.grant_jwt)
     };
 
-    crate::views::helpers::persist_config(config_store, Some(account.clone()), grant_jwt.clone());
+    crate::views::helpers::persist_config(
+        config_store,
+        account.server_url.to_string(),
+        account.full_id().to_string(),
+        account.device_id.to_string(),
+        grant_jwt.clone(),
+    );
 
     finish_principal_setup(
         &registration,
@@ -2931,23 +2940,23 @@ mod tests {
     #[test]
     fn account_summary_requires_a_typed_active_account() {
         let account = test_active_account();
-        assert!(!account_summary_complete(None));
-        assert!(account_summary_complete(Some(&account)));
+        assert!(!account_summary_complete(false, ""));
+        assert!(account_summary_complete(true, account.full_id().as_str()));
     }
 
     #[test]
     fn a_latched_creation_surface_never_goes_empty_when_its_handoff_disappears() {
         let account = test_active_account();
         assert_eq!(
-            missing_creation_handoff_surface(true, None),
+            missing_creation_handoff_surface(true, false, ""),
             MissingCreationHandoffSurface::Finishing
         );
         assert_eq!(
-            missing_creation_handoff_surface(false, Some(&account)),
+            missing_creation_handoff_surface(false, true, account.full_id().as_str()),
             MissingCreationHandoffSurface::Complete
         );
         assert_eq!(
-            missing_creation_handoff_surface(false, None),
+            missing_creation_handoff_surface(false, false, ""),
             MissingCreationHandoffSurface::SignInRequired
         );
     }

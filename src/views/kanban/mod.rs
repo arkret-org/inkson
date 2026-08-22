@@ -942,6 +942,7 @@ pub fn KanbanPanel(
     let columns = use_memo({
         let seed_realm_id = local_realm_id.clone();
         let decrypt_realm_id = selected_realm_id.clone();
+        let decrypt_authority = authority.clone();
         let decrypt_actor = principal_id.clone();
         let seed_columns = initial_columns.clone();
         move || {
@@ -1012,7 +1013,7 @@ pub fn KanbanPanel(
     let synthesis_entries_memo = {
         let memo_realm_id = selected_realm_id.clone();
         let memo_projection_realm_id = projection_realm_id.clone();
-        let memo_principal_id = principal_id.clone();
+        let memo_authority = authority.clone();
         use_memo(move || {
             let want_synthesis = matches!(card_detail_tab(), CardDetailContentTab::Synthesis)
                 || (editing_card_detail() && card_edit_scope() == CardEditScope::Synthesis);
@@ -1036,7 +1037,7 @@ pub fn KanbanPanel(
                 realm_id: &realm_context,
                 member_rows: &member_rows,
             };
-            let decrypt_ctx = mls_decrypt_ctx_if_ready(&store, &memo_realm_id, &memo_principal_id);
+            let decrypt_ctx = mls_decrypt_ctx_if_ready(&store, &memo_realm_id, &memo_authority);
             let _active_sidecar = hosted_sidecar_state().filter(|session| {
                 session.source_realm_id == memo_realm_id
                     && session.source_strand_id == card.primary_strand_id
@@ -1106,6 +1107,7 @@ pub fn KanbanPanel(
                 token,
                 selected_realm_id: selected_realm_id.clone(),
                 projection_realm_id: projection_realm_id.clone(),
+                authority: authority.clone(),
                 principal_id: principal_id.clone(),
                 device_id: device_id.clone(),
                 sync_cursor,

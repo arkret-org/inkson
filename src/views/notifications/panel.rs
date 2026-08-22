@@ -25,7 +25,12 @@ pub fn NotificationsPanel(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let session = crate::app::SessionContext::get();
+    let mut state_store = session.state_store;
+    let Some(account) = session.active_account() else {
+        return rsx! { div { class: "event error-banner", "Active account context is unavailable." } };
+    };
+    let authority = account.authority;
     let (initial_state, initial_privacy_gate) = {
         let store = state_store.read();
         (
@@ -321,11 +326,13 @@ pub fn NotificationsPanel(
                                     let base_url = base_url.clone();
                                     let principal_id = principal_id.clone();
                                     let device_id = device_id.clone();
+                                    let authority = authority.clone();
                                     let notification_id = notification.id.clone();
                                     move |_| {
                                         set_notification_inbox_state(
                                             base_url.clone(),
                                             token(),
+                                            authority.clone(),
                                             principal_id.clone(),
                                             device_id.clone(),
                                             notification_id.clone(),

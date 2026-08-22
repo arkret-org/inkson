@@ -103,7 +103,13 @@ async fn refresh_browser_storage_quota(
 
 #[component]
 pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> Element {
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let session = crate::app::SessionContext::get();
+    let mut state_store = session.state_store;
+    let Some(account) = session.active_account() else {
+        return rsx! {};
+    };
+    let authority = account.authority;
+    let active_device_id = account.device_id;
     let mut cache_usage = use_signal(|| state_store.read().e2ee_plaintext_cache_usage());
     let mut pending_clear = use_signal(|| None::<E2eePlaintextCacheClearScope>);
     let mut cache_status = use_signal(String::new);
@@ -272,7 +278,8 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                     onclick: move |_| {
                                         let clear_scope = clear_scope_for_action.clone();
                                         let actor_id = principal_id.clone();
-                                        let active_device_id = device_id.clone();
+                                        let active_device_id = active_device_id.clone();
+                                        let authority = authority.clone();
                                         spawn(async move {
                                             let secure_store =
                                                 crate::secure_key_store::default_secure_key_store("inkson");

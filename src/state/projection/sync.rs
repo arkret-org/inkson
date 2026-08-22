@@ -198,7 +198,7 @@ pub fn projection_events_from_sync_realms(
                                         message_realm,
                                         event,
                                         Some(store),
-                                        Some((actor_id, device_id)),
+                                        Some((authority, actor_id, device_id)),
                                     );
                                 try_local_mls_decrypt_core_for_scope_from_verified_sender(
                                     store,

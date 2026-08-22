@@ -704,7 +704,7 @@ pub fn AppletsPanel(
                                                 let (registration, grants) =
                                                     build_formal_applet_install_events(
                                                         &snapshot,
-                                                        principal_id.as_str(),
+                                                        actor_id.as_str(),
                                                     )?;
                                                 let mut events = Vec::with_capacity(1 + grants.len());
                                                 events.push(registration.into_intent());
@@ -835,6 +835,10 @@ pub fn AppletsPanel(
                                                     let actor_id = principal_id().trim().to_owned();
                                                     if actor_id.is_empty() {
                                                         install_status.set("revoke failed: account is not connected".to_owned());
+                                                        return;
+                                                    };
+                                                    let Some(account) = active_account.peek().clone() else {
+                                                        install_status.set("revoke failed: active account context is unavailable".to_owned());
                                                         return;
                                                     };
                                                     let principal_id = account.authority.principal_id;

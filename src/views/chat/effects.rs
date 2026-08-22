@@ -3,8 +3,9 @@ use super::*;
 #[component]
 pub(super) fn ChatEffects(
     controller: ChatController,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     principal_id: String,
-    device_id: String,
+    device_id: arkret_sdk::DeviceId,
     selected_realm_id: String,
     initial_strand_id: String,
     plaintext_service_id: String,
@@ -126,6 +127,7 @@ pub(super) fn ChatEffects(
     }
 
     let account_for_connectivity = principal_id.clone();
+    let authority_for_connectivity = authority.clone();
     let realm_for_connectivity = selected_realm_id.clone();
     use_future(move || {
         let authority_for_connectivity = authority_for_connectivity.clone();
@@ -174,6 +176,7 @@ pub(super) fn ChatEffects(
     {
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();
+        let authority_for_receipt = authority.clone();
         let device = device_id.clone();
         let base = base_url.clone();
         use_effect(move || {
@@ -208,7 +211,7 @@ pub(super) fn ChatEffects(
             let base = base.clone();
             let realm = realm.clone();
             let actor = actor.clone();
-            let authority = authority.clone();
+            let authority = authority_for_receipt.clone();
             let device = device.clone();
             // No accepted MLS state for the scope means the Signal capability
             // is withdrawn there. v1 has no plaintext read-receipt branch.
@@ -272,12 +275,13 @@ pub(super) fn ChatEffects(
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();
+        let authority_for_presence = authority.clone();
         let device = device_id.clone();
         let mut state_store_for_presence = state_store;
         use_effect(move || {
             let realm = trim_realm_id(&realm);
             let actor = actor.trim().to_owned();
-            let authority = authority.clone();
+            let authority = authority_for_presence.clone();
             let device = device.clone();
             let heartbeat_tick = presence_heartbeat_tick();
             let visibility = state_store_for_presence.read().presence_visibility();
@@ -514,6 +518,7 @@ pub(super) fn ChatEffects(
             }
         });
     }
+    let authority_for_initial_sync = authority.clone();
     use_effect(move || {
         if !initial_sync_requested() && !token().trim().is_empty() {
             event_sink.emit(ChatProjectionEvent::InitialSync {
@@ -527,7 +532,11 @@ pub(super) fn ChatEffects(
             // P0 decrypt-on-read identity: this device's actor + device id let the
             // message projection decrypt remote members' canonical encrypted_content
             // envelopes from the local MLS snapshot.
-            let local_decrypt_identity = Some((principal_id.as_str(), device_id.as_str()));
+            let local_decrypt_identity = Some((
+                &authority_for_initial_sync,
+                principal_id.as_str(),
+                &device_id,
+            ));
             let (local_messages, local_poll_cards, local_channels) = {
                 let store = state_store.read();
                 let snapshot = store.load();
@@ -560,11 +569,13 @@ pub(super) fn ChatEffects(
                 event_sink.emit(ChatProjectionEvent::MergePollCards(local_poll_cards));
             }
             let principal_id_for_decrypt = principal_id.clone();
+            let authority_for_decrypt = authority_for_initial_sync.clone();
             let device_id_for_decrypt = device_id.clone();
             spawn(async move {
                 let decrypt_identity = Some((
+                    &authority_for_decrypt,
                     principal_id_for_decrypt.as_str(),
-                    device_id_for_decrypt.as_str(),
+                    &device_id_for_decrypt,
                 ));
                 // The bootstrap snapshot must NOT carry a `wait_for` frontier. On
                 // wasm the subscribe response is read as a single buffered body
@@ -760,6 +771,7 @@ pub(super) fn ChatEffects(
     let mut local_timeline_sync_key_seen = use_signal(String::new);
     {
         let selected_realm_for_local_timeline = selected_realm_after_initial_sync.clone();
+        let authority_for_local_timeline = authority.clone();
         let principal_id_for_local_timeline = account_after_initial_sync.clone();
         let device_id_for_local_timeline = device_after_initial_sync.clone();
         use_effect(move || {
@@ -785,8 +797,9 @@ pub(super) fn ChatEffects(
                 let store = state_store.read();
                 let snapshot = store.load();
                 let decrypt_identity = Some((
+                    &authority_for_local_timeline,
                     principal_id_for_local_timeline.as_str(),
-                    device_id_for_local_timeline.as_str(),
+                    &device_id_for_local_timeline,
                 ));
                 let messages = chat_messages_from_local_state_with_sidecar(
                     &snapshot,

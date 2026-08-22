@@ -50,6 +50,10 @@ const RECORD_TTL_HOURS: i64 = 24;
 /// it survives a tab close or a transient coauth outage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingLogout {
+    /// Exact account authority whose logout record owns this secure-store slot.
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    /// Exact account device whose grant-binding material is journalled.
+    pub device_id: arkret_sdk::DeviceId,
     /// The grant JWT to revoke at coauth. `None` when the store held no
     /// session grant at the moment "Log out" was pressed — there is then no
     /// rotation chain to terminate, so only the soland courtesy logout runs.
@@ -337,6 +341,12 @@ mod tests {
 
     fn base_record(created_at: DateTime<Utc>) -> PendingLogout {
         PendingLogout {
+            authority: arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:soland.example").unwrap(),
+            ),
+            device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000042")
+                .unwrap(),
             grant_jwt: Some("eyJ.grant.jwt".to_owned()),
             device_seed_b64: Some("seed".to_owned()),
             device_jkt: Some("jkt".to_owned()),

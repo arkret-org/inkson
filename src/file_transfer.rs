@@ -129,22 +129,22 @@ struct PreparedFileTransfer {
 }
 
 pub fn load_or_create_file_transfer_crypto_context(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
 ) -> anyhow::Result<FileTransferCryptoContext> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let account_secret =
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id)
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority)
             .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?
             .ok_or_else(|| anyhow::anyhow!("account MLS secret recovery is required"))?;
     FileTransferCryptoContext::from_account_secret(&account_secret.secret)
 }
 
 pub fn load_file_transfer_crypto_context(
-    actor_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
 ) -> anyhow::Result<Option<FileTransferCryptoContext>> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let Some(account_secret) =
-        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor_id)
+        crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority)
             .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?
     else {
         return Ok(None);

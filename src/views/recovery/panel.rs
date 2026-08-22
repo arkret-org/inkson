@@ -48,8 +48,12 @@ pub fn RecoveryPanel(
     device_id: Signal<String>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
+    let session_context = crate::app::SessionContext::get();
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let state_store = session_context.state_store;
+    let Some(account) = session_context.active_account() else {
+        return rsx! {};
+    };
     let actor_key = principal_id();
     let initial = load_state(&state_store, &actor_key);
 
@@ -450,6 +454,7 @@ pub fn RecoveryPanel(
                                             token,
                                             principal_id,
                                             device_id,
+                                            account.clone(),
                                             state_store,
                                             current_key,
                                             recovery_key_status,

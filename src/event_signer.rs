@@ -1685,8 +1685,14 @@ mod tests {
         let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let _g = reset();
         let user_store = crate::secure_key_store::UserLocalStore::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-        );
+            arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+            ),
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
+                .unwrap(),
+        )
+        .unwrap();
         user_store.activate();
         let stale = Arc::new(build_ed25519_signer([8u8; 32], "did:web:stale.example"));
         assert!(install_active_signer(stale));

@@ -228,19 +228,20 @@ fn recover_pending_handoff_for_sign_in(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     device_id: &str,
 ) -> bool {
+    let pending_device_id = match arkret_sdk::DeviceId::new(device_id.to_owned()) {
+        Ok(device_id) => device_id,
+        Err(error) => {
+            tracing::warn!(%error, device_id, "starting fresh sign-in because the unfinished handoff device id is invalid");
+            return false;
+        }
+    };
     let pending_holder = store
         .pending_account_handoff()
         .filter(|handoff| handoff.device_id == device_id)
         .map(|handoff| handoff.holder_jkt);
     if let Some(expected_holder) = pending_holder {
-        let pending_device_id = match arkret_sdk::DeviceId::new(device_id.to_owned()) {
-            Ok(device_id) => device_id,
-            Err(error) => {
-                tracing::warn!(%error, device_id, "starting fresh sign-in because the unfinished handoff device id is invalid");
-                return false;
-            }
-        };
-        let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
+        let pending_store =
+            crate::secure_key_store::PendingLocalStore::new(pending_device_id.clone());
         let recovered = match crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
             store,
             secure_store,
@@ -271,7 +272,7 @@ fn recover_pending_handoff_for_sign_in(
             return false;
         }
     }
-    store.can_resume_pending_login(device_id)
+    store.can_resume_pending_login(&pending_device_id)
 }
 
 // Process-global OIDC-callback completion guard. `callback_started` below is a
@@ -349,8 +350,9 @@ pub fn LoginPanel(
         let result = finish_oidc_callback(callback_device, state_store_write).await;
         match result {
             Ok(OidcCallbackOutcome::Login(completed)) => {
-                let principal_server_url = normalize_server_url(&completed.principal_server_url);
-                let actor = completed.actor.to_string();
+                let principal_server_url =
+                    normalize_server_url(completed.account.server_url.as_str());
+                let actor = completed.account.full_id().to_string();
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                 let prepared_keys = match prepare_completed_login_dpop_key(
                     secure_store.as_ref(),
@@ -417,11 +419,13 @@ pub fn LoginPanel(
                 }
                 base_url.set(principal_server_url.clone());
                 principal_id.set(actor.clone());
-                device_id.set(completed.device_id.clone());
+                device_id.set(completed.account.device_id.to_string());
                 token.set(completed.session_credential.clone());
                 persist_config(
                     config_store,
-                    Some(completed.account.clone()),
+                    completed.account.server_url.to_string(),
+                    completed.account.full_id().to_string(),
+                    completed.account.device_id.to_string(),
                     completed.session_credential.clone(),
                 );
                 auth_status.set("Signed in on this authorized device.".to_owned());
@@ -484,6 +488,7 @@ pub fn LoginPanel(
             .as_ref()
             .map(|account| account.device_id.to_string())
             .unwrap_or_else(|| device_id());
+        let persisted_account = loaded_config.active_account.clone();
         let returning_principal = {
             match returning_sign_in_principal(&persisted_actor) {
                 Ok(principal) => principal,
@@ -578,6 +583,14 @@ pub fn LoginPanel(
             } else {
                 crate::config::new_device_id()
             };
+            let pending_device_id = match arkret_sdk::DeviceId::new(device.clone()) {
+                Ok(device_id) => device_id,
+                Err(error) => {
+                    is_busy.set(false);
+                    auth_status.set(format!("The generated device id is invalid: {error}"));
+                    return;
+                }
+            };
             // Only a checkpoint this exact transaction can still finish owns
             // the authentication. A stale, terminal, fenced-out or foreign
             // draft never suppresses the returning candidate: the old
@@ -612,9 +625,10 @@ pub fn LoginPanel(
             } else {
                 reset_state_store
                     .write()
-                    .begin_pending_login(device.trim(), None);
+                    .begin_pending_login(&pending_device_id, None);
                 if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
                     secure_store.as_ref(),
+                    &pending_device_id,
                 ) {
                     tracing::warn!(%error, "reset device seed scope for sign-in failed");
                 }
@@ -629,17 +643,10 @@ pub fn LoginPanel(
             if resume_account_handoff {
                 let resumed = reset_state_store
                     .write()
-                    .resume_pending_login(device.trim());
+                    .resume_pending_login(&pending_device_id);
                 debug_assert!(resumed, "validated handoff resume must remain valid");
             }
-            let pending_store = match arkret_sdk::DeviceId::new(device.trim().to_owned()) {
-                Ok(device_id) => crate::secure_key_store::PendingLocalStore::new(device_id),
-                Err(error) => {
-                    is_busy.set(false);
-                    auth_status.set(format!("The generated device id is invalid: {error}"));
-                    return;
-                }
-            };
+            let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
             if !resume_account_handoff
                 && let Err(error) = pending_store.delete(secure_store.as_ref())
             {
@@ -712,7 +719,7 @@ pub fn LoginPanel(
                         disabled: is_busy(),
                         oninput: move |event: FormEvent| {
                             let value = normalize_server_url(&event.value());
-                            base_url.set(value);
+                            base_url.set(value.clone());
                             token.set(String::new());
                             persist_config(config_store, value, principal_id(), device_id(), String::new());
                         },
@@ -753,7 +760,7 @@ pub fn LoginPanel(
                                         let option_url = option_url.clone();
                                         move |_| {
                                             let value = normalize_server_url(&option_url);
-                                            base_url.set(value);
+                                            base_url.set(value.clone());
                                             token.set(String::new());
                                             persist_config(
                                                 config_store,
@@ -2131,11 +2138,12 @@ mod tests {
         let expected = dpop_record_for_seed(seed);
         handoff.holder_jkt = expected.jkt.clone();
         let device_id = handoff.device_id.clone();
+        let typed_device_id = arkret_sdk::DeviceId::new(device_id.clone()).unwrap();
         store
             .set_pending_account_handoff(Some(handoff))
             .expect("pending handoff");
 
-        assert!(!store.can_resume_pending_login(&device_id));
+        assert!(!store.can_resume_pending_login(&typed_device_id));
         assert!(recover_pending_handoff_for_sign_in(
             &mut store,
             &secure_store,
@@ -2286,7 +2294,9 @@ mod tests {
 
         assert_eq!(crate::secure_key_store::active_device_seed_scope(), None);
         assert_eq!(
-            crate::secure_key_store::pending_login_device_id().as_deref(),
+            crate::secure_key_store::pending_login_device_id()
+                .as_ref()
+                .map(arkret_sdk::DeviceId::as_str),
             Some("ak:device:01964137-0000-7000-8000-000000000001")
         );
     }
@@ -2305,7 +2315,7 @@ mod tests {
                 .unwrap()
                 .expect("returning principal")
                 .as_str(),
-            account.full_id().as_str()
+            actor
         );
     }
 
@@ -2467,15 +2477,9 @@ mod tests {
             store.active_principal_id().is_none(),
             "fallible secure preparation must not switch the public account"
         );
-        store.promote_accepted_context_for_test(&principal_id);
-        commit_completed_login_dpop_key(
-            &mut store,
-            &secure_store,
-            &principal_id,
-            &new_record,
-            prepared,
-        )
-        .expect("commit completed login dpop");
+        store.promote_accepted_context_for_test(account.full_id());
+        commit_completed_login_dpop_key(&mut store, &secure_store, &account, &new_record, prepared)
+            .expect("commit completed login dpop");
 
         let loaded_seed = user_store
             .load_signing_seed(&secure_store)

@@ -784,6 +784,13 @@ pub(super) fn RealmsSection(
                                         }
                                         realm_create_busy.set(true);
                                         realm_state.set(tr("setup.blocker.creating"));
+                                        let Some(account) = active_account() else {
+                                            realm_create_busy.set(false);
+                                            realm_state.set("Active account context is unavailable".to_owned());
+                                            return;
+                                        };
+                                        let authority = account.authority.clone();
+                                        let account_device_id = account.device_id.clone();
                                         let api_token = token();
                                         let base = base.clone();
                                         let backup_trigger_signal =
@@ -975,11 +982,11 @@ pub(super) fn RealmsSection(
                                                             // replayed by the per-Realm bootstrap effect instead of leaving
                                                             // the Realm permanently unable to perform encrypted writes.
                                                             match crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
-                                                                    &api,
-                                                                    state_store,
-                                                                    &realm_id,
-                                                                    &actor,
-                                                                    &device,
+                                                                     &api,
+                                                                     state_store,
+                                                                     &realm_id,
+                                                                     &authority,
+                                                                     &account_device_id,
                                                                 )
                                                                 .await
                                                                 {
@@ -1090,10 +1097,11 @@ pub(super) fn RealmsSection(
                                                             // so attempt the recovery-public-key backup here
                                                             // instead of waiting for a later write hook.
                                                             crate::components::maybe_auto_backup_mls_after_encrypted_write(
-                                                                base.clone(),
-                                                                api_token.clone(),
-                                                                actor.clone(),
-                                                                device.clone(),
+                                                                 base.clone(),
+                                                                 api_token.clone(),
+                                                                 authority.clone(),
+                                                                 actor.clone(),
+                                                                 account_device_id.to_string(),
                                                                 state_store,
                                                                 signal,
                                                             )

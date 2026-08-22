@@ -116,6 +116,7 @@ fn cache_sidecar_view_state(
 
 pub fn ingest_sidecar_view_state_account_data(
     store: &mut crate::state::LocalStateStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     principal_id: &str,
     account_data_key: &str,
     entry: &impl serde::Serialize,
@@ -124,7 +125,7 @@ pub fn ingest_sidecar_view_state_account_data(
         return Ok(false);
     }
     let view_state: arkret_sdk::AgentSidecarViewState = serde_json::from_value(
-        crate::account_data::decrypt_account_data_entry(principal_id, account_data_key, entry)?,
+        crate::account_data::decrypt_account_data_entry(authority, account_data_key, entry)?,
     )?;
     view_state.validate_account_data_key(account_data_key)?;
     if view_state.controller_id != crate::mls_api_helpers::principal_core_id(principal_id)? {
@@ -228,7 +229,7 @@ pub fn cached_sidecar_exchange_projections(
         })
         .filter(|projection| {
             projection.validate().is_ok()
-                && projection.controller_id == *principal_id
+                && projection.controller_id == account_core_id
                 && projection.source_track_ref.realm_id.as_str() == source_realm_id
         })
         .collect::<Vec<_>>();
@@ -240,7 +241,7 @@ pub fn cached_sidecar_exchange_projections(
     }
     let mut projections = fold
         .exchanges_for_realm(&realm_id)
-        .filter(|&projection| projection.controller_id == *principal_id)
+        .filter(|&projection| projection.controller_id == account_core_id)
         .cloned()
         .collect::<Vec<_>>();
     projections.sort_by(|left, right| {
@@ -796,7 +797,8 @@ fn try_begin_sidecar_auto_close(
 pub(crate) async fn submit_pending_sidecar_auto_close(
     base_url: &str,
     api_token: String,
-    device_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     intent: PendingSidecarAutoCloseIntent,
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
@@ -818,6 +820,7 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         state_store,
         &seal_view,
         &intent.source_realm_id,
+        authority,
         &intent.controller_id,
         device_id,
         &intent.source_strand_id,
@@ -948,7 +951,7 @@ fn decrypt_sidecar_scoped_envelope(
         realm_id,
         event,
         Some(store),
-        Some((controller_id, device_id.as_str())),
+        Some((authority, controller_id, device_id)),
     )?;
     let event_kind = event.get("kind")?.as_str()?;
     let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
@@ -964,8 +967,8 @@ fn decrypt_sidecar_scoped_envelope(
         store,
         secure_store.as_ref(),
         realm_id,
-        controller_id,
         authority,
+        controller_id,
         device_id,
         &payload,
         &effective_scope,
@@ -1229,6 +1232,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
             submit_pending_sidecar_auto_close(
                 base_url,
                 api_token.clone(),
+                authority,
                 device_id,
                 state_store,
                 intent,
@@ -1726,7 +1730,8 @@ pub fn cached_sidecar_display_mode(
 ) -> Option<arkret_sdk::AgentSidecarDisplayMode> {
     let controller_core_id =
         crate::mls_api_helpers::principal_core_id(&session.controller_id).ok()?;
-    if &controller_core_id != principal_id {
+    let principal_core_id = crate::mls_api_helpers::principal_core_id(principal_id).ok()?;
+    if controller_core_id != principal_core_id {
         return None;
     }
     let realm_id = arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?;
@@ -1903,9 +1908,9 @@ pub fn push_sidecar_display_mode(
         arkret_sdk::RealmId::new(session.source_realm_id.clone()),
         arkret_sdk::StrandId::new(session.source_strand_id.clone()),
         crate::mls_api_helpers::principal_core_id(&controller_id),
-        Ok(device_id),
+        device_id,
     ) {
-        (Ok(realm_id), Ok(strand_id), Ok(controller_id), Ok(origin_device_id)) => {
+        (Ok(realm_id), Ok(strand_id), Ok(controller_id), origin_device_id) => {
             (realm_id, strand_id, controller_id, origin_device_id)
         }
         _ => {

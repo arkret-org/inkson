@@ -244,8 +244,6 @@ pub fn ensure_device_key(store: &mut LocalStateStore) -> Result<DpopHandle, Auth
     {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         if let Some(device_id) = crate::secure_key_store::pending_login_device_id() {
-            let device_id = arkret_sdk::DeviceId::new(device_id)
-                .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?;
             let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id);
             ensure_pending_device_key_with_secure_store(
                 store,
@@ -809,7 +807,9 @@ mod tests {
 
     #[test]
     fn secure_store_seed_round_trips_without_plaintext_state_seed() {
-        let _scope = DeviceSeedScopeTestGuard::replace(Some("ak:did_core:web:secure.example"));
+        let authority = test_authority("ak:did_core:web:secure.example");
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("secure");
         let secure = MemorySecureKeyStore::default();
         let first = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
@@ -854,7 +854,9 @@ mod tests {
         // the per-account device identity signing seed. `load_or_recover` recovers
         // the DPoP record from the grant-binding seed and ignores the signing seed.
         let actor = "ak:did_core:web:alice.example";
-        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
+        let authority = test_authority(actor);
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("recover-secure-dpop-record");
         let secure = MemorySecureKeyStore::default();
         // A device identity seed exists for this account but MUST NOT drive DPoP.
@@ -889,7 +891,9 @@ mod tests {
         // seed (the `cnf.jkt` credential), never from the device identity signing
         // seed. A present signing seed for the same account MUST be ignored.
         let actor = "ak:did_core:web:bob.example";
-        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
+        let authority = test_authority(actor);
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("repair-stale-dpop-record");
         let secure = MemorySecureKeyStore::default();
         let old_seed = [3_u8; 32];
@@ -927,7 +931,9 @@ mod tests {
         // 0004 §4.2: `ensure_device_key` mints/loads the DPoP key from the
         // grant-binding store, decoupled from the device identity signing seed.
         let actor = "ak:did_core:web:returning.example";
-        let _scope = DeviceSeedScopeTestGuard::replace(Some(actor));
+        let authority = test_authority(actor);
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("ensure-sources-grant-binding");
         let secure = MemorySecureKeyStore::default();
         let identity_seed = [13_u8; 32];

@@ -346,6 +346,7 @@ pub(super) fn build_dnd_account_data_body(enabled: bool, mode: &str) -> serde_js
 pub(super) fn push_dnd_account_data(
     base_url: String,
     api_token: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     actor_id: String,
     device_id: String,
     enabled: bool,
@@ -381,6 +382,7 @@ pub(super) fn push_dnd_account_data(
                     crate::components::maybe_auto_backup_mls_after_encrypted_write(
                         base_url,
                         api_token,
+                        authority,
                         actor_id,
                         device_id,
                         state_store,

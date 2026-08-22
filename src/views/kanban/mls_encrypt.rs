@@ -597,7 +597,26 @@ pub(super) fn dispatch_card_detail_update(
     let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
     let base_for_backup_trigger = base_url.clone();
     let actor_for_backup_trigger = actor_id.clone();
-    let device_for_sidecar_backup = device_id.clone();
+    let backup_account_scope = if effective_security_encrypted {
+        match crate::secure_key_store::active_device_seed_scope() {
+            Some(scope)
+                if scope.authority.principal_id.as_str() == actor_id
+                    && scope.device_id.as_str() == device_id =>
+            {
+                Some(scope)
+            }
+            Some(_) => {
+                board_status.set("active account authority does not match card author".to_owned());
+                return false;
+            }
+            None => {
+                board_status.set("active account authority is unavailable".to_owned());
+                return false;
+            }
+        }
+    } else {
+        None
+    };
     let sidecar_effective_scope = sidecar_effective_scope.clone();
     let calendar_basis_refs = current.calendar_schedule_basis_refs();
     let update_realm_id = realm_id.clone();
@@ -896,11 +915,16 @@ pub(super) fn dispatch_card_detail_update(
                     short_protocol_id(&resp.event_id)
                 ));
                 if effective_security_encrypted {
+                    let Some(backup_account_scope) = backup_account_scope else {
+                        board_status.set("active account authority is unavailable".to_owned());
+                        return;
+                    };
                     crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
                         base_for_backup_trigger.clone(),
                         api_token.clone(),
+                        backup_account_scope.authority.clone(),
                         actor_for_backup_trigger.clone(),
-                        device_for_sidecar_backup.clone(),
+                        backup_account_scope.device_id.to_string(),
                         state_store,
                     );
                     // X11.2 — first-write trigger. After this encrypted write
@@ -911,8 +935,9 @@ pub(super) fn dispatch_card_detail_update(
                         crate::components::maybe_auto_backup_mls_after_encrypted_write(
                             base_for_backup_trigger.clone(),
                             api_token.clone(),
+                            backup_account_scope.authority.clone(),
                             actor_for_backup_trigger.clone(),
-                            device_for_sidecar_backup.clone(),
+                            backup_account_scope.device_id.to_string(),
                             state_store,
                             signal,
                         )

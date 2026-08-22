@@ -285,6 +285,16 @@ pub(crate) fn push_blocklist_account_data(
     if api_token.trim().is_empty() {
         return;
     }
+    let Some(authority) =
+        crate::secure_key_store::active_device_seed_scope().map(|scope| scope.authority)
+    else {
+        tracing::warn!("blocklist upload skipped: active account scope is unavailable");
+        return;
+    };
+    if principal_id != authority.principal_id.as_str() {
+        tracing::warn!("blocklist upload skipped: active authority does not match the account");
+        return;
+    }
     let principal_id = authority.principal_id.to_string();
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
@@ -301,7 +311,7 @@ pub(crate) fn push_blocklist_account_data(
                     )
                     .map_err(anyhow::Error::msg)?;
                     crate::account_data::encrypt_account_data_value(
-                        &principal_id,
+                        &authority,
                         AccountDataKey::ACCOUNT_BLOCKLIST,
                         &plaintext,
                     )
@@ -2010,6 +2020,7 @@ pub fn SettingsPanel(
                                             push_dnd_account_data(
                                                 base_url(),
                                                 token(),
+                                                account_authority(),
                                                 principal_id(),
                                                 device_id(),
                                                 dnd_enabled(),

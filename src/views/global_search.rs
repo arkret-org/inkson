@@ -251,7 +251,7 @@ pub fn GlobalSearchPanel(
     let mut query = use_signal(|| initial_query.clone());
     let results = use_signal(ResultRows::new);
     let loading = use_signal(|| false);
-    let error_msg = use_signal(String::new);
+    let mut error_msg = use_signal(String::new);
     let has_searched = use_signal(|| false);
     let navigator = use_navigator();
 
@@ -261,11 +261,15 @@ pub fn GlobalSearchPanel(
     use_effect(move || {
         let q = initial_query_for_effect.clone();
         if !q.trim().is_empty() {
+            let Some(account) = active_account.peek().clone() else {
+                error_msg.set("active account context is unavailable".to_owned());
+                return;
+            };
             run_search(
                 q,
                 state_store,
-                principal_id(),
-                device_id(),
+                account.authority,
+                account.device_id,
                 results,
                 loading,
                 error_msg,
@@ -286,11 +290,15 @@ pub fn GlobalSearchPanel(
                         evt.prevent_default();
                         let q = query();
                         if q.trim().is_empty() { return; }
+                        let Some(account) = active_account.peek().clone() else {
+                            error_msg.set("active account context is unavailable".to_owned());
+                            return;
+                        };
                         run_search(
                             q,
                             state_store,
-                            principal_id(),
-                            device_id(),
+                            account.authority,
+                            account.device_id,
                             results,
                             loading,
                             error_msg,

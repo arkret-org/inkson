@@ -37,8 +37,9 @@ fn shared_pin_operation_body(
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatCommandContext {
     pub base_url: String,
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
     pub principal_id: String,
-    pub device_id: String,
+    pub device_id: arkret_sdk::DeviceId,
     pub selected_realm_id: String,
     pub selected_channel_id: String,
     pub plaintext_service_id: String,
@@ -409,7 +410,7 @@ impl ChatController {
             self.message_context_menu.set(None);
             return;
         }
-        let namespace_key = match load_chat_productivity_namespace_key(&context.principal_id) {
+        let namespace_key = match load_chat_productivity_namespace_key(&context.authority) {
             Ok(key) => key,
             Err(error) => {
                 self.status_msg
@@ -428,7 +429,7 @@ impl ChatController {
             }
         };
         let hlc = match crate::signing_stamp::issue_account_data_hlc(
-            context.full_id.as_str(),
+            actor.as_str(),
             context.device_id.as_str(),
         ) {
             Ok(hlc) => hlc,
@@ -655,6 +656,7 @@ impl ChatController {
         let operation = match build_chat_reaction_add_operation(
             state_store,
             &context.selected_realm_id,
+            &context.authority,
             &context.principal_id,
             &context.device_id,
             &target_ref,
@@ -916,6 +918,7 @@ impl ChatController {
             plaintext_services_for_policy(projection.as_ref(), &context.plaintext_service_id);
         let mention_values = mention_nodes_to_values(&message.mentions);
         let base_url = context.base_url;
+        let authority = context.authority;
         let actor = context.principal_id;
         let device_id = context.device_id;
         let encrypted = context.selected_channel_security_encrypted;
@@ -980,8 +983,9 @@ impl ChatController {
                     state_store,
                     &seal_view,
                     &message.realm_id,
+                    &authority,
                     &actor,
-                    device_id.as_str(),
+                    &device_id,
                     &message.strand_id,
                     &retry_message_id,
                     message.reply_to.as_deref(),

@@ -1540,14 +1540,22 @@ async fn retain_current_history_secret_durable(
     actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<Option<(u64, zeroize::Zeroizing<Vec<u8>>)>> {
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
+    anyhow::ensure!(
+        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        "MLS history retention identity does not match the active account"
+    );
     let derived = {
         let store = state_store.read();
         crate::mls::runtime::derive_and_retain_realm_history_secret(
             &store,
             secure_store,
             realm_id,
+            &account.authority,
             actor_id,
-            device_id,
+            &account.device_id,
         )
     }
     .map_err(|error| anyhow::anyhow!(error.user_message()))?;
@@ -1568,6 +1576,13 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     invitee_did: String,
     destination_service_id: Option<String>,
 ) -> anyhow::Result<Option<u64>> {
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
+    anyhow::ensure!(
+        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        "MLS admission identity does not match the active account"
+    );
     let needs_mls_admission = {
         let store = state_store.read();
         store.mls_snapshot_for(&realm_id).is_some()
@@ -1673,8 +1688,9 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             &store,
             secure_store.as_ref(),
             &realm_id,
+            &account.authority,
             &actor_id,
-            &device_id,
+            &account.device_id,
             &requester_device_authorize_event_id,
             &claim,
             &claim_nonce,
@@ -1836,12 +1852,19 @@ pub(super) fn realm_mls_roster_matches_complete_membership_hint(
     actor_id: &str,
     device_id: &str,
 ) -> bool {
+    let Some(account) = crate::app::SessionContext::get().active_account() else {
+        return false;
+    };
+    if account.full_id().as_str() != actor_id || account.device_id.as_str() != device_id {
+        return false;
+    }
     crate::mls::runtime::realm_mls_roster_matches_complete_membership_hint(
         state_store,
         secure_store,
         realm_id,
+        &account.authority,
         actor_id,
-        device_id,
+        &account.device_id,
     )
     .unwrap_or(false)
 }
@@ -1928,6 +1951,13 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     actor_id: String,
     device_id: String,
 ) -> anyhow::Result<MlsAdmissionReconcileOutcome> {
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
+    anyhow::ensure!(
+        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        "MLS admission reconcile identity does not match the active account"
+    );
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
     // the commit + Welcome. Without a snapshot we are not an admit-capable
     // member and have nothing to reconcile.
@@ -1938,8 +1968,9 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             &store,
             secure_store.as_ref(),
             &realm_id,
+            &account.authority,
             &actor_id,
-            &device_id,
+            &account.device_id,
         ) {
             Some(dids) => dids.into_iter().collect(),
             None => {
@@ -2073,6 +2104,13 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     device_id: String,
     invitees: Vec<String>,
 ) -> anyhow::Result<usize> {
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
+    anyhow::ensure!(
+        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        "MLS batch admission identity does not match the active account"
+    );
     if invitees.is_empty() {
         return Ok(0);
     }
@@ -2174,8 +2212,9 @@ pub(crate) async fn submit_mls_admission_for_invitees(
             &store,
             secure_store.as_ref(),
             &realm_id,
+            &account.authority,
             &actor_id,
-            &device_id,
+            &account.device_id,
             &requester_device_authorize_event_id,
             &claims,
         )
@@ -2213,6 +2252,13 @@ async fn ensure_mls_genesis_frontier_for_invite(
     actor_id: &str,
     device_id: &str,
 ) -> anyhow::Result<()> {
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
+    anyhow::ensure!(
+        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        "MLS genesis identity does not match the active account"
+    );
     {
         let store = state_store.read();
         if mls_group_state_event_ref_ready(&store, realm_id) {
@@ -2244,8 +2290,8 @@ async fn ensure_mls_genesis_frontier_for_invite(
             &store,
             secure_store,
             realm_id,
-            actor_id,
-            device_id,
+            &account.authority,
+            &account.device_id,
         )
         .map_err(|err| anyhow::anyhow!(err.user_message()))?
     }
@@ -2341,12 +2387,19 @@ async fn ensure_mls_governance_proof_for_next_commit(
     device_id: &str,
     added_claims: &[&arkret_sdk::KeyPackageClaimRecord],
 ) -> anyhow::Result<()> {
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
+    anyhow::ensure!(
+        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        "MLS governance proof identity does not match the active account"
+    );
     let current_leaves = crate::mls::governance_proof::current_security_frontier_leaves(
         &state_store.read(),
         realm_id,
         None,
-        actor_id,
-        device_id,
+        &account.authority,
+        &account.device_id,
     )
     .map_err(anyhow::Error::msg)?;
     let leaves = crate::mls::governance_proof::security_frontier_with_added_claims(

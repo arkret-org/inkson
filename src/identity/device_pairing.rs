@@ -300,19 +300,18 @@ pub async fn author_pairing_request_body(
         }
     }
 
-    let principal = arkret_sdk::DidFullId::new(
-        crate::secure_key_store::active_device_seed_scope()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("no active principal can approve device pairing"))?,
-    )?;
+    let active_scope = crate::secure_key_store::active_device_seed_scope()
+        .ok_or_else(|| anyhow::anyhow!("no active authority can approve device pairing"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active device signer can approve device pairing"))?;
-    let authorizing_device = arkret_sdk::DeviceId::new(
-        signer
-            .device_id()
-            .ok_or_else(|| anyhow::anyhow!("active pairing approver is not device-bound"))?
-            .to_owned(),
-    )?;
+    let principal = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::project_full_id_to_core_id(&principal)? != active_scope.authority.principal_id {
+        anyhow::bail!("active pairing signer does not match the active authority");
+    }
+    if signer.device_id() != Some(active_scope.device_id.as_str()) {
+        anyhow::bail!("active pairing signer does not match the active device");
+    }
+    let authorizing_device = active_scope.device_id;
     let device_signature = match &attestation.device_signature {
         arkret_sdk::SignatureMaterial::NonEmptyString(value) => {
             arkret_sdk::Base64UrlString::new(value.as_str().to_owned())

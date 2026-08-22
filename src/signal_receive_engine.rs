@@ -56,6 +56,7 @@ const MAX_LIVE_PRESENCE_BODIES: usize = 512;
 pub struct SignalReceiveEngineContext {
     pub token: crate::runtime::input::ValueReader<String>,
     pub state_store: crate::runtime::input::StateStoreHandle,
+    pub account: crate::config::ActiveAccountContext,
     pub principal_id: String,
     pub device_id: String,
     /// Active multi-profile snapshot — the engine exits when the active profile
@@ -117,8 +118,8 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
 pub struct MlsSignalDecryptor {
     state_store: crate::runtime::input::StateStoreHandle,
     secure_store: std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
-    principal_id: String,
-    device_id: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+    device_id: arkret_sdk::DeviceId,
     /// §10.1 obliges a receiver to keep a seen-counter set per
     /// `(key_ref, epoch, device_id, purpose, aead_profile)`. It is shared
     /// across every envelope this engine opens, and bounded by the SDK.
@@ -128,13 +129,13 @@ pub struct MlsSignalDecryptor {
 impl MlsSignalDecryptor {
     pub fn new(
         state_store: crate::runtime::input::StateStoreHandle,
-        principal_id: String,
-        device_id: String,
+        authority: arkret_sdk::PrincipalAuthorityKey,
+        device_id: arkret_sdk::DeviceId,
     ) -> Self {
         Self {
             state_store,
             secure_store: crate::secure_key_store::default_secure_key_store("inkson"),
-            principal_id,
+            authority,
             device_id,
             replay: Mutex::new(arkret_sdk::AeadNonceReplayTracker::new()),
         }
@@ -154,7 +155,7 @@ impl garth::SignalDecryptor for MlsSignalDecryptor {
                     store,
                     self.secure_store.as_ref(),
                     &envelope.scope_ref,
-                    &self.principal_id,
+                    &self.authority,
                     &self.device_id,
                     envelope.encrypted_payload.epoch,
                 )
@@ -515,8 +516,8 @@ pub async fn run_signal_receive_engine(
     let resolver = DirectorySenderKeyResolver;
     let decryptor = MlsSignalDecryptor::new(
         ctx.state_store.clone(),
-        ctx.principal_id.clone(),
-        ctx.device_id.clone(),
+        ctx.account.authority.clone(),
+        ctx.account.device_id.clone(),
     );
     let sink = InksonSignalSink {
         state_store: ctx.state_store.clone(),

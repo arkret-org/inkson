@@ -634,7 +634,7 @@ impl LocalStateStore {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn account_state_path(&self, namespace: &str) -> PathBuf {
-        let sanitized = sanitize_did_for_filename(namespace);
+        let sanitized = sanitize_storage_scope_for_filename(namespace);
         let stem = self
             .path
             .file_stem()

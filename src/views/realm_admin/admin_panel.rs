@@ -1499,14 +1499,25 @@ pub fn RealmAdminPanel(
                                 // canonical ak.mls.commit event locally.
                                 let secure_store =
                                     crate::secure_key_store::default_secure_key_store("inkson");
+                                let Some(account) = crate::app::SessionContext::get().active_account() else {
+                                    status_msg.set("rotate failed: active account context is unavailable".to_owned());
+                                    return;
+                                };
+                                if account.full_id().as_str() != actor_id
+                                    || account.device_id.as_str() != device
+                                {
+                                    status_msg.set("rotate failed: active account authority changed".to_owned());
+                                    return;
+                                }
                                 let built = {
                                     let store = state_store.read();
                                     crate::mls::runtime::force_epoch_rotation_commit(
                                         &store,
                                         secure_store.as_ref(),
                                         &realm,
+                                        &account.authority,
                                         &actor_id,
-                                        &device,
+                                        &account.device_id,
                                     )
                                     .map_err(|err| err.user_message())
                                     .and_then(|(commit_envelope, snapshot, previous_governance_binding)| {

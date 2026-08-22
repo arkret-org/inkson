@@ -64,6 +64,13 @@ pub(super) fn test_account_context(
     full_id: &arkret_sdk::DidFullId,
 ) -> crate::config::ActiveAccountContext {
     let authority = test_authority(full_id.as_str());
+    test_account_context_for_authority(full_id, authority)
+}
+
+pub(super) fn test_account_context_for_authority(
+    full_id: &arkret_sdk::DidFullId,
+    authority: arkret_sdk::PrincipalAuthorityKey,
+) -> crate::config::ActiveAccountContext {
     crate::config::ActiveAccountContext::new(
         test_profile_id(&authority),
         authority,
@@ -81,19 +88,17 @@ pub(super) fn test_account_context(
 }
 
 impl LocalStateStore {
-    pub(super) fn switch_test_account(&mut self, principal: &str) -> bool {
-        let authority = test_authority(principal);
-        self.switch_active_account(&test_profile_id(&authority), &authority)
-    }
-
-    pub(super) fn register_test_account(&mut self, principal: &str) {
-        let authority = test_authority(principal);
-        self.register_known_profile(&test_profile_id(&authority), &authority);
-    }
-
-    pub(super) fn active_test_principal_id(&self) -> Option<String> {
-        self.active_account_authority()
-            .map(|authority| authority.principal_id.to_string())
+    pub(crate) fn switch_test_account(&mut self, principal: &str) -> bool {
+        if principal == crate::state::ANONYMOUS_ACCOUNT_NAMESPACE {
+            return false;
+        }
+        let full_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
+        let account = test_account_context(&full_id);
+        let was_known = self
+            .known_profile_id_for_authority(&account.authority)
+            .is_some();
+        self.switch_active_account(&account).unwrap();
+        !was_known
     }
 
     pub(super) fn last_selected_test_principal_id(&self) -> Option<String> {
@@ -105,27 +110,16 @@ impl LocalStateStore {
     }
 
     pub(super) fn known_test_principal_ids(&self) -> Vec<String> {
-        self.known_profile_refs()
-            .into_iter()
-            .map(|known| known.authority.principal_id.to_string())
-            .collect()
+        self.known_principal_ids()
     }
 
     pub(super) fn primary_handle_for_test_principal(&self, principal: &str) -> Option<String> {
-        self.primary_handle_for_authority(&test_authority(principal))
-    }
-
-    pub(super) fn set_primary_handle_for_test_principal(&mut self, principal: &str, handle: &str) {
-        self.set_primary_handle_for_authority(&test_authority(principal), handle);
+        self.primary_handle_for_did(principal)
     }
 
     pub(super) fn begin_test_pending_login(&mut self, device_id: &str, dpop_jkt: Option<&str>) {
         let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap();
         self.begin_pending_login(&device_id, dpop_jkt);
-    }
-
-    pub(super) fn adopt_test_pending_login(&mut self, full_id: &arkret_sdk::DidFullId) -> bool {
-        self.adopt_pending_login(&test_account_context(full_id))
     }
 }
 

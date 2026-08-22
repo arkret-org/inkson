@@ -52,6 +52,7 @@ pub(crate) fn upload_recovery_key_account_backup(
     token: Signal<String>,
     principal_id: Signal<String>,
     device_id: Signal<String>,
+    account: crate::config::ActiveAccountContext,
     state_store: SyncSignal<LocalStateStore>,
     recovery_key: String,
     mut status: Signal<String>,
@@ -66,6 +67,8 @@ pub(crate) fn upload_recovery_key_account_backup(
         return;
     };
     let base = account.server_url.to_string();
+    let authority = account.authority.clone();
+    let actor_full_id = account.full_id().clone();
     let session = token();
     let actor = principal_id();
     let device = device_id();

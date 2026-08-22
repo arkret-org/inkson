@@ -28,18 +28,20 @@ impl InksonSecurityTransactionStore {
         Self { secure_store }
     }
 
-    fn storage_key(transaction_id: &arkret_sdk::TransactionId) -> String {
+    fn storage_key(transaction_id: &arkret_sdk::TransactionId) -> garth::Result<String> {
         crate::secure_key_store::account_scoped_device_key(&format!(
             "{SECURITY_TRANSACTION_STATE_KEY}.{}",
             transaction_id.as_str()
         ))
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 
-    fn staged_secret_key(transaction_id: &arkret_sdk::TransactionId) -> String {
+    fn staged_secret_key(transaction_id: &arkret_sdk::TransactionId) -> garth::Result<String> {
         crate::secure_key_store::account_scoped_device_key(&format!(
             "{SECURITY_TRANSACTION_STAGED_SECRET_KEY}.{}",
             transaction_id.as_str()
         ))
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 
     fn staged_secret_reference(transaction_id: &arkret_sdk::TransactionId) -> String {
@@ -78,7 +80,7 @@ impl InksonSecurityTransactionStore {
         }
         self.secure_store
             .put_secret(
-                &Self::staged_secret_key(transaction_id),
+                &Self::staged_secret_key(transaction_id)?,
                 material.as_slice(),
                 PutSecretOptions {
                     durability: SecretDurability::DurableBeforeReturn,
@@ -95,13 +97,14 @@ impl InksonSecurityTransactionStore {
         transaction_id: &arkret_sdk::TransactionId,
     ) -> garth::Result<Option<Zeroizing<Vec<u8>>>> {
         self.secure_store
-            .get_secret_bytes(&Self::staged_secret_key(transaction_id))
+            .get_secret_bytes(&Self::staged_secret_key(transaction_id)?)
             .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 }
 
-fn pending_fresh_device_recovery_storage_key() -> String {
+fn pending_fresh_device_recovery_storage_key() -> garth::Result<String> {
     crate::secure_key_store::account_scoped_device_key(PENDING_FRESH_DEVICE_RECOVERY_KEY)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
 }
 
 pub(crate) async fn store_pending_fresh_device_recovery(
@@ -114,7 +117,7 @@ pub(crate) async fn store_pending_fresh_device_recovery(
     .map_err(|error| garth::Error::Protocol(error.to_string()))?;
     secure_store
         .put_secret(
-            &pending_fresh_device_recovery_storage_key(),
+            &pending_fresh_device_recovery_storage_key()?,
             &bytes,
             PutSecretOptions {
                 durability: SecretDurability::DurableBeforeReturn,
@@ -129,7 +132,7 @@ pub(crate) fn pending_fresh_device_recovery(
     secure_store: &(dyn SecureKeyStore + Send + Sync),
 ) -> garth::Result<Option<arkret_sdk::TransactionId>> {
     let Some(bytes) = secure_store
-        .get_secret_bytes(&pending_fresh_device_recovery_storage_key())
+        .get_secret_bytes(&pending_fresh_device_recovery_storage_key()?)
         .map_err(|error| garth::Error::Protocol(error.to_string()))?
     else {
         return Ok(None);
@@ -152,7 +155,7 @@ pub(crate) fn pending_fresh_device_recovery(
 pub(crate) fn clear_pending_fresh_device_recovery(
     secure_store: &(dyn SecureKeyStore + Send + Sync),
 ) -> garth::Result<()> {
-    match secure_store.delete_secret(&pending_fresh_device_recovery_storage_key()) {
+    match secure_store.delete_secret(&pending_fresh_device_recovery_storage_key()?) {
         Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
         Err(error) => Err(garth::Error::Protocol(error.to_string())),
     }
@@ -228,7 +231,7 @@ impl SecurityTransactionStore for InksonSecurityTransactionStore {
         transaction_id: &arkret_sdk::TransactionId,
     ) -> garth::Result<Option<DurableSecurityTransaction>> {
         self.secure_store
-            .get_secret_bytes(&Self::storage_key(transaction_id))
+            .get_secret_bytes(&Self::storage_key(transaction_id)?)
             .map_err(|error| garth::Error::Protocol(error.to_string()))?
             .map(|bytes| {
                 serde_json::from_slice(&bytes).map_err(|error| {
@@ -254,7 +257,7 @@ impl SecurityTransactionStore for InksonSecurityTransactionStore {
         async move {
             self.secure_store
                 .put_secret(
-                    &Self::storage_key(&state.transaction_id),
+                    &Self::storage_key(&state.transaction_id)?,
                     &encoded?,
                     PutSecretOptions {
                         durability: SecretDurability::DurableBeforeReturn,
@@ -270,7 +273,7 @@ impl SecurityTransactionStore for InksonSecurityTransactionStore {
         let transaction_id = Self::transaction_id_from_staged_secret_reference(reference)?;
         match self
             .secure_store
-            .delete_secret(&Self::staged_secret_key(&transaction_id))
+            .delete_secret(&Self::staged_secret_key(&transaction_id)?)
         {
             Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
             Err(error) => Err(garth::Error::Protocol(error.to_string())),
@@ -280,14 +283,14 @@ impl SecurityTransactionStore for InksonSecurityTransactionStore {
     fn remove(&self, transaction_id: &arkret_sdk::TransactionId) -> garth::Result<()> {
         let state_result = match self
             .secure_store
-            .delete_secret(&Self::storage_key(transaction_id))
+            .delete_secret(&Self::storage_key(transaction_id)?)
         {
             Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
             Err(error) => Err(garth::Error::Protocol(error.to_string())),
         };
         let staged_result = match self
             .secure_store
-            .delete_secret(&Self::staged_secret_key(transaction_id))
+            .delete_secret(&Self::staged_secret_key(transaction_id)?)
         {
             Ok(()) | Err(SecureKeyStoreError::NotFound) => Ok(()),
             Err(error) => Err(garth::Error::Protocol(error.to_string())),
@@ -406,9 +409,9 @@ mod tests {
         );
         assert!(
             secure_store
-                .get_secret_bytes(&InksonSecurityTransactionStore::staged_secret_key(
-                    &transaction_id
-                ))
+                .get_secret_bytes(
+                    &InksonSecurityTransactionStore::staged_secret_key(&transaction_id).unwrap(),
+                )
                 .unwrap()
                 .is_some()
         );
@@ -425,9 +428,9 @@ mod tests {
         store.clear_staged_secret(&reference).unwrap();
         assert!(
             secure_store
-                .get_secret_bytes(&InksonSecurityTransactionStore::staged_secret_key(
-                    &transaction_id
-                ))
+                .get_secret_bytes(
+                    &InksonSecurityTransactionStore::staged_secret_key(&transaction_id).unwrap(),
+                )
                 .unwrap()
                 .is_none()
         );

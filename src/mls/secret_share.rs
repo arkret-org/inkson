@@ -139,6 +139,7 @@ pub fn build_send_content(
     self_device_id: &str,
     expires_at: &str,
 ) -> Result<arkret_crypto::secret_share::SecretShareSendContent> {
+    let principal_id = crate::mls_api_helpers::principal_core_id(principal_id)?;
     let recipient_pk = URL_SAFE_NO_PAD
         .decode(request.recipient_hpke_public_key.as_bytes())
         .map_err(|err| anyhow!("decode requester hpke public key: {err}"))?;
@@ -149,9 +150,9 @@ pub fn build_send_content(
     )?;
     let aad = send_aad(
         device_message_id,
-        principal_id,
+        &principal_id,
         self_device_id,
-        principal_id,
+        &principal_id,
         request.from_device.as_str(),
         &request.request_id,
         SECRET_SHARE_SECRET_ID,
@@ -192,6 +193,7 @@ pub fn open_send_content(
     our_device_id: &str,
     expires_at: &str,
 ) -> Result<OpenedSecret> {
+    let principal_id = crate::mls_api_helpers::principal_core_id(principal_id)?;
     let send_content: arkret_crypto::secret_share::SecretShareSendContent =
         serde_json::from_value(send_content.clone())
             .map_err(|err| anyhow!("decode ak.secret.send.content: {err}"))?;
@@ -219,9 +221,9 @@ pub fn open_send_content(
 
     let aad = send_aad(
         device_message_id,
-        principal_id,
+        &principal_id,
         sender_device_id,
-        principal_id,
+        &principal_id,
         our_device_id,
         &outer_request_id,
         &secret_id,
@@ -476,7 +478,7 @@ mod tests {
             &parsed,
             &stored_secret(),
             &message_id(),
-            &principal_id(),
+            principal_id().as_str(),
             OLD_DEVICE,
             EXPIRES,
         )
@@ -491,7 +493,7 @@ mod tests {
             &requester,
             &send,
             &message_id(),
-            &principal_id(),
+            principal_id().as_str(),
             OLD_DEVICE,
             NEW_DEVICE,
             EXPIRES,
@@ -522,7 +524,7 @@ mod tests {
             &other,
             &send,
             &message_id(),
-            &principal_id(),
+            principal_id().as_str(),
             OLD_DEVICE,
             NEW_DEVICE,
             EXPIRES,
@@ -540,7 +542,7 @@ mod tests {
             &requester,
             &send,
             &message_id(),
-            &principal_id(),
+            principal_id().as_str(),
             "ak:device:01904100-0000-7000-8000-00000000000c",
             NEW_DEVICE,
             EXPIRES,
@@ -559,7 +561,7 @@ mod tests {
             &attacker,
             &send,
             &message_id(),
-            &principal_id(),
+            principal_id().as_str(),
             OLD_DEVICE,
             NEW_DEVICE,
             EXPIRES,
@@ -579,7 +581,7 @@ mod tests {
             &spoofed,
             &send,
             &message_id(),
-            &principal_id(),
+            principal_id().as_str(),
             OLD_DEVICE,
             NEW_DEVICE,
             EXPIRES,
@@ -597,7 +599,7 @@ mod tests {
             &requester,
             &send,
             &message_id(),
-            &principal_id(),
+            principal_id().as_str(),
             OLD_DEVICE,
             NEW_DEVICE,
             "2026-06-10T00:30:00+00:00",
@@ -612,7 +614,7 @@ mod tests {
         // A non-secret-share envelope is ignored.
         let other = json!({"kind": "ak.key.verification.done", "content": {}});
         assert_eq!(
-            try_open_envelope(&requester, &other, &principal_id(), NEW_DEVICE).unwrap(),
+            try_open_envelope(&requester, &other, principal_id().as_str(), NEW_DEVICE).unwrap(),
             None
         );
 
@@ -630,14 +632,17 @@ mod tests {
             "expires_at": EXPIRES,
             "content": send,
         });
-        let opened = try_open_envelope(&requester, &envelope, &principal_id(), NEW_DEVICE).unwrap();
+        let opened =
+            try_open_envelope(&requester, &envelope, principal_id().as_str(), NEW_DEVICE).unwrap();
         assert_eq!(opened.unwrap().account_secret, stored_secret().secret);
 
         // Missing the top-level device_message_id fails closed before HPKE work:
         // the AAD binds it, so there is nothing to fall back to.
         let mut no_id = envelope.clone();
         no_id.as_object_mut().unwrap().remove("device_message_id");
-        assert!(try_open_envelope(&requester, &no_id, &principal_id(), NEW_DEVICE).is_err());
+        assert!(
+            try_open_envelope(&requester, &no_id, principal_id().as_str(), NEW_DEVICE).is_err()
+        );
 
         // A different id yields a different AAD, so the seal cannot be opened.
         let mut other_id = envelope;
@@ -645,7 +650,9 @@ mod tests {
             "device_message_id".to_owned(),
             json!("ak:device_message:01904100-0000-7000-8000-0000000000d2"),
         );
-        assert!(try_open_envelope(&requester, &other_id, &principal_id(), NEW_DEVICE).is_err());
+        assert!(
+            try_open_envelope(&requester, &other_id, principal_id().as_str(), NEW_DEVICE).is_err()
+        );
     }
 
     #[test]

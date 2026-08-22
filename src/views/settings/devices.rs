@@ -367,8 +367,13 @@ pub fn SettingsDevicesPanel(
     token: Signal<String>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
-    let base_url = crate::app::SessionContext::get().base_url;
-    let state_store = crate::app::SessionContext::get().state_store;
+    let session = crate::app::SessionContext::get();
+    let base_url = session.base_url;
+    let state_store = session.state_store;
+    let Some(account) = session.active_account() else {
+        return rsx! {};
+    };
+    let authority = account.authority;
     let route = use_route::<Route>();
     let pair_mode = matches!(route, Route::SettingsDevicesPair);
 
@@ -860,6 +865,7 @@ fn render_revoke_modal(
                             };
                             let snapshots = state_store.read().mls_snapshots();
                             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                            let authority = authority.clone();
                             revoke_status.set(format!("Revoking {target_label}…"));
                             spawn(async move {
                                 let target_label = short_protocol_id(&target_for_status);

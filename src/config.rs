@@ -4,10 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use arkret_sdk::{
-    DeviceId, DidCoreId, DidFullId, PrincipalAuthorityKey, PrincipalResolutionProjection,
-    project_full_id_to_core_id,
-};
+use arkret_sdk::DeviceId;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -67,6 +64,10 @@ impl ClientConfig {
         self.active_account
             .as_ref()
             .map(|account| &account.server_url)
+    }
+
+    pub fn active_account(&self) -> Option<&ActiveAccountContext> {
+        self.active_account.as_ref()
     }
 
     pub fn principal_id(&self) -> Option<&arkret_sdk::DidCoreId> {
@@ -192,38 +193,6 @@ pub struct AccountProfile {
     pub label: String,
     #[serde(default, skip_serializing)]
     pub session_credential: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SerializedAccountProfile {
-    profile_id: String,
-    #[serde(default)]
-    label: String,
-    authority: PrincipalAuthorityKey,
-    resolution: PrincipalResolutionProjection,
-    device_id: DeviceId,
-    server_url: Url,
-}
-
-impl<'de> Deserialize<'de> for AccountProfile {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = SerializedAccountProfile::deserialize(deserializer)?;
-        let profile = Self {
-            profile_id: value.profile_id,
-            label: value.label,
-            authority: value.authority,
-            resolution: value.resolution,
-            device_id: value.device_id,
-            server_url: value.server_url,
-            session_credential: String::new(),
-        };
-        profile.active_context().map_err(serde::de::Error::custom)?;
-        Ok(profile)
-    }
 }
 
 impl AccountProfile {
@@ -903,158 +872,9 @@ fn app_data_dir() -> PathBuf {
         .join("inkson")
 }
 
-/// The verified identity, account-authority and current routing coordinates for
-/// the foreground account.
-///
-/// Equality is deliberately not implemented for the aggregate. Callers must
-/// choose either principal equality (`principal_id`) or account equality
-/// (`authority`) explicitly; route and resolution changes do not create a new
-/// account.
-#[derive(Clone, Debug, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ActiveAccountContext {
-    pub profile_id: String,
-    pub authority: PrincipalAuthorityKey,
-    pub resolution: PrincipalResolutionProjection,
-    pub device_id: DeviceId,
-    pub server_url: Url,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SerializedActiveAccountContext {
-    profile_id: String,
-    authority: PrincipalAuthorityKey,
-    resolution: PrincipalResolutionProjection,
-    device_id: DeviceId,
-    server_url: Url,
-}
-
-impl<'de> Deserialize<'de> for ActiveAccountContext {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = SerializedActiveAccountContext::deserialize(deserializer)?;
-        Self::new(
-            value.profile_id,
-            value.authority,
-            value.resolution,
-            value.device_id,
-            value.server_url,
-        )
-        .map_err(serde::de::Error::custom)
-    }
-}
-
-#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ActiveAccountContextError {
-    #[error("profile_id must be non-empty")]
-    EmptyProfileId,
-    #[error("invalid principal authority: {0}")]
-    InvalidAuthority(String),
-    #[error("resolution full_id does not project to the authority principal_id")]
-    PrincipalResolutionMismatch,
-    #[error("route refresh service id does not match the account authority")]
-    PrincipalServerMismatch,
-    #[error("resolution update does not continue the active projection")]
-    ResolutionPredecessorMismatch,
-    #[error("invalid Principal Server route: {0}")]
-    InvalidServerUrl(String),
-}
-
-impl ActiveAccountContext {
-    pub(crate) fn new(
-        profile_id: String,
-        authority: PrincipalAuthorityKey,
-        resolution: PrincipalResolutionProjection,
-        device_id: DeviceId,
-        server_url: Url,
-    ) -> Result<Self, ActiveAccountContextError> {
-        if profile_id.trim().is_empty() {
-            return Err(ActiveAccountContextError::EmptyProfileId);
-        }
-        authority
-            .validate()
-            .map_err(|error| ActiveAccountContextError::InvalidAuthority(error.to_string()))?;
-        validate_resolution_binding(&authority, &resolution)?;
-        let server_url = validate_server_url(server_url.as_str())
-            .map_err(|error| ActiveAccountContextError::InvalidServerUrl(error.to_string()))?;
-        Ok(Self {
-            profile_id,
-            authority,
-            resolution,
-            device_id,
-            server_url,
-        })
-    }
-
-    #[must_use]
-    pub fn principal_id(&self) -> &DidCoreId {
-        &self.authority.principal_id
-    }
-
-    #[must_use]
-    pub fn full_id(&self) -> &DidFullId {
-        &self.resolution.full_id
-    }
-
-    #[must_use]
-    pub fn is_same_account(&self, authority: &PrincipalAuthorityKey) -> bool {
-        &self.authority == authority
-    }
-
-    /// Atomically replace the complete accepted resolution projection.
-    pub fn update_resolution(
-        &mut self,
-        resolution: PrincipalResolutionProjection,
-        previous_resolution_event_ref: &str,
-        previous_method_history_head: &str,
-    ) -> Result<(), ActiveAccountContextError> {
-        validate_resolution_binding(&self.authority, &resolution)?;
-        if previous_resolution_event_ref != self.resolution.resolution_event_ref
-            || previous_method_history_head != self.resolution.method_history_head
-            || resolution.updated_at < self.resolution.updated_at
-        {
-            return Err(ActiveAccountContextError::ResolutionPredecessorMismatch);
-        }
-        self.resolution = resolution;
-        Ok(())
-    }
-
-    /// Refresh only the HTTP route after the caller has verified the service
-    /// identity behind it.
-    pub fn update_server_route(
-        &mut self,
-        principal_server_id: &DidCoreId,
-        server_url: Url,
-    ) -> Result<(), ActiveAccountContextError> {
-        if &self.authority.principal_server_id != principal_server_id {
-            return Err(ActiveAccountContextError::PrincipalServerMismatch);
-        }
-        self.server_url = validate_server_url(server_url.as_str())
-            .map_err(|error| ActiveAccountContextError::InvalidServerUrl(error.to_string()))?;
-        Ok(())
-    }
-}
-
-fn validate_resolution_binding(
-    authority: &PrincipalAuthorityKey,
-    resolution: &PrincipalResolutionProjection,
-) -> Result<(), ActiveAccountContextError> {
-    let projected = project_full_id_to_core_id(&resolution.full_id)
-        .map_err(|_| ActiveAccountContextError::PrincipalResolutionMismatch)?;
-    if projected != authority.principal_id {
-        return Err(ActiveAccountContextError::PrincipalResolutionMismatch);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use chrono::{TimeZone as _, Utc};
-
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, TimeZone as _, Utc};
 
     use super::*;
 

@@ -497,7 +497,7 @@ pub fn VerifyDevicePanel(
                                             }
                                             let public_b64 = pair.public_base64();
                                             let base = base.clone();
-                                            let principal_id = principal_id.clone();
+                                            let principal_id = account.clone();
                                             let from_device = from_device_for_send.clone();
                                             let api_token = token();
                                             // `tr()` context is unavailable inside the

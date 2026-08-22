@@ -1,5 +1,17 @@
 use super::*;
 
+fn test_user(device_suffix: &str) -> UserLocalStore {
+    UserLocalStore::new(
+        arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        ),
+        arkret_sdk::DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{device_suffix}"))
+            .unwrap(),
+    )
+    .unwrap()
+}
+
 fn test_local_history_record(
     epoch: u64,
     secret: &[u8],
@@ -666,10 +678,15 @@ fn e2ee_plaintext_cache_key_is_account_scoped_and_indexeddb_only() {
         principal,
         arkret_sdk::DidCoreId::new("ak:did_core:webvh:zServerB".to_owned()).unwrap(),
     );
-    let alice = e2ee_plaintext_cache_store_key(&authority_a).unwrap();
-    let bob = e2ee_plaintext_cache_store_key(&authority_b).unwrap();
+    let authority_a_namespace = principal_authority_storage_digest(&authority_a).unwrap();
+    let authority_b_namespace = principal_authority_storage_digest(&authority_b).unwrap();
+    let alice = e2ee_plaintext_cache_store_key(&authority_a_namespace);
+    let bob = e2ee_plaintext_cache_store_key(&authority_b_namespace);
     assert!(alice.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX));
     assert!(is_wasm_indexeddb_required_secret_key(&alice));
     assert_ne!(alice, bob);
-    assert_eq!(alice, e2ee_plaintext_cache_store_key(&authority_a).unwrap());
+    assert_eq!(
+        alice,
+        e2ee_plaintext_cache_store_key(&authority_a_namespace)
+    );
 }

@@ -489,9 +489,19 @@ async fn session_transport_provider(
     };
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let principal_core_id = persisted_grant_principal_id(grant)?;
+    let active_scope = crate::secure_key_store::active_device_seed_scope()
+        .context("session grant restore has no active authority/device scope")?;
+    if active_scope.authority.principal_id != principal_core_id
+        || active_scope.device_id != grant.device_id
+    {
+        anyhow::bail!("session grant does not match the active authority/device scope");
+    }
     let state_store = PersistedSessionGrantStore {
         secure_store,
-        user_store: crate::secure_key_store::UserLocalStore::new(principal_core_id),
+        user_store: crate::secure_key_store::UserLocalStore::new(
+            active_scope.authority,
+            active_scope.device_id,
+        )?,
         principal_server_url: grant.principal_server_url.clone(),
         device_handle: device_handle.clone(),
     };

@@ -10,6 +10,7 @@ pub(super) fn KanbanEffects(
     token: Signal<String>,
     selected_realm_id: String,
     projection_realm_id: String,
+    authority: arkret_sdk::PrincipalAuthorityKey,
     principal_id: String,
     device_id: String,
     sync_cursor: Signal<String>,
@@ -434,6 +435,7 @@ pub(super) fn KanbanEffects(
         let restore_token = token;
         let restore_realm_id = selected_realm_id.clone();
         let restore_local_realm_id = local_realm_id.clone();
+        let restore_authority = authority.clone();
         let restore_actor = principal_id.clone();
         let restore_device = device_id.clone();
         let restore_sync_cursor = sync_cursor;

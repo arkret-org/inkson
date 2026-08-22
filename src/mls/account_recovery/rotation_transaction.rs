@@ -586,10 +586,10 @@ struct PendingRotation {
     current_device_id: String,
 }
 
-fn pending_rotation_key(target_device_id: &str) -> String {
-    crate::secure_key_store::account_scoped_device_key(&format!(
-        "{PENDING_ROTATION_INDEX_KEY}.{target_device_id}"
-    ))
+fn pending_rotation_key(target_device_id: &str) -> Result<String> {
+    Ok(crate::secure_key_store::account_scoped_device_key(
+        &format!("{PENDING_ROTATION_INDEX_KEY}.{target_device_id}"),
+    )?)
 }
 
 fn load_pending_rotation(
@@ -597,7 +597,7 @@ fn load_pending_rotation(
     target_device_id: &str,
 ) -> Result<Option<PendingRotation>> {
     secure_store
-        .get_secret_bytes(&pending_rotation_key(target_device_id))?
+        .get_secret_bytes(&pending_rotation_key(target_device_id)?)?
         .map(|bytes| serde_json::from_slice(&bytes).context("decode pending security rotation"))
         .transpose()
 }
@@ -610,7 +610,7 @@ async fn save_pending_rotation(
     let bytes = serde_json::to_vec(pending)?;
     secure_store
         .put_secret(
-            &pending_rotation_key(target_device_id),
+            &pending_rotation_key(target_device_id)?,
             &bytes,
             PutSecretOptions {
                 durability: SecretDurability::DurableBeforeReturn,
@@ -622,7 +622,7 @@ async fn save_pending_rotation(
 }
 
 fn clear_pending_rotation(secure_store: &dyn SecureKeyStore, target_device_id: &str) -> Result<()> {
-    match secure_store.delete_secret(&pending_rotation_key(target_device_id)) {
+    match secure_store.delete_secret(&pending_rotation_key(target_device_id)?) {
         Ok(()) | Err(garth::SecureKeyStoreError::NotFound) => Ok(()),
         Err(error) => Err(error.into()),
     }
@@ -811,8 +811,14 @@ mod rotation_resume_tests {
         let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let store = garth::MemorySecureKeyStore::new();
         let user_store = crate::secure_key_store::UserLocalStore::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-        );
+            arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+            ),
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000011".to_owned())
+                .unwrap(),
+        )
+        .unwrap();
         user_store.activate();
         let target = "ak:device:01964137-0000-7000-8000-000000000022";
         let pending = PendingRotation {

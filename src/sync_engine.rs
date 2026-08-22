@@ -104,6 +104,7 @@ const MAX_TO_DEVICE_BACKFILL_PAGES: usize = 32;
 pub struct SyncEngineContext {
     pub token: crate::runtime::input::ValueReader<String>,
     pub state_store: crate::runtime::input::StateStoreHandle,
+    pub account: crate::config::ActiveAccountContext,
     pub principal_id: String,
     /// YOU-02-004R (§5.6) — the local device id, needed by the idle
     /// self-update driver to load the device snapshot secret and build the
@@ -648,14 +649,14 @@ impl
         if !self.ctx.principal_id.trim().is_empty() {
             let submitter = crate::event_submit::EventSubmitter::new(http.clone())
                 .with_state_store(self.ctx.state_store.clone());
-            if let Err(error) = submitter.drain_outbound(self.ctx.principal_id.trim()).await {
+            if let Err(error) = submitter.drain_outbound().await {
                 tracing::debug!(
                     ?error,
                     "account post-commit deferred durable outbound drain"
                 );
             }
             if let Err(error) = submitter
-                .drain_mls_outbound(self.ctx.principal_id.trim(), self.ctx.state_store.clone())
+                .drain_mls_outbound(self.ctx.state_store.clone())
                 .await
             {
                 tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
@@ -1016,12 +1017,13 @@ async fn run_circle_scope_rotate_pass(
     }
     let base = ctx.account.server_url.as_str().to_owned();
     let token = ctx.token.get();
-    let actor_id = ctx.principal_id.trim().to_owned();
-    let device_id = ctx.device_id.trim().to_owned();
+    let actor_id = ctx.account.full_id().to_string();
+    let authority = ctx.account.authority.clone();
+    let device_id = ctx.account.device_id.clone();
     if base.trim().is_empty()
         || token.trim().is_empty()
         || actor_id.is_empty()
-        || device_id.is_empty()
+        || device_id.as_str().is_empty()
     {
         return;
     }
@@ -1509,12 +1511,13 @@ async fn run_idle_self_update_pass(
     }
     let base = ctx.account.server_url.as_str().to_owned();
     let token = ctx.token.get();
-    let actor_id = ctx.principal_id.trim().to_owned();
-    let device_id = ctx.device_id.trim().to_owned();
+    let actor_id = ctx.account.full_id().to_string();
+    let authority = ctx.account.authority.clone();
+    let device_id = ctx.account.device_id.clone();
     if base.trim().is_empty()
         || token.trim().is_empty()
         || actor_id.is_empty()
-        || device_id.is_empty()
+        || device_id.as_str().is_empty()
     {
         return;
     }
@@ -1833,13 +1836,12 @@ fn refresh_projection_events_from_sync_response(
     ctx: &SyncEngineContext,
 ) {
     let state_store = ctx.state_store.clone();
-    let principal_id = ctx.principal_id.clone();
-    let device_id = ctx.device_id.clone();
+    let principal_id = ctx.account.full_id().to_string();
     let synced_projection_events = state_store.read(|store| {
         crate::state::projection::projection_events_from_sync_realms(
             &response.realm_projections,
             Some(store),
-            Some((&principal_id, &device_id)),
+            Some((&ctx.account.authority, &ctx.account.device_id)),
         )
     });
     if is_full_sync {
@@ -2120,7 +2122,12 @@ pub fn apply_response(
                 // surface needs to resolve a display identity.
                 ingest_member_identity_events_from_projection(store, id, &projection);
             }
-            synced_theme = apply_account_data(store, response, &principal_id);
+            synced_theme = apply_account_data(
+                store,
+                response,
+                &ctx.account.authority,
+                &principal_id,
+            );
             apply_notification_projection(
                 store,
                 response,
@@ -2178,7 +2185,7 @@ pub fn apply_response(
         crate::state::projection::projection_events_from_sync_realms(
             &response.realm_projections,
             Some(store),
-            Some((&principal_id, &device_id)),
+            Some((&ctx.account.authority, &ctx.account.device_id)),
         )
     });
     if is_full_sync {
@@ -2346,9 +2353,8 @@ fn response_revokes_local_device(
                 return false;
             };
             kind == event_kind_str::DEVICE_REVOKE
-                && payload.get("principal_id").and_then(Value::as_str)
-                    == Some(principal_id.as_str())
-                && payload.get("device_id").and_then(Value::as_str) == Some(device_id.as_str())
+                && payload.get("principal_id").and_then(Value::as_str) == Some(principal_id)
+                && payload.get("device_id").and_then(Value::as_str) == Some(device_id)
         })
     })
 }
@@ -2872,7 +2878,7 @@ fn apply_notification_projection(
     let account_core_id = crate::mls_api_helpers::principal_core_id(principal_id).ok();
     let joined_realms = crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
         &response.realm_entries,
-        principal_id.as_str(),
+        principal_id,
     );
     crate::state::projection::notifications::apply_notification_projection(
         &mut notification_projection,
@@ -2890,14 +2896,21 @@ fn apply_notification_projection(
 fn apply_account_data(
     store: &mut LocalStateStore,
     response: &AccountSyncStep,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     principal_id: &str,
 ) -> Option<String> {
-    apply_account_data_entries(store, &response.updates.account_data, principal_id)
+    apply_account_data_entries(
+        store,
+        &response.updates.account_data,
+        authority,
+        principal_id,
+    )
 }
 
 pub(crate) fn apply_account_data_entries(
     store: &mut LocalStateStore,
     entries: &[arkret_sdk::Event],
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     principal_id: &str,
 ) -> Option<String> {
     let mut synced_theme = None;
@@ -2907,6 +2920,7 @@ pub(crate) fn apply_account_data_entries(
         };
         match crate::sidecar::ingest_sidecar_view_state_account_data(
             store,
+            authority,
             principal_id,
             account_data_key,
             &entry.payload,
@@ -2923,7 +2937,7 @@ pub(crate) fn apply_account_data_entries(
         // ak.client.ui_state — theme + avatar pointer.
         if account_data_key == AccountDataKey::CLIENT_UI_STATE {
             match crate::account_data::decrypt_account_data_entry(
-                principal_id,
+                authority,
                 account_data_key,
                 &entry.payload,
             ) {
@@ -2956,7 +2970,7 @@ pub(crate) fn apply_account_data_entries(
         // ak.account.blocklist — personal block list.
         if account_data_key == AccountDataKey::PRESENCE_VISIBILITY {
             let Some(visibility) = crate::account_data::decrypt_account_data_entry(
-                principal_id,
+                authority,
                 account_data_key,
                 &entry.payload,
             )
@@ -2978,7 +2992,7 @@ pub(crate) fn apply_account_data_entries(
         // account-data AEAD envelope; decrypt before applying it locally.
         if account_data_key == AccountDataKey::PRESENCE_PREFERENCE {
             match crate::account_data::decrypt_account_data_entry(
-                principal_id,
+                authority,
                 account_data_key,
                 &entry.payload,
             )
@@ -2993,7 +3007,7 @@ pub(crate) fn apply_account_data_entries(
         }
         if account_data_key == AccountDataKey::DND_SCHEDULE {
             match crate::account_data::decrypt_account_data_entry(
-                principal_id,
+                authority,
                 account_data_key,
                 &entry.payload,
             ) {
@@ -3008,7 +3022,7 @@ pub(crate) fn apply_account_data_entries(
         }
         if account_data_key == AccountDataKey::ACCOUNT_BLOCKLIST {
             match crate::account_data::decrypt_account_data_entry(
-                principal_id,
+                authority,
                 account_data_key,
                 &entry.payload,
             )
@@ -3045,7 +3059,7 @@ pub(crate) fn apply_account_data_entries(
         // ak.contacts.actor.<principal_key> — holder-private global petnames.
         if crate::account_data::principal_key_from_contact_remark_key(account_data_key).is_some() {
             if entry.payload.get("tombstone").and_then(Value::as_bool) == Some(true) {
-                match crate::account_data::account_data_namespace_key(principal_id) {
+                match crate::account_data::account_data_namespace_key(authority) {
                     Ok(namespace_key) => {
                         store
                             .remove_contact_remark_by_storage_key(&namespace_key, account_data_key);
@@ -3058,13 +3072,13 @@ pub(crate) fn apply_account_data_entries(
                 continue;
             }
             match crate::account_data::decrypt_account_data_entry(
-                principal_id,
+                authority,
                 account_data_key,
                 &entry.payload,
             )
             .and_then(|content| {
                 let remark: crate::account_data::ContactRemark = serde_json::from_value(content)?;
-                let namespace_key = crate::account_data::account_data_namespace_key(principal_id)?;
+                let namespace_key = crate::account_data::account_data_namespace_key(authority)?;
                 remark
                     .validate_for_account_data_key(&namespace_key, account_data_key)
                     .map_err(anyhow::Error::msg)?;
@@ -3089,7 +3103,7 @@ pub(crate) fn apply_account_data_entries(
             continue;
         };
         match crate::account_data::decrypt_account_data_entry(
-            principal_id,
+            authority,
             account_data_key,
             &entry.payload,
         )

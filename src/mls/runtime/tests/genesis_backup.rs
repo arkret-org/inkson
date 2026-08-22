@@ -12,7 +12,7 @@ fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
     }
 }
 
-fn device(value: &str) -> arkret_sdk::DeviceId {
+fn device_id(value: &str) -> arkret_sdk::DeviceId {
     arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
 }
 
@@ -52,7 +52,7 @@ fn build_mls_genesis_payload_has_required_fields() {
         &secure,
         realm,
         &authority(actor),
-        &device(device),
+        &device_id(device),
     )
     .unwrap()
     .expect("creator snapshot should be created");
@@ -130,7 +130,7 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
         &secure,
         realm,
         &authority(actor),
-        &device(device),
+        &device_id(device),
     )
     .unwrap()
     .expect("creator snapshot should be created");
@@ -139,7 +139,7 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
         &secure,
         realm,
         &authority(actor),
-        &device(device),
+        &device_id(device),
     )
     .unwrap()
     .expect("epoch-0 snapshot restores summary");
@@ -184,7 +184,7 @@ fn legacy_epoch_zero_snapshot_without_governance_binding_fails_closed() {
         &secure,
         realm,
         &authority(actor),
-        &device(device),
+        &device_id(device),
     )
     .unwrap_err();
 

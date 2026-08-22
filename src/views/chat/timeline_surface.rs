@@ -30,6 +30,7 @@ pub(super) struct ChatTimelineContext {
     pub visible_moderation_appeal_prompts: Vec<ModerationAppealPrompt>,
     pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
     pub private_sidecar_strand_ids: std::collections::BTreeSet<String>,
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
     pub principal_id: String,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,
@@ -58,6 +59,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         visible_moderation_appeal_prompts,
         strand_scope_lookup,
         private_sidecar_strand_ids,
+        authority,
         principal_id,
         account_display_label,
         participants: participants_for_messages,
@@ -82,6 +84,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     let state_store = crate::app::SessionContext::get().state_store;
     let command_context = ChatCommandContext {
         base_url: base_url.clone(),
+        authority,
         principal_id: principal_id.clone(),
         device_id: device_id.clone(),
         selected_realm_id: selected_realm_id.clone(),

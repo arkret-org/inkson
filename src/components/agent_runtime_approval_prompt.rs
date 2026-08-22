@@ -44,6 +44,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<St
     let mut status = use_signal(String::new);
     let mut approving = use_signal(|| false);
     let state_store = crate::app::SessionContext::get().state_store;
+    let active_account = crate::app::SessionContext::get().active_account;
     let mut owned_agents_rev = crate::app::SessionContext::get().owned_agents_rev;
 
     {
@@ -327,6 +328,10 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<St
                                 status.set(crate::i18n::tr("agent_runtime.err_no_account"));
                                 return;
                             };
+                            let Some(account) = active_account() else {
+                                status.set(crate::i18n::tr("agent_runtime.err_no_account"));
+                                return;
+                            };
                             let server_url = account.server_url.to_string();
                             let controller = account.full_id().to_string();
                             let body = match parse_runtime_key_approval_request(
@@ -351,6 +356,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<St
                             let request_key = approve_request.request_key.clone();
                             let key_state = approve_request.key_state.clone();
                             let approval_agent_id = approve_request.agent_id.clone();
+                            let approval_account = account.clone();
                             status.set(crate::i18n::tr("agent_runtime.approving"));
                             approving.set(true);
                             spawn(async move {
@@ -358,6 +364,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<St
                                     let body = body.clone();
                                     let key_state = key_state.clone();
                                     let controller = controller.clone();
+                                    let account = approval_account.clone();
                                     async move {
                                         let description = api.describe_cached().await?;
                                         let service_id = description.service_id.to_string();
@@ -407,6 +414,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<St
                                             seal_managed_agent_pcr_current(
                                                 &api,
                                                 state_store,
+                                                &account,
                                                 &key_state.principal_control_realm_id,
                                             )
                                             .await?;
@@ -421,6 +429,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<St
                                         let recovery_refresh_error = bootstrap_provisioned_agent(
                                             &api,
                                             state_store,
+                                            &account,
                                             &agent_full_id,
                                             &key_state.principal_control_realm_id,
                                             key_state.controller_authorization_ref.as_str(),

@@ -33,6 +33,25 @@ fn test_client_config(
     ClientConfig::authenticated(account, credential.into())
 }
 
+fn test_active_account(
+    principal: &str,
+    server_url: &str,
+    device_id: &str,
+) -> crate::config::ActiveAccountContext {
+    test_client_config(server_url, principal, device_id, String::new())
+        .active_account
+        .unwrap()
+}
+
+fn test_authority(principal: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    test_active_account(
+        principal,
+        "https://local.host",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    )
+    .authority
+}
+
 #[test]
 fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
     let contacts: Vec<crate::models::ContactListRow> = serde_json::from_value(serde_json::json!([
@@ -700,70 +719,74 @@ fn boot_state_waits_for_secure_store_before_known_account_is_signed_out() {
         "ak:device:01964137-0000-7000-8000-000000000001",
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, Some(&account), false),
+        session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), false),
         SessionBootState::Restoring
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, None, false),
+        session_boot_state_from_bootstrap_material("", false, "", false),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, Some(&account), true),
+        session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), true),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("sx-live", false, Some(&account), false),
+        session_boot_state_from_bootstrap_material(
+            "sx-live",
+            false,
+            account.full_id().as_str(),
+            false,
+        ),
         SessionBootState::Checking
     );
 }
 
 #[test]
 fn rehydrated_session_credential_only_matches_active_config() {
-    let config = test_client_config(
-        "https://local.host",
+    let account = test_active_account(
         "did:web:alice.example",
         "https://local.host",
         "ak:device:01964137-0000-7000-8000-000000000001",
     );
-    let config = ClientConfig::from_fields(Some(account.clone()), "sx-live");
+    let config = ClientConfig::authenticated(account.clone(), "sx-live".to_owned());
 
     assert_eq!(
-        rehydrated_session_credential_for_active_config(&config, &account).as_deref(),
+        rehydrated_session_credential_for_active_config(
+            &config,
+            account.server_url.as_str(),
+            account.full_id().as_str(),
+            account.device_id.as_str(),
+        )
+        .as_deref(),
         Some("sx-live")
     );
-    assert!(
-        rehydrated_session_credential_for_active_config(
-            &config,
-            &test_active_account(
-                "did:web:alice.example",
-                "https://other.local.host",
-                "ak:device:01964137-0000-7000-8000-000000000001",
+    for candidate in [
+        test_active_account(
+            "did:web:alice.example",
+            "https://other.local.host",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        ),
+        test_active_account(
+            "did:web:bob.example",
+            "https://local.host",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        ),
+        test_active_account(
+            "did:web:alice.example",
+            "https://local.host",
+            "ak:device:01964137-0000-7000-8000-000000000099",
+        ),
+    ] {
+        assert!(
+            rehydrated_session_credential_for_active_config(
+                &config,
+                candidate.server_url.as_str(),
+                candidate.full_id().as_str(),
+                candidate.device_id.as_str(),
             )
-        )
-        .is_none()
-    );
-    assert!(
-        rehydrated_session_credential_for_active_config(
-            &config,
-            &test_active_account(
-                "did:web:bob.example",
-                "https://local.host",
-                "ak:device:01964137-0000-7000-8000-000000000001",
-            )
-        )
-        .is_none()
-    );
-    assert!(
-        rehydrated_session_credential_for_active_config(
-            &config,
-            &test_active_account(
-                "did:web:alice.example",
-                "https://local.host",
-                "ak:device:01964137-0000-7000-8000-000000000099",
-            )
-        )
-        .is_none()
-    );
+            .is_none()
+        );
+    }
 }
 
 #[test]
@@ -790,11 +813,11 @@ fn session_boot_state_leaves_restoring_when_secure_store_is_ready_without_materi
         "ak:device:01964137-0000-7000-8000-000000000001",
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, Some(&account), false,),
+        session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), false,),
         SessionBootState::Restoring
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, Some(&account), true),
+        session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), true),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
@@ -974,6 +997,7 @@ fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
         &payload,
         &store,
         &secure,
+        &test_authority("did:web:alice.example"),
         "did:web:alice.example",
         Some(false),
     ));
@@ -1016,6 +1040,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
         &payload,
         &store,
         &secure,
+        &test_authority("did:web:alice.example"),
         "did:web:alice.example",
         Some(false),
     ));
@@ -1041,6 +1066,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() 
         &payload,
         &store,
         &secure,
+        &test_authority("did:web:alice.example"),
         "did:web:alice.example",
         Some(true),
     ));
@@ -1079,7 +1105,12 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_stor
     });
 
     assert!(!mls_recovery_setup_missing(
-        &payload, &store, &secure, actor, None,
+        &payload,
+        &store,
+        &secure,
+        &test_authority(actor),
+        actor,
+        None,
     ));
 }
 

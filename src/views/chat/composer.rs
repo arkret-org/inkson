@@ -6,6 +6,8 @@ use super::*;
 pub(super) struct ChatComposerContext {
     pub embedded: bool,
     pub selected_channel_info: Option<ChannelEntity>,
+    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub full_id: arkret_sdk::DidFullId,
     pub principal_id: String,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,
@@ -80,6 +82,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let ChatComposerContext {
         embedded: _,
         selected_channel_info,
+        authority: sidecar_authority,
+        full_id: sidecar_full_id,
         principal_id,
         account_display_label,
         participants: participants_for_messages,
@@ -256,6 +260,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         ));
     }
 
+    let typing_authority = sidecar_authority.clone();
+    let scheduled_send_authority = sidecar_authority.clone();
+    let plaintext_sidecar_authority = sidecar_authority.clone();
+    let plaintext_sidecar_full_id = sidecar_full_id.clone();
+    let secure_sidecar_authority = sidecar_authority;
+    let secure_sidecar_full_id = sidecar_full_id;
     rsx! {
             if !visible_channels_empty {
             div { class: "{composer_class}", "data-testid": "chat-composer",
@@ -504,7 +514,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let actor = actor.clone();
-                                let authority = authority.clone();
+                                let authority = typing_authority.clone();
                                 let device = typing_device_id.clone();
                                 if selected_strand.trim().is_empty() {
                                     return;
@@ -529,6 +539,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let typing_store = typing_store.clone();
                                     let realm = realm.clone();
                                     let actor = actor.clone();
+                                    let authority = authority.clone();
                                     let device = device.clone();
                                     let strand_id = strand_id.clone();
                                     let material = material.clone();
@@ -1158,7 +1169,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         context: super::scheduled_send_panel::ScheduledSendPanelContext {
                             realm_id: selected_realm_id.clone(),
                             strand_id: selected_channel(),
-                            principal_id: principal_id.clone(),
+                            authority: scheduled_send_authority.clone(),
                             device_id: device_id.clone(),
                             token,
                             draft: chat_draft,
@@ -1181,8 +1192,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let sidecar_device_id = device_id.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
-                                let authority_for_sidecar = sidecar_authority.clone();
-                                let full_id_for_sidecar = sidecar_full_id.clone();
+                                let authority_for_sidecar = plaintext_sidecar_authority.clone();
+                                let full_id_for_sidecar = plaintext_sidecar_full_id.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -1610,8 +1621,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 selected_realm_pending_mls_binding_reason.clone();
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
-                                let authority_for_sidecar = sidecar_authority.clone();
-                                let full_id_for_sidecar = sidecar_full_id.clone();
+                                let authority_for_sidecar = secure_sidecar_authority.clone();
+                                let full_id_for_sidecar = secure_sidecar_full_id.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
                                 if pending_mls_binding {
                                     status_msg.set(
@@ -1868,7 +1879,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 &base,
                                                 api_token,
                                                 &actor,
-                                                device_id_for_sidecar.as_str(),
+                                                &authority_for_sidecar,
+                                                &device_id_for_sidecar,
                                                 &session.source_realm_id,
                                                 &session.source_strand_id,
                                                 &source_strand_id,
@@ -2101,8 +2113,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     state_store,
                                     &seal_view,
                                     &realm,
+                                    &authority_for_sidecar,
                                     &actor,
-                                    did.as_str(),
+                                    &did,
                                     &strand_id,
                                     &message_id,
                                     reply_to.as_deref(),
@@ -2309,8 +2322,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
                                         base_for_backup_trigger.clone(),
                                         token_for_backup_trigger.clone(),
+                                        authority_for_sidecar.clone(),
                                         actor_for_backup_trigger.clone(),
-                                        device_for_sidecar_backup.clone(),
+                                        device_for_sidecar_backup.to_string(),
                                         state_store,
                                     );
 
@@ -2322,8 +2336,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         crate::components::maybe_auto_backup_mls_after_encrypted_write(
                                             base_for_backup_trigger.clone(),
                                             token_for_backup_trigger.clone(),
+                                            authority_for_sidecar.clone(),
                                             actor_for_backup_trigger.clone(),
-                                            device_for_sidecar_backup.clone(),
+                                            device_for_sidecar_backup.to_string(),
                                             state_store,
                                             signal,
                                         )

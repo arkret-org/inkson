@@ -93,7 +93,7 @@ pub(super) fn session_refresh_write_plan(
         ) {
             (None, None) => true,
             (Some(current), Some(desired)) => {
-                current.is_same_account(&desired.authority)
+                current.same_authority(desired)
                     && current.profile_id == desired.profile_id
                     && current.resolution == desired.resolution
                     && current.device_id == desired.device_id
@@ -198,6 +198,12 @@ pub(super) async fn refresh_session_credential_for_active_context(
     let actor = principal_id();
     let device = device_id();
     let generation = session_generation();
+    let mut active_account = SessionContext::get().active_account;
+    let Some(account) = active_account.peek().clone() else {
+        return crate::runtime::session::CurrentSessionRefresh::SignInRequired {
+            reason: "active account context is unavailable".to_owned(),
+        };
+    };
 
     #[cfg(target_arch = "wasm32")]
     if let Err(error) = crate::secure_key_store::ensure_wasm_secure_key_store_ready("inkson").await
@@ -210,7 +216,7 @@ pub(super) async fn refresh_session_credential_for_active_context(
     // Provider restore owns expiry policy, durable rotation, and client rebuild.
     let restored = crate::identity::session_refresh::provide_authenticated_session(&base).await;
     if active_account.peek().as_ref().is_none_or(|current| {
-        !current.is_same_account(&account.authority) || current.server_url != account.server_url
+        !current.same_authority(&account) || current.server_url != account.server_url
     }) || session_generation() != generation
     {
         return crate::runtime::session::CurrentSessionRefresh::retry_later(
@@ -249,7 +255,9 @@ pub(super) async fn refresh_session_credential_for_active_context(
             if write_plan.config {
                 persist_config(
                     config_store,
-                    Some(account.clone()),
+                    account.server_url.to_string(),
+                    account.full_id().to_string(),
+                    account.device_id.to_string(),
                     session_credential.clone(),
                 );
             }
@@ -436,10 +444,10 @@ pub(super) async fn probe_device_authorization(
         &crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?,
     )?;
     let signer_matches_directory =
-        current_event_signer_matches_directory(principal_api, principal_id, device_id).await?;
+        current_event_signer_matches_directory(principal_api, actor, device).await?;
     Ok(device_authorization_probe_from_account_viewer(
         &viewer,
-        device_id.as_str(),
+        device,
         signer_matches_directory,
     ))
 }
@@ -464,7 +472,7 @@ async fn current_event_signer_matches_directory(
         .map_err(|error| anyhow::anyhow!("bind event signer device: {error}"))?
         .unwrap_or(signer);
     let signer_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != *principal_id {
+    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != actor_id {
         return Ok(false);
     }
     let Some(public_key) = signer.public_key_multibase() else {
@@ -480,8 +488,8 @@ async fn current_event_signer_matches_directory(
     let expected_key = format!("did:key:{public_key}");
     let signer_matches = outcome
         .device_keys
-        .get(principal_id)
-        .and_then(|devices| devices.get(device_id))
+        .get(&actor_id)
+        .and_then(|devices| devices.get(&device_id))
         .map(|record| record.device_signing_key.as_str())
         == Some(expected_key.as_str());
     if !signer_matches {
@@ -495,7 +503,7 @@ async fn current_event_signer_matches_directory(
 }
 
 pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
-    let mut device = normalize_device_id(&device);
+    let mut device = crate::config::normalize_device_id(&device);
     let mut active_account = SessionContext::get().active_account;
     spawn(async move {
         let session = ctx.session.clone();
@@ -914,15 +922,19 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 if let Err(error) = config_store.write().save_profiles(&profiles) {
                     tracing::error!(?error, "active account profile persist failed");
                 }
-                if let Err(error) = state_store.write().switch_active_account(&accepted_account) {
-                    invalidate_bootstrap_session(
-                        &session,
-                        format!("accepted account namespace activation failed: {error}"),
-                        session_boot_state,
-                        sync_bootstrap_complete,
-                    );
-                    return;
-                }
+                let account_changed =
+                    match state_store.write().switch_active_account(&accepted_account) {
+                        Ok(changed) => changed,
+                        Err(error) => {
+                            invalidate_bootstrap_session(
+                                &session,
+                                format!("accepted account namespace activation failed: {error}"),
+                                session_boot_state,
+                                sync_bootstrap_complete,
+                            );
+                            return;
+                        }
+                    };
                 if canonical_actor != actor {
                     invalidate_bootstrap_session(
                         &session,
@@ -932,10 +944,6 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     );
                     return;
                 }
-                let account_changed = state_store.write().switch_active_account(
-                    &active_account_snapshot.profile_id,
-                    &active_account_snapshot.authority,
-                );
                 if account_changed {
                     account_primary_handle.set(String::new());
                     personal_handles.set(Vec::new());
@@ -1044,7 +1052,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         &session,
                         format!(
                             "session grant device {} does not match active account device {}",
-                            grant_device, active_account_snapshot.device_id
+                            grant_device, accepted_account.device_id
                         ),
                         session_boot_state,
                         sync_bootstrap_complete,
@@ -1056,17 +1064,25 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                     match arkret_sdk::DeviceId::new(device.clone()) {
                         Ok(device_id) => {
-                            let user_store = crate::secure_key_store::UserLocalStore::new(
-                                accepted_account.principal_id().clone(),
-                            );
-                            user_store.activate();
-                            if let Err(error) =
-                                user_store.save_device_id(secure_store.as_ref(), &device_id)
-                            {
-                                tracing::warn!(
+                            match crate::secure_key_store::UserLocalStore::new(
+                                accepted_account.authority.clone(),
+                                device_id.clone(),
+                            ) {
+                                Ok(user_store) => {
+                                    user_store.activate();
+                                    if let Err(error) =
+                                        user_store.save_device_id(secure_store.as_ref(), &device_id)
+                                    {
+                                        tracing::warn!(
+                                            ?error,
+                                            "connect: persist canonical device_id failed"
+                                        );
+                                    }
+                                }
+                                Err(error) => tracing::warn!(
                                     ?error,
-                                    "connect: persist canonical device_id failed"
-                                );
+                                    "connect: canonical secure scope is invalid"
+                                ),
                             }
                         }
                         Err(error) => {
@@ -1198,7 +1214,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 }
                 persist_config(
                     config_store,
-                    Some(active_account_snapshot.clone()),
+                    accepted_account.server_url.to_string(),
+                    accepted_account.full_id().to_string(),
+                    accepted_account.device_id.to_string(),
                     session_credential.clone(),
                 );
                 crypto_state.set("Session active".to_owned());
@@ -1485,6 +1503,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 };
                                 match crate::sidecar::ingest_sidecar_view_state_account_data(
                                     &mut store,
+                                    &accepted_account.authority,
                                     &principal_id(),
                                     account_data_key,
                                     entry,
@@ -1507,7 +1526,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // LocalConfigStore synchronously.
                                 if account_data_key == AccountDataKey::CLIENT_UI_STATE {
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &principal_id(),
+                                        &accepted_account.authority,
                                         account_data_key,
                                         entry,
                                     ) {
@@ -1582,7 +1601,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 if account_data_key == AccountDataKey::PRESENCE_VISIBILITY {
                                     let Some(visibility) =
                                         crate::account_data::decrypt_account_data_entry(
-                                            &principal_id(),
+                                            &accepted_account.authority,
                                             account_data_key,
                                             entry,
                                         )
@@ -1606,7 +1625,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 // before applying it to local state.
                                 if account_data_key == AccountDataKey::PRESENCE_PREFERENCE {
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &principal_id(),
+                                        &accepted_account.authority,
                                         account_data_key,
                                         entry,
                                     )
@@ -1622,7 +1641,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 }
                                 if account_data_key == AccountDataKey::DND_SCHEDULE {
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &principal_id(),
+                                        &accepted_account.authority,
                                         account_data_key,
                                         entry,
                                     ) {
@@ -1638,7 +1657,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 if account_data_key == AccountDataKey::ACCOUNT_BLOCKLIST {
                                     blocklist_snapshot_seen = true;
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &principal_id(),
+                                        &accepted_account.authority,
                                         account_data_key,
                                         entry,
                                     )
@@ -1724,7 +1743,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         == Some(true)
                                     {
                                         match crate::account_data::account_data_namespace_key(
-                                            &principal_id(),
+                                            &accepted_account.authority,
                                         ) {
                                             Ok(namespace_key) => {
                                                 store.remove_contact_remark_by_storage_key(
@@ -1740,7 +1759,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                         continue;
                                     }
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &principal_id(),
+                                        &accepted_account.authority,
                                         account_data_key,
                                         entry,
                                     )
@@ -1749,7 +1768,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             serde_json::from_value(content)?;
                                         let namespace_key =
                                             crate::account_data::account_data_namespace_key(
-                                                &principal_id(),
+                                                &accepted_account.authority,
                                             )?;
                                         remark
                                             .validate_for_account_data_key(
@@ -1781,7 +1800,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     continue;
                                 };
                                 match crate::account_data::decrypt_account_data_entry(
-                                    &principal_id(),
+                                    &accepted_account.authority,
                                     account_data_key,
                                     entry,
                                 )
@@ -1804,7 +1823,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             store.retain_scheduled_send_account_data_keys(
                                 &scheduled_send_snapshot_keys,
                             );
-                            match crate::account_data::account_data_namespace_key(&principal_id()) {
+                            match crate::account_data::account_data_namespace_key(
+                                &accepted_account.authority,
+                            ) {
                                 Ok(namespace_key) => store.retain_contact_remarks_for_storage_keys(
                                     &namespace_key,
                                     &contact_remark_snapshot_keys,
@@ -1868,10 +1889,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                             crate::state::projection::projection_events_from_sync_realms(
                                 &sync.realm_projections,
                                 Some(&store_guard),
-                                Some((
-                                    &active_account_snapshot.authority,
-                                    &active_account_snapshot.device_id,
-                                )),
+                                Some((&accepted_account.authority, &accepted_account.device_id)),
                             )
                         };
                         // `realm_tree_nodes` is derived from `state_store.realm_tree_projections`

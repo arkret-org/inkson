@@ -100,8 +100,8 @@ pub(super) fn rehydrated_session_credential_for_active_config(
         tracing::debug!(
             target: "secure_store",
             cred_empty,
-            authority_mismatch,
-            route_mismatch,
+            account_mismatch,
+            server_mismatch,
             device_mismatch,
             stored_server = %account.server_url,
             want_server = %base_url,
@@ -198,14 +198,14 @@ mod account_projection_tests {
         assert!(!account_projections_visible(
             &Route::Onboarding,
             false,
-            Some(&principal("did:webvh:znew:principal.example")),
-            Some(&principal("did:webvh:zold:principal.example")),
+            principal("did:webvh:znew:principal.example").as_str(),
+            principal("did:webvh:zold:principal.example").as_str(),
         ));
         assert!(!account_projections_visible(
             &Route::Onboarding,
             false,
-            Some(&principal("did:webvh:zold:principal.example")),
-            Some(&principal("did:webvh:zold:principal.example")),
+            principal("did:webvh:zold:principal.example").as_str(),
+            principal("did:webvh:zold:principal.example").as_str(),
         ));
     }
 
@@ -214,14 +214,14 @@ mod account_projection_tests {
         assert!(!account_projections_visible(
             &Route::Dashboard,
             true,
-            Some(&principal("did:webvh:znew:principal.example")),
-            Some(&principal("did:webvh:zold:principal.example")),
+            principal("did:webvh:znew:principal.example").as_str(),
+            principal("did:webvh:zold:principal.example").as_str(),
         ));
         assert!(account_projections_visible(
             &Route::Dashboard,
             true,
-            Some(&principal("did:webvh:znew:principal.example")),
-            Some(&principal("did:webvh:znew:principal.example")),
+            principal("did:webvh:znew:principal.example").as_str(),
+            principal("did:webvh:znew:principal.example").as_str(),
         ));
     }
 }

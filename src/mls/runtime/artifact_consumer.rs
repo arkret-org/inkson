@@ -294,8 +294,9 @@ pub(crate) async fn converge_accepted_mls_commits(
 /// durably bind every candidate outcome before publishing plaintext to reads.
 pub(crate) fn converge_external_history_candidate_decryptions(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
+    device_id: &arkret_sdk::DeviceId,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<usize, String> {
     let tasks = {
@@ -346,7 +347,7 @@ pub(crate) fn converge_external_history_candidate_decryptions(
                     &realm_id,
                     event,
                     Some(&store),
-                    Some((actor_id, device_id)),
+                    Some((authority, actor_id, device_id)),
                 ) else {
                     continue;
                 };

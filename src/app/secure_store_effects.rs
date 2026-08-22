@@ -211,8 +211,18 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             String::new(),
                         );
                     }
-                    let user_store = active_account.peek().as_ref().map(|account| {
-                        crate::secure_key_store::UserLocalStore::new(account.principal_id().clone())
+                    let account = active_account.peek().clone();
+                    let user_store = account.as_ref().and_then(|account| {
+                        match crate::secure_key_store::UserLocalStore::new(
+                            account.authority.clone(),
+                            account.device_id.clone(),
+                        ) {
+                            Ok(store) => Some(store),
+                            Err(error) => {
+                                tracing::warn!(target: "secure_store", %error, "invalid active account secure scope");
+                                None
+                            }
+                        }
                     });
                     if let Some(user_store) = user_store.as_ref() {
                         user_store.activate();
@@ -278,31 +288,10 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                     tracing::warn!(target: "secure_store", ?error, "persist active device_id failed");
                                     None
                                 }
-                            };
-                            match resolved {
-                                Some(resolved) => {
-                                    if resolved != current {
-                                        tracing::warn!(
-                                            target: "secure_store",
-                                            stale = %current,
-                                            stable = %resolved,
-                                            "pinning stable device_id from secure store (config blob value was phantom/stale)"
-                                        );
-                                        device_id_for_secure_upgrade.set(resolved.clone());
-                                        persist_config(
-                                            config_store_for_secure_upgrade,
-                                            base_url_for_secure_upgrade(),
-                                            principal_id_for_secure_upgrade(),
-                                            resolved.clone(),
-                                            token_for_secure_upgrade.peek().trim().to_owned(),
-                                        );
-                                    }
-                                    Some(resolved)
-                                }
-                                None if crate::config::is_valid_device_id(&current) => {
-                                    Some(current)
-                                }
-                                None => None,
+                            },
+                            Err(error) => {
+                                tracing::warn!(target: "secure_store", ?error, "load stable device_id failed");
+                                None
                             }
                         }
                     });
@@ -324,9 +313,6 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 anyhow::anyhow!("load device identity signer: {error}")
                             })
                             .and_then(|_| {
-                                let account = account.as_ref().ok_or_else(|| {
-                                    anyhow::anyhow!("active account context is unavailable")
-                                })?;
                                 bind_active_signer_to_account_session(
                                     active_full_id.as_str(),
                                     &stable_device_id,
@@ -405,18 +391,20 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
 // secure-store upgrade block above; the remaining callers are this file's
 // `#[cfg(test)]` tests. Gate on the union of both so native non-test builds
 // do not report it as dead code.
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 fn bind_active_signer_to_account_session(
     account: &crate::config::ActiveAccountContext,
     grant: Option<&PersistedSessionGrant>,
 ) -> anyhow::Result<()> {
+    let principal_core = account.principal_id();
+    let device = &account.device_id;
     if let Some(grant) = grant {
         let grant_principal =
             crate::identity::session_refresh::persisted_grant_principal_id(grant)?;
-        if grant_principal != principal_core {
+        if grant_principal != *principal_core {
             anyhow::bail!("session grant principal does not match the active account");
         }
-        if grant.device_id != device {
+        if grant.device_id != *device {
             anyhow::bail!("session grant device does not match the active device");
         }
     }
@@ -438,6 +426,28 @@ fn bind_active_signer_to_account_session(
 mod account_signer_boot_tests {
     use super::bind_active_signer_to_account_session;
     use crate::state::PersistedSessionGrant;
+
+    fn account(principal: &str, device: &str) -> crate::config::ActiveAccountContext {
+        let full_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
+        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        );
+        crate::config::ActiveAccountContext::new(
+            "ak:profile:boot-test".to_owned(),
+            authority,
+            arkret_sdk::PrincipalResolutionProjection {
+                full_id,
+                method_history_head: "boot-test-head".to_owned(),
+                version_id: "1".to_owned(),
+                resolution_event_ref: "boot-test-event".to_owned(),
+                updated_at: chrono::Utc::now(),
+            },
+            arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
+            url::Url::parse("https://principal.example").unwrap(),
+        )
+        .unwrap()
+    }
 
     fn session_grant(principal_id: String, device_id: &str) -> PersistedSessionGrant {
         PersistedSessionGrant {
@@ -468,7 +478,7 @@ mod account_signer_boot_tests {
         let principal_full = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
         let principal_core = arkret_sdk::project_full_id_to_core_id(&principal_full).unwrap();
         let grant = session_grant(principal_core.to_string(), device);
-        bind_active_signer_to_account_session(principal, device, Some(&grant)).unwrap();
+        bind_active_signer_to_account_session(&account(principal, device), Some(&grant)).unwrap();
 
         let signer = crate::event_signer::active_signer().expect("bound signer");
         assert_eq!(signer.signer_did(), principal);
@@ -493,7 +503,8 @@ mod account_signer_boot_tests {
         let grant = session_grant(other_core.to_string(), device);
 
         let error =
-            bind_active_signer_to_account_session(principal, device, Some(&grant)).unwrap_err();
+            bind_active_signer_to_account_session(&account(principal, device), Some(&grant))
+                .unwrap_err();
 
         assert!(error.to_string().contains("principal does not match"));
         assert_ne!(

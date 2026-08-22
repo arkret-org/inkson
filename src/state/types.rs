@@ -1649,17 +1649,19 @@ mod authority_root_tests {
         let mut root = RootIndex::default();
         let authority = authority("ak:did_core:webvh:zServerA");
 
-        assert_eq!(
-            root.note_known_profile("ak:profile:first", &authority)
-                .as_deref(),
-            Some("ak:profile:first")
-        );
-        assert_eq!(
-            root.note_known_profile("ak:profile:relocated", &authority)
-                .as_deref(),
-            Some("ak:profile:first")
-        );
+        root.note_known_profile(AccountIndexEntry {
+            profile_id: "ak:profile:first".to_owned(),
+            authority: authority.clone(),
+        });
+        root.note_known_profile(AccountIndexEntry {
+            profile_id: "ak:profile:relocated".to_owned(),
+            authority: authority.clone(),
+        });
         assert_eq!(root.known_profiles.len(), 1);
+        assert_eq!(
+            root.authority_for_profile("ak:profile:relocated"),
+            Some(&authority)
+        );
     }
 
     #[test]
@@ -1667,14 +1669,14 @@ mod authority_root_tests {
         let mut root = RootIndex::default();
         let first = authority("ak:did_core:webvh:zServerA");
         let second = authority("ak:did_core:webvh:zServerB");
-        assert!(
-            root.note_known_profile("ak:profile:shared", &first)
-                .is_some()
-        );
-        assert!(
-            root.note_known_profile("ak:profile:shared", &second)
-                .is_none()
-        );
+        root.note_known_profile(AccountIndexEntry {
+            profile_id: "ak:profile:shared".to_owned(),
+            authority: first.clone(),
+        });
+        root.note_known_profile(AccountIndexEntry {
+            profile_id: "ak:profile:shared".to_owned(),
+            authority: second,
+        });
         assert_eq!(
             root.authority_for_profile("ak:profile:shared"),
             Some(&first)

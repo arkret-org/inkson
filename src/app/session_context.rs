@@ -9,7 +9,6 @@
 
 use dioxus::prelude::*;
 
-use crate::identity::active_account::ActiveAccountContext;
 use crate::state::LocalStateStore;
 
 /// Shared per-login-session handles. Provided in `RouterView` via
@@ -27,10 +26,6 @@ pub struct SessionContext {
     /// re-render when the user switches servers, matching the old prop chain
     /// where the parent re-passed the value on change.
     pub base_url: Signal<String>,
-    /// The authenticated account aggregate. `None` is the only signed-out
-    /// representation; principal/full/service/route coordinates are never
-    /// reconstructed from the derived UI strings.
-    pub active_account: Signal<Option<ActiveAccountContext>>,
     /// Monotonic revision bumped whenever the signed-in account's owned-agent
     /// set changes in Settings → My Agents (provision/pair, pause, resume,
     /// deactivate). The Contacts sidebar subscribes to it and re-pulls
@@ -46,6 +41,10 @@ impl SessionContext {
     /// subtree, which is a programming error (every component runs under it).
     pub fn get() -> Self {
         use_context::<SessionContext>()
+    }
+
+    pub fn active_account(&self) -> Option<crate::config::ActiveAccountContext> {
+        self.active_account.peek().clone()
     }
 
     /// Convenience: the current base URL as an owned `String`. Subscribes the

@@ -40,7 +40,7 @@ pub fn EncryptionFloorPrompt(
             || needs_mls_unlock()
             || needs_mls_backup()
             || recovery_key_setup_prompt()
-            || !account_needs_recommended_encryption_prompt(&state_store.read(), &principal_id)
+            || !account_needs_recommended_encryption_prompt(&state_store.read(), &actor)
         {
             return;
         }
@@ -50,7 +50,7 @@ pub fn EncryptionFloorPrompt(
         // state as not configured so the auto-apply path never assumes a
         // Recovery Key exists before the account recovery probe has completed.
         let local_recovery_configured =
-            crate::views::recovery::recovery_options_configured(&state_store.read(), &principal_id);
+            crate::views::recovery::recovery_options_configured(&state_store.read(), &actor);
         let recovery_key_configured =
             matches!(account_recovery_configured(), Some(true)) || local_recovery_configured;
 

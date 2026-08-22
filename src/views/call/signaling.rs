@@ -388,6 +388,12 @@ pub(super) async fn emit_signal(
     signal: arkret_sdk::CallSignalData,
     state_store: &crate::runtime::input::StateStoreHandle,
 ) -> Result<(), String> {
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| "active account context is unavailable".to_owned())?;
+    if account.full_id().as_str() != actor.trim() || account.device_id.as_str() != device.trim() {
+        return Err("call signal identity does not match the active account".to_owned());
+    }
     // Call signalling is Realm-scoped, so the effective scope has no Circle.
     let material = state_store
         .read(|store| crate::signal::key_material_for_scope(store, realm_id, None))
@@ -402,13 +408,14 @@ pub(super) async fn emit_signal(
         seq,
         signal,
     };
-    let (actor, device) = (actor.to_owned(), device.to_owned());
+    let authority = account.authority;
+    let device = account.device_id;
     let material = material.clone();
     let state_store = state_store.clone();
     with_event_submitter(base, api_token.to_owned(), |sub| async move {
         sub.send_scope_signal(
             scope_ref,
-            &actor,
+            &authority,
             &device,
             &material,
             &payload,

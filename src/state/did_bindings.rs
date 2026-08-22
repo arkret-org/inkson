@@ -209,15 +209,9 @@ mod tests {
 
     fn switch_test_account(store: &mut LocalStateStore, full_id: &str) -> bool {
         let full_id = DidFullId::new(full_id.to_owned()).unwrap();
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
-            arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:test-server.example".to_owned()).unwrap(),
-        );
-        let profile_id = format!(
-            "ak:profile:{}",
-            crate::secure_key_store::principal_authority_storage_digest(&authority).unwrap()
-        );
-        store.switch_active_account(&profile_id, &authority)
+        store
+            .switch_active_account(&crate::state::tests::test_account_context(&full_id))
+            .unwrap()
     }
 
     fn document(did: &str) -> arkret_sdk::DidDocument {

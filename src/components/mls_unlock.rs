@@ -212,7 +212,7 @@ pub fn MlsUnlockPrompt(
                                     &mut store,
                                     &account_data,
                                     &authority,
-                                    &authority.principal_id,
+                                    authority.principal_id.as_str(),
                                 );
                             }
                             tracing::warn!(
@@ -402,9 +402,12 @@ pub fn MlsRecoverySetupMissingBanner(
 
     let actor = actor_id();
     if !actor.trim().is_empty() {
+        let Some(account) = crate::app::SessionContext::get().active_account() else {
+            return rsx! {};
+        };
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         if matches!(
-            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), actor.trim()),
+            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &account.authority,),
             Ok(Some(_))
         ) {
             return rsx! {};

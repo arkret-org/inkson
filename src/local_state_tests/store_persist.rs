@@ -988,14 +988,17 @@ fn same_principal_core_on_different_servers_uses_distinct_local_state() {
     let profile_a = test_profile_id(&authority_a);
     let profile_b = test_profile_id(&authority_b);
 
-    assert!(store.switch_active_account(&profile_a, &authority_a));
+    let full_id = arkret_sdk::DidFullId::new("did:webvh:zSamePrincipal".to_owned()).unwrap();
+    let account_a = super::test_account_context_for_authority(&full_id, authority_a.clone());
+    let account_b = super::test_account_context_for_authority(&full_id, authority_b.clone());
+    assert!(store.switch_active_account(&account_a).unwrap());
     store.save_sync_cursor("sx:authority-a");
 
-    assert!(store.switch_active_account(&profile_b, &authority_b));
+    assert!(store.switch_active_account(&account_b).unwrap());
     assert!(store.load().sync_cursor.is_none());
     store.save_sync_cursor("sx:authority-b");
 
-    assert!(store.switch_active_account(&profile_a, &authority_a));
+    assert!(!store.switch_active_account(&account_a).unwrap());
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:authority-a"));
 }
 
@@ -1010,7 +1013,7 @@ fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
     store.save_sync_cursor("sx:bob");
 
     let bob_authority = test_authority("did:web:bob.example");
-    store.forget_account(&test_profile_id(&bob_authority), &bob_authority);
+    store.forget_account(&test_profile_id(&bob_authority));
     assert!(
         !store
             .known_principal_ids()
@@ -1229,6 +1232,7 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
     let path = temp_state_path("pending-onboarding-handoff");
     let mut store = LocalStateStore::with_path(path);
     let device = "ak:device:019f0000-0000-7000-8000-000000000001";
+    let typed_device = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
     let handoff = PendingAccountHandoff {
         principal_server_url: "https://principal.example".to_owned(),
         gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
@@ -1265,22 +1269,25 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
     store
         .set_pending_principal_registration(Some(checkpoint))
         .unwrap();
-    assert!(!store.can_resume_pending_login(device));
+    assert!(!store.can_resume_pending_login(&typed_device));
     let dpop_jkt = "resume-holder-jkt".to_owned();
     store.set_dpop_device_key(Some(DpopDeviceKeyRecord {
         seed_b64: "test-seed".to_owned(),
         jkt: dpop_jkt.clone(),
         created_at: chrono::Utc::now(),
     }));
-    assert!(!store.can_resume_pending_login(device));
+    assert!(!store.can_resume_pending_login(&typed_device));
     let mut resumed_handoff = handoff.clone();
     resumed_handoff.holder_jkt = dpop_jkt;
     store
         .set_pending_account_handoff(Some(resumed_handoff))
         .unwrap();
-    assert!(!store.can_resume_pending_login("ak:device:019f0000-0000-7000-8000-000000000099"));
-    assert!(store.can_resume_pending_login(device));
-    assert!(store.resume_pending_login(device));
+    let other_device =
+        arkret_sdk::DeviceId::new("ak:device:019f0000-0000-7000-8000-000000000099".to_owned())
+            .unwrap();
+    assert!(!store.can_resume_pending_login(&other_device));
+    assert!(store.can_resume_pending_login(&typed_device));
+    assert!(store.resume_pending_login(&typed_device));
 
     store.promote_accepted_context_for_test(&did);
 
@@ -1308,8 +1315,9 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
     let mut store = LocalStateStore::with_path(path);
     let principal = "did:web:alice.example";
     let device = "ak:device:019f0000-0000-7000-8000-000000000001";
+    let typed_device = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
     store.switch_test_account(principal);
-    store.begin_pending_login(device, Some("holder-jkt"));
+    store.begin_pending_login(&typed_device, Some("holder-jkt"));
     store
         .set_pending_account_handoff(Some(PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
