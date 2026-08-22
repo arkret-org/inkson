@@ -66,7 +66,7 @@ pub fn prepare_registration_checkpoint(
         lease_fence,
         device_id: device_id.trim().to_owned(),
         trust_domain: handoff.trust_domain.clone(),
-        did: draft.did,
+        full_id: arkret_sdk::DidFullId::new(draft.did)?,
         version_id: draft.version_id,
         identity_abandonment: None,
         root_public_key_multibase: draft.root_public_key_multibase,
@@ -152,7 +152,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         lease_fence,
         device_id: handoff.device_id.trim().to_owned(),
         trust_domain: handoff.trust_domain.clone(),
-        did: reserved.full_id.to_string(),
+        full_id: reserved.full_id,
         version_id: validated.did_version_id,
         identity_abandonment: None,
         root_public_key_multibase: key_material.root_public_key_multikey.clone(),
@@ -352,7 +352,7 @@ pub fn prepare_genesis_draft(
         return Ok(checkpoint.clone());
     }
 
-    let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
+    let principal_id = checkpoint.full_id.clone();
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.genesis_created_at)
         .context("persisted genesis creation time is invalid")?
         .with_timezone(&Utc);
@@ -424,8 +424,8 @@ pub async fn complete_account_handoff_binding(
     if handoff.holder_jkt != dpop.jkt() {
         anyhow::bail!("account handoff holder key does not match the current DPoP key");
     }
-    if let Some(bound) = handoff.bound_principal_id.as_deref()
-        && bound != checkpoint.did
+    if let Some(bound) = handoff.bound_principal_id.as_ref()
+        && bound != &checkpoint.full_id
     {
         anyhow::bail!("bound account principal does not match the frozen registration draft");
     }
@@ -453,7 +453,7 @@ pub async fn complete_account_handoff_binding(
     let prepared = crate::identity::account_auth::load_prepared_identity_creation_request(
         handoff,
         expected_account_subject,
-        &checkpoint.did,
+        checkpoint.full_id.as_str(),
         &checkpoint.lease_id,
     )
     .await?;
@@ -467,7 +467,7 @@ pub async fn complete_account_handoff_binding(
             .identity_creation
             .as_ref()
             .context("prepared registration omits identity creation")?;
-        if prepared.principal_id.as_str() != checkpoint.did
+        if prepared.principal_id != arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?
             || registration.identity_creation_lease_id != checkpoint.lease_id
             || registration.lease_fence != checkpoint.lease_fence
             || registration.pcr_genesis_unit != unit
@@ -600,10 +600,9 @@ pub async fn complete_account_handoff_binding(
     };
     garth::validate_identity_creation_outcome(&register_outcome, &register_request)?;
     let binding_receipt = register_outcome.binding_receipt.clone();
-    let checkpoint_full_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
     if &binding_receipt.account_subject != expected_account_subject
         || binding_receipt.principal_id
-            != arkret_sdk::project_full_id_to_core_id(&checkpoint_full_id)?
+            != arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?
     {
         anyhow::bail!("Account Authority binding receipt does not match the frozen account or DID");
     }
@@ -796,7 +795,7 @@ async fn verify_registration_terminal_evidence(
     garth::verify_binding_receipt_at_issuance(receipt, &authority_resolver)
         .map_err(|error| anyhow!("verify Account Authority receipt at issuance: {error}"))?;
 
-    let principal_id = arkret_sdk::DidFullId::new(checkpoint.did.clone())?;
+    let principal_id = checkpoint.full_id.clone();
     let history =
         crate::identity::history::fetch_complete_identity_history(&principal_client, &principal_id)
             .await
@@ -963,7 +962,7 @@ mod tests {
 
         let recovered = recover_registration_checkpoint_from_reservation(&renewed, &key).unwrap();
 
-        assert_eq!(recovered.did, first.did);
+        assert_eq!(recovered.full_id, first.full_id);
         assert_eq!(recovered.did_operation, first.did_operation);
         assert_eq!(recovered.lease_fence, 2);
         assert_eq!(recovered.device_id, renewed.device_id);

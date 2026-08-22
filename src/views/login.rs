@@ -943,17 +943,6 @@ fn returning_sign_in_principal(
     Ok(store.full_account_did_for_principal(&core_id))
 }
 
-fn principal_value_matches_full(value: &str, expected: &arkret_sdk::DidFullId) -> bool {
-    let Ok(expected_core) = arkret_sdk::project_full_id_to_core_id(expected) else {
-        return false;
-    };
-    arkret_sdk::DidCoreId::new(value.trim().to_owned()).is_ok_and(|core| core == expected_core)
-        || arkret_sdk::DidFullId::new(value.trim().to_owned())
-            .ok()
-            .and_then(|full| arkret_sdk::project_full_id_to_core_id(&full).ok())
-            .is_some_and(|core| core == expected_core)
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum AuthenticatedAccountRoute {
     IdentityCreation,
@@ -1150,15 +1139,9 @@ fn pending_handoff_from_authority(
             Some(*retry_after_ms),
             None,
         ),
-        AccountHandoffDisposition::Bound { full_id, .. } => (
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(full_id.to_string()),
-        ),
+        AccountHandoffDisposition::Bound { full_id, .. } => {
+            (None, None, None, None, None, None, Some(full_id.clone()))
+        }
     };
     crate::state::PendingAccountHandoff {
         principal_server_url: principal_server_url.to_owned(),
@@ -1513,8 +1496,8 @@ async fn finish_oidc_callback(
         scaffold.expected_device_id.as_ref(),
     ) && pending_handoff
         .bound_principal_id
-        .as_deref()
-        .is_some_and(|bound| principal_value_matches_full(bound, expected_principal))
+        .as_ref()
+        .is_some_and(|bound| bound == expected_principal)
     {
         let handoff_grant =
             crate::identity::account_auth::load_account_handoff_grant(&pending_handoff)
@@ -1646,7 +1629,7 @@ async fn finish_oidc_callback(
             Err(ReturningSessionExchangeError::DeviceSetupRequired(error)) => {
                 tracing::warn!(
                     %error,
-                    principal_id = %pending_handoff.bound_principal_id.as_deref().unwrap_or_default(),
+                    principal_id = %pending_handoff.bound_principal_id.as_ref().map(arkret_sdk::DidFullId::as_str).unwrap_or_default(),
                     device_id = %returning_device,
                     "returning-device authority rejected the durable device; entering device setup"
                 );
@@ -2323,20 +2306,14 @@ mod tests {
     }
 
     #[test]
-    fn returning_candidate_comparison_uses_bound_principal_identity() {
-        let alice = arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap();
-        assert!(principal_value_matches_full(alice.as_str(), &alice));
-        assert!(!principal_value_matches_full("did:web:bob.example", &alice,));
-    }
-
-    #[test]
     fn returning_handoff_resume_is_bound_to_the_exact_coauth_callback() {
         let mut handoff = pending_handoff_for_test(
             "ak:request:019f0000-0000-7000-8000-000000000013",
             "alice:auth.example",
         );
         handoff.oidc_state = Some("state-a".to_owned());
-        handoff.bound_principal_id = Some("did:web:alice.example".to_owned());
+        handoff.bound_principal_id =
+            Some(arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap());
 
         assert!(can_resume_returning_handoff_for_callback(
             &handoff,

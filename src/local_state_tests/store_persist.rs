@@ -1204,7 +1204,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         &recovery_key,
     )
     .unwrap();
-    let previous_did = checkpoint.did.clone();
+    let previous_did = checkpoint.full_id.clone();
     store
         .set_pending_principal_registration(Some(checkpoint))
         .unwrap();
@@ -1261,7 +1261,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         store
             .pending_principal_registration()
             .as_ref()
-            .map(|pending| pending.did.as_str()),
+            .map(|pending| pending.full_id.as_str()),
         Some(previous_did.as_str()),
         "fresh registration must not expose the old identity draft anonymously"
     );
@@ -1302,7 +1302,7 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
         &recovery_key,
     )
     .unwrap();
-    let did = checkpoint.did.clone();
+    let did = checkpoint.full_id.clone();
 
     store
         .set_pending_account_handoff(Some(handoff.clone()))
@@ -1327,8 +1327,7 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
     assert!(store.can_resume_pending_login(device));
     assert!(store.resume_pending_login(device));
 
-    let principal_id = arkret_sdk::DidFullId::new(did.clone()).unwrap();
-    store.adopt_pending_login(&principal_id);
+    store.adopt_pending_login(&did);
 
     assert_eq!(
         store
@@ -1341,7 +1340,7 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
         store
             .pending_principal_registration()
             .as_ref()
-            .map(|pending| pending.did.as_str()),
+            .map(|pending| pending.full_id.as_str()),
         Some(did.as_str())
     );
 }
@@ -1379,9 +1378,18 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
             retry_after_ms: None,
             device_id: device.to_owned(),
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
-            bound_principal_id: Some(principal.to_owned()),
+            bound_principal_id: Some(arkret_sdk::DidFullId::new(principal.to_owned()).unwrap()),
         }))
         .unwrap();
+
+    let unrelated_principal = arkret_sdk::DidFullId::new("did:web:bob.example".to_owned()).unwrap();
+    let unrelated_core = arkret_sdk::project_full_id_to_core_id(&unrelated_principal).unwrap();
+    assert!(
+        store
+            .full_account_did_for_principal(&unrelated_core)
+            .is_none(),
+        "a typed pending handoff must still match the requested principal core id"
+    );
 
     let principal_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
     assert!(!store.adopt_pending_login(&principal_id));

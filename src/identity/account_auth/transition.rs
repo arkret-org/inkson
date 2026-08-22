@@ -152,8 +152,8 @@ impl LoginCorrelation {
             Some(state) => correlation.with_oidc_state(state),
             None => correlation,
         };
-        match handoff.bound_principal_id.as_deref() {
-            Some(principal_id) => correlation.with_principal_id(principal_id),
+        match handoff.bound_principal_id.as_ref() {
+            Some(principal_id) => correlation.with_principal_id(principal_id.as_str()),
             None => correlation,
         }
     }

@@ -81,8 +81,14 @@ impl LocalStateStore {
         if let Some(full_id) = live
             .pending_account_handoff
             .as_ref()
-            .and_then(|handoff| handoff.bound_principal_id.as_deref())
-            .and_then(&matching_full_id)
+            .and_then(|handoff| handoff.bound_principal_id.as_ref())
+            .and_then(|candidate| {
+                (arkret_sdk::project_full_id_to_core_id(candidate)
+                    .ok()?
+                    .as_str()
+                    == principal_id.as_str())
+                .then(|| candidate.clone())
+            })
             .or_else(|| {
                 live.recovery_material_evidence
                     .as_ref()
@@ -470,7 +476,7 @@ impl LocalStateStore {
         let pending_registration = anonymous_onboarding
             .as_ref()
             .and_then(|state| state.pending_principal_registration.clone())
-            .filter(|registration| registration.did == did);
+            .filter(|registration| registration.full_id.as_str() == did);
         let anonymous_account_handoff = anonymous_onboarding
             .as_ref()
             .and_then(|state| state.pending_account_handoff.clone());

@@ -358,7 +358,7 @@ pub(super) fn inject_test_session_grant(
     }
     if let Some(value) = parsed.get("pending_principal_registration").cloned() {
         match serde_json::from_value::<crate::state::PendingPrincipalRegistration>(value) {
-            Ok(registration) if registration.did == account_did => {
+            Ok(registration) if registration.full_id.as_str() == account_did => {
                 if let Err(error) = state_store
                     .write()
                     .set_pending_principal_registration(Some(registration))

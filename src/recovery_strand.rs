@@ -16,7 +16,7 @@ use arkret_models_crypto::{
     RecoveryPublicationAuthorizationRule, RecoverySessionCreateRequestBody,
     RecoverySessionProofSubmitRequestBody, UnsignedRecoveryPolicy, UnsignedRecoveryPolicyBody,
 };
-use arkret_sdk::{DeviceId, DidUrl, NonEmptyString, PolicyId, TrustDomainId};
+use arkret_sdk::{DidUrl, NonEmptyString, PolicyId, TrustDomainId};
 use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole, event_kind_str};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -107,6 +107,109 @@ pub async fn submit_principal_bootstrap_seal(
         anyhow::bail!("Principal Server returned a mismatched PCR bootstrap Seal outcome");
     }
     Ok(())
+}
+
+/// Establish the first durable governance trust anchor for a newly accepted
+/// Principal Control Realm.
+///
+/// Submitting the bootstrap Seal changes server state only.  Event authoring
+/// deliberately refuses to infer a Realm digest suite from an unverified
+/// frontier, so onboarding must resolve, verify, and durably pin the exact
+/// accepted Seal closure before it can author the genesis recovery policy.
+/// Re-entry after response loss is safe: an already-pinned checkpoint is
+/// accepted only when it contains this byte-exact bootstrap Seal.
+pub async fn ensure_principal_bootstrap_governance_checkpoint(
+    api: &TransportClient,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    bootstrap_seal: &arkret_sdk::Seal,
+) -> anyhow::Result<arkret_sdk::MlsGovernanceVerificationCheckpoint> {
+    if let Some(checkpoint) = state_store
+        .read(|store| store.trusted_mls_governance_checkpoint(bootstrap_seal.realm_id.as_str()))
+    {
+        checkpoint.validate_checkpoint().map_err(|error| {
+            anyhow::anyhow!("invalid pinned PCR governance checkpoint: {error}")
+        })?;
+        if !checkpoint
+            .accepted_seals
+            .iter()
+            .any(|accepted| accepted == bootstrap_seal)
+        {
+            anyhow::bail!(
+                "pinned PCR governance checkpoint does not contain the byte-exact bootstrap Seal"
+            );
+        }
+        return Ok(checkpoint);
+    }
+
+    let target_basis = arkret_sdk::SealBasis {
+        leaves: vec![bootstrap_seal.id.clone()],
+    };
+    let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint(
+        api,
+        &bootstrap_seal.realm_id,
+        &target_basis,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    if !resolved
+        .seals
+        .iter()
+        .any(|accepted| accepted == bootstrap_seal)
+    {
+        anyhow::bail!(
+            "resolved PCR governance closure does not contain the byte-exact bootstrap Seal"
+        );
+    }
+    let verified = arkret_sdk::verify_mls_governance_closure(
+        &bootstrap_seal.realm_id,
+        &resolved.target_basis,
+        &resolved.seals,
+        &resolved.events,
+        &resolved.dependencies,
+        |event, digest_suite, evidence, dependencies| {
+            crate::mls::governance_proof::verify_native_agent_history_key(
+                state_store,
+                event,
+                digest_suite,
+                evidence,
+                dependencies,
+            )
+        },
+    )?
+    .checkpoint;
+    if !verified
+        .accepted_seals
+        .iter()
+        .any(|accepted| accepted == bootstrap_seal)
+    {
+        anyhow::bail!(
+            "verified PCR governance checkpoint does not contain the byte-exact bootstrap Seal"
+        );
+    }
+
+    let barrier = state_store.write(|store| {
+        store
+            .pin_mls_governance_checkpoint(bootstrap_seal.realm_id.as_str(), verified.clone())
+            .map_err(anyhow::Error::msg)?;
+        store.begin_durable_flush()
+    })?;
+    barrier.wait().await?;
+
+    let pinned = state_store
+        .read(|store| store.trusted_mls_governance_checkpoint(bootstrap_seal.realm_id.as_str()))
+        .ok_or_else(|| {
+            anyhow::anyhow!("PCR governance checkpoint was not durable after pinning")
+        })?;
+    if !pinned
+        .accepted_seals
+        .iter()
+        .any(|accepted| accepted == bootstrap_seal)
+    {
+        anyhow::bail!(
+            "durable PCR governance checkpoint does not contain the byte-exact bootstrap Seal"
+        );
+    }
+    Ok(pinned)
 }
 
 pub async fn verify_recovery_material_evidence(
@@ -238,7 +341,7 @@ pub async fn fetch_active_recovery_policy(
 }
 
 pub fn build_signed_genesis_recovery_policy(
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
     trust_domain: &str,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<Value> {
@@ -262,17 +365,13 @@ pub fn build_signed_genesis_recovery_policy(
 }
 
 pub fn build_signed_genesis_recovery_policy_for_session_device(
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
     trust_domain: &str,
-    device_id: &str,
+    device_id: &arkret_sdk::DeviceId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<Value> {
-    let device_id = device_id.trim();
-    if device_id.is_empty() {
-        anyhow::bail!("device_id is required");
-    }
     if let Some(signer) = crate::event_signer::active_signer() {
-        if signer.device_id() != Some(device_id) {
+        if signer.device_id() != Some(device_id.as_str()) {
             anyhow::bail!("active signer is not bound to current session device `{device_id}`");
         }
         let verification_method = format!("{principal_id}#{device_id}");
@@ -295,31 +394,23 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
 }
 
 fn default_principal_scoped_recovery_policy_signer(
-    principal_id: &str,
-    device_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
+    device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<crate::event_signer::InksonEventSigner> {
-    let principal_id = principal_id.trim();
-    if principal_id.is_empty() {
-        anyhow::bail!("principal_id is required");
-    }
-    let device_id = device_id.trim();
-    if device_id.is_empty() {
-        anyhow::bail!("device_id is required");
-    }
     let store = crate::secure_key_store::default_secure_key_store("inkson");
     let material = crate::secure_key_store::ensure_signing_seed(store.as_ref())
         .map_err(|err| anyhow::anyhow!("ensure recovery policy signing seed failed: {err}"))?;
     Ok(
         crate::event_signer::build_ed25519_signer_with_verification_method(
             material.seed,
-            principal_id,
+            principal_id.as_str(),
             format!("{principal_id}#{device_id}"),
         ),
     )
 }
 
 fn build_signed_genesis_recovery_policy_with_signer(
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
     trust_domain: &str,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
     signer: &crate::event_signer::InksonEventSigner,
@@ -336,18 +427,14 @@ fn build_signed_genesis_recovery_policy_with_signer(
 }
 
 fn build_signed_genesis_recovery_policy_with_raw_signer(
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
     trust_domain: &str,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
     verification_method: &str,
     sign_raw: impl Fn(&[u8]) -> Result<Vec<u8>, crate::event_signer::EventSignerError>,
 ) -> anyhow::Result<Value> {
-    let principal_id = principal_id.trim();
     let trust_domain = trust_domain.trim();
     let verification_method = verification_method.trim();
-    if principal_id.is_empty() {
-        anyhow::bail!("principal_id is required");
-    }
     if trust_domain.is_empty() {
         anyhow::bail!("trust_domain is required");
     }
@@ -362,7 +449,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
     let policy_body = UnsignedRecoveryPolicyBody {
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
-        principal_id: crate::mls_api_helpers::principal_core_id(principal_id)?,
+        principal_id: arkret_sdk::project_full_id_to_core_id(principal_id)?,
         version: 1,
         supersedes: None,
         trust_domain: TrustDomainId::new(trust_domain.to_owned())?,
@@ -445,7 +532,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
 }
 
 fn principal_scoped_recovery_policy_verification_method<'a>(
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
     signer: &'a crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<&'a str> {
     let verification_method = signer.verification_method().trim();
@@ -454,11 +541,11 @@ fn principal_scoped_recovery_policy_verification_method<'a>(
 }
 
 fn principal_scoped_recovery_policy_verification_method_id(
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
     verification_method: &str,
 ) -> anyhow::Result<()> {
     if verification_method
-        .strip_prefix(principal_id)
+        .strip_prefix(principal_id.as_str())
         .and_then(|rest| rest.strip_prefix('#'))
         .is_some_and(|fragment| !fragment.trim().is_empty())
     {
@@ -474,13 +561,14 @@ fn principal_scoped_recovery_policy_verification_method_id(
 
 pub async fn ensure_active_recovery_policy(
     api: &TransportClient,
-    principal_id: &str,
-    device_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
+    device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<ActiveRecoveryPolicy> {
+    let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)?;
     if let Some(policy) = fetch_active_recovery_policy(api).await? {
-        validate_active_policy_key_material(&policy, principal_id, key_material)?;
+        validate_active_policy_key_material(&policy, &principal_core_id, key_material)?;
         return Ok(policy);
     }
 
@@ -508,7 +596,7 @@ pub async fn ensure_active_recovery_policy(
     let policy = fetch_active_recovery_policy(api)
         .await?
         .ok_or_else(|| anyhow::anyhow!("server accepted recovery policy but did not expose it"))?;
-    validate_active_policy_key_material(&policy, principal_id, key_material)?;
+    validate_active_policy_key_material(&policy, &principal_core_id, key_material)?;
     Ok(policy)
 }
 
@@ -517,12 +605,12 @@ pub async fn ensure_active_recovery_policy(
 #[allow(clippy::expect_used)]
 async fn publish_recovery_policy(
     api: &TransportClient,
-    principal_id: &str,
-    device_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
+    device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     policy_value: Value,
 ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
-    let principal_core_id = crate::mls_api_helpers::principal_core_id(principal_id)?;
+    let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)?;
     let policy: RecoveryPolicy = serde_json::from_value(policy_value)?;
     policy.validate()?;
     let recovery_payload = arkret_sdk::RecoveryPolicySetPayload {
@@ -575,13 +663,8 @@ async fn publish_recovery_policy(
                     && attempt + 1 < FRONTIER_RETRY_ATTEMPTS =>
             {
                 if !successor_seal_submitted {
-                    submit_first_recovery_policy_seal(
-                        api,
-                        principal_core_id.as_str(),
-                        device_id,
-                        &event,
-                    )
-                    .await?;
+                    submit_first_recovery_policy_seal(api, &principal_core_id, device_id, &event)
+                        .await?;
                     successor_seal_submitted = true;
                 }
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
@@ -594,8 +677,8 @@ async fn publish_recovery_policy(
 
 async fn submit_first_recovery_policy_seal(
     api: &TransportClient,
-    principal_id: &str,
-    device_id: &str,
+    principal_id: &arkret_sdk::DidCoreId,
+    device_id: &arkret_sdk::DeviceId,
     policy_event: &arkret_sdk::Event,
 ) -> anyhow::Result<()> {
     let http = api.sdk_http_client()?;
@@ -609,15 +692,14 @@ async fn submit_first_recovery_policy_seal(
     let create = complete_events
         .iter()
         .find(|event| {
-            event.kind == arkret_sdk::EventKind::RealmCreate
-                && event.actor_id.as_str() == principal_id
+            event.kind == arkret_sdk::EventKind::RealmCreate && event.actor_id == *principal_id
         })
         .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap create Event"))?;
     let authorize = complete_events
         .iter()
         .find(|event| {
             event.kind == arkret_sdk::EventKind::DeviceAuthorize
-                && event.actor_id.as_str() == principal_id
+                && event.actor_id == *principal_id
                 && event.actor_seq == 1
         })
         .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap authorize Event"))?;
@@ -627,12 +709,12 @@ async fn submit_first_recovery_policy_seal(
         .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
-    if signer.device_id() != Some(device_id) {
+    if signer.device_id() != Some(device_id.as_str()) {
         anyhow::bail!("active device signer does not match the recovery-policy device");
     }
     let hlc = crate::signing_stamp::issue_protocol_hlc(
-        principal_id,
-        device_id,
+        principal_id.as_str(),
+        device_id.as_str(),
         policy_event.realm_id.as_str(),
     )?;
     let seal = signer
@@ -666,15 +748,14 @@ fn recovery_policy_frontier_pending(error: &anyhow::Error) -> bool {
 
 fn validate_active_policy_key_material(
     summary: &ActiveRecoveryPolicy,
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidCoreId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<DidUrl> {
-    let requested_principal_core = crate::mls_api_helpers::principal_core_id(principal_id)?;
-    if summary.principal_id != requested_principal_core {
+    if summary.principal_id != *principal_id {
         anyhow::bail!(
             "active recovery policy principal `{}` does not match requested principal `{}`",
             summary.principal_id,
-            principal_id.trim()
+            principal_id
         );
     }
     let policy = summary.policy.as_ref().ok_or_else(|| {
@@ -736,7 +817,7 @@ pub fn build_recovery_unlock_proof_from_words(
     )?;
     let recovery_secret_ref = validate_active_policy_key_material(
         policy,
-        session.principal_authority.principal_id.as_str(),
+        &session.principal_authority.principal_id,
         &key_material,
     )?;
     arkret_sdk::identity_root::build_recovery_unlock_proof(
@@ -763,8 +844,8 @@ pub async fn submit_recovery_unlock_proof(
 
 pub async fn ensure_recovery_policy(
     api: &TransportClient,
-    principal_id: &str,
-    device_id: &str,
+    principal_id: &arkret_sdk::DidFullId,
+    device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     recovery_key: &str,
 ) -> anyhow::Result<ActiveRecoveryPolicy> {
@@ -785,18 +866,18 @@ pub async fn ensure_recovery_policy(
 
 /// Build the `recovery-session.schema.json` `create_request` body.
 pub fn create_session_body(
-    principal_id: &str,
-    requesting_device_id: &str,
-    trust_domain: &str,
+    principal_id: &arkret_sdk::DidFullId,
+    requesting_device_id: &arkret_sdk::DeviceId,
+    trust_domain: &arkret_sdk::TrustDomainId,
     expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<RecoverySessionCreateRequestBody> {
     Ok(RecoverySessionCreateRequestBody {
         principal_authority: arkret_sdk::PrincipalAuthorityKey::new(
-            crate::mls_api_helpers::principal_core_id(principal_id)?,
+            arkret_sdk::project_full_id_to_core_id(principal_id)?,
             crate::operation::authoring_principal_server_id()?,
         ),
-        requesting_device_id: DeviceId::new(requesting_device_id.trim().to_owned())?,
-        trust_domain: TrustDomainId::new(trust_domain.trim().to_owned())?,
+        requesting_device_id: requesting_device_id.clone(),
+        trust_domain: trust_domain.clone(),
         expected_recovery_policy_ref: match expected_recovery_policy_ref {
             Some((policy_id, policy_version)) => Some(RecoveryPolicyRef {
                 policy_id: PolicyId::new(policy_id.trim().to_owned())?,
@@ -811,9 +892,9 @@ pub fn create_session_body(
 /// challenge + every binding field the proof transcript needs).
 pub async fn open_recovery_session(
     api: &TransportClient,
-    principal_id: &str,
-    requesting_device_id: &str,
-    trust_domain: &str,
+    principal_id: &arkret_sdk::DidFullId,
+    requesting_device_id: &arkret_sdk::DeviceId,
+    trust_domain: &arkret_sdk::TrustDomainId,
     expected_recovery_policy_ref: Option<(&str, u64)>,
 ) -> anyhow::Result<Value> {
     let body = create_session_body(

@@ -663,7 +663,7 @@ pub struct PendingAccountHandoff {
     /// Existing principal returned by a bound account handoff. Presence
     /// selects Recovery-Key re-anchor instead of identity creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bound_principal_id: Option<String>,
+    pub bound_principal_id: Option<arkret_sdk::DidFullId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -683,7 +683,8 @@ pub struct PendingPrincipalRegistration {
     pub lease_fence: u64,
     pub device_id: String,
     pub trust_domain: String,
-    pub did: String,
+    #[serde(rename = "did")]
+    pub full_id: arkret_sdk::DidFullId,
     pub version_id: String,
     /// Durable explicit-abandonment challenge projected by the Account
     /// Authority together with its authoritative reauthentication decision.

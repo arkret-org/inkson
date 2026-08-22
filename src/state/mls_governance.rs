@@ -62,18 +62,22 @@ impl LocalStateStore {
         checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        if self
-            .cached
-            .mls_governance_checkpoints
-            .contains_key(realm_id)
-        {
-            return Ok(());
-        }
         checkpoint
             .validate_checkpoint()
             .map_err(|error| format!("invalid MLS governance checkpoint: {error}"))?;
         if checkpoint.realm_id.as_str() != realm_id {
             return Err("MLS governance checkpoint belongs to another Realm".to_owned());
+        }
+        if let Some(existing) = self.cached.mls_governance_checkpoints.get(realm_id) {
+            existing
+                .validate_checkpoint()
+                .map_err(|error| format!("invalid existing MLS governance checkpoint: {error}"))?;
+            if existing == &checkpoint {
+                return Ok(());
+            }
+            return Err(
+                "a different MLS governance checkpoint is already pinned for this Realm".to_owned(),
+            );
         }
         self.cached
             .mls_governance_checkpoints
