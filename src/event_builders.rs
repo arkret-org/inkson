@@ -296,15 +296,9 @@ pub fn build_realm_bootstrap_facet_intents(
             realm_id,
             actor_id,
             digest_suite,
-            arkret_sdk::StatePayload {
-                value: Some(serde_json::to_value(parse_wire_enum::<
-                    arkret_sdk::RealmJoinRuleValue,
-                >(
-                    "join_rule", &facets.join_rule
-                )?)?),
-                state: None,
-                reason: None,
-            },
+            arkret_sdk::RealmJoinRulePayload::new(
+                parse_wire_enum::<arkret_sdk::RealmJoinRuleValue>("join_rule", &facets.join_rule)?,
+            ),
         )?
         .into_intent(),
     );
@@ -322,16 +316,11 @@ pub fn build_realm_bootstrap_facet_intents(
             realm_id,
             actor_id,
             digest_suite,
-            arkret_sdk::StatePayload {
-                value: Some(serde_json::to_value(parse_wire_enum::<
-                    arkret_sdk::RealmDiscoveryValue,
-                >(
-                    "discoverability",
-                    &facets.discoverability,
-                )?)?),
-                state: None,
-                reason: None,
-            },
+            arkret_sdk::RealmDiscoveryPayload::new(parse_wire_enum::<
+                arkret_sdk::RealmDiscoverability,
+            >(
+                "discoverability", &facets.discoverability
+            )?),
         )?
         .into_intent(),
     );
@@ -463,7 +452,10 @@ fn build_realm_bootstrap_membership_intent(
 
 /// Parse a wire enum token through its SDK strong type, so an unregistered
 /// value fails here instead of on the receiver's schema gate.
-fn parse_wire_enum<T: serde::de::DeserializeOwned>(field: &str, value: &str) -> anyhow::Result<T> {
+pub(crate) fn parse_wire_enum<T: serde::de::DeserializeOwned>(
+    field: &str,
+    value: &str,
+) -> anyhow::Result<T> {
     serde_json::from_value(Value::String(value.trim().to_owned()))
         .map_err(|err| anyhow::anyhow!("invalid {field} {value:?}: {err}"))
 }
