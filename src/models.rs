@@ -870,9 +870,6 @@ pub use arkret_models_integration::models_push::PushRegisterDeviceOutcome;
 
 // ── Directory ───────────────────────────────────────────────────
 
-pub type SearchOrganizationsView = arkret_models_discovery::DirectoryOrganizationSearchOutcome;
-pub type SearchActorsView = arkret_models_discovery::DirectoryActorSearchOutcome;
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DirectoryDidDocumentJson(pub Value);

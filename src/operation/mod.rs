@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 pub use arkret_sdk::events::kinds::EventKind;
+use arkret_sdk::schema::EventCellContractError;
 pub use arkret_sdk::{
     Audience, AuthoredEvent, CriticalExtension, Event, EventIntent, EventRef, EventRequirements,
     LatticeOp, LatticeOpType, Precondition, Predicate, PredicateOp, ProducerEventProof,
@@ -32,11 +33,9 @@ use serde_json::Value;
 pub fn project_registered_cell_writes(
     event: &Event,
     digest_suite: arkret_sdk::DigestSuite,
-) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
+) -> Result<Vec<ProjectedCellWrite>, EventCellContractError> {
     arkret_sdk::schema::project_registered_cell_writes(event, digest_suite)
 }
-
-pub type EventCellProjectionError = arkret_sdk::schema::EventCellContractError;
 
 /// [`project_registered_cell_writes`] adapted to the SDK's injected
 /// `CellWriteProjector` callback shape (`Result<_, String>`).
@@ -54,7 +53,7 @@ pub fn cell_write_projector(
 pub fn pre_authoring_cell_writes(
     intent: &EventIntent,
     digest_suite: arkret_sdk::DigestSuite,
-) -> Result<Vec<ProjectedCellWrite>, EventCellProjectionError> {
+) -> Result<Vec<ProjectedCellWrite>, EventCellContractError> {
     arkret_sdk::pre_authoring_cell_writes(intent, digest_suite)
 }
 
@@ -68,7 +67,7 @@ pub fn pre_authoring_cell_writes(
 pub fn direct_registered_cell_writes(
     event: &Event,
     digest_suite: arkret_sdk::DigestSuite,
-) -> Result<Vec<ProjectionEffect>, EventCellProjectionError> {
+) -> Result<Vec<ProjectionEffect>, EventCellContractError> {
     Ok(project_registered_cell_writes(event, digest_suite)?
         .iter()
         .filter_map(ProjectedCellWrite::as_direct)

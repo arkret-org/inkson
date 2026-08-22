@@ -8,10 +8,10 @@
 //! session-refresh + terminal-session classification identical to the old
 //! facade path while dropping the per-domain facade method.
 
+use arkret_models_discovery::{DirectoryActorSearchOutcome, DirectoryOrganizationSearchOutcome};
+
 use crate::directory_helpers::{ResolveHandleContext, resolve_handle_request_body};
-use crate::models::{
-    DirectoryRealmResolutionOutcome, ResolveHandleView, SearchActorsView, SearchOrganizationsView,
-};
+use crate::models::{DirectoryRealmResolutionOutcome, ResolveHandleView};
 use crate::wire_helpers::validate_cursor;
 
 pub async fn search_realms(
@@ -122,7 +122,7 @@ pub async fn search_organizations(
     http: &arkret_sdk::http_client::Client,
     query: &str,
     next_cursor: Option<&str>,
-) -> anyhow::Result<SearchOrganizationsView> {
+) -> anyhow::Result<DirectoryOrganizationSearchOutcome> {
     let cursor = next_cursor
         .map(validate_cursor)
         .transpose()?
@@ -142,7 +142,7 @@ pub async fn search_actors(
     http: &arkret_sdk::http_client::Client,
     query: &str,
     next_cursor: Option<&str>,
-) -> anyhow::Result<SearchActorsView> {
+) -> anyhow::Result<DirectoryActorSearchOutcome> {
     let cursor = next_cursor
         .map(validate_cursor)
         .transpose()?

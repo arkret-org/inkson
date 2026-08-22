@@ -25,14 +25,11 @@ use serde_json::Value;
 
 use crate::transport::TransportClient;
 
-/// 6.1 — parsed active recovery policy summary (the fields a client surfaces).
-pub type ActiveRecoveryPolicy = RecoveryPolicySummary;
-
 /// Account-level recovery state derived from server facts plus optional local
 /// display metadata.
 #[derive(Clone, Debug, Default)]
 pub struct AccountRecoveryState {
-    pub active_policy: Option<ActiveRecoveryPolicy>,
+    pub active_policy: Option<RecoveryPolicySummary>,
     pub recovery_public_key_secret_storage_backup_count: usize,
     pub local_recovery_key_fingerprint: Option<String>,
 }
@@ -57,8 +54,8 @@ impl AccountRecoveryState {
 }
 
 /// Parse the `GET recovery-policy` response (`{ "active_policy": <summary|null> }`)
-/// into [`ActiveRecoveryPolicy`]. Returns `None` when no policy is accepted.
-pub fn parse_active_recovery_policy(response: &Value) -> Option<ActiveRecoveryPolicy> {
+/// into [`RecoveryPolicySummary`]. Returns `None` when no policy is accepted.
+pub fn parse_active_recovery_policy(response: &Value) -> Option<RecoveryPolicySummary> {
     let outcome = serde_json::from_value::<RecoveryPolicyActiveOutcome>(response.clone()).ok()?;
     let policy = outcome.active_policy?;
     if policy.version == 0 {
@@ -333,9 +330,9 @@ fn count_backups_by_class_and_method(
 /// 6.1 — fetch + parse the active recovery policy.
 pub async fn fetch_active_recovery_policy(
     api: &TransportClient,
-) -> anyhow::Result<Option<ActiveRecoveryPolicy>> {
-    // `parse_active_recovery_policy` reads `active_policy.*` leniently via
-    // `Value` accessors; serialize the typed outcome back to its wire JSON.
+) -> anyhow::Result<Option<RecoveryPolicySummary>> {
+    // Reuse the same typed parser for direct JSON and transport outcomes by
+    // serializing the already-validated transport DTO back to its wire shape.
     let response = serde_json::to_value(&api.get_recovery_policy().await?)?;
     Ok(parse_active_recovery_policy(&response))
 }
@@ -565,7 +562,7 @@ pub async fn ensure_active_recovery_policy(
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
-) -> anyhow::Result<ActiveRecoveryPolicy> {
+) -> anyhow::Result<RecoveryPolicySummary> {
     let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)?;
     if let Some(policy) = fetch_active_recovery_policy(api).await? {
         validate_active_policy_key_material(&policy, &principal_core_id, key_material)?;
@@ -747,7 +744,7 @@ fn recovery_policy_frontier_pending(error: &anyhow::Error) -> bool {
 }
 
 fn validate_active_policy_key_material(
-    summary: &ActiveRecoveryPolicy,
+    summary: &RecoveryPolicySummary,
     principal_id: &arkret_sdk::DidCoreId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<DidUrl> {
@@ -805,7 +802,7 @@ fn validate_active_policy_key_material(
 
 pub fn build_recovery_unlock_proof_from_words(
     session: &arkret_sdk::RecoverySessionState,
-    policy: &ActiveRecoveryPolicy,
+    policy: &RecoveryPolicySummary,
     recovery_words: &str,
 ) -> anyhow::Result<arkret_sdk::RecoverySessionProof> {
     let normalized = crate::recovery_crypto::normalize_recovery_key_input(recovery_words)
@@ -831,7 +828,7 @@ pub fn build_recovery_unlock_proof_from_words(
 pub async fn submit_recovery_unlock_proof(
     api: &TransportClient,
     session: &arkret_sdk::RecoverySessionState,
-    policy: &ActiveRecoveryPolicy,
+    policy: &RecoveryPolicySummary,
     recovery_words: &str,
 ) -> anyhow::Result<arkret_sdk::RecoverySessionProofSubmitOutcome> {
     let proof = build_recovery_unlock_proof_from_words(session, policy, recovery_words)?;
@@ -848,7 +845,7 @@ pub async fn ensure_recovery_policy(
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     recovery_key: &str,
-) -> anyhow::Result<ActiveRecoveryPolicy> {
+) -> anyhow::Result<RecoveryPolicySummary> {
     let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
         recovery_key,
         "",
