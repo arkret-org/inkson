@@ -24,7 +24,7 @@ pub fn consent_grant(
     let payload = arkret_sdk::ConsentGrantPayload {
         consent_id: consent_id.clone(),
         peer: did_id(peer)?,
-        consent_scope: consent_scope.trim().to_owned(),
+        consent_scope: consent_scope.trim().parse()?,
         not_before: None,
         expires_at,
         constraints: None,

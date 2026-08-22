@@ -114,7 +114,7 @@ fn parse_consent_rows(value: &arkret_sdk::ConsentCellList) -> Vec<ConsentRow> {
         .map(|cell| ConsentRow {
             holder: cell.holder_principal_id.to_string(),
             peer: cell.peer_principal_id.to_string(),
-            scope: cell.consent_scope.clone(),
+            scope: cell.consent_scope.as_str().to_owned(),
             state: serde_json::to_value(cell.state)
                 .ok()
                 .and_then(|v| v.as_str().map(ToOwned::to_owned))

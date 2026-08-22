@@ -1297,7 +1297,7 @@ pub async fn request_consent(
     let body = arkret_sdk::ConsentRequestRequestBody {
         holder_principal_id: crate::mls_api_helpers::principal_core_id(holder)?,
         peer_principal_id: Some(crate::mls_api_helpers::principal_core_id(peer)?),
-        consent_scope: Some(scope.trim().to_owned()),
+        consent_scope: Some(scope.trim().parse()?),
     };
     http.post(arkret_wire::PATH_SELF_CONSENT_REQUEST, &body)
         .await
