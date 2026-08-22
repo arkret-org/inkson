@@ -336,7 +336,6 @@ pub fn build_mls_genesis_payload(
         ratchet_tree_digest: arkret_sdk::Hash::new(ratchet_tree_digest).map_err(|error| {
             MlsRuntimeError::Genesis(format!("invalid ratchet-tree digest: {error}"))
         })?,
-        initial_keypackage_refs: None,
         governance_binding: governance_binding.clone(),
         // The RRK archive is produced by the exporter durability path, which
         // this client does not yet author; the closed schema forbids the field
