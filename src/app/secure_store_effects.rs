@@ -293,14 +293,11 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             }
                         }
                     });
-                    let active_full_id = active_account
-                        .peek()
-                        .as_ref()
-                        .map(|account| account.full_id().clone());
-                    if let (Some(user_store), Some(stable_device_id), Some(active_full_id)) = (
+                    let active_signer_account = active_account.peek().clone();
+                    if let (Some(user_store), Some(stable_device_id), Some(active_signer_account)) = (
                         user_store.as_ref(),
                         stable_device_id_for_signer,
-                        active_full_id,
+                        active_signer_account,
                     ) {
                         let signer_bootstrap =
                             crate::event_signer::bootstrap_default_signer_for_device(
@@ -312,8 +309,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             })
                             .and_then(|_| {
                                 bind_active_signer_to_account_session(
-                                    active_full_id.as_str(),
-                                    &stable_device_id,
+                                    &active_signer_account,
                                     active_grant.as_ref(),
                                 )
                             });
@@ -321,7 +317,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             Ok(()) => {
                                 tracing::info!(
                                     target: "secure_store",
-                                    principal = %active_full_id,
+                                    principal = %active_signer_account.full_id(),
                                     device_id = %stable_device_id,
                                     "IndexedDB account-bound device identity signer bootstrap succeeded"
                                 );
@@ -348,14 +344,14 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                     persist_config(
                                         config_store_for_secure_upgrade,
                                         base_url_for_secure_upgrade(),
-                                        active_full_id.to_string(),
+                                        active_signer_account.full_id().to_string(),
                                         stable_device_id.clone(),
                                         String::new(),
                                     );
                                 }
                                 tracing::warn!(
                                     target: "secure_store",
-                                    principal = %active_full_id,
+                                    principal = %active_signer_account.full_id(),
                                     device_id = %stable_device_id,
                                     %error,
                                     "IndexedDB account-bound device identity signer bootstrap failed; session discarded"

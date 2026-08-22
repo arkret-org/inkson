@@ -259,6 +259,26 @@ impl LocalStateStore {
 /// active-scope global, which is also unset this early.
 #[cfg(target_arch = "wasm32")]
 fn schedule_deferred_session_grant_persist(grant: PersistedSessionGrant) {
+    let Some(scope) = crate::secure_key_store::active_device_seed_scope() else {
+        tracing::warn!(
+            "deferred secure session grant persist skipped without an active authority/device scope"
+        );
+        return;
+    };
+    if scope.authority.principal_id != grant.principal_id || scope.device_id != grant.device_id {
+        tracing::warn!(
+            "deferred secure session grant persist rejected for a different authority/device scope"
+        );
+        return;
+    }
+    let user_store =
+        match crate::secure_key_store::UserLocalStore::new(scope.authority, scope.device_id) {
+            Ok(user_store) => user_store,
+            Err(error) => {
+                tracing::warn!(?error, "deferred secure session grant scope is invalid");
+                return;
+            }
+        };
     tracing::debug!(
         target: "secure_store",
         "deferred session grant persist scheduled (waiting for IndexedDB tier)"
@@ -277,10 +297,8 @@ fn schedule_deferred_session_grant_persist(grant: PersistedSessionGrant) {
             return;
         }
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let result = user_local_store_for_account(grant.authority.clone(), grant.device_id.clone())
-            .and_then(|user_store| {
-                store_session_grant_in_user_secure_store(&user_store, secure_store.as_ref(), &grant)
-            });
+        let result =
+            store_session_grant_in_user_secure_store(&user_store, secure_store.as_ref(), &grant);
         match result {
             Ok(()) => tracing::debug!(
                 target: "secure_store",
