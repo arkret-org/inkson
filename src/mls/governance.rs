@@ -15,7 +15,8 @@
 //! `kind + payload`. Preconditions stay on the Event and stay producer-signed,
 //! so only they are built here.
 //!
-//! Both cells are addressed by `payload.mls_group_id`.
+//! Both cells are addressed by the composite subject
+//! `(effective scope id, payload.mls_group_id)`.
 
 use arkret_sdk::mls_cells::{key_schedule_cell_id, mls_epoch_cell_id};
 use arkret_sdk::{Precondition, Predicate, PredicateOp};
@@ -23,16 +24,18 @@ use serde_json::Value;
 
 /// The exact predecessor preconditions an `ak.mls.commit` Event MUST carry.
 ///
-/// Both are addressed by the MLS group id, matching the registered
-/// `cell_subject` of the cells the commit goes on to write.
+/// Both are addressed by the registered composite `cell_subject`
+/// `(effective scope id, payload.mls_group_id)` of the cells the commit goes
+/// on to write.
 pub fn mls_commit_preconditions(
+    effective_scope: &arkret_sdk::ScopeRef,
     mls_group_id: &str,
     prev_epoch: u64,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> anyhow::Result<Vec<Precondition>> {
-    let epoch_cell = mls_epoch_cell_id(mls_group_id)
+    let epoch_cell = mls_epoch_cell_id(effective_scope, mls_group_id)
         .map_err(|error| anyhow::anyhow!("mls epoch cell id invalid: {error:?}"))?;
-    let key_schedule_cell = key_schedule_cell_id(mls_group_id)
+    let key_schedule_cell = key_schedule_cell_id(effective_scope, mls_group_id)
         .map_err(|error| anyhow::anyhow!("key schedule cell id invalid: {error:?}"))?;
     Ok(vec![
         Precondition {
@@ -91,9 +94,15 @@ mod tests {
     /// `crate::mls::governance_proof`, which is where the projection is
     /// actually consumed.
     #[test]
-    fn commit_preconditions_bind_both_cas_predecessors_by_group() {
+    fn commit_preconditions_bind_both_cas_predecessors_by_composite_subject() {
         let previous_binding = governance_binding();
-        let preconditions = mls_commit_preconditions("mls-group-1", 7, &previous_binding).unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new("ak:realm:AYw-PHWIOTuZhm-EenZx-cCbOziC8pNCrh10oRfqiEmN")
+                .unwrap(),
+        };
+        let group_id = scope.canonical_mls_group_id().unwrap();
+        let preconditions =
+            mls_commit_preconditions(&scope, &group_id, 7, &previous_binding).unwrap();
 
         assert_eq!(preconditions.len(), 2);
         assert!(preconditions[0].cell.as_str().contains("mls.epoch"));
@@ -105,7 +114,17 @@ mod tests {
             preconditions[1].predicate.value,
             Some(serde_json::to_value(&previous_binding).unwrap())
         );
-        assert!(preconditions[0].cell.as_str().ends_with("mls-group-1"));
-        assert!(preconditions[1].cell.as_str().ends_with("mls-group-1"));
+
+        // The subject is the registry composite digest, never the bare group
+        // id: addressing these cells by group id alone yields a cell no
+        // reducer ever writes.
+        let expected_subject = arkret_sdk::composite_subject(&[
+            "ak:realm:AYw-PHWIOTuZhm-EenZx-cCbOziC8pNCrh10oRfqiEmN",
+            group_id.as_str(),
+        ])
+        .unwrap();
+        assert!(preconditions[0].cell.as_str().ends_with(&expected_subject));
+        assert!(preconditions[1].cell.as_str().ends_with(&expected_subject));
+        assert!(!preconditions[0].cell.as_str().ends_with(group_id.as_str()));
     }
 }

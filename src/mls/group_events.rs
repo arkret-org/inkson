@@ -474,6 +474,7 @@ pub(crate) fn mls_commit_basis_from_store(
         None => governance_binding,
     };
     let preconditions = crate::mls::governance::mls_commit_preconditions(
+        &effective_scope,
         commit_envelope.group_id.as_str(),
         prev_epoch,
         previous_governance_binding,
