@@ -182,7 +182,7 @@ pub fn RealmAdminPanel(
     // Resolve the authority root from the locally replayed projection. Every
     // governance authoring path below binds these exact coordinates; no UI
     // state or Realm identifier is treated as an authority assertion.
-    let actor_core_id = arkret_sdk::DidCoreId::new(principal_id.clone())
+    let actor_core_id = crate::mls_api_helpers::principal_core_id(&principal_id)
         .map(|id| id.as_str().to_owned())
         .unwrap_or_default();
     let (authority_root, is_root_controller) = {

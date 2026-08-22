@@ -1301,24 +1301,13 @@ pub struct ClientLocalState {
     pub primary_handle: String,
 }
 
-/// One row for the signed-out account selector (Google-style "choose an
-/// account" list). Built from the [`RootIndex`] `known_profiles` joined with each
-/// account's own persisted entry. The `handle` is the display label (callers
-/// MUST prefer it and never render the raw `did`); `device_id` / `server_url`
-/// are the values that account last signed in with, so a reuse-login targets
-/// that exact device + server.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct KnownAccount {
-    /// Installation-local profile selector. It is never protocol authority.
+/// Stable root-index row. Current resolution and route live in the profile;
+/// the root needs only enough typed identity to select an account namespace.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountIndexEntry {
     pub profile_id: String,
-    /// Exact account authority pair owning the profile and its local state.
     pub authority: arkret_sdk::PrincipalAuthorityKey,
-    /// Resolved primary personal handle (e.g. `david`), or empty when unknown.
-    pub handle: String,
-    /// The `device_id` this account last signed in with on this browser.
-    pub device_id: Option<arkret_sdk::DeviceId>,
-    /// The principal-server URL this account last signed in against.
-    pub server_url: Option<url::Url>,
 }
 
 /// Cross-account UI device preferences — the ONLY part of local state shared
@@ -1354,15 +1343,14 @@ pub struct PendingLogin {
 
 /// Small, cold-written root index that replaces the former single global
 /// `ClientLocalState` blob. Each account's full [`ClientLocalState`] lives in
-/// its own sibling key (`inkson.local_state.v1.account.<authority-digest>`); this index only
+/// its own sibling authority-digest key; this index only
 /// records which account is active, the cross-account [`DevicePrefs`], any
 /// in-flight [`PendingLogin`] device material, and the set of known account
-/// DIDs (for enumeration / cleanup). Hot per-write flushes touch only the
+/// profiles (for enumeration / cleanup). Hot per-write flushes touch only the
 /// active account's key, never this index.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RootIndex {
-    /// The currently-foreground installation-local profile id, or `None` when signed out / before
-    /// any account has been adopted on this browser.
+    /// The currently-foreground local profile id.
     #[serde(default)]
     pub active_profile_id: Option<String>,
     /// Cross-account UI device preferences (the only shared part).
@@ -1372,48 +1360,36 @@ pub struct RootIndex {
     /// in-flight interactive sign-in.
     #[serde(default)]
     pub pending_login: Option<PendingLogin>,
-    /// Every profile with a persisted account-authority entry, for enumeration
-    /// and cleanup. The active profile is always a member.
+    /// Every local profile with a persisted authority-scoped account entry.
     #[serde(default)]
-    pub known_profiles: Vec<KnownProfileRef>,
+    pub known_profiles: Vec<AccountIndexEntry>,
 }
 
 impl RootIndex {
-    pub fn note_known_profile(
-        &mut self,
-        profile_id: &str,
-        authority: &arkret_sdk::PrincipalAuthorityKey,
-    ) -> Option<String> {
-        let profile_id = profile_id.trim();
-        if profile_id.is_empty() {
-            return None;
-        }
-        if let Some(known) = self
+    pub fn note_known_profile(&mut self, entry: AccountIndexEntry) {
+        if let Some(existing) = self
             .known_profiles
             .iter_mut()
-            .find(|known| known.authority == *authority)
+            .find(|known| known.authority == entry.authority)
         {
-            return Some(known.profile_id.clone());
+            existing.profile_id = entry.profile_id;
+        } else {
+            self.known_profiles.push(entry);
+            self.known_profiles
+                .sort_by(|left, right| left.profile_id.cmp(&right.profile_id));
         }
-        if self
-            .known_profiles
-            .iter()
-            .any(|known| known.profile_id == profile_id)
-        {
-            return None;
-        }
-        self.known_profiles.push(KnownProfileRef {
-            profile_id: profile_id.to_owned(),
-            authority: authority.clone(),
-        });
-        self.known_profiles
-            .sort_by(|left, right| left.profile_id.cmp(&right.profile_id));
-        Some(profile_id.to_owned())
     }
 
-    pub fn forget_known_profile(&mut self, profile_id: &str) {
+    pub fn forget_profile(&mut self, profile_id: &str) {
         self.known_profiles
             .retain(|known| known.profile_id != profile_id);
+    }
+
+    pub fn active_entry(&self) -> Option<&AccountIndexEntry> {
+        let profile_id = self.active_profile_id.as_deref()?;
+        self.known_profiles
+            .iter()
+            .find(|known| known.profile_id == profile_id)
     }
 
     pub fn authority_for_profile(
@@ -1489,12 +1465,14 @@ pub struct PersistedSessionGrant {
     pub grant_id: String,
     /// Audience the grant is bound to (typically the principal-server URL).
     pub audience: String,
-    /// Exact account authority pair that issued and owns this grant.
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    /// Stable core principal ID (`DidCoreId`) the grant authorizes. A record
+    /// holding anything else is invalid and the session is unusable; it is
+    /// never repaired by back-projecting a full DID.
+    pub principal_id: arkret_sdk::DidCoreId,
     /// Device id bound to the grant.
     pub device_id: arkret_sdk::DeviceId,
     /// Principal-server base URL whose `/_arkret/self/*` surface accepts this grant.
-    pub principal_server_url: String,
+    pub principal_server_url: url::Url,
     /// When the grant itself stops being usable. Once we pass this the
     /// next refresh attempt will fail and the user must re-login.
     #[serde(default)]

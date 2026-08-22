@@ -278,7 +278,7 @@ pub(crate) fn build_read_receipt_preferences_body(
 pub(crate) fn push_blocklist_account_data(
     base_url: String,
     api_token: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    principal_id: String,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     entries: Vec<arkret_models_collaboration::objects::productivity::AccountBlocklistPayloadEntry>,
 ) {
@@ -293,7 +293,7 @@ pub(crate) fn push_blocklist_account_data(
                 AccountDataKey::ACCOUNT_BLOCKLIST,
                 |snapshot| {
                     let plaintext = crate::account_data::build_blocklist_account_data_body(
-                        &authority,
+                        &principal_id,
                         snapshot.revision.checked_add(1).ok_or_else(|| {
                             anyhow::anyhow!("ak.account.blocklist revision overflow")
                         })?,
@@ -503,6 +503,8 @@ pub(crate) fn push_contact_remark_account_data(
 #[allow(clippy::expect_used)]
 #[component]
 pub fn SettingsPanel(
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
     token: Signal<String>,
     account_primary_handle: String,
     personal_handles: Vec<String>,
@@ -589,10 +591,7 @@ pub fn SettingsPanel(
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
     let mut notification_settings_status = use_signal(String::new);
     let mut notification_sound_enabled = use_signal(|| {
-        crate::notification_sound::notification_sound_enabled(
-            &state_store.read(),
-            &account_storage_key(),
-        )
+        crate::notification_sound::notification_sound_enabled(&state_store.read(), &principal_id())
     });
     // Per-realm override editor state (spec push-notifications.md §4.3.2).
     // `new_override_realm` holds the realm id picked in the "add" row;
@@ -638,7 +637,7 @@ pub fn SettingsPanel(
     // published through the spec profile endpoint so directory projections can index it.
     let initial_avatar_blob_ref = state_store
         .read()
-        .load_private_data(&account_storage_key(), "avatar_blob_ref")
+        .load_private_data(&principal_id(), "avatar_blob_ref")
         .unwrap_or_default();
     let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
     let mut avatar_upload_status = use_signal(String::new);
@@ -734,7 +733,7 @@ pub fn SettingsPanel(
     };
     let device_short_label = short_protocol_id(&device_label);
     {
-        let account_key = account_storage_key();
+        let account_key = principal_id();
         use_effect(move || {
             let hydrated = state_store
                 .read()
@@ -1164,7 +1163,7 @@ pub fn SettingsPanel(
                                                                                 {
                                                                                     Ok(_) => {
                                                                                         state_store.write().save_private_data(
-                                                                                            &account_storage_key(),
+                                                                                            &principal_id(),
                                                                                             "avatar_blob_ref",
                                                                                             blob_ref.clone(),
                                                                                         );
@@ -1176,7 +1175,7 @@ pub fn SettingsPanel(
                                                                                         );
                                                                                         let refreshed = state_store
                                                                                             .read()
-                                                                                            .load_private_data(&account_storage_key(), "avatar_blob_ref")
+                                                                                            .load_private_data(&principal_id(), "avatar_blob_ref")
                                                                                             .filter(|value| !value.trim().is_empty())
                                                                                             .unwrap_or_else(|| blob_ref.clone());
                                                                                         profile_avatar_blob_ref.set(refreshed);
@@ -1256,7 +1255,7 @@ pub fn SettingsPanel(
                                                         pending_avatar_crop.set(None);
                                                         avatar_uploading.set(false);
                                                         state_store.write().save_private_data(
-                                                            &account_storage_key(),
+                                                            &principal_id(),
                                                             "avatar_blob_ref",
                                                             "",
                                                         );
@@ -1497,6 +1496,8 @@ pub fn SettingsPanel(
 
                     if active_section == SettingsSection::Devices {
                         crate::views::settings::devices::SettingsDevicesPanel {
+                            principal_id,
+                            device_id,
                             token,
                         }
                     }
@@ -1511,6 +1512,8 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Recovery {
                         crate::views::recovery::RecoveryPanel {
                             token,
+                            principal_id,
+                            device_id,
                         }
                     }
 
@@ -1526,7 +1529,7 @@ pub fn SettingsPanel(
                         }
                         div { class: "metric",
                             strong { "Config Size" }
-                            span { "~{config_store.read().load().server_url.len()} bytes" }
+                            span { "~{config_store.read().load().server_url().map(|url| url.as_str().len()).unwrap_or(0)} bytes" }
                         }
                         div { class: "metric",
                             strong { "State Store" }
@@ -1540,6 +1543,8 @@ pub fn SettingsPanel(
                 }
 
                             storage::E2eeStorageManagement {
+                                principal_id: principal_id,
+                                device_id: device_id,
                             }
 
                             details { class: "event", "data-testid": "storage-risks",
@@ -1607,6 +1612,8 @@ pub fn SettingsPanel(
                             // `needs_mls_backup`.
                             mls_recovery::SettingsMlsRecoveryPanel {
                                 token,
+                                principal_id,
+                                device_id,
                                 account_primary_handle: account_primary_handle.clone(),
                             }
                             details { class: "event", "data-testid": "key-backup-guidance",
@@ -1949,7 +1956,7 @@ pub fn SettingsPanel(
                                                 notification_sound_enabled.set(enabled);
                                                 crate::notification_sound::set_notification_sound_enabled(
                                                     &mut state_store.write(),
-                                                    &account_storage_key(),
+                                                    &principal_id(),
                                                     enabled,
                                                 );
                                                 if enabled {
@@ -3051,7 +3058,7 @@ pub fn SettingsPanel(
                                         push_blocklist_account_data(
                                             base(),
                                             token(),
-                                            account_authority(),
+                                            principal_id(),
                                             state_store,
                                             entries,
                                         );
@@ -3145,7 +3152,7 @@ pub fn SettingsPanel(
                                                             push_blocklist_account_data(
                                                                 base(),
                                                                 token(),
-                                                                account_authority(),
+                                                                principal_id(),
                                                                 state_store,
                                                                 entries,
                                                             );
@@ -3179,7 +3186,7 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Blocklist {
                         div { class: "settings-content-stack",
                             crate::views::settings::blocklist::BlocklistSettingsCard {
-                                authority: account_authority(),
+                                principal_id,
                                 token,
                             }
                         }
@@ -3210,7 +3217,7 @@ pub fn SettingsPanel(
                             "aria-label": "Light theme",
                             onclick: move |_| {
                                 theme.set("light".to_owned());
-                                state_store.write().save_private_data(&account_storage_key(), "theme", "light");
+                                state_store.write().save_private_data(&principal_id(), "theme", "light");
                                 push_client_ui_account_data(base_url(), token(), "light".to_owned());
                             },
                             UiIcon { name: "sun" }
@@ -3224,7 +3231,7 @@ pub fn SettingsPanel(
                             "aria-label": "Night theme",
                             onclick: move |_| {
                                 theme.set("night".to_owned());
-                                state_store.write().save_private_data(&account_storage_key(), "theme", "night");
+                                state_store.write().save_private_data(&principal_id(), "theme", "night");
                                 push_client_ui_account_data(base_url(), token(), "night".to_owned());
                             },
                             UiIcon { name: "moon" }
@@ -3238,7 +3245,7 @@ pub fn SettingsPanel(
                             "aria-label": "System theme",
                             onclick: move |_| {
                                 theme.set("system".to_owned());
-                                state_store.write().save_private_data(&account_storage_key(), "theme", "system");
+                                state_store.write().save_private_data(&principal_id(), "theme", "system");
                                 push_client_ui_account_data(base_url(), token(), "system".to_owned());
                             },
                             UiIcon { name: "monitor" }
@@ -3255,7 +3262,7 @@ pub fn SettingsPanel(
                             let base = base_url();
                             let api_token = token();
                             EventHandler::new(move |next: String| {
-                                state_store.write().save_private_data(&account_storage_key(), "theme", next.clone());
+                                state_store.write().save_private_data(&principal_id(), "theme", next.clone());
                                 push_client_ui_account_data(base.clone(), api_token.clone(), next);
                             })
                         },

@@ -29,17 +29,15 @@ const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
 /// `known_profiles`.
 const ANONYMOUS_ACCOUNT_NAMESPACE: &str = "anonymous";
 
-/// Bounded physical locator for one exact account authority pair.
-fn account_storage_scope(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
-) -> Result<String, crate::secure_key_store::SecureKeyStoreError> {
-    crate::secure_key_store::principal_authority_storage_digest(authority)
+/// Canonical physical namespace for an accepted account authority pair.
+fn account_storage_scope(authority: &arkret_sdk::PrincipalAuthorityKey) -> anyhow::Result<String> {
+    crate::identity::active_account::authority_namespace(authority)
 }
 
 /// Per-account `ClientLocalState` storage key, always authority-pair scoped.
 #[cfg(target_arch = "wasm32")]
-fn account_state_key(storage_scope: &str) -> String {
-    format!("{LOCAL_STATE_STORAGE_KEY}.account.{storage_scope}")
+fn account_state_key(namespace: &str) -> String {
+    format!("{LOCAL_STATE_STORAGE_KEY}.account.{namespace}")
 }
 
 /// YOU-02-003: hard cap on the persisted `raw_operations` audit log. Each
@@ -124,15 +122,15 @@ enum LocalProjectionCommand {
 pub struct LocalStateStore {
     /// The ACTIVE account's full state. Every existing read/write method
     /// operates on `cached` unchanged — they simply act on whichever account
-    /// the persisted root index's active profile authority selects. Loaded from
-    /// the authority-digest account key (or default when signed out) by
+    /// the persisted root index's `active_profile_id` selects. Loaded from
+    /// `account_state_key(active_profile_id)` (or default when signed out) by
     /// [`Self::ensure_cached_loaded`].
     ///
     /// NOTE: the root index is deliberately NOT a struct field. `LocalStateStore`
     /// is `#[derive(Clone)]` and held in a widely-cloned `Signal<_>`; a cached
     /// `root` field would diverge per clone (one clone adopting an account while
     /// a stale clone's later flush rewrites the index back), which is exactly the
-    /// "login leaves the active profile unset / pending_login uncleared" race. Instead
+    /// "login leaves active_profile_id = null / pending_login uncleared" race. Instead
     /// the root index is the small localStorage/root-file blob itself — read
     /// through [`Self::read_root`] and updated atomically through
     /// [`Self::mutate_root`] so every clone observes one shared source of truth.
@@ -626,18 +624,15 @@ impl LocalStateStore {
     // (native: sibling files via `account_state_path`). The only persistence
     // functions that touch a storage key are the three below; the ~hundreds of
     // `cached`-based read/write methods are untouched — they act on whichever
-    // account selected by `root.active_profile_id` and its typed authority.
+    // account `root.active_profile_id` selects.
     //
     // `read_persisted_state` returns the ACTIVE account's state (its callers
     // only want the state); `load_persisted_root` reads the index;
     // `write_persisted_state` writes the active account's entry and the index.
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn account_state_path(&self, storage_scope: &str) -> PathBuf {
-        // Sibling file with the stem suffixed by `.account.<authority_digest>`.
-        // DID syntax (`did:webvh:…`) contains `:` which is filesystem-hostile
-        // on Windows, so sanitise to a stable token.
-        let sanitized = sanitize_storage_scope_for_filename(storage_scope);
+    fn account_state_path(&self, namespace: &str) -> PathBuf {
+        let sanitized = sanitize_did_for_filename(namespace);
         let stem = self
             .path
             .file_stem()
@@ -766,16 +761,8 @@ impl LocalStateStore {
         if root.pending_login.is_some() {
             ANONYMOUS_ACCOUNT_NAMESPACE.to_owned()
         } else {
-            root.active_profile_id
-                .as_deref()
-                .and_then(|profile_id| root.authority_for_profile(profile_id))
-                .and_then(|authority| match account_storage_scope(authority) {
-                    Ok(scope) => Some(scope),
-                    Err(error) => {
-                        tracing::error!(?error, "invalid active account authority namespace");
-                        None
-                    }
-                })
+            root.active_entry()
+                .and_then(|entry| account_storage_scope(&entry.authority).ok())
                 .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned())
         }
     }
@@ -786,21 +773,16 @@ impl LocalStateStore {
     /// absent.
     fn read_persisted_state(&self) -> Option<ClientLocalState> {
         let root = self.read_root();
-        let active_authority = root
+        let active_namespace = root
             .pending_login
             .is_none()
-            .then(|| {
-                root.active_profile_id
-                    .as_deref()
-                    .and_then(|profile_id| root.authority_for_profile(profile_id))
-                    .cloned()
-            })
-            .flatten();
-        let account_scope = active_authority
-            .as_ref()
-            .and_then(|authority| account_storage_scope(authority).ok())
-            .unwrap_or_else(|| ANONYMOUS_ACCOUNT_NAMESPACE.to_owned());
-        let state = self.read_account_state(&account_scope).unwrap_or_default();
+            .then(|| root.active_entry())
+            .flatten()
+            .and_then(|entry| account_storage_scope(&entry.authority).ok());
+        let account_key = active_namespace
+            .as_deref()
+            .unwrap_or(ANONYMOUS_ACCOUNT_NAMESPACE);
+        let state = self.read_account_state(account_key).unwrap_or_default();
         #[cfg(not(test))]
         {
             let mut state = state;
@@ -815,41 +797,12 @@ impl LocalStateStore {
             #[cfg(not(target_arch = "wasm32"))]
             let secure_store_ready = true;
             if secure_store_ready {
-                let secure_grant = active_authority.as_ref().and_then(|authority| {
-                    let scope = crate::secure_key_store::active_device_seed_scope()?;
-                    if scope.authority != *authority {
-                        tracing::warn!(
-                            "secure session grant restore skipped because the active device scope belongs to a different authority"
-                        );
-                        return None;
-                    }
-                    let user_store = match crate::secure_key_store::UserLocalStore::new(
-                        authority.clone(),
-                        scope.device_id,
-                    ) {
-                        Ok(user_store) => user_store,
-                        Err(error) => {
-                            tracing::warn!(
-                                ?error,
-                                "secure session grant restore skipped for invalid authority/device"
-                            );
-                            return None;
-                        }
-                    };
-                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    load_session_grant_from_user_secure_store(&user_store, secure_store.as_ref())
-                        .map_err(|error| {
-                            tracing::warn!(?error, "secure session grant restore failed");
-                            error
-                        })
-                        .ok()
-                        .flatten()
-                });
-                if let Some(grant) = secure_grant {
-                    state.session_grant = Some(grant);
-                } else {
-                    state.session_grant = None;
-                }
+                // Restoring an account-local session requires the accepted
+                // PrincipalAuthorityKey. The legacy root retains only a DID,
+                // so fail closed instead of guessing a secure-store scope from
+                // a core/full string. Authority-scoped restore is wired only
+                // after the root/profile context can be reconstructed.
+                state.session_grant = None;
             }
             Some(state)
         }

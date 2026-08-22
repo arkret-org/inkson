@@ -4,8 +4,7 @@ use super::*;
 pub(super) fn ChatEffects(
     controller: ChatController,
     principal_id: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
-    device_id: arkret_sdk::DeviceId,
+    device_id: String,
     selected_realm_id: String,
     initial_strand_id: String,
     plaintext_service_id: String,
@@ -126,7 +125,7 @@ pub(super) fn ChatEffects(
         });
     }
 
-    let authority_for_connectivity = authority.clone();
+    let account_for_connectivity = principal_id.clone();
     let realm_for_connectivity = selected_realm_id.clone();
     use_future(move || {
         let authority_for_connectivity = authority_for_connectivity.clone();
@@ -155,7 +154,6 @@ pub(super) fn ChatEffects(
 
     let selected_realm_after_initial_sync = selected_realm_id.clone();
     let account_after_initial_sync = principal_id.clone();
-    let authority_after_initial_sync = authority.clone();
     let device_after_initial_sync = device_id.clone();
     use_effect(move || {
         let Some(expires_at_ms) = typing_next_expires_at_ms() else {
@@ -176,7 +174,6 @@ pub(super) fn ChatEffects(
     {
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();
-        let authority = authority.clone();
         let device = device_id.clone();
         let base = base_url.clone();
         use_effect(move || {
@@ -275,7 +272,6 @@ pub(super) fn ChatEffects(
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();
-        let authority = authority.clone();
         let device = device_id.clone();
         let mut state_store_for_presence = state_store;
         use_effect(move || {
@@ -531,7 +527,7 @@ pub(super) fn ChatEffects(
             // P0 decrypt-on-read identity: this device's actor + device id let the
             // message projection decrypt remote members' canonical encrypted_content
             // envelopes from the local MLS snapshot.
-            let local_decrypt_identity = Some((&authority, principal_id.as_str(), &device_id));
+            let local_decrypt_identity = Some((principal_id.as_str(), device_id.as_str()));
             let (local_messages, local_poll_cards, local_channels) = {
                 let store = state_store.read();
                 let snapshot = store.load();
@@ -564,13 +560,11 @@ pub(super) fn ChatEffects(
                 event_sink.emit(ChatProjectionEvent::MergePollCards(local_poll_cards));
             }
             let principal_id_for_decrypt = principal_id.clone();
-            let authority_for_decrypt = authority.clone();
             let device_id_for_decrypt = device_id.clone();
             spawn(async move {
                 let decrypt_identity = Some((
-                    &authority_for_decrypt,
                     principal_id_for_decrypt.as_str(),
-                    &device_id_for_decrypt,
+                    device_id_for_decrypt.as_str(),
                 ));
                 // The bootstrap snapshot must NOT carry a `wait_for` frontier. On
                 // wasm the subscribe response is read as a single buffered body
@@ -767,7 +761,6 @@ pub(super) fn ChatEffects(
     {
         let selected_realm_for_local_timeline = selected_realm_after_initial_sync.clone();
         let principal_id_for_local_timeline = account_after_initial_sync.clone();
-        let authority_for_local_timeline = authority_after_initial_sync.clone();
         let device_id_for_local_timeline = device_after_initial_sync.clone();
         use_effect(move || {
             let cursor = sync_cursor();
@@ -792,9 +785,8 @@ pub(super) fn ChatEffects(
                 let store = state_store.read();
                 let snapshot = store.load();
                 let decrypt_identity = Some((
-                    &authority_for_local_timeline,
                     principal_id_for_local_timeline.as_str(),
-                    &device_id_for_local_timeline,
+                    device_id_for_local_timeline.as_str(),
                 ));
                 let messages = chat_messages_from_local_state_with_sidecar(
                     &snapshot,

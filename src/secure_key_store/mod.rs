@@ -241,13 +241,11 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
 }
 
-pub(crate) fn e2ee_plaintext_cache_store_key(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
-) -> Result<String, SecureKeyStoreError> {
-    Ok(format!(
+pub(crate) fn e2ee_plaintext_cache_store_key(authority_namespace: &str) -> String {
+    format!(
         "{E2EE_PLAINTEXT_CACHE_KEY_PREFIX}{}",
-        principal_authority_storage_digest(authority)?
-    ))
+        STANDARD_NO_PAD.encode(authority_namespace.as_bytes())
+    )
 }
 
 /// E2EE-at-rest T1 — SecureKeyStore key for one exact scope/group's aggregated

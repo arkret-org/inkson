@@ -196,9 +196,11 @@ impl E2eePlaintextCacheV1 {
 
 impl LocalStateStore {
     fn active_e2ee_plaintext_cache_key(&self) -> Option<String> {
-        self.active_account_authority().and_then(|authority| {
-            crate::secure_key_store::e2ee_plaintext_cache_store_key(&authority).ok()
-        })
+        let root = self.read_root();
+        let namespace = account_storage_scope(&root.active_entry()?.authority).ok()?;
+        Some(crate::secure_key_store::e2ee_plaintext_cache_store_key(
+            &namespace,
+        ))
     }
 
     pub(crate) fn e2ee_plaintext_cache_secure_write(

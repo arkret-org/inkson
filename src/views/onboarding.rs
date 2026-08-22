@@ -227,8 +227,12 @@ fn onboarding_surface(
     }
 }
 
-fn account_summary_complete(active_account: Option<&crate::config::ActiveAccountContext>) -> bool {
-    active_account.is_some()
+/// A remembered DID is only an account summary when its authenticated session
+/// is present too. The DID is persisted independently, so treating it as proof
+/// of a completed account binding makes a signed-out, interrupted setup look
+/// successfully finished.
+fn account_summary_complete(session_token_present: bool, principal_id: &str) -> bool {
+    session_token_present && !principal_id.trim().is_empty()
 }
 
 /// A latched creation surface can outlive its durable account handoff while an
@@ -244,11 +248,12 @@ enum MissingCreationHandoffSurface {
 
 fn missing_creation_handoff_surface(
     busy: bool,
-    active_account: Option<&crate::config::ActiveAccountContext>,
+    session_token_present: bool,
+    principal_id: &str,
 ) -> MissingCreationHandoffSurface {
     if busy {
         MissingCreationHandoffSurface::Finishing
-    } else if account_summary_complete(active_account) {
+    } else if account_summary_complete(session_token_present, principal_id) {
         MissingCreationHandoffSurface::Complete
     } else {
         MissingCreationHandoffSurface::SignInRequired
@@ -330,7 +335,7 @@ async fn repair_pruned_bound_completion(
         }
         let Some(grant) = store.session_grant().filter(|grant| {
             crate::identity::session_refresh::grant_matches_full_principal(grant, bound)
-                && grant.device_id == handoff.device_id
+                && grant.device_id.as_str() == handoff.device_id
         }) else {
             return Ok(None);
         };
@@ -431,6 +436,8 @@ fn must_enter_reserved_recovery_key(handoff: &crate::state::PendingAccountHandof
 pub fn OnboardingPanel(
     secure_store_ready: bool,
     token: Signal<String>,
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     account_primary_handle: Signal<String>,
     needs_device_authorization: Signal<bool>,
@@ -467,13 +474,11 @@ pub fn OnboardingPanel(
                 Ok(()) => match repair_pruned_bound_completion(state_store).await {
                     Ok(Some(repaired)) => {
                         let mut repaired_token = token;
-                        crate::views::helpers::persist_config(
-                            config_store,
-                            Some(repaired.account.clone()),
-                            repaired.session_credential.clone(),
-                        );
+                        let mut repaired_principal_id = principal_id;
+                        let mut repaired_device_id = device_id;
                         repaired_token.set(repaired.session_credential);
-                        active_account.set(Some(repaired.account));
+                        repaired_principal_id.set(repaired.principal_id);
+                        repaired_device_id.set(repaired.device_id);
                         server_reconciliation.set(ServerReconciliationStatus::Ready);
                     }
                     Ok(None) => server_reconciliation.set(ServerReconciliationStatus::Ready),
@@ -569,6 +574,8 @@ pub fn OnboardingPanel(
                 DeviceSetupRequired {
                     state_store,
                     token,
+                    principal_id,
+                    device_id,
                     config_store,
                     needs_device_authorization,
                     device_authorization_check_complete,
@@ -579,6 +586,8 @@ pub fn OnboardingPanel(
             div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
                 PendingAccountIdentityCreation {
                     token,
+                    principal_id,
+                    device_id,
                     config_store,
                     account_primary_handle,
                     needs_device_authorization,
@@ -603,12 +612,8 @@ pub fn OnboardingPanel(
             }
         },
         OnboardingSurface::AccountSummary => {
-            let account = active_account();
-            let complete = account_summary_complete(account.as_ref());
-            let principal_label = account
-                .as_ref()
-                .map(|account| short_protocol_id(account.principal_id().as_str()))
-                .unwrap_or_default();
+            let did = principal_id();
+            let complete = account_summary_complete(!token().trim().is_empty(), &did);
             rsx! {
                 div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
                     div { class: "event onboarding-card onboarding-finished", "data-testid": "account-strand",
@@ -843,6 +848,8 @@ async fn check_device_setup_pairing(
 fn DeviceSetupRequired(
     state_store: SyncSignal<crate::state::LocalStateStore>,
     token: Signal<String>,
+    mut principal_id: Signal<String>,
+    mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     needs_device_authorization: Signal<bool>,
     device_authorization_check_complete: Signal<bool>,
@@ -861,7 +868,7 @@ fn DeviceSetupRequired(
             RootAnchoredDeviceRecovery {
                 state_store,
                 token,
-                config_store,
+                principal_id,
                 replacement_device_id: recovery_device_id,
                 needs_device_authorization,
                 device_authorization_check_complete,
@@ -961,6 +968,20 @@ fn DeviceSetupRequired(
                         spawn(async move {
                             match check_device_setup_pairing(&handoff, &request).await {
                                 Ok(arkret_sdk::DevicePairingState::Authorized) => {
+                                    let principal = handoff
+                                        .bound_principal_id
+                                        .as_ref()
+                                        .map(ToString::to_string)
+                                        .unwrap_or_default();
+                                    principal_id.set(principal.clone());
+                                    device_id.set(request.device_id.to_string());
+                                    crate::views::helpers::persist_config(
+                                        config_store,
+                                        handoff.principal_server_url.clone(),
+                                        principal,
+                                        request.device_id.to_string(),
+                                        String::new(),
+                                    );
                                     pairing_status.set(
                                         "Device authorization is accepted and verified. No session was issued; sign in again to request one."
                                             .to_owned(),
@@ -1038,7 +1059,7 @@ fn DeviceSetupRequired(
 fn RootAnchoredDeviceRecovery(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     mut token: Signal<String>,
-    config_store: Signal<crate::config::LocalConfigStore>,
+    mut principal_id: Signal<String>,
     replacement_device_id: String,
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
@@ -1070,7 +1091,7 @@ fn RootAnchoredDeviceRecovery(
                         status.set("The authenticated account recovery checkpoint is missing. Sign in again.".to_owned());
                         return;
                     };
-                    let Some(principal_id) = handoff.bound_principal_id.clone() else {
+                    let Some(principal_full_id) = handoff.bound_principal_id.clone() else {
                         status.set("This account does not require existing-identity recovery.".to_owned());
                         return;
                     };
@@ -1081,7 +1102,7 @@ fn RootAnchoredDeviceRecovery(
                     spawn(async move {
                         let result = recover_bound_principal_device(
                             &handoff,
-                            &principal_id,
+                            &principal_full_id,
                             &replacement_device_id,
                             &recovery_words,
                             state_store,
@@ -1092,14 +1113,8 @@ fn RootAnchoredDeviceRecovery(
                         match result {
                             Ok((completed, account)) => {
                                 if let Some(grant) = state_store.read().session_grant() {
-                                    let session_credential = grant.grant_jwt;
-                                    crate::views::helpers::persist_config(
-                                        config_store,
-                                        Some(account.clone()),
-                                        session_credential.clone(),
-                                    );
-                                    token.set(session_credential);
-                                    active_account.set(Some(account));
+                                    principal_id.set(principal_full_id.to_string());
+                                    token.set(grant.grant_jwt);
                                 }
                                 needs_device_authorization.set(false);
                                 device_authorization_check_complete.set(true);
@@ -1275,19 +1290,14 @@ async fn issue_recovery_completion_grant(
     if session.principal_id != principal_core_id {
         anyhow::bail!("recovery session grant principal does not match the account handoff");
     }
-    let authority = arkret_sdk::PrincipalAuthorityKey::new(
-        principal_core_id.clone(),
-        arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
-    );
-    let device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
     let persisted = crate::state::PersistedSessionGrant {
         grant_jwt: session.grant_jwt.clone(),
         session_private_key_pem: holder.session_signing_key_pkcs8_pem()?.to_string(),
         grant_id: session.grant_id.to_string(),
         audience: session.audience.to_string(),
-        authority: authority.clone(),
-        device_id: device_id.clone(),
-        principal_server_url: handoff.principal_server_url.clone(),
+        principal_id: session.principal_id.clone(),
+        device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
+        principal_server_url: url::Url::parse(&handoff.principal_server_url)?,
         grant_expires_at: Some(session.expires_at),
         stored_at: chrono::Utc::now(),
     };
@@ -1308,7 +1318,6 @@ async fn issue_recovery_completion_grant(
         .await
         .map_err(anyhow::Error::msg)?;
         let mut store = state_store.write();
-        store.adopt_pending_login(&account);
         crate::views::login::commit_completed_login_dpop_key(
             &mut store,
             secure_store.as_ref(),
@@ -1318,7 +1327,6 @@ async fn issue_recovery_completion_grant(
         )
         .map_err(anyhow::Error::msg)?;
         store.set_session_grant(Some(persisted));
-        store.register_known_profile(&account.profile_id, &account.authority);
         store.set_pending_account_handoff(None)?;
         let barrier = store.begin_durable_flush()?;
         drop(store);
@@ -1352,6 +1360,8 @@ fn SetupProgress(current: usize) -> Element {
 #[component]
 fn PendingAccountIdentityCreation(
     mut token: Signal<String>,
+    mut principal_id: Signal<String>,
+    mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     account_primary_handle: Signal<String>,
     mut needs_device_authorization: Signal<bool>,
@@ -1415,8 +1425,8 @@ fn PendingAccountIdentityCreation(
     let handoff = state_store.read().pending_account_handoff();
 
     let Some(handoff) = handoff else {
-        let account = active_account();
-        let fallback = missing_creation_handoff_surface(busy(), account.as_ref());
+        let did = principal_id();
+        let fallback = missing_creation_handoff_surface(busy(), !token().trim().is_empty(), &did);
         let current_status = status();
         return rsx! {
             div {
@@ -1819,9 +1829,10 @@ fn PendingAccountIdentityCreation(
                                 .await;
 
                                 match result {
-                                    Ok(completed_login) => {
-                                        token.set(completed_login.session_credential);
-                                        active_account.set(Some(completed_login.account));
+                                    Ok((actor, device, grant)) => {
+                                        principal_id.set(actor);
+                                        device_id.set(device);
+                                        token.set(grant);
                                         needs_device_authorization.set(false);
                                         device_authorization_check_complete.set(true);
                                         recovery_key.set(String::new());
@@ -2308,9 +2319,9 @@ async fn create_and_bind_identity(
             session_private_key_pem: completion.session_private_key_pem,
             grant_id: completion.session_grant.grant_id.to_string(),
             audience: completion.session_grant.audience.to_string(),
-            authority: account.authority.clone(),
-            device_id: account.device_id.clone(),
-            principal_server_url: handoff.principal_server_url.clone(),
+            principal_id: completion.session_grant.principal_id.clone(),
+            device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
+            principal_server_url: url::Url::parse(&handoff.principal_server_url)?,
             grant_expires_at: Some(completion.session_grant.expires_at),
             stored_at: chrono::Utc::now(),
         };
@@ -2337,7 +2348,6 @@ async fn create_and_bind_identity(
             .await
             .map_err(anyhow::Error::msg)?;
             let mut store = state_store.write();
-            store.adopt_pending_login(&account);
             crate::views::login::commit_completed_login_dpop_key(
                 &mut store,
                 secure_store.as_ref(),
@@ -2351,7 +2361,6 @@ async fn create_and_bind_identity(
             // finish_principal_setup succeeds keeps this component (and its
             // in-memory Recovery Key) alive through the background work.
             store.set_session_grant(Some(persisted_grant));
-            store.register_known_profile(&account.profile_id, &account.authority);
         }
         (accepted, account, grant_jwt)
     } else {
@@ -2364,7 +2373,7 @@ async fn create_and_bind_identity(
                 crate::identity::session_refresh::grant_matches_full_principal(
                     grant,
                     &checkpoint.full_id,
-                ) && grant.device_id == checkpoint.device_id
+                ) && grant.device_id.as_str() == checkpoint.device_id
             })
             .ok_or_else(|| {
                 anyhow::anyhow!("the unfinished setup session is unavailable; sign in again")

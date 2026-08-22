@@ -7,8 +7,6 @@ pub(super) struct ChatComposerContext {
     pub embedded: bool,
     pub selected_channel_info: Option<ChannelEntity>,
     pub principal_id: String,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
-    pub full_id: arkret_sdk::DidFullId,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,
     pub selected_realm_id: String,
@@ -83,8 +81,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         embedded: _,
         selected_channel_info,
         principal_id,
-        authority,
-        full_id,
         account_display_label,
         participants: participants_for_messages,
         selected_realm_id,
@@ -466,7 +462,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
-                            let authority = authority.clone();
                             let typing_device_id = device_id.clone();
                             let selected_strand = selected_channel_value.clone();
                             move |event: FormEvent| {
@@ -1164,7 +1159,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             realm_id: selected_realm_id.clone(),
                             strand_id: selected_channel(),
                             principal_id: principal_id.clone(),
-                            authority: authority.clone(),
                             device_id: device_id.clone(),
                             token,
                             draft: chat_draft,
@@ -1183,8 +1177,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let service_id = plaintext_service_id.clone();
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
-                            let sidecar_authority = authority.clone();
-                            let sidecar_full_id = full_id.clone();
                             let own_controller_handle = own_controller_handle.clone();
                             let sidecar_device_id = device_id.clone();
                             move |_| {
@@ -1610,8 +1602,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
-                            let sidecar_authority = authority.clone();
-                            let sidecar_full_id = full_id.clone();
                             let own_controller_handle = own_controller_handle.clone();
                             let selected_strand = selected_channel_value.clone();
                             let pending_mls_binding = selected_realm_pending_mls_binding;

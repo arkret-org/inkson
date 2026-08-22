@@ -13,8 +13,7 @@ pub(super) struct ScheduledSendPanelContext {
     pub realm_id: String,
     pub strand_id: String,
     pub principal_id: String,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
-    pub device_id: arkret_sdk::DeviceId,
+    pub device_id: String,
     pub token: Signal<String>,
     pub draft: Signal<String>,
     pub status_msg: Signal<String>,
@@ -58,7 +57,6 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
         realm_id,
         strand_id,
         principal_id,
-        authority,
         device_id,
         token,
         mut draft,
@@ -88,7 +86,7 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
     let create_plan = {
         let realm_id = realm_id.clone();
         let strand_id = strand_id.clone();
-        let authority = authority.clone();
+        let principal_id = principal_id.clone();
         let device_id = device_id.clone();
         let base_url = base_url.clone();
         move |_| {
@@ -121,7 +119,11 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
             let payload =
                 arkret_sdk::MessageCreatePayload::with_content(strand, "discussion", content);
             let prepared = match crate::scheduled_send::prepare_scheduled_send_plan(
-                &authority, &device_id, None, &send_at, payload,
+                &principal_id,
+                &device_id,
+                None,
+                &send_at,
+                payload,
             ) {
                 Ok(prepared) => prepared,
                 Err(error) => {
@@ -217,7 +219,7 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
                                         r#type: "button",
                                         "data-testid": "scheduled-send-save-button",
                                         onclick: {
-                                            let authority = authority.clone();
+                                            let principal_id = principal_id.clone();
                                             let device_id = device_id.clone();
                                             let plan_id = plan_id.clone();
                                             let plan_key = plan_key.clone();
@@ -252,7 +254,7 @@ pub(super) fn ScheduledSendPanel(context: ScheduledSendPanelContext) -> Element 
                                                     content,
                                                 );
                                                 let prepared = match crate::scheduled_send::prepare_scheduled_send_plan(
-                                                    &authority,
+                                                    &principal_id,
                                                     &device_id,
                                                     Some(&plan_id),
                                                     &send_at,

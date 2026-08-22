@@ -311,11 +311,11 @@ mod tests {
         let bob = "did:web:bob.example";
         let peer = "did:web:peer.example";
 
-        switch_test_account(&mut store, alice);
+        store.switch_test_account(alice);
         store.store_accepted_did_bindings(vec![record(&scope, peer, DidBindingPurpose::Principal)]);
         assert_eq!(store.accepted_did_bindings().len(), 1);
 
-        switch_test_account(&mut store, bob);
+        store.switch_test_account(bob);
         assert!(
             store.accepted_did_bindings().is_empty(),
             "account B must not inherit account A's accepted DID bindings"
@@ -335,7 +335,7 @@ mod tests {
             "the same DID + trust domain must still miss under a different principal"
         );
 
-        switch_test_account(&mut store, alice);
+        store.switch_test_account(alice);
         assert_eq!(
             store.accepted_did_binding_dids(),
             vec![DidFullId::new(peer.to_owned()).expect("did")],
@@ -384,7 +384,7 @@ mod tests {
         let peer = "did:web:peer.example";
         let peer_did = DidFullId::new(peer.to_owned()).expect("did");
         let (mut first_boot, path) = temp_store("restart");
-        switch_test_account(&mut first_boot, "did:web:alice.example");
+        first_boot.switch_test_account("did:web:alice.example");
         first_boot.store_accepted_did_bindings(vec![record(
             &scope,
             peer,

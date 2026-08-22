@@ -265,7 +265,7 @@ fn resolve_chime_session_grant(
             reason: "persisted grant belongs to a different principal server".to_owned(),
         });
     }
-    if grant.device_id != ctx.device_id {
+    if grant.device_id.as_str() != ctx.device_id {
         return Err(PushRegistrationError::SessionGrantMismatch {
             reason: format!(
                 "persisted grant device_id {} does not match {}",
@@ -274,7 +274,7 @@ fn resolve_chime_session_grant(
         });
     }
     if ctx.principal_id.is_none() {
-        ctx.principal_id = Some(grant.principal_id.clone());
+        ctx.principal_id = Some(grant.principal_id.to_string());
     }
 
     let signing_key = session_grant_signing_key_from_pem(&grant.session_private_key_pem)
@@ -479,9 +479,10 @@ mod tests {
             session_private_key_pem: pem,
             grant_id: "ak:grant:push-local".to_owned(),
             audience: "did:web:principal.example".to_owned(),
-            principal_id: "did:web:alice.example".to_owned(),
-            device_id: device.to_owned(),
-            principal_server_url: "https://principal.example/".to_owned(),
+            principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+                .unwrap(),
+            device_id: arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
+            principal_server_url: url::Url::parse("https://principal.example/").unwrap(),
             grant_expires_at: Some(Utc::now() + Duration::hours(1)),
             stored_at: Utc::now(),
         }

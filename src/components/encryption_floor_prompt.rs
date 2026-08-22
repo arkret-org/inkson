@@ -10,6 +10,7 @@ use crate::state::LocalStateStore;
 #[component]
 pub fn EncryptionFloorPrompt(
     token: Signal<String>,
+    principal_id: Signal<String>,
     sync_bootstrap_complete: Signal<bool>,
     device_authorization_check_complete: Signal<bool>,
     needs_device_authorization: Signal<bool>,
@@ -30,10 +31,7 @@ pub fn EncryptionFloorPrompt(
     let state_store = session_context.state_store;
     use_effect(move || {
         let session = token();
-        let Some(account) = active_account() else {
-            return;
-        };
-        let principal_id = account.principal_id().to_string();
+        let actor = principal_id();
         if dismissed()
             || !sync_bootstrap_complete()
             || !device_authorization_check_complete()
@@ -56,7 +54,7 @@ pub fn EncryptionFloorPrompt(
         let recovery_key_configured =
             matches!(account_recovery_configured(), Some(true)) || local_recovery_configured;
 
-        acknowledge_recommended_encryption(dismissed, &account, state_store);
+        acknowledge_recommended_encryption(dismissed, principal_id, state_store);
         if !recovery_key_configured {
             recovery_key_setup_prompt.set(true);
         }
@@ -73,15 +71,18 @@ pub fn EncryptionFloorPrompt(
 /// once-per-account suppression.
 fn acknowledge_recommended_encryption(
     mut dismissed: Signal<bool>,
-    account: &crate::config::ActiveAccountContext,
+    principal_id: Signal<String>,
     mut state_store: SyncSignal<LocalStateStore>,
 ) {
     dismissed.set(true);
-    state_store.write().save_private_data(
-        account.principal_id().as_str(),
-        crate::app::ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY,
-        "1".to_owned(),
-    );
+    let actor = principal_id();
+    if !actor.trim().is_empty() {
+        state_store.write().save_private_data(
+            &actor,
+            crate::app::ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY,
+            "1".to_owned(),
+        );
+    }
 }
 
 pub(crate) fn account_needs_recommended_encryption_prompt(

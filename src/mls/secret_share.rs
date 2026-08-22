@@ -135,7 +135,7 @@ pub fn build_send_content(
     request: &arkret_crypto::secret_share::SecretShareRequestContent,
     account_secret: &StoredAccountMlsSecret,
     device_message_id: &arkret_sdk::DeviceMessageId,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     self_device_id: &str,
     expires_at: &str,
 ) -> Result<arkret_crypto::secret_share::SecretShareSendContent> {
@@ -187,7 +187,7 @@ pub fn open_send_content(
     requester: &SecretShareRequester,
     send_content: &Value,
     device_message_id: &arkret_sdk::DeviceMessageId,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     sender_device_id: &str,
     our_device_id: &str,
     expires_at: &str,
@@ -278,7 +278,7 @@ pub fn land_opened_secret(
 pub async fn send_request(
     api: &crate::transport::TransportClient,
     requester: &SecretShareRequester,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     target_existing_device_id: &str,
     requesting_device_id: &str,
 ) -> Result<()> {
@@ -286,7 +286,7 @@ pub async fn send_request(
     crate::transport::keys::send_device_message::<arkret_sdk::device_message_spec::SecretRequest>(
         &api.sdk_http_client()?,
         &format!("ak.secret.request:{}", requester.request_id),
-        principal_id.as_str(),
+        principal_id,
         target_existing_device_id,
         &crate::clock::timestamp_in(30),
         content,
@@ -309,7 +309,7 @@ pub async fn respond_to_request(
     api: &crate::transport::TransportClient,
     request: &arkret_crypto::secret_share::SecretShareRequestContent,
     account_secret: &StoredAccountMlsSecret,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     self_device_id: &str,
 ) -> Result<()> {
     let expires_at = crate::clock::timestamp_in(30);
@@ -330,7 +330,7 @@ pub async fn respond_to_request(
         &api.sdk_http_client()?,
         &format!("ak.secret.send:{}", request.request_id),
         device_message_id,
-        principal_id.as_str(),
+        principal_id,
         request.from_device.as_str(),
         &expires_at,
         content,
@@ -347,7 +347,7 @@ pub async fn respond_to_request(
 pub fn try_open_envelope(
     requester: &SecretShareRequester,
     envelope: &Value,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     our_device_id: &str,
 ) -> Result<Option<OpenedSecret>> {
     if envelope.get("kind").and_then(Value::as_str) != Some(SECRET_SEND_KIND) {

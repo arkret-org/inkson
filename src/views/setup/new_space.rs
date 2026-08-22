@@ -55,6 +55,7 @@ impl SpaceStatusStrings {
 #[component]
 pub(super) fn NewSpaceSection(
     token: Signal<String>,
+    principal_id: Signal<String>,
     selected_realm_id: Signal<String>,
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     new_space_context_node: Signal<String>,
@@ -413,11 +414,7 @@ pub(super) fn NewSpaceSection(
                                 let kind = new_space_kind();
                                 let parent_id = new_space_parent_id();
                                 let default_realm_id = new_space_default_realm_id();
-                                let Some(account) = active_account() else {
-                                    new_space_state.set("create blocked: account is not connected".to_owned());
-                                    return;
-                                };
-                                let actor = account.authority.principal_id.to_string();
+                                let actor = principal_id();
                                 new_space_state.set(tr("setup.space.state.submitting_create"));
                                 spawn(async move {
                                     match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
@@ -567,11 +564,7 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let Some(account) = active_account() else {
-                                            new_space_state.set("update blocked: account is not connected".to_owned());
-                                            return;
-                                        };
-                                        let actor = account.authority.principal_id.to_string();
+                                        let actor = principal_id();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_archive"));
@@ -610,11 +603,7 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let Some(account) = active_account() else {
-                                            new_space_state.set("update blocked: account is not connected".to_owned());
-                                            return;
-                                        };
-                                        let actor = account.authority.principal_id.to_string();
+                                        let actor = principal_id();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_restore"));
@@ -653,11 +642,7 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let Some(account) = active_account() else {
-                                            new_space_state.set("update blocked: account is not connected".to_owned());
-                                            return;
-                                        };
-                                        let actor = account.authority.principal_id.to_string();
+                                        let actor = principal_id();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_tombstone"));

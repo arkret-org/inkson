@@ -741,9 +741,12 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
         audience: "did:web:principal.example".to_owned(),
-        authority: test_authority("did:web:alice.example"),
-        device_id: test_device_id(),
-        principal_server_url: "https://principal.example".to_owned(),
+        principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        device_id: arkret_sdk::DeviceId::new(
+            "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+        )
+        .unwrap(),
+        principal_server_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
     };
@@ -785,9 +788,13 @@ fn production_persist_policy_strips_session_credentials_from_account_state() {
             session_private_key_pem: "secret-session-private-key".to_owned(),
             grant_id: "grant-id".to_owned(),
             audience: "did:web:principal.example".to_owned(),
-            authority: test_authority("did:web:alice.example"),
-            device_id: test_device_id(),
-            principal_server_url: "https://principal.example".to_owned(),
+            principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+                .unwrap(),
+            device_id: arkret_sdk::DeviceId::new(
+                "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+            )
+            .unwrap(),
+            principal_server_url: url::Url::parse("https://principal.example").unwrap(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),
         }),
@@ -813,7 +820,7 @@ fn account_switch_isolates_authority_namespaces() {
         "first adopt (no active account) switches and reports a change"
     );
     assert_eq!(
-        store.active_test_principal_id().as_deref(),
+        store.active_principal_id().as_deref(),
         Some("ak:did_core:web:alice.example")
     );
     store.save_sync_cursor("sx:alice");
@@ -823,9 +830,12 @@ fn account_switch_isolates_authority_namespaces() {
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
         audience: "did:web:principal.example".to_owned(),
-        authority: test_authority("did:web:alice.example"),
-        device_id: test_device_id(),
-        principal_server_url: "https://principal.example".to_owned(),
+        principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        device_id: arkret_sdk::DeviceId::new(
+            "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+        )
+        .unwrap(),
+        principal_server_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
     }));
@@ -853,14 +863,14 @@ fn account_switch_isolates_authority_namespaces() {
         "alice's grant must not appear in bob's entry"
     );
     assert_eq!(
-        store.active_test_principal_id().as_deref(),
+        store.active_principal_id().as_deref(),
         Some("ak:did_core:web:bob.example"),
         "active account points at the new identity"
     );
 
     // Both accounts are tracked, and switching back to alice restores her own
     // independent state — structural per-account isolation, not a wipe.
-    let mut known = store.known_test_principal_ids();
+    let mut known = store.known_principal_ids();
     known.sort();
     assert_eq!(
         known,
@@ -869,7 +879,7 @@ fn account_switch_isolates_authority_namespaces() {
             "ak:did_core:web:bob.example"
         ]
     );
-    assert!(store.switch_test_account("did:web:alice.example"));
+    assert!(!store.switch_test_account("did:web:alice.example"));
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
     assert!(
         store.load().session_grant.is_some(),
@@ -891,7 +901,7 @@ fn per_account_entries_persist_independently_across_store_instances() {
     // A fresh store reloads the persisted active account (bob) + index.
     let reader = LocalStateStore::with_path(path.clone());
     assert_eq!(
-        reader.active_test_principal_id().as_deref(),
+        reader.active_principal_id().as_deref(),
         Some("ak:did_core:web:bob.example")
     );
     assert_eq!(reader.load().sync_cursor.as_deref(), Some("sx:bob"));
@@ -943,13 +953,10 @@ fn active_account_match_uses_exact_authority_while_resolution_relocates() {
     let mut store = LocalStateStore::with_path(path);
     store.switch_test_account("did:webvh:zSameScid:old.example:users:alice");
 
-    assert!(store.active_account_matches(&test_authority("ak:did_core:webvh:zSameScid")));
-    assert!(store.active_account_matches(&test_authority(
-        "did:webvh:zSameScid:new.example:people:alice"
-    )));
-    assert!(!store.active_account_matches(&test_authority(
-        "did:webvh:zOtherScid:new.example:people:alice"
-    )));
+    let same = arkret_sdk::DidCoreId::new("ak:did_core:webvh:zSameScid".to_owned()).unwrap();
+    let other = arkret_sdk::DidCoreId::new("ak:did_core:webvh:zOtherScid".to_owned()).unwrap();
+    assert!(store.active_account_matches(&same));
+    assert!(!store.active_account_matches(&other));
 }
 
 #[test]
@@ -1006,13 +1013,13 @@ fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
     store.forget_account(&test_profile_id(&bob_authority), &bob_authority);
     assert!(
         !store
-            .known_test_principal_ids()
+            .known_principal_ids()
             .iter()
-            .any(|principal_id| principal_id == "ak:did_core:web:bob.example"),
-        "purged account remains in the profile index"
+            .any(|did| did == "ak:did_core:web:bob.example"),
+        "purged account leaves known_profiles"
     );
     assert!(
-        store.active_test_principal_id().is_none(),
+        store.active_principal_id().is_none(),
         "purging the active account clears the active pointer"
     );
     // Cross-account device prefs are untouched by purging an account.
@@ -1023,113 +1030,8 @@ fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
 }
 
 #[test]
-fn primary_handle_is_per_account_and_readable_by_did() {
-    let path = temp_state_path("primary-handle");
-    let mut store = LocalStateStore::with_path(path);
-
-    store.switch_test_account("did:webvh:zA:alice.example");
-    store.set_primary_handle("alice");
-    store.switch_test_account("did:webvh:zB:david.example");
-    store.set_primary_handle("david");
-
-    // Each account's handle is readable BY DID without making it active.
-    assert_eq!(
-        store
-            .primary_handle_for_test_principal("did:webvh:zA:alice.example")
-            .as_deref(),
-        Some("alice")
-    );
-    assert_eq!(
-        store
-            .primary_handle_for_test_principal("did:webvh:zB:david.example")
-            .as_deref(),
-        Some("david")
-    );
-    // Unknown / empty → None.
-    assert!(
-        store
-            .primary_handle_for_test_principal("did:webvh:zC:nobody.example")
-            .is_none()
-    );
-    assert!(store.primary_handle_for_test_principal("").is_none());
-}
-
-#[test]
-fn explicit_account_primary_handle_update_is_scoped_and_can_clear() {
-    let path = temp_state_path("explicit-primary-handle");
-    let mut store = LocalStateStore::with_path(path);
-    let alice = "did:webvh:zA:alice.example";
-    let david = "did:webvh:zB:david.example";
-
-    store.switch_test_account(david);
-    store.set_primary_handle_for_test_principal(alice, "alice:local.host");
-
-    assert_eq!(
-        store.active_test_principal_id().as_deref(),
-        Some("ak:did_core:webvh:zB")
-    );
-    assert_eq!(
-        store.primary_handle_for_test_principal(alice).as_deref(),
-        Some("alice:local.host")
-    );
-
-    store.set_primary_handle_for_test_principal(alice, "");
-
-    assert_eq!(
-        store.active_test_principal_id().as_deref(),
-        Some("ak:did_core:webvh:zB")
-    );
-    assert!(store.primary_handle_for_test_principal(alice).is_none());
-}
-
-#[test]
-fn known_accounts_lists_each_account_with_its_handle_and_device() {
-    let path = temp_state_path("known-accounts");
-    let mut store = LocalStateStore::with_path(path);
-
-    store.register_test_account("did:webvh:zA:alice.example");
-    store.switch_test_account("did:webvh:zA:alice.example");
-    store.set_primary_handle("alice");
-    store.set_session_grant(Some(PersistedSessionGrant {
-        grant_jwt: "alice.grant".to_owned(),
-        session_private_key_pem: "pem".to_owned(),
-        grant_id: "g-alice".to_owned(),
-        audience: "did:web:alice.example".to_owned(),
-        authority: test_authority("did:webvh:zA:alice.example"),
-        device_id: test_device_id(),
-        principal_server_url: "https://alice.example".to_owned(),
-        grant_expires_at: None,
-        stored_at: chrono::Utc::now(),
-    }));
-
-    store.register_test_account("did:webvh:zB:david.example");
-    store.switch_test_account("did:webvh:zB:david.example");
-    store.set_primary_handle("david");
-
-    let accounts = store.known_accounts();
-    assert_eq!(accounts.len(), 2);
-    let alice = accounts
-        .iter()
-        .find(|account| account.authority == test_authority("did:webvh:zA:alice.example"))
-        .expect("alice present");
-    assert_eq!(alice.handle, "alice");
-    // device_id / server_url come from alice's own persisted authority state
-    // (not the active account, which is currently david).
-    assert_eq!(alice.device_id.as_ref(), Some(&test_device_id()));
-    assert_eq!(
-        alice.server_url.as_ref().map(url::Url::as_str),
-        Some("https://alice.example/")
-    );
-    let david = accounts
-        .iter()
-        .find(|account| account.authority == test_authority("did:webvh:zB:david.example"))
-        .expect("david present");
-    assert_eq!(david.handle, "david");
-}
-
-#[test]
-fn adopt_pending_login_keeps_pending_device_for_new_account() {
-    // begin/adopt_pending_login mutate the process-global pending-login id.
+fn accepted_context_promotion_keeps_pending_device_for_new_account() {
+    // begin/accepted-context promotion mutate the process-global pending-login id.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-new");
     let mut store = LocalStateStore::with_path(path);
@@ -1141,11 +1043,11 @@ fn adopt_pending_login_keeps_pending_device_for_new_account() {
 
     // A DID never seen on this browser is a new account.
     let newcomer = arkret_sdk::DidFullId::new("did:web:newcomer.example".to_owned()).unwrap();
-    let is_new = store.adopt_test_pending_login(&newcomer);
+    let is_new = store.promote_accepted_context_for_test(&newcomer);
     assert!(is_new, "an unknown DID adopts as a new account");
     assert!(store.pending_login().is_none(), "pending is cleared");
     assert_eq!(
-        store.active_test_principal_id().as_deref(),
+        store.active_principal_id().as_deref(),
         Some("ak:did_core:web:newcomer.example")
     );
 }
@@ -1172,8 +1074,8 @@ fn pending_login_clears_the_previous_accounts_process_signer() {
 }
 
 #[test]
-fn adopt_pending_login_preserves_returning_account_entry() {
-    // begin/adopt_pending_login mutate the process-global pending-login id.
+fn accepted_context_promotion_preserves_returning_account_entry() {
+    // begin/accepted-context promotion mutate the process-global pending-login id.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-returning");
     let mut store = LocalStateStore::with_path(path);
@@ -1186,11 +1088,11 @@ fn adopt_pending_login_preserves_returning_account_entry() {
         Some("jkt-fresh"),
     );
     assert!(
-        store.active_test_principal_id().is_none(),
+        store.active_principal_id().is_none(),
         "pending transaction must not expose an authenticated account"
     );
     assert_eq!(
-        store.last_selected_test_principal_id().as_deref(),
+        store.last_selected_principal_id().as_deref(),
         Some("ak:did_core:web:alice.example"),
         "pending login must retain the last-selected account for cancellation/reload"
     );
@@ -1199,7 +1101,7 @@ fn adopt_pending_login_preserves_returning_account_entry() {
         "anonymous pre-DID state must not expose Alice's projections"
     );
     let alice = arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap();
-    let is_new = store.adopt_test_pending_login(&alice);
+    let is_new = store.promote_accepted_context_for_test(&alice);
     assert!(!is_new, "a returning DID is not a new account");
     assert!(store.pending_login().is_none());
     // Alice's own entry (with her cursor) is restored, not wiped. The
@@ -1210,7 +1112,7 @@ fn adopt_pending_login_preserves_returning_account_entry() {
 
 #[test]
 fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
-    // begin/adopt_pending_login mutate the process-global pending-login id.
+    // begin/accepted-context promotion mutate the process-global pending-login id.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-isolates-previous-onboarding");
     let mut store = LocalStateStore::with_path(path);
@@ -1260,9 +1162,9 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
 
     store.begin_test_pending_login(&handoff.device_id, Some(&handoff.holder_jkt));
 
-    assert!(store.active_test_principal_id().is_none());
+    assert!(store.active_principal_id().is_none());
     assert_eq!(
-        store.last_selected_test_principal_id().as_deref(),
+        store.last_selected_principal_id().as_deref(),
         Some("ak:did_core:web:old.example")
     );
     assert!(store.pending_account_handoff().is_none());
@@ -1278,7 +1180,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
     );
 
     let newcomer = arkret_sdk::DidFullId::new("did:web:new.example".to_owned()).unwrap();
-    assert!(store.adopt_test_pending_login(&newcomer));
+    assert!(store.promote_accepted_context_for_test(&newcomer));
     assert!(store.load().sync_cursor.is_none());
     assert!(store.pending_account_handoff().is_none());
     assert!(store.pending_principal_registration().is_none());
@@ -1293,7 +1195,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:old"));
     assert_eq!(
         store
-            .primary_handle_for_test_principal("did:web:old.example")
+            .primary_handle_for_did("ak:did_core:web:old.example")
             .as_deref(),
         Some("old-user")
     );
@@ -1321,8 +1223,8 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
 }
 
 #[test]
-fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
-    // resume/adopt_pending_login mutate the process-global pending-login id.
+fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration() {
+    // resume/accepted-context promotion mutate the process-global pending-login id.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-onboarding-handoff");
     let mut store = LocalStateStore::with_path(path);
@@ -1380,7 +1282,7 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
     assert!(store.can_resume_pending_login(device));
     assert!(store.resume_pending_login(device));
 
-    store.adopt_test_pending_login(&did);
+    store.promote_accepted_context_for_test(&did);
 
     assert_eq!(
         store
@@ -1400,15 +1302,14 @@ fn adopt_pending_login_moves_the_unfinished_handoff_with_its_registration() {
 
 #[test]
 fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
-    // begin/adopt_pending_login mutate the process-global pending-login id.
+    // begin/accepted-context promotion mutate the process-global pending-login id.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("returning-login-clears-anonymous-handoff");
     let mut store = LocalStateStore::with_path(path);
     let principal = "did:web:alice.example";
     let device = "ak:device:019f0000-0000-7000-8000-000000000001";
     store.switch_test_account(principal);
-    store.register_test_account(principal);
-    store.begin_test_pending_login(device, Some("holder-jkt"));
+    store.begin_pending_login(device, Some("holder-jkt"));
     store
         .set_pending_account_handoff(Some(PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
@@ -1436,12 +1337,16 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
         .unwrap();
 
     let principal_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
-    assert!(!store.adopt_test_pending_login(&principal_id));
+    assert!(!store.promote_accepted_context_for_test(&principal_id));
     assert!(
         store.pending_account_handoff().is_some(),
         "handoff remains recoverable on the target account until completion commits"
     );
     store.set_pending_account_handoff(None).unwrap();
 
-    assert!(store.pending_account_handoff().is_none());
+    store.switch_test_account("anonymous");
+    assert!(
+        store.pending_account_handoff().is_none(),
+        "returning completion must remove the consumed checkpoint from anonymous storage"
+    );
 }

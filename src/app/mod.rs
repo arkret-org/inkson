@@ -242,6 +242,25 @@ fn AppBootstrap() -> Element {
         &initial_config,
         chrono::Utc::now().timestamp(),
     );
+    let initial_active_account = initial_config.active_account.clone();
+    let initial_server_url = initial_active_account
+        .as_ref()
+        .map(|account| account.server_url.to_string())
+        .or_else(|| {
+            initial_config
+                .principal_servers
+                .first()
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| "https://local.host".to_owned());
+    let initial_principal_id = initial_active_account
+        .as_ref()
+        .map(|account| account.full_id().to_string())
+        .unwrap_or_default();
+    let initial_device_id = initial_active_account
+        .as_ref()
+        .map(|account| account.device_id.to_string())
+        .unwrap_or_else(crate::config::new_device_id);
     let initial_can_restore_session = has_bootstrap_refresh_material(
         &initial_state_store,
         &initial_server_url,
@@ -251,7 +270,7 @@ fn AppBootstrap() -> Element {
     let initial_session_boot_state = session_boot_state_from_bootstrap_material(
         &initial_session_credential,
         initial_can_restore_session,
-        initial_active_account.as_ref(),
+        &initial_principal_id,
         initial_secure_store_bootstrap_ready,
     );
     let initial_realm_tree_nodes = realm_tree_nodes_from_sync_realms_with_roles(
@@ -259,8 +278,7 @@ fn AppBootstrap() -> Element {
         &initial_local_state.realm_collaboration_roles,
     );
     let initial_realm_tree_owner_did = initial_state_store
-        .active_account_authority()
-        .map(|authority| authority.principal_id.to_string())
+        .active_principal_id()
         .unwrap_or_default();
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
     // Boot locale: the device cache plus the platform default, through the
@@ -292,9 +310,13 @@ fn AppBootstrap() -> Element {
     // Pin the active typed user store to the persisted server-authored
     // principal before async signer bootstrap begins.
     {
-        let boot_account = initial_active_account.clone();
+        let boot_seed_scope = initial_active_account
+            .as_ref()
+            .map(|account| account.principal_id().clone());
         use_hook(move || {
-            let Some(account) = boot_account else {
+            if let Some(core_id) = boot_seed_scope.clone() {
+                crate::secure_key_store::UserLocalStore::new(core_id).activate();
+            } else {
                 crate::secure_key_store::set_active_device_seed_scope(None);
                 return;
             };
@@ -327,6 +349,7 @@ fn AppBootstrap() -> Element {
         active_account,
         state_store,
         base_url,
+        active_account,
         owned_agents_rev,
     });
     let sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
@@ -336,7 +359,9 @@ fn AppBootstrap() -> Element {
     let session_coordinator = use_hook(move || {
         crate::runtime::session::SessionCoordinator::new(move || {
             Box::pin(refresh_session_credential_for_active_context(
-                active_account,
+                base_url,
+                principal_id,
+                device_id,
                 state_store,
                 token,
                 config_store,
@@ -1070,6 +1095,8 @@ fn AppBootstrap() -> Element {
                     match auth_surface {
                         AuthSurface::Callback => rsx! {
                             crate::views::login::LoginPanel {
+                                principal_id,
+                                device_id,
                                 token,
                                 config_store,
                                 locale,
@@ -1119,6 +1146,8 @@ fn AppBootstrap() -> Element {
                         },
                         AuthSurface::Login | AuthSurface::AppShell => rsx! {
                             crate::views::login::LoginPanel {
+                                principal_id,
+                                device_id,
                                 token,
                                 config_store,
                                 locale,
@@ -1214,7 +1243,8 @@ fn AppBootstrap() -> Element {
                     connection_status,
                     sync_cursor,
                     token,
-                    principal_id: principal_id,
+                    principal_id,
+                    device_id,
                     selected_realm_id,
                     realm_tree_nodes,
                     projection_events,
@@ -1263,7 +1293,8 @@ fn AppBootstrap() -> Element {
                     secure_store_bootstrap_ready,
                     account_recovery_configured,
                     token,
-                    active_account,
+                    principal_id,
+                    device_id,
                     sync_generation,
                     session_boot_state,
                     on_onboarding_route: matches!(&content_route, Route::Onboarding),
@@ -1296,7 +1327,8 @@ fn AppBootstrap() -> Element {
                     device_authorization_check_complete,
                     needs_device_authorization,
                     token,
-                    active_account,
+                    principal_id,
+                    device_id,
                     server_description,
                     sync_bootstrap_complete,
                     sync_cursor,
@@ -1335,6 +1367,8 @@ fn AppBootstrap() -> Element {
             SecureStoreEffects {
                 state: SecureStoreEffectState {
                     config_store,
+                    principal_id,
+                    device_id,
                     secure_store_bootstrap_ready,
                     token,
                 }
@@ -1350,6 +1384,7 @@ fn AppBootstrap() -> Element {
                 websocket_rail_active_generation,
                 sync_bootstrap_complete,
                 token,
+                principal_id,
                 device_id,
                 selected_realm_id,
                 realm_events_route_enabled,
@@ -1434,6 +1469,7 @@ fn AppBootstrap() -> Element {
             }
             crate::components::AgentRuntimeApprovalPrompt {
                 token,
+                principal_id,
             }
             if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
                 && !recovery_key_setup_prompt()
@@ -1442,6 +1478,7 @@ fn AppBootstrap() -> Element {
             {
                 crate::components::EncryptionFloorPrompt {
                     token,
+                    principal_id,
                     sync_bootstrap_complete,
                     device_authorization_check_complete,
                     needs_device_authorization,
@@ -1454,6 +1491,8 @@ fn AppBootstrap() -> Element {
             }
             crate::components::RecoveryKeySetupPrompt {
                 token,
+                principal_id,
+                device_id,
                 open: recovery_key_setup_prompt,
                 account_primary_handle,
                 on_server_configured: move |_| account_recovery_configured.set(Some(true)),
@@ -1633,15 +1672,17 @@ fn AppBootstrap() -> Element {
                         onclick: move |_| {
                             sync_generation.set(sync_generation() + 1);
                             sync_bootstrap_complete.set(false);
-                            if let Some(active_account_snapshot) = active_account() {
-                                connect(
-                                    active_account_snapshot,
-                                    ConnectContext {
+                            connect(
+                                base_url(),
+                                principal_id(),
+                                device_id(),
+                ConnectContext {
                     session: mobile_connect_session.clone(),
                                     connection_status,
                                     sync_cursor,
                                     token,
-                                    principal_id: principal_id,
+                                    principal_id,
+                                    device_id,
                                     selected_realm_id,
                                     realm_tree_nodes,
                                     projection_events,
@@ -1818,6 +1859,43 @@ fn AppBootstrap() -> Element {
                                                 });
                                                 server_menu_open.set(false);
                                                 sync_bootstrap_complete.set(false);
+                                                connect(
+                                                    next_url,
+                                                    principal_id(),
+                                                    device_id(),
+                ConnectContext {
+                    session: server_connect_session.clone(),
+                                                        connection_status,
+                                                        sync_cursor,
+                                                        token,
+                                                        principal_id,
+                                                        device_id,
+                                                        selected_realm_id,
+                                                        realm_tree_nodes,
+                                                        projection_events,
+                                                        device_queue,
+                                                        frontier_state,
+                                                        crypto_state,
+                                                        config_store,
+                                                        state_store,
+                                                        network_state,
+                                                        last_error,
+                                                        server_description,
+                                                        server_probe_status,
+                                                        account_primary_handle,
+                                                        personal_handles,
+                                                        personal_handles_status,
+                                                        theme,
+                                                        sync_generation,
+                                                        needs_device_authorization,
+                                                        device_authorization_check_complete,
+                                                        account_has_other_devices,
+                                                        sync_bootstrap_complete,
+                                                        session_boot_state,
+                                                                            did_cache,
+                                                        did_resolution_health,
+                                                    },
+                                                );
                                             }
                                         },
                                         span { class: "server-option-text",
@@ -2008,13 +2086,13 @@ fn AppBootstrap() -> Element {
                                         .read()
                                         .load()
                                         .active_account
-                                        .map(|account| account.principal_id().to_string())
+                                        .map(|account| account.full_id().to_string())
                                         .unwrap_or_default();
                                     if configured.trim().is_empty() {
                                         state_store
                                             .read()
                                             .session_grant()
-                                            .map(|grant| grant.principal_id)
+                                            .map(|grant| grant.principal_id.to_string())
                                             .unwrap_or_default()
                                     } else {
                                         configured
@@ -3507,9 +3585,7 @@ fn AppBootstrap() -> Element {
                                                     let session = session.clone();
                                                     let api_token = token();
                                                     let actor = principal_id();
-                                                    let Some(active) = active_account() else {
-                                                        return;
-                                                    };
+                                                    let device = device_id();
                                                     personal_handles_lookup_key.set(String::new());
                                                     account_identity_lookup_key.set(String::new());
                                                     account_session_state.set("Refreshing session".to_owned());
@@ -3521,13 +3597,10 @@ fn AppBootstrap() -> Element {
                                                             .await
                                                             {
                                                                 Ok(account) => {
-                                                                    let canonical_actor = match connect::verify_account_viewer_context(
-                                                                        &active,
-                                                                        &account,
-                                                                    ) {
-                                                                        Ok(()) => active.principal_id().to_string(),
-                                                                        Err(error) => {
-                                                                            last_error.set(Some(error.to_string()));
+                                                                    let canonical_actor = match active_account.peek().as_ref() {
+                                                                        Some(context) if context.principal_id() == &account.principal_id => context.full_id().to_string(),
+                                                                        _ => {
+                                                                            last_error.set(Some("account viewer authority does not match the accepted active context".to_owned()));
                                                                             account_session_state.set(
                                                                                 "Session identity could not be restored; sign in again."
                                                                                     .to_owned(),
@@ -3581,11 +3654,11 @@ fn AppBootstrap() -> Element {
                                                                                         .await
                                                                                         .ok()
                                                                                         .and_then(|account| {
-                                                                                            connect::verify_account_viewer_context(
-                                                                                                &active,
-                                                                                                &account,
-                                                                                            )
-                                                                                            .ok()?;
+                                                                                            let canonical_actor = active_account
+                                                                                                .peek()
+                                                                                                .as_ref()
+                                                                                                .filter(|context| context.principal_id() == &account.principal_id)
+                                                                                                .map(|context| context.full_id().to_string())?;
                                                                                             if let Some(personal_handle) =
                                                                                                 personal_handle_from_account_handle(&account.handle)
                                                                                             {
@@ -3696,7 +3769,7 @@ fn AppBootstrap() -> Element {
                                                         principal_server_url: logout_grant
                                                             .as_ref()
                                                             .map(|grant| {
-                                                                grant.principal_server_url.clone()
+                                                                grant.principal_server_url.to_string()
                                                             }),
                                                         // T1.Y4 — re-resolved at
                                                         // logout time from the
@@ -3768,7 +3841,9 @@ fn AppBootstrap() -> Element {
                                                 personal_handles_lookup_key.set(String::new());
                                                 last_error.set(None);
                                                 token.set(String::new());
-                                                crate::config::clear_session_credential_secret(&actor);
+                                                if let Some(account) = SessionContext::get().active_account.peek().as_ref() {
+                                                    crate::config::clear_session_credential_secret(account);
+                                                }
                                                 persist_config(
                                                     config_store,
                                                     base.clone(),

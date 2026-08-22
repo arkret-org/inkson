@@ -36,9 +36,9 @@ struct PendingAgentRuntimeApproval {
 }
 
 #[component]
-pub fn AgentRuntimeApprovalPrompt(token: Signal<String>) -> Element {
-    let session_context = crate::app::SessionContext::get();
-    let active_account = session_context.active_account;
+pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<String>) -> Element {
+    // A4 — base_url from session context instead of a prop.
+    let base_url = crate::app::SessionContext::get().base_url;
     let mut pending = use_signal(|| None::<PendingAgentRuntimeApproval>);
     let mut handled = use_signal(HashSet::<OpaqueLocalId>::new);
     let mut status = use_signal(String::new);
@@ -322,7 +322,8 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>) -> Element {
                             if approving() {
                                 return;
                             }
-                            let Some(account) = active_account() else {
+                            let controller = principal_id();
+                            if controller.trim().is_empty() {
                                 status.set(crate::i18n::tr("agent_runtime.err_no_account"));
                                 return;
                             };

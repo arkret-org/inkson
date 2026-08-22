@@ -1798,8 +1798,7 @@ pub fn ChatPanel(
     // hung even though network traffic stays quiet.
     let all_messages_snapshot = use_memo({
         let principal_id = principal_id.clone();
-        let authority = authority.clone();
-        let device_id = account_device_id.clone();
+        let device_id = device_id.clone();
         move || {
             // These are the durable invalidation edges. `peek` below avoids
             // treating unrelated LocalStateStore writes (backup metadata,
@@ -1808,7 +1807,7 @@ pub fn ChatPanel(
             let _realm_epoch = realm_live_epoch();
             let store = state_store.peek();
             let snapshot = store.load();
-            let decrypt_identity = Some((&authority, principal_id.as_str(), &device_id));
+            let decrypt_identity = Some((principal_id.as_str(), device_id.as_str()));
             let mut folded = fold_local_state_into_chat_messages_with_sidecar(
                 messages(),
                 &snapshot,
@@ -1830,8 +1829,7 @@ pub fn ChatPanel(
     {
         let close_base_url = base_url.clone();
         let principal_id = principal_id.clone();
-        let authority = authority.clone();
-        let account_device_id = account_device_id.clone();
+        let device_id = device_id.clone();
         let selected_realm_id = selected_realm_id.clone();
         let all_messages_for_fold = all_messages_snapshot;
         let active_sidecar = sidecar_session.clone();
@@ -1891,8 +1889,7 @@ pub fn ChatPanel(
             crate::sidecar::refold_sidecar_exchanges_from_history(
                 &mut store,
                 &principal_id,
-                &authority,
-                &account_device_id,
+                &device_id,
                 &selected_realm_id,
                 &session_scope_hints,
             );
@@ -2169,8 +2166,7 @@ pub fn ChatPanel(
             ChatEffects {
                 controller,
                 principal_id: principal_id.clone(),
-                authority: authority.clone(),
-                device_id: account_device_id.clone(),
+                device_id: device_id.clone(),
                 selected_realm_id: selected_realm_id.clone(),
                 initial_strand_id: initial_strand_id.clone(),
                 plaintext_service_id: plaintext_service_id.clone(),
@@ -2930,8 +2926,6 @@ pub fn ChatPanel(
                         strand_scope_lookup: strand_scope_lookup.clone(),
                         private_sidecar_strand_ids: private_sidecar_strand_ids.clone(),
                         principal_id: principal_id.clone(),
-                        authority: authority.clone(),
-                        full_id: full_id.clone(),
                         account_display_label: account_display_label.clone(),
                         participants: participants_for_messages.clone(),
                         selected_realm_id: selected_realm_id.clone(),
@@ -3638,8 +3632,6 @@ pub fn ChatPanel(
                     embedded,
                     selected_channel_info: selected_channel_info.clone(),
                     principal_id: principal_id.clone(),
-                    authority: authority.clone(),
-                    full_id: full_id.clone(),
                     account_display_label: account_display_label.clone(),
                     participants: composer_participants.clone(),
                     selected_realm_id: selected_realm_id.clone(),

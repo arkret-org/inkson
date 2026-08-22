@@ -32,6 +32,8 @@ pub fn SetupPanel(
     plaintext_service_id: String,
     secure_store_ready: bool,
     token: Signal<String>,
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     selected_realm_id: Signal<String>,
@@ -93,6 +95,8 @@ pub fn SetupPanel(
                     plaintext_service_id,
                     secure_store_ready,
                     token,
+                    principal_id,
+                    device_id,
                     config_store,
                     selected_realm_id,
                     create_step,
@@ -118,6 +122,7 @@ pub fn SetupPanel(
             if active_section == SetupSection::NewSpace {
                 NewSpaceSection {
                     token,
+                    principal_id,
                     selected_realm_id,
                     realm_tree_nodes,
                     new_space_context_node,

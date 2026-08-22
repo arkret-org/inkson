@@ -89,10 +89,11 @@ fn sidecar_view_state_cache_key(controller_id: &str, realm_id: &str, strand_id: 
 
 fn cache_sidecar_view_state(
     store: &mut crate::state::LocalStateStore,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     view_state: &arkret_sdk::AgentSidecarViewState,
 ) -> anyhow::Result<bool> {
-    if &view_state.controller_id != principal_id {
+    let account_core_id = crate::mls_api_helpers::principal_core_id(principal_id)?;
+    if view_state.controller_id != account_core_id {
         anyhow::bail!("Sidecar view-state controller does not match the account holder");
     }
     let key = sidecar_view_state_cache_key(
@@ -101,26 +102,21 @@ fn cache_sidecar_view_state(
         view_state.context_ref.strand_id.as_str(),
     );
     if let Some(current) = store
-        .load_private_data(principal_id.as_str(), &key)
+        .load_private_data(principal_id, &key)
         .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())
     {
         store.apply_sidecar_view_state(current);
     }
     let should_replace = store.apply_sidecar_view_state(view_state.clone());
     if should_replace {
-        store.save_private_data(
-            principal_id.as_str(),
-            key,
-            serde_json::to_string(view_state)?,
-        );
+        store.save_private_data(principal_id, key, serde_json::to_string(view_state)?);
     }
     Ok(should_replace)
 }
 
 pub fn ingest_sidecar_view_state_account_data(
     store: &mut crate::state::LocalStateStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     account_data_key: &str,
     entry: &impl serde::Serialize,
 ) -> anyhow::Result<bool> {
@@ -128,10 +124,10 @@ pub fn ingest_sidecar_view_state_account_data(
         return Ok(false);
     }
     let view_state: arkret_sdk::AgentSidecarViewState = serde_json::from_value(
-        crate::account_data::decrypt_account_data_entry(authority, account_data_key, entry)?,
+        crate::account_data::decrypt_account_data_entry(principal_id, account_data_key, entry)?,
     )?;
     view_state.validate_account_data_key(account_data_key)?;
-    if &view_state.controller_id != principal_id {
+    if view_state.controller_id != crate::mls_api_helpers::principal_core_id(principal_id)? {
         anyhow::bail!("Sidecar view-state controller does not match the account holder");
     }
     cache_sidecar_view_state(store, principal_id, &view_state)?;
@@ -183,11 +179,12 @@ fn sidecar_exchange_fold_cache_key(
 /// do not loop on their own writes. Returns whether the cache changed.
 pub(crate) fn cache_sidecar_exchange_projection(
     store: &mut crate::state::LocalStateStore,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     projection: &arkret_sdk::AgentSidecarExchangeProjection,
 ) -> anyhow::Result<bool> {
     projection.validate()?;
-    if &projection.controller_id != principal_id {
+    let account_core_id = crate::mls_api_helpers::principal_core_id(principal_id)?;
+    if projection.controller_id != account_core_id {
         anyhow::bail!("Sidecar exchange controller does not match the account holder");
     }
     store.apply_sidecar_exchange_projection(projection.clone())?;
@@ -196,27 +193,24 @@ pub(crate) fn cache_sidecar_exchange_projection(
         projection.sidecar_id.as_str(),
         projection.exchange_id.as_str(),
     );
-    let current = store
-        .load_private_data(principal_id.as_str(), &key)
-        .and_then(|raw| {
-            serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
-        });
+    let current = store.load_private_data(principal_id, &key).and_then(|raw| {
+        serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
+    });
     if current.as_ref() == Some(projection) {
         return Ok(false);
     }
-    store.save_private_data(
-        principal_id.as_str(),
-        key,
-        serde_json::to_string(projection)?,
-    );
+    store.save_private_data(principal_id, key, serde_json::to_string(projection)?);
     Ok(true)
 }
 
 pub fn cached_sidecar_exchange_projections(
     store: &crate::state::LocalStateStore,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     source_realm_id: &str,
 ) -> Vec<arkret_sdk::AgentSidecarExchangeProjection> {
+    let Ok(account_core_id) = crate::mls_api_helpers::principal_core_id(principal_id) else {
+        return Vec::new();
+    };
     let Ok(realm_id) = arkret_sdk::RealmId::new(source_realm_id.to_owned()) else {
         return Vec::new();
     };
@@ -228,7 +222,7 @@ pub fn cached_sidecar_exchange_projections(
         .private_data_keys()
         .into_iter()
         .filter(|key| key.starts_with(&prefix))
-        .filter_map(|key| store.load_private_data(principal_id.as_str(), &key))
+        .filter_map(|key| store.load_private_data(principal_id, &key))
         .filter_map(|raw| {
             serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
         })
@@ -1727,7 +1721,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
 
 pub fn cached_sidecar_display_mode(
     store: &crate::state::LocalStateStore,
-    principal_id: &arkret_sdk::DidCoreId,
+    principal_id: &str,
     session: &HostedSidecarState,
 ) -> Option<arkret_sdk::AgentSidecarDisplayMode> {
     let controller_core_id =
@@ -1745,11 +1739,9 @@ pub fn cached_sidecar_display_mode(
                 &session.source_realm_id,
                 &session.source_strand_id,
             );
-            store
-                .load_private_data(principal_id.as_str(), &key)
-                .and_then(|raw| {
-                    serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok()
-                })
+            store.load_private_data(principal_id, &key).and_then(|raw| {
+                serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok()
+            })
         })?;
     (view_state.controller_id == controller_core_id
         && view_state.sidecar_id == session.sidecar_id

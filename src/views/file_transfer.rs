@@ -10,7 +10,11 @@ use crate::file_transfer::{
 };
 
 #[component]
-pub fn FileTransferPanel(token: Signal<String>) -> Element {
+pub fn FileTransferPanel(
+    token: Signal<String>,
+    principal_id: String,
+    device_id: String,
+) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session = crate::app::SessionContext::get();
     let base_url = session.base_url.read().clone();
@@ -25,18 +29,18 @@ pub fn FileTransferPanel(token: Signal<String>) -> Element {
 
     {
         let base_url = base_url.clone();
+        let principal_id = principal_id.clone();
+        let device_id = device_id.clone();
         use_effect(move || {
-            if let Some(account) = active_account() {
-                refresh_items(
-                    base_url.clone(),
-                    token(),
-                    account.authority.principal_id.to_string(),
-                    account.device_id.to_string(),
-                    items,
-                    status,
-                    refreshing,
-                );
-            }
+            refresh_items(
+                base_url.clone(),
+                token(),
+                principal_id.clone(),
+                device_id.clone(),
+                items,
+                status,
+                refreshing,
+            );
         });
     }
 
@@ -71,6 +75,8 @@ pub fn FileTransferPanel(token: Signal<String>) -> Element {
                         disabled: uploading(),
                         onchange: {
                             let base_url = base_url.clone();
+                            let principal_id = principal_id.clone();
+                            let device_id = device_id.clone();
                             move |evt: Event<FormData>| {
                                 let files = evt.files();
                                 if files.is_empty() {
@@ -79,12 +85,8 @@ pub fn FileTransferPanel(token: Signal<String>) -> Element {
                                 }
                                 let api_token = token();
                                 let base_url = base_url.clone();
-                                let Some(account) = active_account() else {
-                                    status.set("Upload failed: account is not connected".to_owned());
-                                    return;
-                                };
-                                let actor = account.authority.principal_id.to_string();
-                                let device = account.device_id.to_string();
+                                let actor = principal_id.clone();
+                                let device = device_id.clone();
                                 uploading.set(true);
                                 status.set("Uploading".to_owned());
                                 spawn(async move {
@@ -187,18 +189,18 @@ pub fn FileTransferPanel(token: Signal<String>) -> Element {
                         disabled: refreshing(),
                         onclick: {
                             let base_url = base_url.clone();
+                            let principal_id = principal_id.clone();
+                            let device_id = device_id.clone();
                             move |_| {
-                                if let Some(account) = active_account() {
-                                    refresh_items(
-                                        base_url.clone(),
-                                        token(),
-                                        account.authority.principal_id.to_string(),
-                                        account.device_id.to_string(),
-                                        items,
-                                        status,
-                                        refreshing,
-                                    );
-                                }
+                                refresh_items(
+                                    base_url.clone(),
+                                    token(),
+                                    principal_id.clone(),
+                                    device_id.clone(),
+                                    items,
+                                    status,
+                                    refreshing,
+                                );
                             }
                         },
                         UiIcon { name: "refresh" }

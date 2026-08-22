@@ -104,21 +104,57 @@ pub(super) fn session_refresh_write_plan(
     SessionRefreshWritePlan {
         grant: current_grant != Some(next_grant),
         credential: current_credential != next_grant.grant_jwt,
-        config: !config_unchanged,
+        config: !current_config.same_runtime_state(desired_config),
     }
 }
 
-pub(super) fn verify_account_viewer_context(
-    active_account: &crate::config::ActiveAccountContext,
-    account: &crate::models::CurrentAccount,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        &account.principal_id == active_account.principal_id(),
-        "account viewer principal {} does not match active authority principal {}",
-        account.principal_id,
-        active_account.principal_id()
-    );
-    Ok(())
+async fn accepted_account_context(
+    authed: &crate::transport::TransportClient,
+    principal_id: arkret_sdk::DidCoreId,
+    description: &arkret_sdk::ServiceDescribe,
+    did_cache: &arkret_sdk::identity::DidResolutionCache,
+    current: Option<&crate::identity::active_account::ActiveAccountContext>,
+    device_id: &str,
+    server_url: &str,
+) -> anyhow::Result<crate::identity::active_account::ActiveAccountContext> {
+    let public = authed
+        .sdk_http_client()?
+        .open_principal_resolution(&principal_id, &description.service_id)
+        .await?;
+    public.method_history_evidence.validate_shape()?;
+    let boundary = public.method_history_evidence.boundary();
+    if boundary.to_method_history_head != public.resolution_projection.method_history_head
+        || boundary.to_version_id != public.resolution_projection.version_id
+    {
+        return Err(anyhow::anyhow!(
+            "principal resolution projection does not match method-history boundary"
+        ));
+    }
+    let now = chrono::Utc::now();
+    let resolved_service = did_cache
+        .get(&description.service_resolution.full_id, now)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Principal Server DID document is not present in the accepted resolution cache"
+            )
+        })?;
+    arkret_sdk::signatures::service_resolution::verify_public_principal_resolution(
+        &public,
+        &resolved_service.document,
+        now,
+    )?;
+    let authority = public.authority();
+    let profile_id = current
+        .filter(|account| account.authority == authority)
+        .map(|account| account.profile_id.clone())
+        .unwrap_or_else(|| format!("ak:profile:{}", crate::operation::uuid_v7()));
+    crate::identity::active_account::ActiveAccountContext::new(
+        profile_id,
+        authority,
+        public.resolution_projection,
+        arkret_sdk::DeviceId::new(device_id.trim().to_owned())?,
+        url::Url::parse(server_url)?,
+    )
 }
 
 async fn client_core_events_describe(
@@ -150,18 +186,17 @@ async fn client_core_account_subscribe_snapshot(
 /// in-flight invocation, so this never runs twice in parallel for a single
 /// rollover.
 pub(super) async fn refresh_session_credential_for_active_context(
-    active_account: Signal<Option<crate::config::ActiveAccountContext>>,
+    base_url: Signal<String>,
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
     mut state_store: SyncSignal<LocalStateStore>,
     mut token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     session_generation: Signal<u64>,
 ) -> crate::runtime::session::CurrentSessionRefresh {
-    let Some(account) = active_account() else {
-        return crate::runtime::session::CurrentSessionRefresh::SignInRequired {
-            reason: "no active account context".to_owned(),
-        };
-    };
-    let base = account.server_url.to_string();
+    let base = base_url();
+    let actor = principal_id();
+    let device = device_id();
     let generation = session_generation();
 
     #[cfg(target_arch = "wasm32")]
@@ -189,8 +224,8 @@ pub(super) async fn refresh_session_credential_for_active_context(
                 let store = state_store.peek();
                 store.session_grant()
             };
-            let desired_config =
-                ClientConfig::from_fields(Some(account.clone()), session_credential.clone());
+            let mut desired_config = config_store.peek().load();
+            desired_config.session_credential = session_credential.clone();
             let write_plan = session_refresh_write_plan(
                 current_grant.as_ref(),
                 token.peek().as_str(),
@@ -256,6 +291,7 @@ pub(super) struct ConnectContext {
     pub(super) sync_cursor: Signal<String>,
     pub(super) token: Signal<String>,
     pub(super) principal_id: Signal<String>,
+    pub(super) device_id: Signal<String>,
     pub(super) selected_realm_id: Signal<String>,
     pub(super) realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub(super) projection_events: Signal<Vec<ProjectionEvent>>,
@@ -390,8 +426,8 @@ fn device_authorization_probe_from_account_viewer(
 /// device bootstrap, while every later or key-mismatched device must use the
 /// user-approved pairing/recovery flow from key-management.md §5.1.
 pub(super) async fn probe_device_authorization(
-    principal_id: &arkret_sdk::DidCoreId,
-    device_id: &arkret_sdk::DeviceId,
+    actor: &arkret_sdk::DidFullId,
+    device: &str,
     principal_api: &TransportClient,
 ) -> anyhow::Result<(bool, bool)> {
     // The account-viewer helpers read `devices[]` leniently via `Value`
@@ -415,15 +451,16 @@ pub(super) async fn probe_device_authorization(
 /// accepted device through the founding enrollment endpoint.
 async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
-    principal_id: &arkret_sdk::DidCoreId,
-    device_id: &arkret_sdk::DeviceId,
+    actor: &arkret_sdk::DidFullId,
+    device: &str,
 ) -> anyhow::Result<bool> {
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
     };
-    let signer = crate::event_signer::bind_active_signer_device_id(device_id.as_str())
+    let actor_id = arkret_sdk::project_full_id_to_core_id(actor)?;
+    let signer = crate::event_signer::bind_active_signer_device_id(device)
         .map_err(|error| anyhow::anyhow!("bind event signer device: {error}"))?
         .unwrap_or(signer);
     let signer_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
@@ -435,10 +472,11 @@ async fn current_event_signer_matches_directory(
     };
     let outcome = crate::transport::keys::query_keys(
         &principal_api.sdk_http_client()?,
-        principal_id.as_str(),
-        device_id.as_str(),
+        actor.as_str(),
+        device,
     )
     .await?;
+    let device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let expected_key = format!("did:key:{public_key}");
     let signer_matches = outcome
         .device_keys
@@ -451,18 +489,14 @@ async fn current_event_signer_matches_directory(
     }
     crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
         &outcome,
-        principal_id.as_str(),
-        device_id.as_str(),
+        actor.as_str(),
+        device,
     )
 }
 
-pub(super) fn connect(
-    active_account_snapshot: crate::config::ActiveAccountContext,
-    ctx: ConnectContext,
-) {
-    let base = active_account_snapshot.server_url.to_string();
-    let actor = active_account_snapshot.principal_id().to_string();
-    let mut device = active_account_snapshot.device_id.to_string();
+pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
+    let mut device = normalize_device_id(&device);
+    let mut active_account = SessionContext::get().active_account;
     spawn(async move {
         let session = ctx.session.clone();
         let mut sync_bootstrap_complete = ctx.sync_bootstrap_complete;
@@ -472,13 +506,14 @@ pub(super) fn connect(
         let mut sync_cursor = ctx.sync_cursor;
         let token = ctx.token;
         let mut principal_id = ctx.principal_id;
+        let mut device_id_signal = ctx.device_id;
         let mut selected_realm_id = ctx.selected_realm_id;
         let mut realm_tree_nodes = ctx.realm_tree_nodes;
         let mut projection_events = ctx.projection_events;
         let mut device_queue = ctx.device_queue;
         let mut frontier_state = ctx.frontier_state;
         let mut crypto_state = ctx.crypto_state;
-        let config_store = ctx.config_store;
+        let mut config_store = ctx.config_store;
         let mut state_store = ctx.state_store;
         let mut network_state = ctx.network_state;
         let mut last_error = ctx.last_error;
@@ -683,22 +718,11 @@ pub(super) fn connect(
                 else {
                     return;
                 };
-                let canonical_actor = match account_viewer_result {
+                let canonical_actor_hint = match account_viewer_result {
                     Ok(account) => {
                         account_personal_handle =
                             personal_handle_from_account_handle(&account.handle);
-                        match verify_account_viewer_context(&active_account_snapshot, &account) {
-                            Ok(()) => actor.clone(),
-                            Err(error) => {
-                                invalidate_bootstrap_session(
-                                    &session,
-                                    format!("account_me identity boundary failed: {error}"),
-                                    session_boot_state,
-                                    sync_bootstrap_complete,
-                                );
-                                return;
-                            }
-                        }
+                        account.principal_id.to_string()
                     }
                     Err(error) if is_account_viewer_projection_missing_error(&error) => {
                         invalidate_bootstrap_session(
@@ -749,23 +773,7 @@ pub(super) fn connect(
                                     Ok(account) => {
                                         account_personal_handle =
                                             personal_handle_from_account_handle(&account.handle);
-                                        match verify_account_viewer_context(
-                                            &active_account_snapshot,
-                                            &account,
-                                        ) {
-                                            Ok(()) => actor.clone(),
-                                            Err(error) => {
-                                                invalidate_bootstrap_session(
-                                                    &session,
-                                                    format!(
-                                                        "account_me identity boundary failed after session refresh: {error}"
-                                                    ),
-                                                    session_boot_state,
-                                                    sync_bootstrap_complete,
-                                                );
-                                                return;
-                                            }
-                                        }
+                                        account.principal_id.to_string()
                                     }
                                     Err(retry_error)
                                         if is_account_viewer_projection_missing_error(
@@ -837,6 +845,84 @@ pub(super) fn connect(
                         actor.clone()
                     }
                 };
+                let canonical_principal_id = arkret_sdk::DidCoreId::new(
+                    canonical_actor_hint.trim().to_owned(),
+                )
+                .or_else(|_| {
+                    let full = arkret_sdk::DidFullId::new(canonical_actor_hint.trim().to_owned())?;
+                    arkret_sdk::project_full_id_to_core_id(&full)
+                });
+                let Ok(canonical_principal_id) = canonical_principal_id else {
+                    invalidate_bootstrap_session(
+                        &session,
+                        "account viewer did not yield a valid stable principal",
+                        session_boot_state,
+                        sync_bootstrap_complete,
+                    );
+                    return;
+                };
+                let Some(description) = description.as_ref() else {
+                    invalidate_bootstrap_session(
+                        &session,
+                        "Principal Server identity was not accepted; account context cannot be created",
+                        session_boot_state,
+                        sync_bootstrap_complete,
+                    );
+                    return;
+                };
+                let current_account = active_account.peek().clone();
+                let did_cache_snapshot = ctx.did_cache.peek().clone();
+                let accepted_account = match accepted_account_context(
+                    &authed,
+                    canonical_principal_id,
+                    description,
+                    &did_cache_snapshot,
+                    current_account.as_ref(),
+                    &device,
+                    &base,
+                )
+                .await
+                {
+                    Ok(account) => account,
+                    Err(error) => {
+                        invalidate_bootstrap_session(
+                            &session,
+                            format!("current principal resolution was not accepted: {error}"),
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
+                        return;
+                    }
+                };
+                let canonical_actor = accepted_account.full_id().to_string();
+                active_account.set(Some(accepted_account.clone()));
+                let authenticated_config = ClientConfig::authenticated(
+                    accepted_account.clone(),
+                    session_credential.clone(),
+                );
+                config_store.write().save(authenticated_config);
+                let mut profiles = config_store.read().load_profiles();
+                if let Err(error) =
+                    profiles.upsert_and_activate(crate::config::AccountProfile::new(
+                        accepted_account.clone(),
+                        session_credential.clone(),
+                    ))
+                {
+                    tracing::error!(?error, "active account profile update rejected");
+                    return;
+                }
+                if let Err(error) = config_store.write().save_profiles(&profiles) {
+                    tracing::error!(?error, "active account profile persist failed");
+                }
+                if let Err(error) = state_store.write().switch_active_account(&accepted_account) {
+                    invalidate_bootstrap_session(
+                        &session,
+                        format!("accepted account namespace activation failed: {error}"),
+                        session_boot_state,
+                        sync_bootstrap_complete,
+                    );
+                    return;
+                }
                 if canonical_actor != actor {
                     invalidate_bootstrap_session(
                         &session,
@@ -854,15 +940,51 @@ pub(super) fn connect(
                     account_primary_handle.set(String::new());
                     personal_handles.set(Vec::new());
                     personal_handles_status.set("Not published".to_owned());
-                    realm_tree_nodes.set(Vec::new());
-                    projection_events.set(Vec::new());
-                    selected_realm_id.set(String::new());
-                    sync_cursor.set(String::new());
-                    device_queue.set(0);
-                    let mut sync_generation = ctx.sync_generation;
-                    sync_generation.set(sync_generation() + 1);
-                    let mut session_did_cache = ctx.did_cache;
-                    session_did_cache.write().clear();
+                    // Account changed since the last persisted run (the
+                    // server's account viewer disagrees with our cached
+                    // actor). When the previous actor was non-empty this
+                    // means a different human is signing in on the same
+                    // device — every account-scoped record (projections,
+                    // drafts, seal views, read markers, remarks, and the
+                    // previous identity's session grant + OIDC bundle) is
+                    // someone else's data and must be wiped before the sync
+                    // below repopulates the store. Account switching loads the
+                    // new owner's isolated entry. Device-level state
+                    // (local_identity, push_registration, DPoP key) is
+                    // preserved.
+                    if !actor.trim().is_empty() {
+                        let store = state_store.write();
+                        // Also wipe the in-memory UI signals so the
+                        // sidebar can't paint the previous actor's
+                        // Realm tree updates between this point and the sync that's
+                        // about to run.
+                        drop(store);
+                        realm_tree_nodes.set(Vec::new());
+                        projection_events.set(Vec::new());
+                        selected_realm_id.set(String::new());
+                        sync_cursor.set(String::new());
+                        device_queue.set(0);
+                        // Retire the previous-account SyncEngine so its
+                        // in-flight long-poll doesn't write back into
+                        // the freshly-wiped state.
+                        let mut sync_generation = ctx.sync_generation;
+                        sync_generation.set(sync_generation() + 1);
+                        // DID-P2-B step 5: the persisted accepted bindings are
+                        // scoped structurally (they live in the incoming
+                        // account's own entry, which `switch_active_account`
+                        // just loaded), but the *in-memory* session cache is
+                        // not — it is one signal shared by whoever is signed
+                        // in. Clearing it here is what stops the previous
+                        // principal's resolved documents from being reused for
+                        // the new one.
+                        let mut session_did_cache = ctx.did_cache;
+                        session_did_cache.write().clear();
+                    } else {
+                        // No previous identity to displace — just record
+                        // who the scope now belongs to (don't wipe: a
+                        // just-established grant could be dropped).
+                    }
+                    principal_id.set(canonical_actor.clone());
                 }
                 principal_id.set(canonical_actor.clone());
                 // DID-P2-B step 5, trust-domain half: an account entry can be
@@ -899,21 +1021,24 @@ pub(super) fn connect(
                     personal_handles_status.set("Not published".to_owned());
                 }
                 let grant_device = {
+                    let canonical_actor_id = Some(accepted_account.principal_id().clone());
                     let store = state_store.read();
                     store
                         .session_grant()
                         .filter(|grant| {
-                            crate::identity::session_refresh::grant_matches_principal_core_id(
-                                grant,
-                                active_account_snapshot.principal_id(),
-                            ) && crate::identity::session_refresh::grant_matches_principal_server(
+                            canonical_actor_id.as_ref().is_some_and(|principal_id| {
+                                crate::identity::session_refresh::grant_matches_principal_id(
+                                    grant,
+                                    principal_id,
+                                )
+                            }) && crate::identity::session_refresh::grant_matches_principal_server(
                                 grant, &base,
-                            )
+                            ) && crate::config::is_valid_device_id(grant.device_id.as_str())
                         })
                         .map(|grant| grant.device_id)
                 };
                 if let Some(grant_device) = grant_device
-                    && grant_device != active_account_snapshot.device_id
+                    && grant_device.as_str() != device
                 {
                     invalidate_bootstrap_session(
                         &session,
@@ -924,20 +1049,20 @@ pub(super) fn connect(
                         session_boot_state,
                         sync_bootstrap_complete,
                     );
-                    return;
+                    device = grant_device.to_string();
+                    device_id_signal.set(grant_device.to_string());
                 }
                 {
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    match crate::secure_key_store::UserLocalStore::new(
-                        active_account_snapshot.authority.clone(),
-                        active_account_snapshot.device_id.clone(),
-                    ) {
-                        Ok(user_store) => {
+                    match arkret_sdk::DeviceId::new(device.clone()) {
+                        Ok(device_id) => {
+                            let user_store = crate::secure_key_store::UserLocalStore::new(
+                                accepted_account.principal_id().clone(),
+                            );
                             user_store.activate();
-                            if let Err(error) = user_store.save_device_id(
-                                secure_store.as_ref(),
-                                &active_account_snapshot.device_id,
-                            ) {
+                            if let Err(error) =
+                                user_store.save_device_id(secure_store.as_ref(), &device_id)
+                            {
                                 tracing::warn!(
                                     ?error,
                                     "connect: persist canonical device_id failed"
@@ -945,7 +1070,7 @@ pub(super) fn connect(
                             }
                         }
                         Err(error) => {
-                            tracing::warn!(?error, "connect: account secure scope is invalid")
+                            tracing::warn!(?error, "connect: canonical device_id is invalid")
                         }
                     }
                     if let Err(error) =
@@ -965,11 +1090,7 @@ pub(super) fn connect(
                     "device authorization check",
                     &session,
                     bootstrap_session_generation,
-                    probe_device_authorization(
-                        active_account_snapshot.principal_id(),
-                        &active_account_snapshot.device_id,
-                        &authed,
-                    ),
+                    probe_device_authorization(accepted_account.full_id(), &device, &authed),
                 )
                 .await
                 else {
@@ -1005,8 +1126,8 @@ pub(super) fn connect(
                                         &session,
                                         bootstrap_session_generation,
                                         probe_device_authorization(
-                                            active_account_snapshot.principal_id(),
-                                            &active_account_snapshot.device_id,
+                                            accepted_account.full_id(),
+                                            &device,
                                             &authed,
                                         ),
                                     )
@@ -1263,10 +1384,10 @@ pub(super) fn connect(
                             };
                         {
                             let mut store = state_store.write();
-                            if !store.active_account_matches(&active_account_snapshot.authority) {
+                            if !store.active_account_matches(accepted_account.principal_id()) {
                                 tracing::warn!(
                                     response_principal = %canonical_actor,
-                                    active_profile = ?store.active_profile_id(),
+                                    active_principal = ?store.active_principal_id(),
                                     "discarded account snapshot after the active principal changed"
                                 );
                                 return;
@@ -1364,7 +1485,7 @@ pub(super) fn connect(
                                 };
                                 match crate::sidecar::ingest_sidecar_view_state_account_data(
                                     &mut store,
-                                    active_account_snapshot.principal_id(),
+                                    &principal_id(),
                                     account_data_key,
                                     entry,
                                 ) {
@@ -1386,7 +1507,7 @@ pub(super) fn connect(
                                 // LocalConfigStore synchronously.
                                 if account_data_key == AccountDataKey::CLIENT_UI_STATE {
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &active_account_snapshot.authority,
+                                        &principal_id(),
                                         account_data_key,
                                         entry,
                                     ) {
@@ -1400,7 +1521,7 @@ pub(super) fn connect(
                                             {
                                                 theme.set(remote_theme.clone());
                                                 store.save_private_data(
-                                                    &canonical_actor,
+                                                    &principal_id(),
                                                     "theme",
                                                     remote_theme,
                                                 );
@@ -1440,13 +1561,13 @@ pub(super) fn connect(
                                             )
                                         {
                                             store.save_private_data(
-                                                &canonical_actor,
+                                                &principal_id(),
                                                 "avatar_blob_ref",
                                                 avatar_blob_ref,
                                             );
                                         } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(&content) {
                                             store.save_private_data(
-                                                &canonical_actor,
+                                                &principal_id(),
                                                 "avatar_blob_ref",
                                                 "",
                                             );
@@ -1461,7 +1582,7 @@ pub(super) fn connect(
                                 if account_data_key == AccountDataKey::PRESENCE_VISIBILITY {
                                     let Some(visibility) =
                                         crate::account_data::decrypt_account_data_entry(
-                                            &active_account_snapshot.authority,
+                                            &principal_id(),
                                             account_data_key,
                                             entry,
                                         )
@@ -1485,7 +1606,7 @@ pub(super) fn connect(
                                 // before applying it to local state.
                                 if account_data_key == AccountDataKey::PRESENCE_PREFERENCE {
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &active_account_snapshot.authority,
+                                        &principal_id(),
                                         account_data_key,
                                         entry,
                                     )
@@ -1501,7 +1622,7 @@ pub(super) fn connect(
                                 }
                                 if account_data_key == AccountDataKey::DND_SCHEDULE {
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &active_account_snapshot.authority,
+                                        &principal_id(),
                                         account_data_key,
                                         entry,
                                     ) {
@@ -1517,14 +1638,14 @@ pub(super) fn connect(
                                 if account_data_key == AccountDataKey::ACCOUNT_BLOCKLIST {
                                     blocklist_snapshot_seen = true;
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &active_account_snapshot.authority,
+                                        &principal_id(),
                                         account_data_key,
                                         entry,
                                     )
                                     .and_then(|content| {
                                         let payload = crate::account_data::blocklist_payload_from_account_data(
                                             &content,
-                                            &canonical_actor,
+                                            &principal_id(),
                                         )
                                         .map_err(anyhow::Error::msg)?;
                                         let revision = entry
@@ -1603,7 +1724,7 @@ pub(super) fn connect(
                                         == Some(true)
                                     {
                                         match crate::account_data::account_data_namespace_key(
-                                            &active_account_snapshot.authority,
+                                            &principal_id(),
                                         ) {
                                             Ok(namespace_key) => {
                                                 store.remove_contact_remark_by_storage_key(
@@ -1619,7 +1740,7 @@ pub(super) fn connect(
                                         continue;
                                     }
                                     match crate::account_data::decrypt_account_data_entry(
-                                        &active_account_snapshot.authority,
+                                        &principal_id(),
                                         account_data_key,
                                         entry,
                                     )
@@ -1628,7 +1749,7 @@ pub(super) fn connect(
                                             serde_json::from_value(content)?;
                                         let namespace_key =
                                             crate::account_data::account_data_namespace_key(
-                                                &active_account_snapshot.authority,
+                                                &principal_id(),
                                             )?;
                                         remark
                                             .validate_for_account_data_key(
@@ -1660,7 +1781,7 @@ pub(super) fn connect(
                                     continue;
                                 };
                                 match crate::account_data::decrypt_account_data_entry(
-                                    &active_account_snapshot.authority,
+                                    &principal_id(),
                                     account_data_key,
                                     entry,
                                 )
@@ -1683,9 +1804,7 @@ pub(super) fn connect(
                             store.retain_scheduled_send_account_data_keys(
                                 &scheduled_send_snapshot_keys,
                             );
-                            match crate::account_data::account_data_namespace_key(
-                                &active_account_snapshot.authority,
-                            ) {
+                            match crate::account_data::account_data_namespace_key(&principal_id()) {
                                 Ok(namespace_key) => store.retain_contact_remarks_for_storage_keys(
                                     &namespace_key,
                                     &contact_remark_snapshot_keys,

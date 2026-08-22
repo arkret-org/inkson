@@ -56,10 +56,11 @@ pub(crate) fn refresh_notifications(
         .await
         {
             Ok((response, invite_notifications)) => {
+                let principal_id = state_store.read().active_principal_id().unwrap_or_default();
                 let push_rules =
-                    push_rules_from_account_data(&authority, &response.updates.account_data);
+                    push_rules_from_account_data(&principal_id, &response.updates.account_data);
                 let account_dnd =
-                    dnd_settings_from_account_data(&authority, &response.updates.account_data);
+                    dnd_settings_from_account_data(&principal_id, &response.updates.account_data);
                 let mut raw_notifications = raw_notifications_from_sources(
                     Some(&response.updates.notifications),
                     &response.updates.account_data,
@@ -73,7 +74,7 @@ pub(crate) fn refresh_notifications(
                 );
                 let inbox_states =
                     crate::account_data::notification_inbox_states_from_account_data_events(
-                        &authority,
+                        &principal_id,
                         &response.updates.account_data,
                     );
                 let hydrated = {
@@ -514,10 +515,11 @@ fn accept_invite_notification(
         .await
         {
             Ok((Ok(sync), invite_notifications, accepted_title, delivery_cell)) => {
+                let principal_id = state_store.read().active_principal_id().unwrap_or_default();
                 let push_rules =
-                    push_rules_from_account_data(&authority, &sync.updates.account_data);
+                    push_rules_from_account_data(&principal_id, &sync.updates.account_data);
                 let account_dnd =
-                    dnd_settings_from_account_data(&authority, &sync.updates.account_data);
+                    dnd_settings_from_account_data(&principal_id, &sync.updates.account_data);
                 let hidden_realms =
                     JoinedRealmIds::from_realm_entries(&sync.realm_entries, &principal_id)
                         .joined_now(accepted_realm.clone());
@@ -564,6 +566,7 @@ fn accept_invite_notification(
                         .notification_dnd_settings
                         .as_ref()
                         .or(account_dnd.as_ref());
+                    let principal_id = store.active_principal_id().unwrap_or_default();
                     let privacy_gate =
                         crate::sidecar::SidecarPrivacyGate::from_store(&store, &principal_id);
                     hydrate_notifications_with_privacy_gate(

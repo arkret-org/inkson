@@ -604,7 +604,7 @@ fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
     });
     let rows = realm_member_roster(Some(&projection));
     let mut store = isolated_store_for_tests("synthesis-current-account-handle");
-    store.switch_active_account(actor);
+    store.switch_test_account(actor);
     store.set_primary_handle_for_did(actor, "alice:local.host");
     let context = CardAuthorDisplayContext {
         realm_id: TEST_REALM_ID,

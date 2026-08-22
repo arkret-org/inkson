@@ -91,7 +91,7 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
 struct InksonAuthenticatedTransportFactory {
     principal_sdk_base_url: Url,
     account_sdk_base_url: Url,
-    principal_server_url: String,
+    principal_server_url: Url,
     device_handle: DpopHandle,
     refresh_transport: ReplaceableSessionTransport,
 }
@@ -170,7 +170,7 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
 struct PersistedSessionGrantStore {
     secure_store: Arc<dyn SecureKeyStore + Send + Sync>,
     user_store: crate::secure_key_store::UserLocalStore,
-    principal_server_url: String,
+    principal_server_url: Url,
     device_handle: DpopHandle,
 }
 
@@ -333,8 +333,8 @@ pub fn grant_is_dead(grant: &PersistedSessionGrant) -> bool {
 /// ②(A+②): "Due" means the grant itself is near its own expiry and should be
 /// rotated (grant-binding DPoP proof → fresh grant). There is no separate
 /// minted local session expiry to chase — the grant *is* the credential.
-fn normalized_server_key(server_url: &str) -> String {
-    normalize_server_url(server_url)
+fn normalized_server_key(server_url: &Url) -> String {
+    normalize_server_url(server_url.as_str())
         .trim()
         .trim_end_matches('/')
         .to_ascii_lowercase()
@@ -350,7 +350,10 @@ pub fn grant_matches_principal_server(
     principal_server_url: &str,
 ) -> bool {
     let grant_server = normalized_server_key(&grant.principal_server_url);
-    let active_server = normalized_server_key(principal_server_url);
+    let Ok(active_server_url) = Url::parse(principal_server_url) else {
+        return false;
+    };
+    let active_server = normalized_server_key(&active_server_url);
     !grant_server.is_empty() && grant_server == active_server
 }
 
@@ -444,8 +447,9 @@ pub(crate) async fn refresh_authenticated_session_after_unauthorized(
 pub(crate) fn cached_authenticated_sdk_client(
     principal_server_url: &str,
 ) -> Option<arkret_sdk::http_client::Client> {
+    let principal_server_url = Url::parse(principal_server_url).ok()?;
     session_grant_runtime()
-        .get_for_server(&normalized_server_key(principal_server_url))?
+        .get_for_server(&normalized_server_key(&principal_server_url))?
         .cached_transport()
 }
 
@@ -455,7 +459,7 @@ async fn session_transport_provider(
     device_handle: &DpopHandle,
 ) -> anyhow::Result<InksonSessionProvider> {
     let server_key = normalized_server_key(&grant.principal_server_url);
-    if let Some(provider) = runtime.get(&server_key, &grant.device_id) {
+    if let Some(provider) = runtime.get(&server_key, grant.device_id.as_str()) {
         return Ok(provider);
     }
 
@@ -464,17 +468,17 @@ async fn session_transport_provider(
     // reaches `runtime.replace`; serialize that cold path so every caller
     // shares one SessionEngine and therefore one consumable-grant refresh gate.
     let _initialization = session_provider_initialization_lock().lock().await;
-    if let Some(provider) = runtime.get(&server_key, &grant.device_id) {
+    if let Some(provider) = runtime.get(&server_key, grant.device_id.as_str()) {
         return Ok(provider);
     }
 
     let gate_account_base = crate::identity::account_auth::resolve_principal_gate_account_base(
-        &grant.principal_server_url,
+        grant.principal_server_url.as_str(),
     )
     .await
     .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
     let account_sdk_base_url = sdk_base_url_from_gate_account_base(&gate_account_base)?;
-    let principal_sdk_base_url = crate::config::validate_server_url(&grant.principal_server_url)?;
+    let principal_sdk_base_url = grant.principal_server_url.clone();
     let refresh_transport = ReplaceableSessionTransport::default();
     let factory = InksonAuthenticatedTransportFactory {
         principal_sdk_base_url,
@@ -484,7 +488,7 @@ async fn session_transport_provider(
         refresh_transport: refresh_transport.clone(),
     };
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let principal_core_id = persisted_grant_principal_core_id(grant)?;
+    let principal_core_id = persisted_grant_principal_id(grant)?;
     let state_store = PersistedSessionGrantStore {
         secure_store,
         user_store: crate::secure_key_store::UserLocalStore::new(principal_core_id),
@@ -515,7 +519,7 @@ async fn session_transport_provider(
             .await?
         }
     };
-    runtime.replace(server_key, grant.device_id.clone(), provider.clone());
+    runtime.replace(server_key, grant.device_id.to_string(), provider.clone());
     Ok(provider)
 }
 
@@ -526,7 +530,7 @@ fn session_provider_initialization_lock() -> &'static tokio::sync::Mutex<()> {
 
 fn persisted_session_grant_from_state(
     state: &SessionGrantState,
-    principal_server_url: &str,
+    principal_server_url: &Url,
     device_handle: &DpopHandle,
 ) -> anyhow::Result<PersistedSessionGrant> {
     let device_id = state
@@ -541,9 +545,9 @@ fn persisted_session_grant_from_state(
         session_private_key_pem: session_private_key_pem.to_string(),
         grant_id: state.grant_id.as_str().to_owned(),
         audience: state.audience.to_string(),
-        principal_id: state.principal_id.to_string(),
-        device_id: device_id.to_string(),
-        principal_server_url: principal_server_url.to_owned(),
+        principal_id: state.principal_id.clone(),
+        device_id: device_id.clone(),
+        principal_server_url: principal_server_url.clone(),
         grant_expires_at: Some(state.expires_at),
         stored_at: Utc::now(),
     })
@@ -558,11 +562,8 @@ fn session_grant_state_from_persisted(
         .grant_expires_at
         .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
     Ok(SessionGrantState {
-        principal_id: persisted_grant_principal_core_id(grant)?,
-        device_id: Some(
-            arkret_sdk::DeviceId::new(grant.device_id.trim().to_owned())
-                .map_err(|error| anyhow::anyhow!("invalid refresh device_id: {error}"))?,
-        ),
+        principal_id: persisted_grant_principal_id(grant)?,
+        device_id: Some(grant.device_id.clone()),
         grant_id: arkret_wire::SessionGrantId::new(grant.grant_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid refresh grant_id: {error}"))?,
         grant_jwt: grant.grant_jwt.clone(),
@@ -583,11 +584,10 @@ fn session_grant_state_from_persisted(
 /// Records always store a `DidCoreId`. Anything else is an invalid record: the
 /// caller must treat the failure as "no usable session" and re-authenticate,
 /// never reconstruct a core id from some other identifier form.
-pub(crate) fn persisted_grant_principal_core_id(
+pub(crate) fn persisted_grant_principal_id(
     grant: &PersistedSessionGrant,
 ) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    arkret_sdk::DidCoreId::new(grant.principal_id.trim().to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid session principal: {error}"))
+    Ok(grant.principal_id.clone())
 }
 
 pub(crate) fn grant_matches_full_principal(
@@ -597,15 +597,14 @@ pub(crate) fn grant_matches_full_principal(
     let Ok(expected_core_id) = arkret_sdk::project_full_id_to_core_id(principal_id) else {
         return false;
     };
-    grant_matches_principal_core_id(grant, &expected_core_id)
+    grant_matches_principal_id(grant, &expected_core_id)
 }
 
-pub(crate) fn grant_matches_principal_core_id(
+pub(crate) fn grant_matches_principal_id(
     grant: &PersistedSessionGrant,
     principal_id: &arkret_sdk::DidCoreId,
 ) -> bool {
-    persisted_grant_principal_core_id(grant)
-        .is_ok_and(|grant_core_id| grant_core_id == *principal_id)
+    persisted_grant_principal_id(grant).is_ok_and(|grant_core_id| grant_core_id == *principal_id)
 }
 
 pub(crate) fn sdk_base_url_from_gate_account_base(gate_account_base: &str) -> anyhow::Result<Url> {
@@ -633,9 +632,8 @@ fn mint_session_grant_refresh_proof(
     grant: &PersistedSessionGrant,
     holder_jkt: &str,
 ) -> anyhow::Result<arkret_sdk::AcceptedDeviceRefreshPossessionProof> {
-    let principal_core = persisted_grant_principal_core_id(grant)?;
-    let device_id =
-        arkret_sdk::DeviceId::new(required_trimmed(&grant.device_id, "device_id")?.to_owned())?;
+    let principal_core = persisted_grant_principal_id(grant)?;
+    let device_id = grant.device_id.clone();
     let audience = session_audience(&grant.audience)?;
     let predecessor_session_grant_id = arkret_wire::SessionGrantId::new(
         required_trimmed(&grant.grant_id, "grant_id")?.to_owned(),
@@ -741,9 +739,12 @@ mod tests {
             session_private_key_pem: String::new(),
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
             audience: "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
-            principal_id: principal_id.to_owned(),
-            device_id: "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
-            principal_server_url: "https://soland.example".to_owned(),
+            principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned()).unwrap(),
+            device_id: arkret_sdk::DeviceId::new(
+                "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+            )
+            .unwrap(),
+            principal_server_url: url::Url::parse("https://soland.example").unwrap(),
             grant_expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
             stored_at: Utc::now(),
         }
@@ -754,7 +755,7 @@ mod tests {
         let factory = InksonAuthenticatedTransportFactory {
             principal_sdk_base_url: Url::parse("https://soland.example/").unwrap(),
             account_sdk_base_url: Url::parse("https://coauth.example/").unwrap(),
-            principal_server_url: "https://soland.example".to_owned(),
+            principal_server_url: Url::parse("https://soland.example").unwrap(),
             device_handle: test_device_handle(),
             refresh_transport: ReplaceableSessionTransport::default(),
         };
@@ -775,8 +776,8 @@ mod tests {
         let grant = test_persisted_grant(core_id.as_str());
 
         assert!(grant_matches_full_principal(&grant, &full_id));
-        assert!(grant_matches_principal_core_id(&grant, &core_id));
-        assert_ne!(grant.principal_id, full_id.as_str());
+        assert!(grant_matches_principal_id(&grant, &core_id));
+        assert_ne!(grant.principal_id.as_str(), full_id.as_str());
     }
 
     /// A persisted grant that stores anything other than a `DidCoreId` is an
@@ -788,7 +789,7 @@ mod tests {
             arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
         let grant = test_persisted_grant(full_id.as_str());
 
-        assert!(persisted_grant_principal_core_id(&grant).is_err());
+        assert!(persisted_grant_principal_id(&grant).is_err());
         assert!(!grant_matches_full_principal(&grant, &full_id));
     }
 }

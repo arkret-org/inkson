@@ -361,19 +361,14 @@ fn build_pairing_verification_content(
 }
 
 #[component]
-pub fn SettingsDevicesPanel(token: Signal<String>) -> Element {
-    let session = crate::app::SessionContext::get();
-    let state_store = session.state_store;
-    let Some(account) = session.active_account() else {
-        return rsx! {};
-    };
-    let server_url = account.server_url.to_string();
-    let full_id = account.full_id().to_string();
-    let active_device_id = account.device_id.to_string();
-    let authority = account.authority.clone();
-    let base_url = use_signal(move || server_url.clone());
-    let principal_id = use_signal(move || full_id.clone());
-    let device_id = use_signal(move || active_device_id.clone());
+pub fn SettingsDevicesPanel(
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
+    token: Signal<String>,
+) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    let base_url = crate::app::SessionContext::get().base_url;
+    let state_store = crate::app::SessionContext::get().state_store;
     let route = use_route::<Route>();
     let pair_mode = matches!(route, Route::SettingsDevicesPair);
 

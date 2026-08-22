@@ -148,15 +148,17 @@ mod qr_tests {
 }
 
 #[component]
-pub fn VerifyDevicePanel(token: Signal<String>, selected_realm_id: String) -> Element {
-    let session = crate::app::SessionContext::get();
-    let Some(account) = session.active_account() else {
-        return rsx! {};
-    };
-    let base_url = account.server_url.to_string();
-    let principal_id = account.principal_id().to_string();
-    let device_id = account.device_id.to_string();
-    let mut state_store = session.state_store;
+pub fn VerifyDevicePanel(
+    token: Signal<String>,
+    device_id: String,
+    principal_id: String,
+    selected_realm_id: String,
+) -> Element {
+    // A4 — base_url / state_store from session context instead of props.
+    // `selected_realm_id` is kept on the prop list so the route binding in
+    // `app.rs` stays uniform with other panel signatures.
+    let base_url = crate::app::SessionContext::base_url_string();
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let _ = (&selected_realm_id,);
     let mut verify_method = use_signal(|| VerifyMethod::QrCode);
     let mut target_device = use_signal(String::new);
@@ -477,7 +479,7 @@ pub fn VerifyDevicePanel(token: Signal<String>, selected_realm_id: String) -> El
                                     disabled: ephemeral_keypair().is_none() || target_device().trim().is_empty(),
                                     onclick: {
                                         let base = base_url.clone();
-                                        let principal_id = principal_id.clone();
+                                        let account = principal_id.clone();
                                         let from_device_for_send = device_id.clone();
                                         let send_failed_signing_tpl = send_failed_signing_tpl.clone();
                                         let send_failed_sign_tpl = send_failed_sign_tpl.clone();

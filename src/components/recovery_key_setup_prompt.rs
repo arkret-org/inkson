@@ -23,7 +23,7 @@ use crate::views::recovery::RecoveryKeyBackupOutcome;
 /// phrase; no plaintext or encrypted copy is persisted as ordinary device
 /// state while confirmation is pending.
 fn begin_recovery_key_setup(
-    active_account: Signal<Option<crate::config::ActiveAccountContext>>,
+    principal_id: Signal<String>,
     mut generated_recovery_key: Signal<String>,
     mut confirmation_input: Signal<String>,
     mut status: Signal<String>,
@@ -32,7 +32,7 @@ fn begin_recovery_key_setup(
     mut generation_failed: Signal<bool>,
 ) {
     generation_failed.set(false);
-    if active_account().is_none() {
+    if principal_id().trim().is_empty() {
         status.set(crate::i18n::tr("recovery_setup.err_requires_account"));
         return;
     }
@@ -56,6 +56,8 @@ fn begin_recovery_key_setup(
 #[component]
 pub fn RecoveryKeySetupPrompt(
     token: Signal<String>,
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
     open: Signal<bool>,
     account_primary_handle: Signal<String>,
     #[props(default)] on_server_configured: Option<EventHandler<()>>,
@@ -89,14 +91,14 @@ pub fn RecoveryKeySetupPrompt(
         }
         if auto_generate_started()
             || !generated_recovery_key().trim().is_empty()
-            || active_account().is_none()
+            || principal_id().trim().is_empty()
         {
             return;
         }
         auto_generate_started.set(true);
         status.set(crate::i18n::tr("recovery_setup.generating"));
         begin_recovery_key_setup(
-            active_account,
+            principal_id,
             generated_recovery_key,
             confirmation_input,
             status,
@@ -261,7 +263,7 @@ pub fn RecoveryKeySetupPrompt(
                                     auto_generate_started.set(true);
                                     status.set(crate::i18n::tr("recovery_setup.generating"));
                                     begin_recovery_key_setup(
-                                        active_account,
+                                        principal_id,
                                         generated_recovery_key,
                                         confirmation_input,
                                         status,
@@ -295,7 +297,7 @@ pub fn RecoveryKeySetupPrompt(
                                 auto_generate_started.set(true);
                                 status.set(crate::i18n::tr("recovery_setup.generating_replacement"));
                                 begin_recovery_key_setup(
-                                    active_account,
+                                    principal_id,
                                     generated_recovery_key,
                                     confirmation_input,
                                     status,
@@ -336,13 +338,10 @@ pub fn RecoveryKeySetupPrompt(
                                             return;
                                         }
                                     }
-                                    let Some(account) = active_account() else {
-                                        status.set(crate::i18n::tr(
-                                            "recovery_setup.err_requires_account",
-                                        ));
-                                        return;
-                                    };
-                                    if saved_recovery_key.trim().is_empty() {
+                                    let actor = principal_id();
+                                    if actor.trim().is_empty()
+                                        || saved_recovery_key.trim().is_empty()
+                                    {
                                         status.set(crate::i18n::tr(
                                             "recovery_setup.err_requires_account",
                                         ));
@@ -396,7 +395,8 @@ pub fn RecoveryKeySetupPrompt(
                                     );
                                     crate::views::recovery::upload_recovery_key_account_backup(
                                         token,
-                                        account,
+                                        principal_id,
+                                        device_id,
                                         state_store,
                                         saved_recovery_key.clone(),
                                         status,

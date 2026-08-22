@@ -326,7 +326,11 @@ pub fn classify_manifest_input(raw: &str) -> ManifestInputKind {
 }
 
 #[component]
-pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element {
+pub fn AppletsPanel(
+    token: Signal<String>,
+    principal_id: Signal<String>,
+    selected_realm_id: String,
+) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session = crate::app::SessionContext::get();
     let base_url = crate::app::SessionContext::base_url_string();
@@ -687,11 +691,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                         };
                                         let base = base.clone();
                                         let api_token = token();
-                                        let Some(account) = active_account() else {
-                                            install_status.set("install failed: account is not connected".to_owned());
-                                            return;
-                                        };
-                                        let principal_id = account.authority.principal_id;
+                                        let actor_id = principal_id();
                                         let ghost_actor_mode = if install_ghost_actors_allowed() {
                                             AppletGhostActorMode::PolicyDeclared
                                         } else {
@@ -832,7 +832,8 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                     let realm = realm.clone();
                                                     let aid = aid.clone();
                                                     let api_token = token();
-                                                    let Some(account) = active_account() else {
+                                                    let actor_id = principal_id().trim().to_owned();
+                                                    if actor_id.is_empty() {
                                                         install_status.set("revoke failed: account is not connected".to_owned());
                                                         return;
                                                     };

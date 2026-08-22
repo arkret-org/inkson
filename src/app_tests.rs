@@ -1,30 +1,36 @@
 use super::*;
 
-fn test_active_account(
-    principal_full_id: &str,
+fn test_client_config(
     server_url: &str,
-    device_id: &str,
-) -> crate::config::ActiveAccountContext {
-    let full_id = arkret_sdk::DidFullId::new(principal_full_id.to_owned()).unwrap();
-    let authority = arkret_sdk::PrincipalAuthorityKey::new(
-        arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
-        arkret_sdk::DidCoreId::new("did:web:principal-server.example".to_owned()).unwrap(),
-    );
-    let resolution = arkret_sdk::PrincipalResolutionProjection {
-        full_id,
-        method_history_head: "head-test".to_owned(),
-        version_id: "version-test".to_owned(),
-        resolution_event_ref: "event-test".to_owned(),
-        updated_at: "2026-08-22T00:00:00Z".parse().unwrap(),
+    principal: impl AsRef<str>,
+    device_id: impl AsRef<str>,
+    credential: impl Into<String>,
+) -> ClientConfig {
+    let principal = principal.as_ref();
+    let full = if let Some(rest) = principal.strip_prefix("ak:did_core:web:") {
+        arkret_sdk::DidFullId::new(format!("did:web:{rest}")).unwrap()
+    } else {
+        arkret_sdk::DidFullId::new(principal.to_owned()).unwrap()
     };
-    crate::config::ActiveAccountContext::new(
-        "ak:profile:test".to_owned(),
+    let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        arkret_sdk::project_full_id_to_core_id(&full).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+    );
+    let account = crate::identity::active_account::ActiveAccountContext::new(
+        "ak:profile:019b0000-0000-7000-8000-000000000001".to_owned(),
         authority,
-        resolution,
-        arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap(),
+        arkret_sdk::PrincipalResolutionProjection {
+            full_id: full,
+            method_history_head: "head-1".to_owned(),
+            version_id: "1".to_owned(),
+            resolution_event_ref: format!("ak:event:{}", "A".repeat(44)),
+            updated_at: chrono::Utc::now(),
+        },
+        arkret_sdk::DeviceId::new(device_id.as_ref().to_owned()).unwrap(),
         url::Url::parse(server_url).unwrap(),
     )
-    .unwrap()
+    .unwrap();
+    ClientConfig::authenticated(account, credential.into())
 }
 
 #[test]
@@ -69,12 +75,10 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
 #[test]
 fn unchanged_session_refresh_is_a_noop_for_reactive_and_persisted_state() {
     let grant = session_grant(3600);
-    let config = ClientConfig::from_fields(
-        Some(test_active_account(
-            grant.authority.principal_id.as_str(),
-            grant.principal_server_url.as_str(),
-            grant.device_id.as_str(),
-        )),
+    let config = test_client_config(
+        "https://example.test",
+        grant.principal_id.clone(),
+        grant.device_id.clone(),
         grant.grant_jwt.clone(),
     );
 
@@ -218,10 +222,13 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
         grant_jwt: "grant.jwt".to_owned(),
         session_private_key_pem: "PEM".to_owned(),
         grant_id: "grant-1".to_owned(),
-        audience: url::Url::parse("https://local.host").unwrap(),
-        authority: account.authority,
-        device_id: account.device_id,
-        principal_server_url: account.server_url,
+        audience: "did:web:local.host".to_owned(),
+        principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        device_id: arkret_sdk::DeviceId::new(
+            "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
+        )
+        .unwrap(),
+        principal_server_url: url::Url::parse("https://local.host").unwrap(),
         grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
         stored_at: now,
     }
@@ -236,7 +243,7 @@ fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
         "ak:device:01964137-0000-7000-8000-000000000001",
     );
     let mut store = crate::state::isolated_store_for_tests("account-scope-no-restore");
-    store.switch_active_account(&account.profile_id, &account.authority);
+    store.switch_test_account(actor);
 
     assert!(!has_bootstrap_refresh_material(
         &store,
@@ -566,12 +573,10 @@ use crate::state::isolated_store_for_tests as isolated_store;
 #[test]
 fn boot_session_credential_ignores_config_token_without_boot_material() {
     let state = ClientLocalState::default();
-    let config = ClientConfig::from_fields(
-        Some(test_active_account(
-            "did:web:alice.example",
-            "https://local.host",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        )),
+    let config = test_client_config(
+        "https://local.host",
+        "did:web:alice.example",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "config-token",
     );
 
@@ -588,12 +593,10 @@ fn boot_session_credential_uses_fresh_session_grant() {
         session_grant: Some(session_grant(3600)),
         ..Default::default()
     };
-    let config = ClientConfig::from_fields(
-        Some(test_active_account(
-            "did:web:alice.example",
-            "https://local.host",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        )),
+    let config = test_client_config(
+        "https://local.host",
+        "did:web:alice.example",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
 
@@ -610,12 +613,10 @@ fn boot_session_credential_ignores_expired_session_grant() {
         session_grant: Some(session_grant(-1)),
         ..Default::default()
     };
-    let config = ClientConfig::from_fields(
-        Some(test_active_account(
-            "did:web:alice.example",
-            "https://local.host",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        )),
+    let config = test_client_config(
+        "https://local.host",
+        "did:web:alice.example",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
 
@@ -634,12 +635,10 @@ fn boot_session_credential_ignores_session_grant_for_other_server() {
         session_grant: Some(grant),
         ..Default::default()
     };
-    let config = ClientConfig::from_fields(
-        Some(test_active_account(
-            "did:web:alice.example",
-            "https://local.host",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        )),
+    let config = test_client_config(
+        "https://local.host",
+        "did:web:alice.example",
+        "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
 
@@ -720,7 +719,8 @@ fn boot_state_waits_for_secure_store_before_known_account_is_signed_out() {
 
 #[test]
 fn rehydrated_session_credential_only_matches_active_config() {
-    let account = test_active_account(
+    let config = test_client_config(
+        "https://local.host",
         "did:web:alice.example",
         "https://local.host",
         "ak:device:01964137-0000-7000-8000-000000000001",

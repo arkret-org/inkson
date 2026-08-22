@@ -38,9 +38,7 @@ fn shared_pin_operation_body(
 pub(super) struct ChatCommandContext {
     pub base_url: String,
     pub principal_id: String,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
-    pub full_id: arkret_sdk::DidFullId,
-    pub device_id: arkret_sdk::DeviceId,
+    pub device_id: String,
     pub selected_realm_id: String,
     pub selected_channel_id: String,
     pub plaintext_service_id: String,
@@ -411,8 +409,17 @@ impl ChatController {
             self.message_context_menu.set(None);
             return;
         }
-        let namespace_key = match load_chat_productivity_namespace_key(&context.authority) {
+        let namespace_key = match load_chat_productivity_namespace_key(&context.principal_id) {
             Ok(key) => key,
+            Err(error) => {
+                self.status_msg
+                    .set(format!("Private save failed: {error:#}"));
+                self.message_context_menu.set(None);
+                return;
+            }
+        };
+        let actor = match arkret_sdk::DidFullId::new(context.principal_id.clone()) {
+            Ok(actor) => actor,
             Err(error) => {
                 self.status_msg
                     .set(format!("Private save failed: {error:#}"));
@@ -649,7 +656,7 @@ impl ChatController {
             state_store,
             &context.selected_realm_id,
             &context.principal_id,
-            context.device_id.as_str(),
+            &context.device_id,
             &target_ref,
             &emoji,
             context.selected_channel_security_encrypted,

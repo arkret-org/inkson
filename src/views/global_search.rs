@@ -239,7 +239,11 @@ pub fn result_destination(result: &Value) -> Option<SearchDestination> {
 use crate::realm_tree::string_field;
 
 #[component]
-pub fn GlobalSearchPanel(initial_query: String) -> Element {
+pub fn GlobalSearchPanel(
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
+    initial_query: String,
+) -> Element {
     // A4 — state_store from session context instead of a prop.
     let session = crate::app::SessionContext::get();
     let state_store = session.state_store;
@@ -257,18 +261,16 @@ pub fn GlobalSearchPanel(initial_query: String) -> Element {
     use_effect(move || {
         let q = initial_query_for_effect.clone();
         if !q.trim().is_empty() {
-            if let Some(account) = active_account() {
-                run_search(
-                    q,
-                    state_store,
-                    account.authority,
-                    account.device_id,
-                    results,
-                    loading,
-                    error_msg,
-                    has_searched,
-                );
-            }
+            run_search(
+                q,
+                state_store,
+                principal_id(),
+                device_id(),
+                results,
+                loading,
+                error_msg,
+                has_searched,
+            );
         }
     });
 
@@ -284,18 +286,16 @@ pub fn GlobalSearchPanel(initial_query: String) -> Element {
                         evt.prevent_default();
                         let q = query();
                         if q.trim().is_empty() { return; }
-                        if let Some(account) = active_account() {
-                            run_search(
-                                q,
-                                state_store,
-                                account.authority,
-                                account.device_id,
-                                results,
-                                loading,
-                                error_msg,
-                                has_searched,
-                            );
-                        }
+                        run_search(
+                            q,
+                            state_store,
+                            principal_id(),
+                            device_id(),
+                            results,
+                            loading,
+                            error_msg,
+                            has_searched,
+                        );
                     },
                     div { class: "actions", style: "gap: 8px;",
                         Input {

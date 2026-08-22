@@ -116,7 +116,7 @@ pub(crate) fn app_data_dir() -> PathBuf {
 
 /// Reversible XOR obfuscation for **non-sensitive** client-side preferences.
 ///
-/// This is NOT encryption: the key is a public local storage locator (recomputable
+/// This is NOT encryption: the key is the public `principal_id()` (recomputable
 /// by anyone holding the on-disk data) and XOR is trivially invertible. It only
 /// keeps UI preferences (theme, avatar ref, sidebar width, recovery-hint
 /// markers) from being casually readable as plaintext on disk. NEVER route
@@ -171,14 +171,20 @@ pub(super) fn active_user_local_store()
                 .to_owned(),
         )
     })?;
-    crate::secure_key_store::UserLocalStore::new(scope.authority, scope.device_id)
+    let principal = arkret_sdk::DidCoreId::new(principal).map_err(|error| {
+        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+            "active principal core id is invalid: {error}"
+        ))
+    })?;
+    user_local_store_for_principal(&principal)
 }
 
-pub(super) fn user_local_store_for_account(
-    authority: arkret_sdk::PrincipalAuthorityKey,
-    device_id: arkret_sdk::DeviceId,
+pub(super) fn user_local_store_for_principal(
+    principal: &arkret_sdk::DidCoreId,
 ) -> Result<crate::secure_key_store::UserLocalStore, crate::secure_key_store::SecureKeyStoreError> {
-    crate::secure_key_store::UserLocalStore::new(authority, device_id)
+    Ok(crate::secure_key_store::UserLocalStore::new(
+        principal.clone(),
+    ))
 }
 
 pub(crate) fn load_identity_record_from_secure_store(

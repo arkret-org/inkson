@@ -282,7 +282,7 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
         handle_claims_limited: false,
     };
     let mut store = isolated_store_for_tests("member-display-current-account");
-    store.switch_active_account(actor);
+    store.switch_test_account(actor);
     store.set_primary_handle_for_did(actor, "alice:local.host");
 
     let display = crate::views::member_display::resolve_member_display(&store, TEST_REALM_ID, &row);

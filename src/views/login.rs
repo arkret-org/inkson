@@ -288,6 +288,8 @@ thread_local! {
 
 #[component]
 pub fn LoginPanel(
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
     token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     mut locale: Signal<crate::i18n::UiLocale>,
@@ -347,16 +349,8 @@ pub fn LoginPanel(
         let result = finish_oidc_callback(callback_device, state_store_write).await;
         match result {
             Ok(OidcCallbackOutcome::Login(completed)) => {
-                let mut completed = *completed;
-                if let Some(existing) = state_store_write
-                    .read()
-                    .known_profile_refs()
-                    .into_iter()
-                    .find(|known| known.authority == completed.account.authority)
-                {
-                    completed.account.profile_id = existing.profile_id;
-                }
-                let principal_server_url = completed.account.server_url.to_string();
+                let principal_server_url = normalize_server_url(&completed.principal_server_url);
+                let actor = completed.actor.to_string();
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                 let prepared_keys = match prepare_completed_login_dpop_key(
                     secure_store.as_ref(),
@@ -378,7 +372,6 @@ pub fn LoginPanel(
                 let mut persist_error = None::<String>;
                 {
                     let mut store = state_store_write.write();
-                    store.adopt_pending_login(&completed.account);
                     if let Err(error) = commit_completed_login_dpop_key(
                         &mut store,
                         secure_store.as_ref(),
@@ -393,10 +386,6 @@ pub fn LoginPanel(
                         if let Some(handle) = completed.personal_handle.as_deref() {
                             store.set_primary_handle(handle);
                         }
-                        store.register_known_profile(
-                            &completed.account.profile_id,
-                            &completed.account.authority,
-                        );
                         store.set_session_grant(Some(completed.session_grant.clone()));
                         if let Err(error) =
                             crate::identity::account_auth::clear_account_handoff_grant(
@@ -427,7 +416,8 @@ pub fn LoginPanel(
                     return;
                 }
                 base_url.set(principal_server_url.clone());
-                active_account.set(Some(completed.account.clone()));
+                principal_id.set(actor.clone());
+                device_id.set(completed.device_id.clone());
                 token.set(completed.session_credential.clone());
                 persist_config(
                     config_store,
@@ -479,12 +469,28 @@ pub fn LoginPanel(
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
         let loaded_config = config_store.read().load();
-        let persisted_account = active_account().or_else(|| loaded_config.active_account.clone());
-        let returning_principal = match returning_sign_in_principal(persisted_account.as_ref()) {
-            Ok(principal) => principal,
-            Err(error) => {
-                auth_status.set(error);
-                return;
+        let live_actor = principal_id();
+        let persisted_actor = if live_actor.trim().is_empty() {
+            loaded_config
+                .active_account
+                .as_ref()
+                .map(|account| account.full_id().to_string())
+                .unwrap_or_default()
+        } else {
+            live_actor
+        };
+        let persisted_device = loaded_config
+            .active_account
+            .as_ref()
+            .map(|account| account.device_id.to_string())
+            .unwrap_or_else(|| device_id());
+        let returning_principal = {
+            match returning_sign_in_principal(&persisted_actor) {
+                Ok(principal) => principal,
+                Err(error) => {
+                    auth_status.set(error);
+                    return;
+                }
             }
         };
         let mut reset_state_store = state_store;
@@ -619,7 +625,7 @@ pub fn LoginPanel(
             // Pre-DID: record the sign-in device id as the pending login so the
             // bootstrap wrap_seed / secrets land under the
             // `pending.<device_id>` namespace until the principal DID resolves
-            // and `adopt_pending_login` re-homes them.
+            // and `accepted-context promotion` re-homes them.
             if resume_account_handoff {
                 let resumed = reset_state_store
                     .write()
@@ -708,6 +714,7 @@ pub fn LoginPanel(
                             let value = normalize_server_url(&event.value());
                             base_url.set(value);
                             token.set(String::new());
+                            persist_config(config_store, value, principal_id(), device_id(), String::new());
                         },
                     }
                     button {
@@ -748,6 +755,13 @@ pub fn LoginPanel(
                                             let value = normalize_server_url(&option_url);
                                             base_url.set(value);
                                             token.set(String::new());
+                                            persist_config(
+                                                config_store,
+                                                value,
+                                                principal_id(),
+                                                device_id(),
+                                                String::new(),
+                                            );
                                             server_menu_open.set(false);
                                         }
                                     },
@@ -798,15 +812,8 @@ pub fn LoginPanel(
                 // without scraping log lines.
                 {
                     let token_value = token();
-                    let account_value = active_account();
-                    let device_value = account_value
-                        .as_ref()
-                        .map(|account| account.device_id.to_string())
-                        .unwrap_or_else(|| pending_device_id());
-                    let actor_value = account_value
-                        .as_ref()
-                        .map(|account| account.principal_id().to_string())
-                        .unwrap_or_default();
+                    let device_value = device_id();
+                    let actor_value = principal_id();
                     let store_snapshot = state_store_write.read();
                     let session_status = compute_session_status(
                         &token_value,
@@ -913,9 +920,17 @@ fn restore_oidc_callback_device_seed_scope(
 }
 
 fn returning_sign_in_principal(
-    active_account: Option<&crate::config::ActiveAccountContext>,
+    persisted_actor: &str,
 ) -> Result<Option<arkret_sdk::DidFullId>, String> {
-    Ok(active_account.map(|account| account.full_id().clone()))
+    let actor = persisted_actor.trim();
+    if actor.is_empty() {
+        return Ok(None);
+    }
+    let full_id = arkret_sdk::DidFullId::new(actor.to_owned())
+        .map_err(|error| format!("The saved current principal resolution is invalid: {error}"))?;
+    arkret_sdk::project_full_id_to_core_id(&full_id)
+        .map_err(|error| format!("The saved account principal cannot be projected: {error}"))?;
+    Ok(Some(full_id))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1922,8 +1937,9 @@ async fn issue_bound_handoff_session(
     let persisted_session_grant = persisted_session_grant_from_state(
         &session_grant,
         &session_private_key_pem,
-        authority,
-        principal_server_route,
+        url::Url::parse(principal_server_url).map_err(|error| {
+            ReturningSessionExchangeError::Fatal(format!("invalid Principal Server route: {error}"))
+        })?,
         device_id.clone(),
     );
     Ok(CompletedLogin {
@@ -1946,7 +1962,6 @@ async fn issue_bound_handoff_session(
 fn persisted_session_grant_from_state(
     grant: &SessionGrantState,
     session_private_key_pem: &str,
-    authority: arkret_sdk::PrincipalAuthorityKey,
     principal_server_url: url::Url,
     device_id: arkret_sdk::DeviceId,
 ) -> PersistedSessionGrant {
@@ -1955,9 +1970,9 @@ fn persisted_session_grant_from_state(
         session_private_key_pem: session_private_key_pem.to_owned(),
         grant_id: grant.grant_id.as_str().to_owned(),
         audience: grant.audience.to_string(),
-        authority,
+        principal_id: grant.principal_id.clone(),
         device_id,
-        principal_server_url: principal_server_url.to_string(),
+        principal_server_url,
         grant_expires_at: Some(grant.expires_at),
         stored_at: Utc::now(),
     }
@@ -2029,15 +2044,13 @@ mod tests {
             session_private_key_pem: "PEM".to_owned(),
             grant_id: "grant-1".to_owned(),
             audience: "did:web:principal.example".to_owned(),
-            authority: arkret_sdk::PrincipalAuthorityKey::new(
-                arkret_sdk::DidCoreId::new("did:web:alice.example".to_owned()).unwrap(),
-                arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned()).unwrap(),
-            ),
+            principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+                .unwrap(),
             device_id: arkret_sdk::DeviceId::new(
-                "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
+                "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
-            principal_server_url: "https://principal.example".to_owned(),
+            principal_server_url: url::Url::parse("https://principal.example").unwrap(),
             grant_expires_at: Some(now + chrono::Duration::seconds(3600)),
             stored_at: now,
         }
@@ -2280,18 +2293,15 @@ mod tests {
 
     #[test]
     fn account_first_sign_in_has_no_returning_principal() {
-        assert_eq!(returning_sign_in_principal(None).unwrap(), None);
+        assert_eq!(returning_sign_in_principal("").unwrap(), None);
     }
 
     #[test]
     fn returning_sign_in_keeps_the_resolvable_principal_assertion() {
-        let account = test_active_account(
-            "did:webvh:z6mkfixture:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        );
+        let actor = "did:webvh:z6mkfixture:alice.example";
 
         assert_eq!(
-            returning_sign_in_principal(Some(&account))
+            returning_sign_in_principal(actor)
                 .unwrap()
                 .expect("returning principal")
                 .as_str(),
@@ -2300,46 +2310,11 @@ mod tests {
     }
 
     #[test]
-    fn typed_active_account_routes_as_returning_device() {
-        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
-        let account = test_active_account(
-            "did:webvh:z6mkfixture:alice.example",
-            "ak:device:01964137-0000-7000-8000-000000000001",
-        );
-        let user_store = crate::secure_key_store::UserLocalStore::new(
-            account.authority.clone(),
-            account.device_id.clone(),
-        )
-        .unwrap();
-        user_store
-            .save_device_id(&secure_store, &account.device_id)
-            .unwrap();
-        user_store
-            .save_signing_seed(&secure_store, &[41_u8; 32])
-            .unwrap();
-
-        let returning_principal = returning_sign_in_principal(Some(&account))
-            .unwrap()
-            .expect("typed account retains its full principal");
-        let returning_device = returning_device_id(&secure_store, &account)
-            .unwrap()
-            .expect("durable device identity remains available");
-        let disposition = AccountHandoffDisposition::Bound {
-            principal_id: account.principal_id().clone(),
-            full_id: account.full_id().clone(),
-        };
-
-        assert_eq!(returning_principal, *account.full_id());
-        assert_eq!(returning_device, account.device_id.to_string());
-        assert_eq!(
-            authenticated_account_route(
-                &disposition,
-                Some(&returning_principal),
-                Some(&account.device_id),
-            ),
-            AuthenticatedAccountRoute::ReturningSession(account.device_id),
-            "same-browser second login must not enter device setup",
-        );
+    fn core_only_profile_is_not_repaired_into_resolution_material() {
+        let principal =
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal).unwrap();
+        assert!(returning_sign_in_principal(principal_core.as_str()).is_err());
     }
 
     #[test]
@@ -2489,12 +2464,18 @@ mod tests {
                 .await
                 .expect("prepare completed login dpop");
         assert!(
-            store.active_account_authority().is_none(),
+            store.active_principal_id().is_none(),
             "fallible secure preparation must not switch the public account"
         );
-        store.adopt_pending_login(&account);
-        commit_completed_login_dpop_key(&mut store, &secure_store, &account, &new_record, prepared)
-            .expect("commit completed login dpop");
+        store.promote_accepted_context_for_test(&principal_id);
+        commit_completed_login_dpop_key(
+            &mut store,
+            &secure_store,
+            &principal_id,
+            &new_record,
+            prepared,
+        )
+        .expect("commit completed login dpop");
 
         let loaded_seed = user_store
             .load_signing_seed(&secure_store)

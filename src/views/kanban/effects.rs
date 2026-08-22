@@ -11,8 +11,7 @@ pub(super) fn KanbanEffects(
     selected_realm_id: String,
     projection_realm_id: String,
     principal_id: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
-    device_id: arkret_sdk::DeviceId,
+    device_id: String,
     sync_cursor: Signal<String>,
     realm_live_epoch: Signal<u64>,
 ) -> Element {
@@ -436,7 +435,6 @@ pub(super) fn KanbanEffects(
         let restore_realm_id = selected_realm_id.clone();
         let restore_local_realm_id = local_realm_id.clone();
         let restore_actor = principal_id.clone();
-        let restore_authority = authority.clone();
         let restore_device = device_id.clone();
         let restore_sync_cursor = sync_cursor;
         let restore_realm_live_epoch = realm_live_epoch;

@@ -447,8 +447,7 @@ mod wasm_bootstrap {
     use std::sync::atomic::Ordering;
 
     use super::super::{
-        LocalStateStore, active_user_local_store, load_session_grant_from_user_secure_store,
-        store_session_grant_in_user_secure_store,
+        LocalStateStore, store_session_grant_in_user_secure_store, user_local_store_for_principal,
     };
     use super::{
         ClientLocalState, merge_persisted_into_live, merge_secure_session_grant_into_live,
@@ -466,31 +465,22 @@ mod wasm_bootstrap {
             secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         ) {
             self.ensure_cached_loaded();
-            let effective_scope = self.effective_account_key();
-            let user_store = active_user_local_store().map_err(|error| {
-                tracing::warn!(
-                    ?error,
-                    "secure session grant scope unavailable after IndexedDB upgrade"
-                );
-                error
-            });
-            let secure_grant = user_store.as_ref().ok().and_then(|user_store| {
-                load_session_grant_from_user_secure_store(user_store, secure_store)
-                    .map_err(|error| {
-                        tracing::warn!(
-                            ?error,
-                            "secure session grant hydration failed after IndexedDB upgrade"
-                        );
-                        error
-                    })
-                    .ok()
-                    .flatten()
-            });
-            let Some(stored) = self.read_account_state(&effective_scope) else {
+            let effective_did = self.effective_account_key();
+            let user_store = self
+                .cached
+                .session_grant
+                .as_ref()
+                .and_then(|grant| user_local_store_for_principal(&grant.principal_id).ok());
+            // The legacy root key cannot prove a PrincipalAuthorityKey, so it
+            // is not an acceptable source for restoring an account-local
+            // session secret. A freshly staged typed grant may still be
+            // persisted below; reload restoration remains fail-closed.
+            let secure_grant = None;
+            let Some(stored) = self.read_account_state(&effective_did) else {
                 // No durable entry yet; keep the live state and mark loaded so the
                 // first flush persists it under the active account key.
                 merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
-                persist_staged_session_grant(&self.cached, user_store.as_ref().ok(), secure_store);
+                persist_staged_session_grant(&self.cached, user_store.as_ref(), secure_store);
                 self.loaded.store(true, Ordering::Relaxed);
                 let _ = self.flush();
                 return;
@@ -498,7 +488,7 @@ mod wasm_bootstrap {
             let live = std::mem::replace(&mut self.cached, ClientLocalState::default());
             self.cached = merge_persisted_into_live(live, stored);
             merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
-            persist_staged_session_grant(&self.cached, user_store.as_ref().ok(), secure_store);
+            persist_staged_session_grant(&self.cached, user_store.as_ref(), secure_store);
             self.loaded.store(true, Ordering::Relaxed);
             let _ = self.flush();
         }
@@ -656,21 +646,15 @@ mod tests {
             session_private_key_pem: String::new(),
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
             audience: "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
-            authority: arkret_sdk::PrincipalAuthorityKey::new(
-                arkret_sdk::DidCoreId::new(
-                    "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
-                )
-                .unwrap(),
-                arkret_sdk::DidCoreId::new(
-                    "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
-                )
-                .unwrap(),
-            ),
+            principal_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
+            )
+            .unwrap(),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
-            principal_server_url: "https://soland.example".to_owned(),
+            principal_server_url: url::Url::parse("https://soland.example").unwrap(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),
         }

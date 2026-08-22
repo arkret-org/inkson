@@ -10,7 +10,8 @@ pub(super) struct MlsRecoveryEffectState {
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub account_recovery_configured: Signal<Option<bool>>,
     pub token: Signal<String>,
-    pub active_account: Signal<Option<crate::config::ActiveAccountContext>>,
+    pub principal_id: Signal<String>,
+    pub device_id: Signal<String>,
     pub sync_generation: Signal<u64>,
     pub session_boot_state: Signal<SessionBootState>,
     pub on_onboarding_route: bool,
@@ -27,7 +28,8 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
         secure_store_bootstrap_ready,
         account_recovery_configured,
         token,
-        active_account,
+        principal_id,
+        device_id,
         sync_generation,
         session_boot_state,
         on_onboarding_route,
@@ -64,12 +66,8 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             }
             let base = base_url();
             let session = token();
-            let Some(account) = active_account() else {
-                return;
-            };
-            let actor = account.principal_id().to_string();
-            let authority = account.authority.clone();
-            let device = account.device_id.clone();
+            let actor = principal_id();
+            let device = device_id();
             let generation = sync_generation();
             let account_recovery_configured_value = account_recovery_configured_for_detection();
             if !matches!(session_boot_state(), SessionBootState::Authenticated) {

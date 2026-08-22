@@ -216,6 +216,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("login.server_url", "服务器地址");
     dict.set("login.test_connection", "测试连接");
     dict.set("login.account", "账户");
+    dict.set("login.principal_id", "账户 DID");
     dict.set("login.device_id", "设备 ID");
     dict.set("login.passkey", "Passkey 登录");
     dict.set("login.oidc", "OIDC 登录");

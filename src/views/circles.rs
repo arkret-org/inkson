@@ -434,8 +434,8 @@ pub fn CirclesPanel(
                                             status.set("Invalid Realm id".to_owned());
                                             return;
                                         };
-                                        let Ok(actor_id) = arkret_sdk::DidCoreId::new(principal_id.clone()) else {
-                                            status.set("Invalid principal id".to_owned());
+                                        let Ok(actor_id) = arkret_sdk::DidFullId::new(principal_id.clone()) else {
+                                            status.set("Invalid account DID".to_owned());
                                             return;
                                         };
                                         let encryption_profile = if create_encryption() == "none" {

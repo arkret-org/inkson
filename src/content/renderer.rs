@@ -573,7 +573,10 @@ async fn authenticated_blob_bytes(blob_ref: &str) -> anyhow::Result<Vec<u8>> {
         anyhow::bail!("no authenticated session for blob download");
     }
     // ②(A+②): grant + per-request DPoP for the self-path blob fetch (§3.3).
-    let api = crate::transport::auth::authed_api(&config.server_url, token)?;
+    let server_url = config
+        .server_url()
+        .ok_or_else(|| anyhow::anyhow!("authenticated renderer has no active account route"))?;
+    let api = crate::transport::auth::authed_api(server_url.as_str(), token)?;
     let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     clients.blob().get_bytes(blob_ref).await
 }

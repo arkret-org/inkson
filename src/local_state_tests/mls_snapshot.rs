@@ -77,9 +77,12 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
         audience: "did:web:principal.example".to_owned(),
-        authority: test_authority(actor),
-        device_id: test_device_id(),
-        principal_server_url: "https://principal.example".to_owned(),
+        principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+        device_id: arkret_sdk::DeviceId::new(
+            "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+        )
+        .unwrap(),
+        principal_server_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
     };
@@ -116,9 +119,8 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         assert!(store.private_plaintext_for(realm, strand, "body").is_none());
         assert!(store.mls_decrypted_plaintext_for(realm, digest).is_none());
 
-        let cache_key =
-            crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor))
-                .unwrap();
+        let namespace = store.active_authority_namespace_for_test();
+        let cache_key = crate::secure_key_store::e2ee_plaintext_cache_store_key(&namespace);
         assert!(secure.get_secret(&cache_key).unwrap().is_some());
         store
             .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
@@ -137,7 +139,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
 
     let reader = LocalStateStore::with_path(path);
     assert_eq!(
-        reader.active_test_principal_id().as_deref(),
+        reader.active_principal_id().as_deref(),
         Some("ak:did_core:web:alice.example")
     );
     assert!(reader.session_grant().is_none());

@@ -74,10 +74,7 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<chrono::DateTime<chrono::Utc
 }
 
 #[component]
-pub fn BlocklistSettingsCard(
-    authority: arkret_sdk::PrincipalAuthorityKey,
-    token: Signal<String>,
-) -> Element {
+pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let active_account = crate::app::SessionContext::get().active_account;
     let base_url = use_signal(move || {
@@ -224,7 +221,7 @@ pub fn BlocklistSettingsCard(
                                                         crate::views::settings::push_blocklist_account_data(
                                                             base(),
                                                             token(),
-                                                            authority.clone(),
+                                                            principal_id(),
                                                             state_store,
                                                             next,
                                                         );
@@ -398,7 +395,7 @@ pub fn BlocklistSettingsCard(
                                     crate::views::settings::push_blocklist_account_data(
                                         base(),
                                         token(),
-                                        authority.clone(),
+                                        principal_id(),
                                         state_store,
                                         next,
                                     );

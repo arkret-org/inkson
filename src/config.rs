@@ -11,6 +11,8 @@ use arkret_sdk::{
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+pub use crate::identity::active_account::ActiveAccountContext;
+use crate::identity::active_account::authority_namespace;
 use crate::operation::uuid_v7;
 
 const DEFAULT_SERVER_URL: &str = "https://local.host";
@@ -28,8 +30,7 @@ const PROFILES_STORAGE_KEY: &str = "inkson.profiles.v1";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {
-    pub principal_servers: Vec<String>,
-    #[serde(default)]
+    pub principal_servers: Vec<Url>,
     pub active_account: Option<ActiveAccountContext>,
     #[serde(default, skip_serializing)]
     pub session_credential: String,
@@ -46,16 +47,12 @@ impl Default for ClientConfig {
 }
 
 impl ClientConfig {
-    pub fn from_fields(
-        active_account: Option<ActiveAccountContext>,
-        session_credential: impl Into<String>,
-    ) -> Self {
+    pub fn authenticated(active_account: ActiveAccountContext, session_credential: String) -> Self {
         Self {
             principal_servers: default_principal_servers(),
-            active_account,
-            session_credential: session_credential.into(),
+            active_account: Some(active_account),
+            session_credential,
         }
-        .normalized()
     }
 
     fn normalized(mut self) -> Self {
@@ -66,16 +63,45 @@ impl ClientConfig {
         self
     }
 
-    #[must_use]
-    pub fn active_account(&self) -> Option<&ActiveAccountContext> {
-        self.active_account.as_ref()
+    pub fn server_url(&self) -> Option<&Url> {
+        self.active_account
+            .as_ref()
+            .map(|account| &account.server_url)
+    }
+
+    pub fn principal_id(&self) -> Option<&arkret_sdk::DidCoreId> {
+        self.active_account
+            .as_ref()
+            .map(ActiveAccountContext::principal_id)
+    }
+
+    pub fn device_id(&self) -> Option<&DeviceId> {
+        self.active_account
+            .as_ref()
+            .map(|account| &account.device_id)
+    }
+
+    pub fn same_runtime_state(&self, other: &Self) -> bool {
+        self.principal_servers == other.principal_servers
+            && self.session_credential == other.session_credential
+            && match (&self.active_account, &other.active_account) {
+                (None, None) => true,
+                (Some(left), Some(right)) => {
+                    left.authority == right.authority
+                        && left.profile_id == right.profile_id
+                        && left.resolution == right.resolution
+                        && left.device_id == right.device_id
+                        && left.server_url == right.server_url
+                }
+                _ => false,
+            }
     }
 }
 
-fn default_principal_servers() -> Vec<String> {
+fn default_principal_servers() -> Vec<Url> {
     DEFAULT_PRINCIPAL_SERVERS
         .iter()
-        .map(|server| normalize_server_url(server))
+        .map(|server| Url::parse(server).expect("default Principal Server URL"))
         .collect()
 }
 
@@ -90,26 +116,21 @@ pub fn same_server_url(left: &str, right: &str) -> bool {
     server_url_key(left) == server_url_key(right)
 }
 
-fn push_unique_principal_server(options: &mut Vec<String>, server_url: &str) {
-    let normalized = normalize_server_url(server_url);
-    if normalized.trim().is_empty()
-        || options
-            .iter()
-            .any(|existing| same_server_url(existing, &normalized))
-    {
+fn push_unique_principal_server(options: &mut Vec<Url>, server_url: &Url) {
+    if options.iter().any(|existing| existing == server_url) {
         return;
     }
-    options.push(normalized);
+    options.push(server_url.clone());
 }
 
-pub fn normalize_principal_server_presets(principal_servers: &[String]) -> Vec<String> {
-    let mut options = Vec::<String>::new();
+pub fn normalize_principal_server_presets(principal_servers: &[Url]) -> Vec<Url> {
+    let mut options = Vec::<Url>::new();
     for server_url in principal_servers {
         push_unique_principal_server(&mut options, server_url);
     }
     if options.is_empty() {
-        for server_url in DEFAULT_PRINCIPAL_SERVERS {
-            push_unique_principal_server(&mut options, server_url);
+        for server_url in default_principal_servers() {
+            push_unique_principal_server(&mut options, &server_url);
         }
     }
     options
@@ -117,22 +138,35 @@ pub fn normalize_principal_server_presets(principal_servers: &[String]) -> Vec<S
 
 pub fn principal_server_options_for(
     current_server_url: &str,
-    configured_principal_servers: &[String],
+    configured_principal_servers: &[Url],
 ) -> Vec<String> {
     let mut options = Vec::<String>::new();
-    push_unique_principal_server(&mut options, current_server_url);
+    let mut push = |candidate: &str| {
+        let normalized = normalize_server_url(candidate);
+        if !normalized.is_empty()
+            && !options
+                .iter()
+                .any(|existing| same_server_url(existing, &normalized))
+        {
+            options.push(normalized);
+        }
+    };
+    push(current_server_url);
     for server_url in configured_principal_servers {
-        push_unique_principal_server(&mut options, server_url);
+        push(server_url.as_str());
     }
     for server_url in DEFAULT_PRINCIPAL_SERVERS {
-        push_unique_principal_server(&mut options, server_url);
+        push(server_url);
     }
     options
 }
 
-/// AKP-0007 P3B.4 — multi-account profile primitive. The stable authority
-/// identifies the account while resolution and route remain independently
-/// replaceable projections. `profile_id` is the installation-local UI key.
+/// AKP-0007 P3B.4 — multi-account profile primitive. A profile is the
+/// (server_url, principal_id, device_id, session_credential) tuple that the
+/// existing single-profile `ClientConfig` already carries, plus a
+/// stable `profile_id` so the switcher UI can address profiles by a
+/// non-secret handle (principal_id + device_id could rotate; profile_id
+/// stays put for the life of the profile).
 ///
 /// The single-profile `ClientConfig` continues to exist as the *active*
 /// view onto the multi-profile store — every call site that reads
@@ -147,22 +181,15 @@ pub fn principal_server_options_for(
 /// [`MultiProfileConfig`] through a `Signal` so subsystems can pick
 /// up the rotation atomically without the previous per-subsystem
 /// peek pattern.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountProfile {
-    /// Stable, opaque id (UUIDv7 prefixed `ak:profile:`). It is never derived
-    /// from identity coordinates and remains stable across resolution or route
-    /// refreshes.
-    pub profile_id: String,
+    #[serde(flatten)]
+    pub account: ActiveAccountContext,
     /// Optional human label (e.g. "Work", "Personal"). Falls back to
     /// the stable principal identifier's last segment when empty.
     #[serde(default)]
     pub label: String,
-    pub authority: PrincipalAuthorityKey,
-    pub resolution: PrincipalResolutionProjection,
-    pub device_id: DeviceId,
-    pub server_url: Url,
-    /// Runtime-only credential; plaintext profile persistence never carries it.
     #[serde(default, skip_serializing)]
     pub session_credential: String,
 }
@@ -200,24 +227,12 @@ impl<'de> Deserialize<'de> for AccountProfile {
 }
 
 impl AccountProfile {
-    pub(crate) fn new(
-        authority: PrincipalAuthorityKey,
-        resolution: PrincipalResolutionProjection,
-        device_id: DeviceId,
-        server_url: Url,
-        session_credential: impl Into<String>,
-    ) -> Result<Self, ActiveAccountContextError> {
-        let profile = Self {
-            profile_id: format!("ak:profile:{}", uuid_v7()),
+    pub fn new(account: ActiveAccountContext, session_credential: String) -> Self {
+        Self {
+            account,
             label: String::new(),
-            server_url,
-            authority,
-            resolution,
-            device_id,
-            session_credential: session_credential.into(),
-        };
-        profile.active_context()?;
-        Ok(profile)
+            session_credential,
+        }
     }
 
     /// Human label used by the avatar dropdown switcher. Falls back to the
@@ -226,28 +241,18 @@ impl AccountProfile {
         if !self.label.is_empty() {
             return self.label.as_str();
         }
-        self.authority
-            .principal_id
+        self.account
+            .principal_id()
             .as_str()
             .rsplit(':')
             .next()
-            .unwrap_or(self.authority.principal_id.as_str())
-    }
-
-    pub fn active_context(&self) -> Result<ActiveAccountContext, ActiveAccountContextError> {
-        ActiveAccountContext::new(
-            self.profile_id.clone(),
-            self.authority.clone(),
-            self.resolution.clone(),
-            self.device_id.clone(),
-            self.server_url.clone(),
-        )
+            .unwrap_or(self.account.principal_id().as_str())
     }
 }
 
 /// Multi-profile config. Persisted under `PROFILES_STORAGE_KEY` on
 /// wasm and `app_data_dir()/profiles.json` on native.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MultiProfileConfig {
     /// `profile_id` of the profile currently driving the UI.
@@ -262,30 +267,36 @@ pub struct MultiProfileConfig {
 impl MultiProfileConfig {
     pub fn active(&self) -> Option<&AccountProfile> {
         let id = self.active_profile_id.as_deref()?;
-        self.profiles.iter().find(|p| p.profile_id == id)
+        self.profiles
+            .iter()
+            .find(|profile| profile.account.profile_id == id)
     }
 
-    /// Add or replace a profile (matched only by account authority)
+    /// Add or replace a profile (matched by `principal_id + server_url`)
     /// and mark it active. Returns the active profile id.
-    pub fn upsert_and_activate(
-        &mut self,
-        profile: AccountProfile,
-    ) -> Result<String, ActiveAccountContextError> {
-        profile.active_context()?;
-        let key = profile.authority.clone();
-        if let Some(existing) = self.profiles.iter_mut().find(|p| p.authority == key) {
-            existing.resolution = profile.resolution;
-            existing.server_url = profile.server_url;
-            existing.device_id = profile.device_id;
+    pub fn upsert_and_activate(&mut self, profile: AccountProfile) -> anyhow::Result<String> {
+        if let Some(existing) = self
+            .profiles
+            .iter_mut()
+            .find(|candidate| candidate.account.authority == profile.account.authority)
+        {
+            existing
+                .account
+                .update_resolution(profile.account.resolution)?;
+            existing.account.device_id = profile.account.device_id;
+            existing.account.update_route(
+                &profile.account.authority.principal_server_id,
+                profile.account.server_url,
+            )?;
             existing.session_credential = profile.session_credential;
             if !profile.label.is_empty() {
                 existing.label = profile.label;
             }
-            let id = existing.profile_id.clone();
+            let id = existing.account.profile_id.clone();
             self.active_profile_id = Some(id.clone());
             return Ok(id);
         }
-        let id = profile.profile_id.clone();
+        let id = profile.account.profile_id.clone();
         self.profiles.push(profile);
         self.active_profile_id = Some(id.clone());
         Ok(id)
@@ -294,7 +305,11 @@ impl MultiProfileConfig {
     /// Switch the active profile. Returns `false` if the requested
     /// profile_id is not in the store.
     pub fn activate(&mut self, profile_id: &str) -> bool {
-        if self.profiles.iter().any(|p| p.profile_id == profile_id) {
+        if self
+            .profiles
+            .iter()
+            .any(|profile| profile.account.profile_id == profile_id)
+        {
             self.active_profile_id = Some(profile_id.to_owned());
             true
         } else {
@@ -306,9 +321,13 @@ impl MultiProfileConfig {
     /// pointer is reset to the first remaining profile (or `None` if
     /// the list is now empty).
     pub fn remove(&mut self, profile_id: &str) {
-        self.profiles.retain(|p| p.profile_id != profile_id);
+        self.profiles
+            .retain(|profile| profile.account.profile_id != profile_id);
         if self.active_profile_id.as_deref() == Some(profile_id) {
-            self.active_profile_id = self.profiles.first().map(|p| p.profile_id.clone());
+            self.active_profile_id = self
+                .profiles
+                .first()
+                .map(|profile| profile.account.profile_id.clone());
         }
     }
 
@@ -317,10 +336,9 @@ impl MultiProfileConfig {
     /// install).
     pub fn active_as_client_config(&self) -> Option<ClientConfig> {
         let active = self.active()?;
-        let active_account = active.active_context().ok()?;
-        Some(ClientConfig::from_fields(
-            Some(active_account),
-            active.session_credential.as_str(),
+        Some(ClientConfig::authenticated(
+            active.account.clone(),
+            active.session_credential.clone(),
         ))
     }
 
@@ -333,7 +351,7 @@ impl MultiProfileConfig {
         let target = self
             .profiles
             .iter()
-            .find(|p| p.profile_id == target_profile_id)?
+            .find(|profile| profile.account.profile_id == target_profile_id)?
             .clone();
         Some(ProfileSwitchEvent {
             prior_profile_id: prior,
@@ -350,28 +368,25 @@ impl MultiProfileConfig {
 /// gateway registrations atomically. The previous "each subsystem
 /// peeks at `ClientConfig`" pattern raced when two of them refreshed
 /// out of order across a single user click.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ProfileSwitchEvent {
     /// `profile_id` that was active before the switch. `None` on the
     /// first activation after a fresh install.
     pub prior_profile_id: Option<String>,
-    /// Profile the shell is switching into, including its typed authority,
-    /// accepted resolution, device and current route.
+    /// Profile the shell is switching into. Carries the resolved
+    /// `(server_url, principal_id, device_id, session_credential)` tuple so
+    /// reactors don't need a follow-up store read.
     pub next_profile: AccountProfile,
 }
 
-/// SecureKeyStore key for a current session credential. Both the account
-/// authority pair and device participate in the namespace; resolution and
-/// route deliberately do not.
-fn session_credential_secret_key(
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-) -> anyhow::Result<String> {
-    let authority_digest = crate::secure_key_store::principal_authority_storage_digest(authority)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    let device_digest = crate::secure_key_store::device_storage_digest(device_id);
+/// SecureKeyStore key for the current session credential of `principal_id`.
+/// The namespace is per-DID — two profiles for the same DID on different
+/// servers share one slot, matching the existing single-active-profile model.
+fn session_credential_secret_key(account: &ActiveAccountContext) -> anyhow::Result<String> {
     Ok(format!(
-        "coauth.session_credential.{authority_digest}.{device_digest}"
+        "coauth.session_credential.v1.{}.{}",
+        authority_namespace(&account.authority)?,
+        account.device_id.as_str()
     ))
 }
 
@@ -411,18 +426,17 @@ fn session_credential_cache()
 /// Move `session_credential` into the SecureKeyStore. Plaintext persistence is
 /// always redacted, including when the secure backend rejects the write.
 fn persist_session_credential_secret(
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
+    account: &ActiveAccountContext,
     session_credential: &str,
-) {
-    if session_credential.is_empty() {
-        return;
-    }
+) -> anyhow::Result<()> {
     let store = config_secure_store();
-    let Ok(key) = session_credential_secret_key(authority, device_id) else {
-        tracing::warn!("session credential scope canonicalization failed");
-        return;
-    };
+    let key = session_credential_secret_key(account)?;
+    if session_credential.is_empty() {
+        // Empty config writes also happen during first-paint restore and
+        // profile/bootstrap churn. Do not treat them as logout; explicit
+        // session invalidation calls `clear_session_credential_secret`.
+        return Ok(());
+    }
     match store.store_secret(&key, session_credential) {
         Ok(()) => {
             if let Ok(mut cache) = session_credential_cache().lock() {
@@ -436,13 +450,11 @@ fn persist_session_credential_secret(
             );
         }
     }
+    Ok(())
 }
 
-pub(crate) fn clear_session_credential_secret(
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-) {
-    let Ok(key) = session_credential_secret_key(authority, device_id) else {
+pub(crate) fn clear_session_credential_secret(account: &ActiveAccountContext) {
+    let Ok(key) = session_credential_secret_key(account) else {
         return;
     };
     let store = config_secure_store();
@@ -452,14 +464,13 @@ pub(crate) fn clear_session_credential_secret(
     }
 }
 
-/// Companion read for one authority/device slot, from the
+/// Companion read: the session credential for `principal_id`, from the
 /// in-process cache first, then the SecureKeyStore.
 fn restore_session_credential_secret_from_store(
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
+    account: &ActiveAccountContext,
     store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<String> {
-    let key = session_credential_secret_key(authority, device_id).ok()?;
+    let key = session_credential_secret_key(account).ok()?;
     // The synchronous first-paint wasm store is intentionally forbidden from
     // reading session credentials. Wait for the IndexedDB/SubtleCrypto tier
     // instead of probing the forbidden localStorage path on every render and
@@ -490,12 +501,9 @@ fn restore_session_credential_secret_from_store(
     result
 }
 
-fn restore_session_credential_secret(
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-) -> Option<String> {
+fn restore_session_credential_secret(account: &ActiveAccountContext) -> Option<String> {
     let store = config_secure_store();
-    restore_session_credential_secret_from_store(authority, device_id, store.as_ref())
+    restore_session_credential_secret_from_store(account, store.as_ref())
 }
 
 /// Build the copy of `config` that is allowed to touch the plaintext
@@ -503,12 +511,10 @@ fn restore_session_credential_secret(
 /// SecureKeyStore and blanked.
 fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
     let mut redacted = config.clone();
-    if let Some(active) = &redacted.active_account {
-        persist_session_credential_secret(
-            &active.authority,
-            &active.device_id,
-            &redacted.session_credential,
-        );
+    if let Some(account) = redacted.active_account.as_ref()
+        && let Err(error) = persist_session_credential_secret(account, &redacted.session_credential)
+    {
+        tracing::warn!(?error, "session credential namespace construction failed");
     }
     redacted.session_credential.clear();
     redacted
@@ -518,11 +524,11 @@ fn redact_config_for_disk(config: &ClientConfig) -> ClientConfig {
 fn redact_profiles_for_disk(profiles: &MultiProfileConfig) -> MultiProfileConfig {
     let mut redacted = profiles.clone();
     for profile in &mut redacted.profiles {
-        persist_session_credential_secret(
-            &profile.authority,
-            &profile.device_id,
-            &profile.session_credential,
-        );
+        if let Err(error) =
+            persist_session_credential_secret(&profile.account, &profile.session_credential)
+        {
+            tracing::warn!(?error, "profile credential namespace construction failed");
+        }
         profile.session_credential.clear();
     }
     redacted
@@ -673,12 +679,8 @@ impl LocalConfigStore {
         store: &dyn crate::secure_key_store::SecureKeyStore,
     ) -> ClientConfig {
         config.session_credential.clear();
-        if let Some(active) = &config.active_account
-            && let Some(token) = restore_session_credential_secret_from_store(
-                &active.authority,
-                &active.device_id,
-                store,
-            )
+        if let Some(account) = config.active_account.as_ref()
+            && let Some(token) = restore_session_credential_secret_from_store(account, store)
         {
             config.session_credential = token;
         }
@@ -754,17 +756,6 @@ impl LocalConfigStore {
             .clone()
     }
 
-    pub fn save_fields(
-        &mut self,
-        active_account: Option<ActiveAccountContext>,
-        session_credential: String,
-    ) {
-        self.save(ClientConfig::from_fields(
-            active_account,
-            session_credential,
-        ));
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_path(path: impl Into<PathBuf>) -> Self {
         Self {
@@ -776,10 +767,10 @@ impl LocalConfigStore {
 
     /// P3B.4 — load the multi-profile config.
     pub fn load_profiles(&self) -> MultiProfileConfig {
-        if let Some(v2) = self.read_persisted_profiles()
-            && !v2.profiles.is_empty()
+        if let Some(profiles) = self.read_persisted_profiles()
+            && !profiles.profiles.is_empty()
         {
-            return self.rehydrate_profiles(v2);
+            return self.rehydrate_profiles(profiles);
         }
         MultiProfileConfig::default()
     }
@@ -789,9 +780,7 @@ impl LocalConfigStore {
     fn rehydrate_profiles(&self, mut profiles: MultiProfileConfig) -> MultiProfileConfig {
         for profile in &mut profiles.profiles {
             profile.session_credential.clear();
-            if let Some(token) =
-                restore_session_credential_secret(&profile.authority, &profile.device_id)
-            {
+            if let Some(token) = restore_session_credential_secret(&profile.account) {
                 profile.session_credential = token;
             }
         }
@@ -1062,272 +1051,143 @@ fn validate_resolution_binding(
 }
 
 #[cfg(test)]
-mod active_account_tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
+mod tests {
+    use chrono::{TimeZone as _, Utc};
 
     use chrono::{DateTime, Utc};
 
     use super::*;
 
-    fn projection(full_id: &str, coordinate: &str) -> PrincipalResolutionProjection {
-        PrincipalResolutionProjection {
-            full_id: DidFullId::new(full_id).expect("full DID"),
-            method_history_head: format!("head-{coordinate}"),
-            version_id: format!("version-{coordinate}"),
-            resolution_event_ref: format!("event-{coordinate}"),
-            updated_at: "2026-08-22T00:00:00Z"
-                .parse::<DateTime<Utc>>()
-                .expect("timestamp"),
-        }
-    }
-
-    fn authority(full_id: &str, server_id: &str) -> PrincipalAuthorityKey {
-        let full_id = DidFullId::new(full_id).expect("full DID");
-        PrincipalAuthorityKey::new(
-            project_full_id_to_core_id(&full_id).expect("principal core"),
-            DidCoreId::new(server_id).expect("server core"),
-        )
-    }
-
-    fn device(suffix: &str) -> DeviceId {
-        DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{suffix:0>12}"))
-            .expect("device id")
-    }
-
-    fn context(
+    fn account(
+        profile: &str,
+        principal: &str,
+        service: &str,
         full_id: &str,
-        server_id: &str,
+        device: &str,
         route: &str,
-        coordinate: &str,
     ) -> ActiveAccountContext {
         ActiveAccountContext::new(
-            format!("ak:profile:{coordinate}"),
-            authority(full_id, server_id),
-            projection(full_id, coordinate),
-            device(coordinate),
-            Url::parse(route).expect("route"),
+            profile.to_owned(),
+            arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
+                arkret_sdk::DidCoreId::new(service.to_owned()).unwrap(),
+            ),
+            arkret_sdk::PrincipalResolutionProjection {
+                full_id: arkret_sdk::DidFullId::new(full_id.to_owned()).unwrap(),
+                method_history_head: "head-1".to_owned(),
+                version_id: "1".to_owned(),
+                resolution_event_ref: format!("ak:event:{}", "A".repeat(44)),
+                updated_at: Utc.with_ymd_and_hms(2026, 8, 22, 12, 0, 0).unwrap(),
+            },
+            arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
+            Url::parse(route).unwrap(),
         )
-        .expect("active context")
+        .unwrap()
+    }
+
+    fn alice(service: &str, route: &str) -> ActiveAccountContext {
+        account(
+            "ak:profile:019b0000-0000-7000-8000-000000000001",
+            "ak:did_core:webvh:zAlice",
+            service,
+            "did:webvh:zAlice:users.example:alice",
+            "ak:device:019b0000-0000-7000-8000-000000000001",
+            route,
+        )
     }
 
     #[test]
-    fn default_config_is_explicitly_signed_out() {
+    fn default_config_is_signed_out_without_placeholder_identity() {
         let config = ClientConfig::default();
         assert!(config.active_account.is_none());
         assert!(config.session_credential.is_empty());
-        assert_eq!(config.principal_servers, vec!["https://local.host"]);
-    }
-
-    #[test]
-    fn context_rejects_resolution_for_another_principal() {
-        let result = ActiveAccountContext::new(
-            "ak:profile:mismatch".to_owned(),
-            authority(
-                "did:webvh:z6mkalice:old.example:alice",
-                "ak:did_core:web:server.example",
-            ),
-            projection("did:webvh:z6mkbob:bob.example:bob", "mismatch"),
-            device("1"),
-            Url::parse("https://server.example").unwrap(),
-        );
         assert_eq!(
-            result.unwrap_err(),
-            ActiveAccountContextError::PrincipalResolutionMismatch
+            config.principal_servers,
+            vec![Url::parse("https://local.host").unwrap()]
         );
     }
 
     #[test]
-    fn same_core_resolution_update_replaces_projection_atomically() {
-        let mut active = context(
-            "did:webvh:z6mkalice:old.example:alice",
-            "ak:did_core:web:server.example",
-            "https://route-a.example",
-            "1",
-        );
-        let profile_id = active.profile_id.clone();
-        let authority = active.authority.clone();
-        let device_id = active.device_id.clone();
-        let route = active.server_url.clone();
-        let previous_event_ref = active.resolution.resolution_event_ref.clone();
-        let previous_history_head = active.resolution.method_history_head.clone();
-        let next = projection("did:webvh:z6mkalice:new.example:users:alice", "2");
-
-        active
-            .update_resolution(next.clone(), &previous_event_ref, &previous_history_head)
-            .unwrap();
-
-        assert_eq!(active.resolution, next);
-        assert_eq!(active.profile_id, profile_id);
-        assert_eq!(active.authority, authority);
-        assert_eq!(active.device_id, device_id);
-        assert_eq!(active.server_url, route);
-    }
-
-    #[test]
-    fn resolution_update_rejects_a_stale_predecessor() {
-        let mut active = context(
-            "did:webvh:z6mkalice:old.example:alice",
-            "ak:did_core:web:server.example",
-            "https://route-a.example",
-            "1",
-        );
-        let next = projection("did:webvh:z6mkalice:new.example:users:alice", "2");
-
-        assert_eq!(
-            active
-                .update_resolution(next, "ak:event:stale", "sha256:stale")
-                .unwrap_err(),
-            ActiveAccountContextError::ResolutionPredecessorMismatch
-        );
-    }
-
-    #[test]
-    fn route_refresh_requires_same_principal_server() {
-        let mut active = context(
-            "did:webvh:z6mkalice:old.example:alice",
-            "ak:did_core:web:server.example",
-            "https://route-a.example",
-            "1",
-        );
-        let other = DidCoreId::new("ak:did_core:web:other.example").unwrap();
-        assert_eq!(
-            active
-                .update_server_route(&other, Url::parse("https://route-b.example").unwrap())
-                .unwrap_err(),
-            ActiveAccountContextError::PrincipalServerMismatch
-        );
-        assert_eq!(active.server_url.as_str(), "https://route-a.example/");
-
-        let server = active.authority.principal_server_id.clone();
-        active
-            .update_server_route(&server, Url::parse("https://route-b.example").unwrap())
-            .unwrap();
-        assert_eq!(active.server_url.as_str(), "https://route-b.example/");
-    }
-
-    #[test]
-    fn profile_upsert_uses_authority_not_resolution_or_route() {
-        let first_context = context(
-            "did:webvh:z6mkalice:old.example:alice",
-            "ak:did_core:web:server.example",
-            "https://route-a.example",
-            "1",
-        );
-        let mut first = AccountProfile {
-            profile_id: first_context.profile_id.clone(),
-            label: "Personal".to_owned(),
-            authority: first_context.authority.clone(),
-            resolution: first_context.resolution.clone(),
-            device_id: first_context.device_id.clone(),
-            server_url: first_context.server_url.clone(),
-            session_credential: "token-a".to_owned(),
-        };
+    fn profile_upsert_keys_only_by_authority_pair() {
         let mut profiles = MultiProfileConfig::default();
-        let profile_id = profiles.upsert_and_activate(first.clone()).unwrap();
+        let first = alice("ak:did_core:webvh:zServerA", "https://principal-a.example/");
+        let stable_profile_id = profiles
+            .upsert_and_activate(AccountProfile::new(first.clone(), "token-a".to_owned()))
+            .unwrap();
 
-        first.profile_id = "ak:profile:must-not-replace-stable-id".to_owned();
-        first.resolution = projection("did:webvh:z6mkalice:new.example:alice", "2");
-        first.server_url = Url::parse("https://route-b.example").unwrap();
-        first.device_id = device("2");
-        first.session_credential = "token-b".to_owned();
-        let refreshed_id = profiles.upsert_and_activate(first.clone()).unwrap();
+        let mut relocated = first;
+        relocated.resolution = arkret_sdk::PrincipalResolutionProjection {
+            full_id: arkret_sdk::DidFullId::new(
+                "did:webvh:zAlice:new.example:people:alice".to_owned(),
+            )
+            .unwrap(),
+            method_history_head: "head-2".to_owned(),
+            version_id: "2".to_owned(),
+            resolution_event_ref: format!("ak:event:{}", "B".repeat(44)),
+            updated_at: Utc.with_ymd_and_hms(2026, 8, 22, 12, 1, 0).unwrap(),
+        };
+        relocated.server_url = Url::parse("https://principal-a-mirror.example/").unwrap();
+        let updated_profile_id = profiles
+            .upsert_and_activate(AccountProfile::new(relocated, "token-b".to_owned()))
+            .unwrap();
 
         assert_eq!(profiles.profiles.len(), 1);
-        assert_eq!(refreshed_id, profile_id);
-        let refreshed = profiles.active().unwrap();
-        assert_eq!(refreshed.profile_id, profile_id);
-        assert_eq!(refreshed.resolution, first.resolution);
-        assert_eq!(refreshed.server_url, first.server_url);
-        assert_eq!(refreshed.session_credential, "token-b");
+        assert_eq!(stable_profile_id, updated_profile_id);
+        assert_eq!(
+            profiles.active().unwrap().account.resolution.version_id,
+            "2"
+        );
+        assert_eq!(
+            profiles.active().unwrap().account.server_url.as_str(),
+            "https://principal-a-mirror.example/"
+        );
     }
 
     #[test]
-    fn same_principal_on_different_servers_creates_distinct_profiles_and_secret_keys() {
-        let full_id = "did:webvh:z6mkalice:alice.example:alice";
-        let first = context(
-            full_id,
-            "ak:did_core:web:server-a.example",
-            "https://route.example",
-            "1",
-        );
-        let second = context(
-            full_id,
-            "ak:did_core:web:server-b.example",
-            "https://route.example",
-            "2",
-        );
-        assert_ne!(
-            session_credential_secret_key(&first.authority, &first.device_id).unwrap(),
-            session_credential_secret_key(&second.authority, &second.device_id).unwrap()
-        );
-
+    fn same_principal_on_different_authority_is_a_distinct_profile_and_secret() {
+        let first = alice("ak:did_core:webvh:zServerA", "https://principal-a.example/");
+        let second = alice("ak:did_core:webvh:zServerB", "https://principal-b.example/");
         let mut profiles = MultiProfileConfig::default();
-        for active in [first, second] {
-            profiles
-                .upsert_and_activate(AccountProfile {
-                    profile_id: active.profile_id,
-                    label: String::new(),
-                    authority: active.authority,
-                    resolution: active.resolution,
-                    device_id: active.device_id,
-                    server_url: active.server_url,
-                    session_credential: String::new(),
-                })
-                .unwrap();
-        }
+        profiles
+            .upsert_and_activate(AccountProfile::new(first.clone(), "token-a".to_owned()))
+            .unwrap();
+        profiles
+            .upsert_and_activate(AccountProfile::new(second.clone(), "token-b".to_owned()))
+            .unwrap();
+
         assert_eq!(profiles.profiles.len(), 2);
+        assert_ne!(
+            session_credential_secret_key(&first).unwrap(),
+            session_credential_secret_key(&second).unwrap()
+        );
     }
 
     #[test]
-    fn persisted_config_redacts_and_rehydrates_authority_device_scoped_credential() {
-        let path = temp_config_path("typed-redaction");
-        let active = context(
-            "did:webvh:z6mkalice:alice.example:alice",
-            "ak:did_core:web:server.example",
-            "https://route.example",
-            "1",
+    fn persisted_config_and_profile_reject_unknown_or_old_identity_shapes() {
+        assert!(
+            serde_json::from_value::<ClientConfig>(serde_json::json!({
+                "server_url": "https://principal.example",
+                "principal_servers": ["https://principal.example"],
+                "principal_id": "ak:did_core:web:alice.example",
+                "device_id": "ak:device:019b0000-0000-7000-8000-000000000001",
+                "session_credential": ""
+            }))
+            .is_err()
         );
-        let mut writer = LocalConfigStore::with_path(path.clone());
-        writer.save(ClientConfig::from_fields(
-            Some(active.clone()),
-            "sx_secret_credential",
-        ));
-
-        let raw = fs::read_to_string(&path).expect("config blob");
-        assert!(!raw.contains("sx_secret_credential"));
-        let loaded = LocalConfigStore::with_path(path).load();
-        assert_eq!(loaded.session_credential, "sx_secret_credential");
-        let loaded_active = loaded.active_account.unwrap();
-        assert_eq!(loaded_active.authority, active.authority);
-        assert_eq!(loaded_active.resolution, active.resolution);
+        assert!(
+            serde_json::from_value::<MultiProfileConfig>(serde_json::json!({
+                "active_profile_id": null,
+                "profiles": [],
+                "active_principal": "ak:did_core:web:shadow.example"
+            }))
+            .is_err()
+        );
     }
 
     #[test]
-    fn legacy_ambiguous_identity_fields_fail_closed() {
-        let mut value = serde_json::Map::new();
-        value.insert(
-            "principal_servers".to_owned(),
-            serde_json::json!(["https://route.example"]),
-        );
-        value.insert(
-            ["account_", "did"].concat(),
-            serde_json::json!("did:web:alice.example"),
-        );
-        assert!(serde_json::from_value::<ClientConfig>(serde_json::Value::Object(value)).is_err());
-    }
-
-    #[test]
-    fn validate_server_url_allows_https_and_loopback_only() {
+    fn validate_server_url_allows_https_and_loopback_http() {
         assert!(validate_server_url("https://arkret.example").is_ok());
         assert!(validate_server_url("http://127.0.0.1:8787").is_ok());
         assert!(validate_server_url("http://arkret.example").is_err());
-    }
-
-    fn temp_config_path(name: &str) -> PathBuf {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        std::env::temp_dir().join(format!("inkson-{name}-{stamp}.json"))
     }
 }

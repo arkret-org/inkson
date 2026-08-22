@@ -12,16 +12,32 @@ use crate::config::{ClientConfig, LocalConfigStore};
 use crate::transport::auth::with_endpoint_clients;
 use crate::ui::button::{Button, ButtonVariant};
 
-/// Persist the authenticated account context and its transient credential.
+/// Persist the current authenticated configuration. Derived strings are
+/// checked against the typed context and never used to manufacture identity or
+/// resolution coordinates.
 pub fn persist_config(
     mut config_store: Signal<LocalConfigStore>,
-    active_account: Option<crate::config::ActiveAccountContext>,
+    server_url: String,
+    principal_id: String,
+    device_id: String,
     session_credential: String,
 ) {
-    config_store.write().save(ClientConfig::from_fields(
-        active_account,
-        session_credential,
-    ));
+    let Some(account) = (crate::app::SessionContext::get().active_account)() else {
+        tracing::warn!("authenticated config persist skipped without accepted account context");
+        return;
+    };
+    if account.server_url.as_str().trim_end_matches('/') != server_url.trim_end_matches('/')
+        || account.full_id().as_str() != principal_id.trim()
+        || account.device_id.as_str() != device_id.trim()
+    {
+        tracing::error!(
+            "authenticated config persist rejected because derived coordinates disagree with active context"
+        );
+        return;
+    }
+    config_store
+        .write()
+        .save(ClientConfig::authenticated(account, session_credential));
 }
 
 pub fn active_sync_token(sync_cursor: impl AsRef<str>) -> Option<String> {

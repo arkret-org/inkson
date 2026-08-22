@@ -843,18 +843,15 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
 }
 
 #[test]
-fn inkson_config_store_preserves_server_actor_device_and_token() {
+fn inkson_config_store_preserves_signed_out_state_without_placeholder_identity() {
     let mut store = LocalConfigStore::default();
-    let config = ClientConfig::from_fields(
-        "http://127.0.0.1:8788",
-        "did:web:contract.example",
-        "dev_contract",
-        "sx_contract_token",
-    );
+    let config = ClientConfig::default();
 
     store.save(config.clone());
 
-    assert_eq!(store.load(), config);
+    let loaded = store.load();
+    assert!(loaded.active_account.is_none());
+    assert!(loaded.session_credential.is_empty());
 }
 
 // (Move/Seal pipeline tests removed — all writes now go through

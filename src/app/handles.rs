@@ -98,7 +98,7 @@ pub(super) fn same_server_url(left: &str, right: &str) -> bool {
 
 pub(super) fn server_options_for(
     current_server_url: &str,
-    configured_principal_servers: &[String],
+    configured_principal_servers: &[url::Url],
 ) -> Vec<String> {
     crate::config::principal_server_options_for(current_server_url, configured_principal_servers)
 }

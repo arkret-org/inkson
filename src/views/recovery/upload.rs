@@ -50,7 +50,8 @@ pub(crate) enum RecoveryKeyBackupOutcome {
 
 pub(crate) fn upload_recovery_key_account_backup(
     token: Signal<String>,
-    account: crate::config::ActiveAccountContext,
+    principal_id: Signal<String>,
+    device_id: Signal<String>,
     state_store: SyncSignal<LocalStateStore>,
     recovery_key: String,
     mut status: Signal<String>,
@@ -66,10 +67,8 @@ pub(crate) fn upload_recovery_key_account_backup(
     };
     let base = account.server_url.to_string();
     let session = token();
-    let actor = account.principal_id().to_string();
-    let actor_full_id = account.full_id().clone();
-    let authority = account.authority.clone();
-    let device = account.device_id.to_string();
+    let actor = principal_id();
+    let device = device_id();
     if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
         if let Some(handler) = on_outcome {
             handler.call(RecoveryKeyBackupOutcome::Transient);

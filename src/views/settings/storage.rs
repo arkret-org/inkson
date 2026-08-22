@@ -102,15 +102,8 @@ async fn refresh_browser_storage_quota(
 }
 
 #[component]
-pub(super) fn E2eeStorageManagement() -> Element {
-    let session = crate::app::SessionContext::get();
-    let mut state_store = session.state_store;
-    let Some(account) = session.active_account() else {
-        return rsx! {};
-    };
-    let authority = account.authority.clone();
-    let principal_id = account.principal_id().to_string();
-    let device_id = account.device_id.clone();
+pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> Element {
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut cache_usage = use_signal(|| state_store.read().e2ee_plaintext_cache_usage());
     let mut pending_clear = use_signal(|| None::<E2eePlaintextCacheClearScope>);
     let mut cache_status = use_signal(String::new);

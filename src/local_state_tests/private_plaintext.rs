@@ -218,15 +218,15 @@ fn e2ee_plaintext_cache_round_trips_through_account_scoped_secure_store() {
                 .unwrap()
         );
 
-        let account_path = writer.account_state_path(actor);
+        let namespace = writer.active_authority_namespace_for_test();
+        let account_path = writer.account_state_path(&namespace);
         let raw = std::fs::read_to_string(account_path).expect("account state written");
         assert!(!raw.contains("author secret"));
         assert!(!raw.contains("remote secret"));
         assert!(!raw.contains("mls_private_plaintext"));
         assert!(!raw.contains("mls_decrypted_plaintext"));
 
-        let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor))
-            .unwrap();
+        let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(&namespace);
         assert!(secure.get_secret(&key).unwrap().is_some());
     }
 
@@ -274,8 +274,8 @@ fn receive_snapshot_and_plaintext_share_one_secure_entry() {
         .persist_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
 
-    let key =
-        crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor)).unwrap();
+    let namespace = writer.active_authority_namespace_for_test();
+    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(&namespace);
     let raw = secure.get_secret(&key).unwrap().expect("combined entry");
     let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert!(value["mls_snapshots"].get(realm).is_some());
@@ -505,8 +505,8 @@ fn secure_cache_bootstrap_persists_live_values_when_no_entry_exists_yet() {
     live.switch_test_account(actor);
     live.save_private_plaintext(realm, strand, "body", "\"written before init\"");
 
-    let key =
-        crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor)).unwrap();
+    let namespace = live.active_authority_namespace_for_test();
+    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(&namespace);
     assert!(secure.get_secret(&key).unwrap().is_none());
     assert!(
         !live
@@ -624,8 +624,8 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
         Some("realm-b-author".to_owned())
     );
 
-    let key =
-        crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor)).unwrap();
+    let namespace = store.active_authority_namespace_for_test();
+    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(&namespace);
     let persisted: serde_json::Value =
         serde_json::from_str(&secure.get_secret(&key).unwrap().unwrap()).unwrap();
     assert!(persisted["mls_snapshots"].get(realm_a).is_some());
@@ -725,8 +725,8 @@ async fn failed_durable_plaintext_cleanup_rolls_back_and_reports_error() {
     store
         .persist_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
-    let key =
-        crate::secure_key_store::e2ee_plaintext_cache_store_key(&test_authority(actor)).unwrap();
+    let namespace = store.active_authority_namespace_for_test();
+    let key = crate::secure_key_store::e2ee_plaintext_cache_store_key(&namespace);
     let before = secure.get_secret(&key).unwrap().unwrap();
 
     secure.fail_writes.store(true, Ordering::SeqCst);

@@ -6,6 +6,7 @@ pub(super) struct ConnectionEffectState {
     pub sync_cursor: Signal<String>,
     pub token: Signal<String>,
     pub principal_id: Signal<String>,
+    pub device_id: Signal<String>,
     pub selected_realm_id: Signal<String>,
     pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub projection_events: Signal<Vec<ProjectionEvent>>,
@@ -40,6 +41,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         mut sync_cursor,
         mut token,
         principal_id,
+        device_id,
         mut selected_realm_id,
         mut realm_tree_nodes,
         mut projection_events,
@@ -87,13 +89,16 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 session_generation.set(session_generation() + 1);
                 state_store.write().set_session_grant(None);
                 token.set(String::new());
-                if let Some(account) = active_account() {
-                    crate::config::clear_session_credential_secret(
-                        &account.authority,
-                        &account.device_id,
-                    );
-                    persist_config(config_store, Some(account), String::new());
+                if let Some(account) = active_account.peek().as_ref() {
+                    crate::config::clear_session_credential_secret(account);
                 }
+                persist_config(
+                    config_store,
+                    base_url(),
+                    principal_id(),
+                    device_id(),
+                    String::new(),
+                );
                 sync_cursor.set(String::new());
                 selected_realm_id.set(String::new());
                 realm_tree_nodes.set(Vec::new());
@@ -137,23 +142,22 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             // exact directory signer and release MLS publication on this one.
             let cursor = sync_cursor();
             let session = token();
-            let Some(account) = active_account() else {
+            let Some(actor) = active_account
+                .peek()
+                .as_ref()
+                .map(|account| account.full_id().clone())
+            else {
                 return;
             };
-            let base = account.server_url.to_string();
-            let actor = account.principal_id().to_string();
-            let device = account.device_id.to_string();
-            let typed_principal_id = account.principal_id().clone();
-            let typed_device_id = account.device_id.clone();
+            let device = device_id();
             if cursor.trim().is_empty()
                 || base.trim().is_empty()
                 || session.trim().is_empty()
-                || actor.trim().is_empty()
                 || device.trim().is_empty()
             {
                 return;
             }
-            let key = format!("{cursor}|{actor}|{device}");
+            let key = format!("{cursor}|{}|{device}", actor.as_str());
             if device_authorization_recheck_key().as_str() == key {
                 return;
             }
@@ -213,9 +217,12 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         let mut session = token();
         if session.trim().is_empty() && secure_store_ready {
             let loaded = config_store.read().load();
-            if let Some(rehydrated) = active.as_ref().and_then(|account| {
-                rehydrated_session_credential_for_active_config(&loaded, account)
-            }) {
+            if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
+                &loaded,
+                &base,
+                &principal_id(),
+                &device_id(),
+            ) {
                 token.set(rehydrated.clone());
                 session = rehydrated;
             }
@@ -231,7 +238,13 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             if stale_for_selected_server {
                 token.set(String::new());
                 session_boot_state.set(SessionBootState::Unauthenticated);
-                persist_config(config_store, active.clone(), String::new());
+                persist_config(
+                    config_store,
+                    base.clone(),
+                    principal_id(),
+                    device_id(),
+                    String::new(),
+                );
                 session.clear();
             }
         }
@@ -248,51 +261,52 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             let bootstrap_state = session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
-                active.as_ref(),
+                &principal_id(),
                 secure_store_ready,
             );
             session_boot_state.set(bootstrap_state);
-            if let Some(active_account_snapshot) = active.clone() {
-                connect(
-                    active_account_snapshot,
-                    ConnectContext {
-                        session: runtime_services.session.clone(),
-                        connection_status,
-                        sync_cursor,
-                        token,
-                        principal_id,
-                        selected_realm_id,
-                        realm_tree_nodes,
-                        projection_events,
-                        device_queue,
-                        frontier_state,
-                        crypto_state,
-                        config_store,
-                        state_store,
-                        network_state,
-                        last_error,
-                        server_description,
-                        server_probe_status,
-                        account_primary_handle,
-                        personal_handles,
-                        personal_handles_status,
-                        theme,
-                        sync_generation,
-                        needs_device_authorization,
-                        device_authorization_check_complete,
-                        account_has_other_devices,
-                        sync_bootstrap_complete,
-                        session_boot_state,
-                        did_cache,
-                        did_resolution_health,
-                    },
-                );
-            }
+            connect(
+                base,
+                principal_id(),
+                device_id(),
+                ConnectContext {
+                    session: runtime_services.session.clone(),
+                    connection_status,
+                    sync_cursor,
+                    token,
+                    principal_id,
+                    device_id,
+                    selected_realm_id,
+                    realm_tree_nodes,
+                    projection_events,
+                    device_queue,
+                    frontier_state,
+                    crypto_state,
+                    config_store,
+                    state_store,
+                    network_state,
+                    last_error,
+                    server_description,
+                    server_probe_status,
+                    account_primary_handle,
+                    personal_handles,
+                    personal_handles_status,
+                    theme,
+                    sync_generation,
+                    needs_device_authorization,
+                    device_authorization_check_complete,
+                    account_has_other_devices,
+                    sync_bootstrap_complete,
+                    session_boot_state,
+                    did_cache,
+                    did_resolution_health,
+                },
+            );
         } else if !base.trim().is_empty() {
             let bootstrap_state = session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
-                active.as_ref(),
+                &principal_id(),
                 secure_store_ready,
             );
             if *session_boot_state.peek() != bootstrap_state {

@@ -81,9 +81,9 @@ pub struct PendingLogout {
     /// hard logout authenticates with the grant + DPoP, not this value.
     #[serde(default)]
     pub session_credential: String,
-    /// Exact account authority and device owning the journalled session.
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
-    pub device_id: arkret_sdk::DeviceId,
+    /// Account DID, for diagnostics only.
+    #[serde(default)]
+    pub principal_id: String,
     /// When the record was journalled. Drives the [`RECORD_TTL_HOURS`] bound.
     pub created_at: DateTime<Utc>,
 }
@@ -346,14 +346,7 @@ mod tests {
             ),
             base_url: url::Url::parse("https://soland.example").unwrap(),
             session_credential: "session-credential".to_owned(),
-            authority: arkret_sdk::PrincipalAuthorityKey::new(
-                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:soland.example".to_owned()).unwrap(),
-            ),
-            device_id: arkret_sdk::DeviceId::new(
-                "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
-            )
-            .unwrap(),
+            principal_id: "did:web:soland.example:users:01".to_owned(),
             created_at,
         }
     }
