@@ -6,7 +6,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+use arkret_sdk::KeyBytes;
+use garth::SecureKeyStoreBackendInfo;
 
 use super::{SecureKeyStore, SecureKeyStoreError, WASM_INDEXEDDB_SECURE_KEY_STORE};
 
@@ -973,14 +974,14 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         })
     }
 
-    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         let guard = self
             .cache
             .lock()
             .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
         Ok(guard
             .get(key)
-            .map(|value| SecretBytes::new(value.as_bytes().to_vec())))
+            .map(|value| KeyBytes::new(value.as_bytes().to_vec())))
     }
 
     fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {

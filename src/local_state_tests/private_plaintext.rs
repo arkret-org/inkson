@@ -699,7 +699,8 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
 async fn failed_durable_plaintext_cleanup_rolls_back_and_reports_error() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+    use arkret_sdk::KeyBytes;
+    use garth::SecureKeyStoreBackendInfo;
 
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
 
@@ -719,7 +720,7 @@ async fn failed_durable_plaintext_cleanup_rolls_back_and_reports_error() {
             self.inner.store_secret_bytes(key, value)
         }
 
-        fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+        fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
             self.inner.get_secret_bytes(key)
         }
 

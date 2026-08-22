@@ -2,9 +2,10 @@
 
 #![cfg(target_arch = "wasm32")]
 
+use arkret_sdk::KeyBytes;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+use garth::SecureKeyStoreBackendInfo;
 
 use super::{
     SecureKeyStore, SecureKeyStoreError, WASM_ED25519_SEED_INDEXEDDB_REQUIRED,
@@ -129,7 +130,7 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
             .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage set: {err:?}")))
     }
 
-    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         if is_wasm_indexeddb_required_secret_key(key)
             && !(wasm_localstorage_secret_downgrade_enabled()
                 && is_wasm_test_downgrade_fixture_key(key))
@@ -150,7 +151,7 @@ impl SecureKeyStore for LocalStorageSecureKeyStore {
             return Ok(None);
         };
         Ok(unwrap_secret(&wrapped, &self.wrapping_key)?
-            .map(|plain| SecretBytes::new(plain.into_bytes())))
+            .map(|plain| KeyBytes::new(plain.into_bytes())))
     }
 
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {

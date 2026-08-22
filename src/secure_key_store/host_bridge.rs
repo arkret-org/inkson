@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 
-use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+use arkret_sdk::KeyBytes;
+use garth::SecureKeyStoreBackendInfo;
 
 use super::{SecureKeyStore, SecureKeyStoreError};
 
@@ -210,12 +211,12 @@ impl SecureKeyStore for HostBridgeSecureKeyStore {
         self.bridge.put(&self.service_name, key, value)
     }
 
-    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         self.require_biometric("Authenticate to access secret")?;
         Ok(self
             .bridge
             .get(&self.service_name, key)?
-            .map(|value| SecretBytes::new(value.into_bytes())))
+            .map(|value| KeyBytes::new(value.into_bytes())))
     }
 
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {

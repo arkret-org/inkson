@@ -5,7 +5,7 @@
 use std::fmt;
 
 use arkret_sdk::{KeyBytes, KeyStore, KeyStoreError, durable_platform_keystore};
-use garth::{SdkKeyStoreSecureAdapter, SecretBytes, SecureKeyStoreBackendInfo};
+use garth::{SdkKeyStoreSecureAdapter, SecureKeyStoreBackendInfo};
 
 use super::{SecureKeyStore, SecureKeyStoreError};
 
@@ -76,7 +76,7 @@ impl SecureKeyStore for KeyringSecureKeyStore {
         self.inner()?.store_secret_bytes(key, value)
     }
 
-    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         self.inner()?.get_secret_bytes(key)
     }
 

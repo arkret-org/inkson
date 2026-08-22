@@ -583,7 +583,7 @@ mod tests {
         fn get_secret_bytes(
             &self,
             key: &str,
-        ) -> Result<Option<garth::SecretBytes>, SecureKeyStoreError> {
+        ) -> Result<Option<arkret_sdk::KeyBytes>, SecureKeyStoreError> {
             self.inner.get_secret_bytes(key)
         }
 

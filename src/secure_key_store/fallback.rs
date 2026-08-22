@@ -28,7 +28,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+use arkret_sdk::KeyBytes;
+use garth::SecureKeyStoreBackendInfo;
 
 use super::{SecureKeyStore, SecureKeyStoreError, WASM_INDEXEDDB_SECURE_KEY_STORE_BACKEND};
 
@@ -101,7 +102,7 @@ impl SecureKeyStore for FallbackSecureKeyStore {
         })
     }
 
-    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         match self.primary.get_secret_bytes(key) {
             Ok(Some(secret)) => Ok(Some(secret)),
             Ok(None) => match self.fallback.get_secret_bytes(key) {

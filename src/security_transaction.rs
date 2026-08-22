@@ -95,7 +95,7 @@ impl InksonSecurityTransactionStore {
     pub fn load_staged_secret(
         &self,
         transaction_id: &arkret_sdk::TransactionId,
-    ) -> garth::Result<Option<Zeroizing<Vec<u8>>>> {
+    ) -> garth::Result<Option<arkret_sdk::KeyBytes>> {
         self.secure_store
             .get_secret_bytes(&Self::staged_secret_key(transaction_id)?)
             .map_err(|error| garth::Error::Protocol(error.to_string()))

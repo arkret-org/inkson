@@ -15,7 +15,14 @@ use std::sync::Arc;
     feature = "mobile-ios",
     target_os = "ios"
 ))]
-use garth::{SecretBytes, SecureKeyStoreBackendInfo};
+use arkret_sdk::KeyBytes;
+#[cfg(any(
+    feature = "mobile-android",
+    target_os = "android",
+    feature = "mobile-ios",
+    target_os = "ios"
+))]
+use garth::SecureKeyStoreBackendInfo;
 
 #[cfg(any(
     feature = "mobile-android",
@@ -76,7 +83,7 @@ impl SecureKeyStore for AndroidKeystoreSecureKeyStore {
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
         self.inner.store_secret_bytes(key, value)
     }
-    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         self.inner.get_secret_bytes(key)
     }
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
@@ -138,7 +145,7 @@ impl SecureKeyStore for IosKeychainSecureKeyStore {
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
         self.inner.store_secret_bytes(key, value)
     }
-    fn get_secret_bytes(&self, key: &str) -> Result<Option<SecretBytes>, SecureKeyStoreError> {
+    fn get_secret_bytes(&self, key: &str) -> Result<Option<KeyBytes>, SecureKeyStoreError> {
         self.inner.get_secret_bytes(key)
     }
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
