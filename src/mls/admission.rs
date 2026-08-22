@@ -38,7 +38,7 @@ pub(crate) struct WelcomePayloadInputs {
     pub(crate) welcome_envelope: arkret_sdk::MlsWelcomeEnvelope,
     pub(crate) governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     pub(crate) claim_nonce: String,
-    pub(crate) claim_receipt: arkret_sdk::MlsWelcomeClaimReceipt,
+    pub(crate) claim_receipt: arkret_sdk::PeerKeyPackageClaimReceipt,
     pub(crate) effective_scope: Option<arkret_sdk::ScopeRef>,
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     requester_device_authorize_event_id: &arkret_sdk::EventId,
     claim: &arkret_sdk::KeyPackageClaimRecord,
     claim_nonce: &str,
-    claim_receipt: &arkret_sdk::MlsWelcomeClaimReceipt,
+    claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
 ) -> Result<RealmMlsAdmissionEvents, String> {
     validate_claim_receipt_for_admission(
         state_store,
@@ -107,7 +107,7 @@ fn build_realm_mls_admission_events_from_verified_claim(
     requester_device_authorize_event_id: &arkret_sdk::EventId,
     claim: &arkret_sdk::KeyPackageClaimRecord,
     claim_nonce: &str,
-    claim_receipt: &arkret_sdk::MlsWelcomeClaimReceipt,
+    claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
 ) -> Result<RealmMlsAdmissionEvents, String> {
     let member_key_package = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
         .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))?;
@@ -170,7 +170,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claims(
     claims: &[(
         arkret_sdk::KeyPackageClaimRecord,
         String,
-        arkret_sdk::MlsWelcomeClaimReceipt,
+        arkret_sdk::PeerKeyPackageClaimReceipt,
     )],
 ) -> Result<RealmMlsBatchAdmissionEvents, String> {
     build_mls_admission_events_from_claims_for_effective_scope(
@@ -200,7 +200,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
     claims: &[(
         arkret_sdk::KeyPackageClaimRecord,
         String,
-        arkret_sdk::MlsWelcomeClaimReceipt,
+        arkret_sdk::PeerKeyPackageClaimReceipt,
     )],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<RealmMlsBatchAdmissionEvents, String> {
@@ -311,7 +311,7 @@ fn validate_claim_receipt_for_admission(
     actor_id: &str,
     claim: &arkret_sdk::KeyPackageClaimRecord,
     claim_nonce: &str,
-    receipt: &arkret_sdk::MlsWelcomeClaimReceipt,
+    receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
 ) -> Result<(), String> {
     let requester = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|error| format!("invalid requester actor_id: {error}"))?;
@@ -406,7 +406,7 @@ pub(crate) fn build_mls_welcome_payload(
     commit_event_id: &arkret_sdk::EventId,
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     claim_nonce: &str,
-    claim_receipt: &arkret_sdk::MlsWelcomeClaimReceipt,
+    claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
 ) -> Result<arkret_sdk::MlsWelcomePayload, String> {
     let intended_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS Welcome Realm id: {err:?}"))?;
@@ -614,7 +614,7 @@ mod tests {
         realm_id: &str,
         requester: &str,
         claim_nonce: &str,
-    ) -> arkret_sdk::MlsWelcomeClaimReceipt {
+    ) -> arkret_sdk::PeerKeyPackageClaimReceipt {
         let request = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
             claim_request_id: arkret_sdk::Base64UrlString::new(claim_nonce.to_owned()).unwrap(),
             target_principal_id: claim.principal_id.clone(),

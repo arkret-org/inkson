@@ -2160,7 +2160,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     let mut claims = Vec::<(
         arkret_sdk::KeyPackageClaimRecord,
         String,
-        arkret_sdk::MlsWelcomeClaimReceipt,
+        arkret_sdk::PeerKeyPackageClaimReceipt,
     )>::new();
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     for invitee_did in invitees {
