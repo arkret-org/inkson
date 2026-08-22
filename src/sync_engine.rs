@@ -847,30 +847,37 @@ pub async fn run_sync_engine(
     }
 }
 
-fn realm_membership_removal_basis(
+/// Accepted leave/ban membership frontier for one effective scope.
+///
+/// The Realm-default scope takes every accepted `ak.member.state` transition to
+/// `leave`/`ban`. A Circle scope additionally takes the `ak.circle.member.state`
+/// transitions naming that Circle, because a Realm departure removes the
+/// principal from every Circle in it while a Circle departure does not touch
+/// the Realm roster.
+fn membership_removal_frontier(
     projection: &Value,
-) -> Option<(BTreeSet<String>, Vec<arkret_sdk::EventId>)> {
-    // A truncated roster is not negative membership evidence.  Waiting for a
-    // complete projection is required before comparing it with the MLS tree.
-    if projection.get("members_limited").and_then(Value::as_bool) != Some(false) {
-        return None;
-    }
-    let active_members = projection
-        .get("members")?
-        .as_array()?
-        .iter()
-        .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
-        .filter_map(|member| member.get("actor_id").and_then(Value::as_str))
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
+    circle_id: Option<&str>,
+) -> Vec<arkret_sdk::EventId> {
     let mut membership_frontier = sync_realm_state_events(projection)
         .into_iter()
         .filter(|event| {
-            event
+            let kind = event
                 .get("kind")
                 .or_else(|| event.get("event_kind"))
-                .and_then(Value::as_str)
-                == Some(arkret_sdk::EventKind::MemberState.as_str())
+                .and_then(Value::as_str);
+            let payload = event
+                .get("payload")
+                .or_else(|| event.get("content"))
+                .unwrap_or(&Value::Null);
+            match kind {
+                Some(kind) if kind == arkret_sdk::EventKind::MemberState.as_str() => true,
+                Some(kind) if kind == arkret_sdk::EventKind::CircleMemberState.as_str() => {
+                    circle_id.is_some_and(|circle_id| {
+                        payload.get("circle_id").and_then(Value::as_str) == Some(circle_id)
+                    })
+                }
+                _ => false,
+            }
         })
         .filter(|event| {
             let payload = event
@@ -895,7 +902,66 @@ fn realm_membership_removal_basis(
         .collect::<Vec<_>>();
     membership_frontier.sort();
     membership_frontier.dedup();
+    membership_frontier
+}
+
+fn realm_membership_removal_basis(
+    projection: &Value,
+) -> Option<(BTreeSet<String>, Vec<arkret_sdk::EventId>)> {
+    // A truncated roster is not negative membership evidence.  Waiting for a
+    // complete projection is required before comparing it with the MLS tree.
+    if projection.get("members_limited").and_then(Value::as_bool) != Some(false) {
+        return None;
+    }
+    let active_members = projection
+        .get("members")?
+        .as_array()?
+        .iter()
+        .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
+        .filter_map(|member| member.get("actor_id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    let membership_frontier = membership_removal_frontier(projection, None);
     (!membership_frontier.is_empty()).then_some((active_members, membership_frontier))
+}
+
+/// Outstanding MLS Remove obligations of one Circle scope, derived exclusively
+/// from canonical local state: the registered active Circle roster from
+/// `circle_view.members`, the accepted leave/ban frontier in the account-sync
+/// Realm projection, and the local RFC 9420 group roster. No unregistered wire
+/// field participates.
+pub(crate) fn circle_mls_removal_candidates(
+    state_store: &LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    realm_id: &str,
+    circle_id: &str,
+    active_members: &BTreeSet<String>,
+    actor_id: &str,
+    device_id: &str,
+) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
+    let state = state_store.load();
+    let projection = state.realm_tree_projections.get(realm_id)?;
+    let membership_frontier = membership_removal_frontier(projection, Some(circle_id));
+    if membership_frontier.is_empty() {
+        return None;
+    }
+    let mut mls_members = crate::mls::runtime::mls_group_member_principal_ids_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        Some(circle_id),
+        actor_id,
+        device_id,
+    )?;
+    mls_members.sort();
+    mls_members.dedup();
+    Some(
+        mls_members
+            .into_iter()
+            .filter(|member| !active_members.contains(member))
+            .map(|member| (member, membership_frontier.clone()))
+            .collect(),
+    )
 }
 
 fn realm_default_mls_removal_candidates(
@@ -1207,24 +1273,47 @@ async fn run_circle_scope_rotate_pass(
             }
         }
 
-        let has_pending_circle_removals = circles
+        let circle_removals: std::collections::BTreeMap<
+            String,
+            Vec<(String, Vec<arkret_sdk::EventId>)>,
+        > = circles
             .circles
             .iter()
-            .any(|circle| !circle.pending_mls_removals.is_empty());
+            .filter(|circle| {
+                circle.state == arkret_sdk::CircleState::Active
+                    && circle.encryption_profile == arkret_sdk::EncryptionProfile::MlsRfc9420
+            })
+            .filter_map(|circle| {
+                let circle_id = circle.circle_id.to_string();
+                let active_members: BTreeSet<String> = circle
+                    .members
+                    .iter()
+                    .map(arkret_sdk::DidCoreId::to_string)
+                    .collect();
+                let removals = ctx.state_store.read(|store| {
+                    circle_mls_removal_candidates(
+                        store,
+                        secure_store.as_ref(),
+                        &realm_id,
+                        &circle_id,
+                        &active_members,
+                        &actor_id,
+                        &device_id,
+                    )
+                })?;
+                (!removals.is_empty()).then_some((circle_id, removals))
+            })
+            .collect();
+        let has_pending_circle_removals = !circle_removals.is_empty();
         if has_pending_circle_removals
             && !ctx
                 .state_store
                 .read(|store| store.realm_has_pending_mls_binding(&realm_id))
         {
-            let tracking_suffix = circles
-                .circles
+            let tracking_suffix = circle_removals
                 .iter()
-                .find_map(|circle| {
-                    circle
-                        .pending_mls_removals
-                        .first()
-                        .map(|removal| format!("{}:{}", circle.circle_id, removal.principal_id()))
-                })
+                .next()
+                .map(|(circle_id, removals)| format!("{circle_id}:{}", removals[0].0))
                 .unwrap_or_else(|| "circle-membership-frontier".to_owned());
             ctx.state_store.write(|store| {
                 store.record_move_submission(
@@ -1245,22 +1334,17 @@ async fn run_circle_scope_rotate_pass(
                 store.resolve_member_remove_mls_bindings(&realm_id);
             });
         }
-        for circle in circles.circles {
+        for (circle_id, removals) in circle_removals {
             if generation.get() != start_generation {
                 return;
             }
-            let circle_id = circle.circle_id.to_string();
-            if circle.state != arkret_sdk::CircleState::Active
-                || circle.encryption_profile != arkret_sdk::EncryptionProfile::MlsRfc9420
-                || circle.pending_mls_removals.is_empty()
-            {
-                continue;
-            }
-            if !circle
-                .members
-                .iter()
-                .any(|member| member.to_string() == actor_id)
-            {
+            if !circles.circles.iter().any(|circle| {
+                circle.circle_id.as_str() == circle_id.as_str()
+                    && circle
+                        .members
+                        .iter()
+                        .any(|member| member.to_string() == actor_id)
+            }) {
                 tracing::debug!(
                     %realm_id,
                     %circle_id,
@@ -1280,29 +1364,14 @@ async fn run_circle_scope_rotate_pass(
                 );
                 continue;
             }
-            let mut target_principal_ids = Vec::new();
-            let mut revocation_membership_frontier = Vec::new();
-            let mut missing_frontier = false;
-            for target in circle.pending_mls_removals {
-                let target_principal_id = target.principal_id().to_string();
-                if target.membership_frontier().is_empty() {
-                    missing_frontier = true;
-                    tracing::debug!(
-                        %realm_id,
-                        %circle_id,
-                        %target_principal_id,
-                        "sync_engine: Circle scope-rotate skipped without revoke/import membership frontier",
-                    );
-                    continue;
-                }
-                target_principal_ids.push(target_principal_id);
-                revocation_membership_frontier.extend(target.membership_frontier().iter().cloned());
-            }
-            // Server validation is all-or-nothing for the pending obligations
-            // in one effective scope; a partial Remove commit must not be sent.
-            if missing_frontier || target_principal_ids.is_empty() {
-                continue;
-            }
+            let target_principal_ids: Vec<String> = removals
+                .iter()
+                .map(|(principal_id, _)| principal_id.clone())
+                .collect();
+            let mut revocation_membership_frontier: Vec<arkret_sdk::EventId> = removals
+                .iter()
+                .flat_map(|(_, frontier)| frontier.iter().cloned())
+                .collect();
             revocation_membership_frontier.sort();
             revocation_membership_frontier.dedup();
             let draft = ctx.state_store.read(|store| {

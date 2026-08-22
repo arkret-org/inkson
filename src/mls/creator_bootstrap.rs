@@ -108,8 +108,15 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     {
         let mut store = state_store.write();
         let mut view = store.seal_view_for_realm(realm_id);
-        view.frontier = vec![seal_view.seal_id.to_string()];
-        view.state_root = Some(seal_view.state_root.to_string());
+        view.frontier = seal_view
+            .seal_basis
+            .leaves
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        // The frontier view carries no service-derived root hint; the local
+        // post-state root is filled by verified Seal replay.
+        view.state_root = None;
         store.set_realm_seal_view(realm_id.to_owned(), view);
     }
 

@@ -591,13 +591,10 @@ where
     let arkret_sdk::EventsFrontierView::RealmSeal(frontier) = frontier.frontier else {
         anyhow::bail!("Realm Seal frontier returned the wrong selector variant");
     };
-    let basis = arkret_sdk::SealBasis {
-        leaves: vec![frontier.seal_id],
-    };
     let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(
         http,
         &event.realm_id,
-        &basis,
+        &frontier.seal_basis,
     )
     .await
     .map_err(anyhow::Error::msg)?;
@@ -1672,7 +1669,7 @@ impl EventSubmitter {
     /// view. Only the CBA data-plane stamping path uses this.
     pub(crate) async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
         let view = self.events_frontier_realm_seal_view(realm_id).await?;
-        Ok(view.seal_id.to_string())
+        Ok(view.sole_leaf()?.to_string())
     }
     /// Query durable events through the current `/_arkret/self/events` surface,
     /// following pagination to completion (COR-07).
@@ -1794,6 +1791,32 @@ impl EventSubmitter {
         Ok(view)
     }
 
+    /// Resolve the accepted Seal named by the single-leaf Realm frontier.
+    ///
+    /// `event-auth-state-resolution.md` forbids treating any service-derived
+    /// root hint as authority, so callers that need the frontier's signed roots
+    /// resolve the leaf Seal itself through `ak.self.seals.read.resolve`.
+    pub async fn events_frontier_realm_seal_head(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<arkret_sdk::Seal> {
+        let view = self.events_frontier_realm_seal_view(realm_id).await?;
+        let leaf = view.sole_leaf()?.clone();
+        let outcome = self
+            .http
+            .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
+                realm_id: view.realm_id.clone(),
+                seal_refs: vec![leaf.clone()],
+                history_traversal_access: None,
+            })
+            .await?;
+        outcome
+            .seals
+            .into_iter()
+            .find(|seal| seal.id == leaf)
+            .ok_or_else(|| anyhow::anyhow!("accepted Realm Seal frontier leaf did not resolve"))
+    }
+
     async fn events_frontier_realm_state(
         &self,
         realm_id: &str,
@@ -1854,11 +1877,10 @@ impl EventSubmitter {
                 "managed Agent PCR Seal head is not byte-exact in the verified checkpoint"
             );
         }
-        if seal.realm_id != view.realm_id
-            || seal.id != view.seal_id
-            || seal.control_event_set_root != view.control_event_set_root
-            || seal.state_root != view.state_root
-        {
+        // The frontier view carries no service-derived roots: the resolved
+        // Seal's own signed roots are the only authority, so only identity is
+        // cross-checked here.
+        if seal.realm_id != view.realm_id || Some(&seal.id) != view.sole_leaf().ok() {
             anyhow::bail!("managed Agent PCR Seal head differs from its frontier view");
         }
         Ok((view, seal))

@@ -346,6 +346,10 @@ pub fn build_mls_genesis_payload(
         })?,
         initial_keypackage_refs: None,
         governance_binding: governance_binding.clone(),
+        // The RRK archive is produced by the exporter durability path, which
+        // this client does not yet author; the closed schema forbids the field
+        // for every other content-scheme/durability combination.
+        organization_recovery_archive: None,
         created_at: crate::clock::now_utc_canonical(),
     };
     payload.validate().map_err(|error| {

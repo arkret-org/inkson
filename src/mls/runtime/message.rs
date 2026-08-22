@@ -1173,7 +1173,26 @@ pub fn mls_group_member_principal_ids_for_realm(
     actor_id: &str,
     device_id: &str,
 ) -> Option<Vec<String>> {
-    let snapshot = state_store.mls_snapshot_for(realm_id)?;
+    mls_group_member_principal_ids_for_effective_scope(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        actor_id,
+        device_id,
+    )
+}
+
+/// Local RFC 9420 member roster of one effective MLS scope.
+pub fn mls_group_member_principal_ids_for_effective_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    actor_id: &str,
+    device_id: &str,
+) -> Option<Vec<String>> {
+    let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, circle_id)?;
     let secret = load_device_snapshot_secret(secure_store, actor_id, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     Some(

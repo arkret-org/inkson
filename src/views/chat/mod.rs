@@ -1593,7 +1593,6 @@ pub fn ChatPanel(
                                 circle.state == arkret_sdk::CircleState::Active
                                     && circle.viewer_membership
                                         == Some(arkret_sdk::CircleMembership::Join)
-                                    && circle.pending_mls_removals.is_empty()
                             })
                             .map(|circle| CircleSummary {
                                 id: circle.circle_id.to_string(),

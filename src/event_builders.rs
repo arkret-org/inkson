@@ -919,6 +919,7 @@ fn build_realm_delivery_binding_policy(
         required_endorsers: Some(BTreeSet::new()),
         unroutable_membership_allowed: Some(true),
         rebind_authorization: Some(arkret_sdk::RebindAuthorization::Member),
+        handover_grace_seconds: None,
         expires_after_seconds: None,
     })
 }

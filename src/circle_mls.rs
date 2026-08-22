@@ -378,7 +378,23 @@ pub async fn drain_circle_scope_rotate_obligations(
             });
             continue;
         }
-        if circle.pending_mls_removals.is_empty() {
+        let active_members: std::collections::BTreeSet<String> = circle
+            .members
+            .iter()
+            .map(arkret_sdk::DidCoreId::to_string)
+            .collect();
+        let Some(removals) = crate::sync_engine::circle_mls_removal_candidates(
+            state_store,
+            secure_store,
+            realm_id,
+            &circle_id,
+            &active_members,
+            actor_id,
+            device_id,
+        ) else {
+            continue;
+        };
+        if removals.is_empty() {
             continue;
         }
         if state_store
@@ -392,28 +408,14 @@ pub async fn drain_circle_scope_rotate_obligations(
             });
             continue;
         }
-        let mut target_principal_ids = Vec::new();
-        let mut revocation_membership_frontier = Vec::new();
-        let mut missing_frontier = false;
-        for target in circle.pending_mls_removals {
-            let target_principal_id = target.principal_id().to_string();
-            if target.membership_frontier().is_empty() {
-                missing_frontier = true;
-                outcome.skipped.push(CircleScopeRotateDrainSkip {
-                    circle_id: circle_id.clone(),
-                    target_principal_id: Some(target_principal_id),
-                    reason: "missing_removal_membership_frontier".to_owned(),
-                });
-                continue;
-            }
-            target_principal_ids.push(target_principal_id);
-            revocation_membership_frontier.extend(target.membership_frontier().iter().cloned());
-        }
-        // The server validates a scope rotation against every pending Remove
-        // obligation in that scope. Never submit a partial batch.
-        if missing_frontier || target_principal_ids.is_empty() {
-            continue;
-        }
+        let target_principal_ids: Vec<String> = removals
+            .iter()
+            .map(|(principal_id, _)| principal_id.clone())
+            .collect();
+        let mut revocation_membership_frontier: Vec<arkret_sdk::EventId> = removals
+            .iter()
+            .flat_map(|(_, frontier)| frontier.iter().cloned())
+            .collect();
         revocation_membership_frontier.sort();
         revocation_membership_frontier.dedup();
         let target_refs: Vec<&str> = target_principal_ids.iter().map(String::as_str).collect();

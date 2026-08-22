@@ -8,7 +8,7 @@ use arkret_sdk::{IdempotencyKey, ProtocolOperationId, ReservationHandle};
 pub(crate) struct PrincipalSuccessorSealContext {
     actor_id: arkret_sdk::DidCoreId,
     control_realm: arkret_sdk::RealmId,
-    predecessor: arkret_sdk::RealmSealFrontierView,
+    predecessor: arkret_sdk::Seal,
 }
 
 pub(crate) async fn prepare_principal_successor_seal(
@@ -27,12 +27,26 @@ pub(crate) async fn prepare_principal_successor_seal(
         realm_id: control_realm.clone(),
     };
     let state = http.events_frontier(&selector).await?;
-    let arkret_sdk::EventsFrontierView::RealmSeal(predecessor) = state.frontier else {
+    let arkret_sdk::EventsFrontierView::RealmSeal(view) = state.frontier else {
         anyhow::bail!("principal control frontier did not return a Realm Seal view");
     };
-    if predecessor.realm_id != control_realm {
+    if view.realm_id != control_realm {
         anyhow::bail!("principal control frontier returned a different Realm");
     }
+    // The successor Seal binds the predecessor's own signed roots, so the
+    // frontier leaf is resolved instead of trusting a service root hint.
+    let leaf = view.sole_leaf()?.clone();
+    let predecessor = http
+        .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
+            realm_id: control_realm.clone(),
+            seal_refs: vec![leaf.clone()],
+            history_traversal_access: None,
+        })
+        .await?
+        .seals
+        .into_iter()
+        .find(|seal| seal.id == leaf)
+        .ok_or_else(|| anyhow::anyhow!("accepted principal control Seal leaf did not resolve"))?;
     Ok(PrincipalSuccessorSealContext {
         actor_id,
         control_realm,

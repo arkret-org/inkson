@@ -36,13 +36,13 @@ async fn current_backup_frontier_ref(
         &http, actor_id, device_id,
     )
     .await?;
-    let frontier = api
+    let seal = api
         .event_submitter()?
-        .events_frontier_realm_seal_view(control_realm.as_str())
+        .events_frontier_realm_seal_head(control_realm.as_str())
         .await?;
     Ok(arkret_sdk::KeyBackupFrontierRef {
-        frontier_digest: frontier.control_event_set_root,
-        seal_ref: Some(frontier.seal_id.to_string()),
+        frontier_digest: seal.control_event_set_root,
+        seal_ref: Some(seal.id.to_string()),
         device_generation_ref: trust_anchor.generation_ref,
     })
 }
@@ -80,7 +80,7 @@ async fn ensure_initial_active_series(
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let submitter = api.event_submitter()?;
     let frontier = submitter
-        .events_frontier_realm_seal_view(control_realm.as_str())
+        .events_frontier_realm_seal_head(control_realm.as_str())
         .await?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
         &http, actor_id, device_id,

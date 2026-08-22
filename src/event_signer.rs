@@ -455,15 +455,15 @@ impl InksonEventSigner {
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
-    /// Sign the first post-bootstrap self-PCR Seal. The predecessor view is
-    /// the accepted two-Event bootstrap Seal; the first successor is the
+    /// Sign the first post-bootstrap self-PCR Seal. The predecessor is the
+    /// resolved accepted two-Event bootstrap Seal; the first successor is the
     /// recovery-policy Event required before the first encrypted backup.
     pub fn sign_self_principal_first_successor_seal(
         &self,
         create: &arkret_sdk::Event,
         authorize: &arkret_sdk::Event,
         successor: &arkret_sdk::Event,
-        predecessor: &arkret_sdk::RealmSealFrontierView,
+        predecessor: &arkret_sdk::Seal,
         hlc: arkret_sdk::Hlc,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
         let device_id = self.device_id.as_deref().ok_or_else(|| {
@@ -492,7 +492,7 @@ impl InksonEventSigner {
     pub fn sign_self_principal_linear_successor_seal(
         &self,
         events: &[arkret_sdk::Event],
-        predecessor: &arkret_sdk::RealmSealFrontierView,
+        predecessor: &arkret_sdk::Seal,
         hlc: arkret_sdk::Hlc,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
         let principal = events.first().ok_or_else(|| {

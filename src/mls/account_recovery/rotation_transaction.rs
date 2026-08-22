@@ -182,6 +182,11 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let frontier = submitter
         .events_frontier_realm_seal_view(control_realm.as_str())
         .await?;
+    // The active-series pointer binds the accepted Seal's own signed roots, so
+    // the frontier leaf is resolved rather than trusting a service root hint.
+    let frontier_seal = submitter
+        .events_frontier_realm_seal_head(control_realm.as_str())
+        .await?;
     let revoke = crate::operation::ak_ops::device_revoke(
         control_realm.as_str(),
         actor_id,
@@ -200,7 +205,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
             class.new_series_id.as_str(),
             active_pointer_version(&list_payload, class.backup_kind)? + 1,
             std::slice::from_ref(&class.previous_series_id),
-            &frontier,
+            &frontier_seal,
             &trust_anchor,
         )?);
     }
@@ -406,6 +411,7 @@ async fn drive_security_rotation(
         let erase_frontier = submitter
             .events_frontier_realm_seal_view(control_realm.as_str())
             .await?;
+        let erase_basis_leaf = erase_frontier.sole_leaf()?.clone();
         let erase_lease = crate::authorization_lease::acquire_for_intent(
             &http,
             arkret_wire::AuthorizationLeaseIssueIntent {
@@ -416,7 +422,7 @@ async fn drive_security_rotation(
                     .to_owned(),
                 authorization_rule_id: "realm_admission".to_owned(),
                 risk_tier: RiskTier::High,
-                basis_ref: LeaseBasisRef::Seal(erase_frontier.seal_id),
+                basis_ref: LeaseBasisRef::Seal(erase_basis_leaf),
             },
             digest_suite,
         )
@@ -673,7 +679,7 @@ pub(super) fn build_active_series_event(
     series_id: &str,
     pointer_version: u64,
     previous_series_ids: &[BackupSeriesId],
-    frontier: &arkret_sdk::RealmSealFrontierView,
+    frontier: &arkret_sdk::Seal,
     trust_anchor: &ControllerBackupTrustAnchor,
 ) -> Result<crate::operation::LocalOperation> {
     let signer = crate::event_signer::active_signer()
@@ -692,7 +698,7 @@ pub(super) fn build_active_series_event(
         pointer_version,
         previous_series_ids.to_vec(),
         frontier.control_event_set_root.clone(),
-        Some(frontier.seal_id.clone()),
+        Some(frontier.id.clone()),
         crate::clock::now_utc(),
         verification_method,
         trust_anchor.clone(),

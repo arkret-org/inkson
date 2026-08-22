@@ -626,7 +626,7 @@ async fn submit_first_recovery_policy_seal(
         .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap authorize Event"))?;
     let predecessor = api
         .event_submitter()?
-        .events_frontier_realm_seal_view(policy_event.realm_id.as_str())
+        .events_frontier_realm_seal_head(policy_event.realm_id.as_str())
         .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;

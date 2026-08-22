@@ -542,7 +542,7 @@ fn build_active_mls_history_series_event(
     series_id: &str,
     pointer_version: u64,
     previous_series_ids: &[String],
-    frontier: &arkret_sdk::RealmSealFrontierView,
+    frontier: &arkret_sdk::Seal,
     trust_anchor: &ControllerBackupTrustAnchor,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let signer = crate::event_signer::active_signer()
@@ -560,7 +560,7 @@ fn build_active_mls_history_series_event(
             .map(|series_id| BackupSeriesId::new(series_id.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()?,
         frontier.control_event_set_root.clone(),
-        Some(frontier.seal_id.clone()),
+        Some(frontier.id.clone()),
         crate::clock::now_utc(),
         verification_method,
         trust_anchor.clone(),
@@ -703,7 +703,7 @@ async fn collect_current_managed_pcr_backup_items(
             );
         }
         let realm_id = key_state.principal_control_realm_id.as_str();
-        let frontier = match submitter.events_frontier_realm_seal_view(realm_id).await {
+        let frontier = match submitter.events_frontier_realm_seal_head(realm_id).await {
             Ok(frontier) => frontier,
             // An Agent whose PCR bootstrap never completed has nothing to put
             // in the shared recovery series: the Principal Server reports its
@@ -767,7 +767,7 @@ async fn collect_current_managed_pcr_backup_items(
             authorization_ref: key_state.controller_authorization_ref.to_string(),
             managed_frontier_ref: ManagedFrontierRef {
                 frontier_digest: frontier.control_event_set_root,
-                seal_ref: frontier.seal_id.to_string(),
+                seal_ref: frontier.id.to_string(),
                 mls_epoch: snapshot.epoch,
             },
         };
@@ -957,7 +957,7 @@ pub(crate) async fn seal_self_principal_event_current(
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
     let predecessor = submitter
-        .events_frontier_realm_seal_view(realm_id.as_str())
+        .events_frontier_realm_seal_head(realm_id.as_str())
         .await?;
     let controller_actor_id = arkret_sdk::project_full_id_to_core_id(controller_id)?;
     let mut accepted = submitter
@@ -1092,7 +1092,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         anyhow::bail!("Principal Server did not expose the accepted managed Agent PCR genesis");
     }
 
-    let (initial_frontier, _) = ensure_managed_agent_pcr_seal_current(
+    let (_, initial_frontier_seal) = ensure_managed_agent_pcr_seal_current(
         &submitter,
         &http,
         signer.as_ref(),
@@ -1105,8 +1105,8 @@ pub(crate) async fn bootstrap_provisioned_agent(
     state_store.write().set_realm_seal_view(
         realm_id.to_owned(),
         crate::state::LocalSealView {
-            frontier: vec![initial_frontier.seal_id.to_string()],
-            state_root: Some(initial_frontier.state_root.to_string()),
+            frontier: vec![initial_frontier_seal.id.to_string()],
+            state_root: Some(initial_frontier_seal.state_root.to_string()),
             ..Default::default()
         },
     );
@@ -1156,7 +1156,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             state_store,
         )
         .await?
-        .0
+        .1
     } else {
         let summary = {
             let mut store = state_store.write();
@@ -1239,7 +1239,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             }
             Err(error) => return Err(error),
         }
-        let (frontier, _) = ensure_managed_agent_pcr_seal_current(
+        let (_, frontier) = ensure_managed_agent_pcr_seal_current(
             &submitter,
             &http,
             signer.as_ref(),
@@ -1254,7 +1254,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
     state_store.write().set_realm_seal_view(
         realm_id.to_owned(),
         crate::state::LocalSealView {
-            frontier: vec![frontier.seal_id.to_string()],
+            frontier: vec![frontier.id.to_string()],
             state_root: Some(frontier.state_root.to_string()),
             ..Default::default()
         },
@@ -1273,7 +1273,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         authorization_ref: controller_authorization_ref.to_owned(),
         managed_frontier_ref: ManagedFrontierRef {
             frontier_digest: frontier.control_event_set_root.clone(),
-            seal_ref: frontier.seal_id.to_string(),
+            seal_ref: frontier.id.to_string(),
             mls_epoch: snapshot.epoch,
         },
     };
@@ -1319,7 +1319,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
                     crate::identity::principal_control::resolve_accepted(&http, &controller_did)
                         .await?;
                 let controller_frontier = submitter
-                    .events_frontier_realm_seal_view(controller_realm_id.as_str())
+                    .events_frontier_realm_seal_head(controller_realm_id.as_str())
                     .await?;
                 let active_series = build_active_mls_history_series_event(
                     &controller_realm_id,
@@ -1405,7 +1405,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         let controller_realm_id =
             crate::identity::principal_control::resolve_accepted(&http, &controller_did).await?;
         let controller_frontier = submitter
-            .events_frontier_realm_seal_view(controller_realm_id.as_str())
+            .events_frontier_realm_seal_head(controller_realm_id.as_str())
             .await?;
         let active_series = build_active_mls_history_series_event(
             &controller_realm_id,

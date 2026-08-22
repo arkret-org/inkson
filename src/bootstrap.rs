@@ -762,8 +762,15 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         state_store.write().set_realm_seal_view(
             realm_id.clone(),
             crate::state::LocalSealView {
-                frontier: vec![seal_view.seal_id.to_string()],
-                state_root: Some(seal_view.state_root.to_string()),
+                frontier: seal_view
+                    .seal_basis
+                    .leaves
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                // The frontier view carries no service-derived root hint; the
+                // local post-state root is filled by verified Seal replay.
+                state_root: None,
                 ..Default::default()
             },
         );
