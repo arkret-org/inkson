@@ -38,7 +38,6 @@ pub fn encrypt_reaction_with_device_snapshot(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     authority: &PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &DeviceId,
     target_ref: &arkret_sdk::EventId,
     created_at: chrono::DateTime<chrono::Utc>,

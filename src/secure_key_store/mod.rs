@@ -166,11 +166,6 @@ pub(crate) fn is_wasm_ed25519_seed_key(key: &str) -> bool {
 /// exact durable local-state reference and winning transition tuple.
 pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secret.v1.";
 
-/// Durable staged history-response attempt bodies. These blobs can contain
-/// encrypted history material and therefore must never use the browser
-/// localStorage fallback tier.
-pub(crate) const HISTORY_SOURCE_OUTBOX_BLOB_KEY_PREFIX: &str = "arkret/history-source-outbox/v1/";
-
 /// Account-scoped cache for decrypted MLS application plaintext and the
 /// author's private plaintext sidecar. On wasm this key is IndexedDB-only so
 /// neither the plaintext nor a decryptable mirror can enter localStorage.
@@ -238,7 +233,6 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with(MLS_HISTORY_SECRET_KEY_PREFIX)
         || key.starts_with("arkret/history-candidate/v1/")
         || key.starts_with("arkret/history-response-capability/v1/")
-        || key.starts_with(HISTORY_SOURCE_OUTBOX_BLOB_KEY_PREFIX)
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
 }

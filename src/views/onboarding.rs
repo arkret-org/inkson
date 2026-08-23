@@ -439,7 +439,6 @@ pub fn OnboardingPanel(
     device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let session_context = crate::app::SessionContext::get();
-    let mut active_account = session_context.active_account;
     let state_store = session_context.state_store;
     if !secure_store_ready {
         return rsx! {
@@ -1060,8 +1059,6 @@ fn PcrPolicyDeviceRecovery(
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
-    let session_context = crate::app::SessionContext::get();
-    let mut active_account = session_context.active_account;
     let mut words = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -1107,7 +1104,7 @@ fn PcrPolicyDeviceRecovery(
                         words.set(String::new());
                         busy.set(false);
                         match result {
-                            Ok((completed, account)) => {
+                            Ok((completed, _)) => {
                                 if let Some(grant) = state_store.read().session_grant() {
                                     principal_id.set(principal_full_id.to_string());
                                     token.set(grant.grant_jwt);
@@ -1367,7 +1364,6 @@ fn PendingAccountIdentityCreation(
     mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let session_context = crate::app::SessionContext::get();
-    let mut active_account = session_context.active_account;
     let mut state_store = session_context.state_store;
     let initial_handoff = state_store.peek().pending_account_handoff();
     let initial_checkpoint = state_store.peek().pending_principal_registration();

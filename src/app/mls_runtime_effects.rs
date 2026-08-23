@@ -39,8 +39,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         device_authorization_check_complete,
         needs_device_authorization,
         token,
-        principal_id,
-        device_id,
+        principal_id: _,
+        device_id: _,
         server_description,
         sync_bootstrap_complete,
         sync_cursor,
@@ -441,7 +441,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let session = token();
             let actor = account.full_id().to_string();
             let device = account.device_id.clone();
-            let authority = account.authority.clone();
             if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
                 return;
             }

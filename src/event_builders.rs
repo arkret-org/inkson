@@ -465,7 +465,7 @@ pub(crate) fn test_single_signer_notary(
     signer_did: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
     let full_id = arkret_sdk::DidFullId::new(signer_did.to_owned())?;
-    let actor_id = arkret_sdk::DidCoreId::from(arkret_sdk::project_full_id_to_core_id(&full_id)?);
+    let actor_id = arkret_sdk::project_full_id_to_core_id(&full_id)?;
     let public_key = [7_u8; 32];
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id,
@@ -473,7 +473,7 @@ pub(crate) fn test_single_signer_notary(
             .map_err(anyhow::Error::msg)?,
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-        frozen_public_key_b64u: arkret_sdk::base64url_encode(&public_key),
+        frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
         frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
             public_key,
         ))?,
@@ -625,7 +625,7 @@ pub fn managed_agent_inception_notary(
         .map_err(anyhow::Error::msg)?,
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-        frozen_public_key_b64u: arkret_sdk::base64url_encode(&public_key),
+        frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
         frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
             public_key,
         ))?,

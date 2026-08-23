@@ -85,22 +85,6 @@ pub(super) fn session_refresh_write_plan(
     next_grant: &PersistedSessionGrant,
     desired_config: &ClientConfig,
 ) -> SessionRefreshWritePlan {
-    let config_unchanged = current_config.principal_servers == desired_config.principal_servers
-        && current_config.session_credential == desired_config.session_credential
-        && match (
-            current_config.active_account(),
-            desired_config.active_account(),
-        ) {
-            (None, None) => true,
-            (Some(current), Some(desired)) => {
-                current.same_authority(desired)
-                    && current.profile_id == desired.profile_id
-                    && current.resolution == desired.resolution
-                    && current.device_id == desired.device_id
-                    && current.server_url == desired.server_url
-            }
-            _ => false,
-        };
     SessionRefreshWritePlan {
         grant: current_grant != Some(next_grant),
         credential: current_credential != next_grant.grant_jwt,
@@ -175,7 +159,7 @@ async fn client_core_account_subscribe_snapshot(
 /// The single source of truth for restoring or rotating the current session credential.
 ///
 /// Registered once at the app root through `RuntimeServices`. Reads the live
-/// base/actor/device from their signals (so it always targets the active
+/// base URL and accepted account context (so it always targets the active
 /// session), then either adopts the current grant JWT or rotates the grant.
 /// On success it writes the current credential into the `token` signal and
 /// persisted config and returns it. Missing local refresh material is surfaced
@@ -187,18 +171,14 @@ async fn client_core_account_subscribe_snapshot(
 /// rollover.
 pub(super) async fn refresh_session_credential_for_active_context(
     base_url: Signal<String>,
-    principal_id: Signal<String>,
-    device_id: Signal<String>,
     mut state_store: SyncSignal<LocalStateStore>,
     mut token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     session_generation: Signal<u64>,
 ) -> crate::runtime::session::CurrentSessionRefresh {
     let base = base_url();
-    let actor = principal_id();
-    let device = device_id();
     let generation = session_generation();
-    let mut active_account = SessionContext::get().active_account;
+    let active_account = SessionContext::get().active_account;
     let Some(account) = active_account.peek().clone() else {
         return crate::runtime::session::CurrentSessionRefresh::SignInRequired {
             reason: "active account context is unavailable".to_owned(),

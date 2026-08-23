@@ -914,7 +914,6 @@ pub(crate) fn decrypt_chat_encrypted_content(
     state_store: &LocalStateStore,
     realm_id: &str,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
     circle_id: Option<&str>,
     encrypted_content: &Value,
@@ -930,7 +929,6 @@ pub(crate) fn decrypt_chat_encrypted_content(
         state_store,
         realm_id,
         authority,
-        actor_id,
         device_id,
         effective_scope.as_ref(),
         encrypted_content,
@@ -943,7 +941,6 @@ fn decrypt_chat_encrypted_content_value(
     state_store: &LocalStateStore,
     realm_id: &str,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
     effective_scope: Option<&arkret_sdk::ScopeRef>,
     encrypted_content: &Value,
@@ -977,7 +974,6 @@ fn decrypt_chat_encrypted_content_value(
             secure_store.as_ref(),
             realm_id,
             authority,
-            actor_id,
             device_id,
             &payload,
             effective_scope,
@@ -1162,7 +1158,7 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
         };
         let coordinates = minimal_metadata_content_coordinates(realm_id, &candidates);
         let mls_view = if let Some((group_id, epoch, group_state_ref)) = &coordinates {
-            let Some((authority, self_actor, self_device)) = decrypt_identity else {
+            let Some((authority, _, self_device)) = decrypt_identity else {
                 return ChatProofVerdict::Unresolved;
             };
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -1171,7 +1167,6 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
                 secure_store.as_ref(),
                 realm_id,
                 authority,
-                self_actor,
                 self_device,
                 group_id,
                 *epoch,
@@ -1337,7 +1332,7 @@ fn verify_minimal_metadata_chat_author(
     else {
         return ChatProofVerdict::Rejected;
     };
-    let Some((authority, self_actor, self_device)) = decrypt_identity else {
+    let Some((authority, _, self_device)) = decrypt_identity else {
         return ChatProofVerdict::Unresolved;
     };
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -1346,7 +1341,6 @@ fn verify_minimal_metadata_chat_author(
         secure_store.as_ref(),
         realm_id,
         authority,
-        self_actor,
         self_device,
         &group_id,
         epoch,
@@ -1599,12 +1593,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     };
     let decrypt_was_attempted = decrypt_context.is_some();
     let decrypted_content =
-        decrypt_context.and_then(|(store, authority, actor_id, device_id, encrypted)| {
+        decrypt_context.and_then(|(store, authority, _, device_id, encrypted)| {
             decrypt_chat_encrypted_content_value(
                 store,
                 message_realm,
                 authority,
-                actor_id,
                 device_id,
                 effective_scope.as_ref(),
                 encrypted,
@@ -1833,12 +1826,11 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
                             .and_then(|content| content.get("encrypted_content"))
                     })
                 })?;
-                let (store, (authority, actor_id, device_id)) = (state_store?, decrypt_identity?);
+                let (store, (authority, _, device_id)) = (state_store?, decrypt_identity?);
                 decrypt_chat_encrypted_content_value(
                     store,
                     message_realm,
                     authority,
-                    actor_id,
                     device_id,
                     effective_scope.as_ref(),
                     encrypted_content,

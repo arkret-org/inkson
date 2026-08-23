@@ -204,7 +204,6 @@ pub fn projection_events_from_sync_realms(
                                     store,
                                     message_realm,
                                     authority,
-                                    actor_id,
                                     device_id,
                                     encrypted_content,
                                     &effective_scope,

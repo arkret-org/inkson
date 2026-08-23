@@ -118,7 +118,6 @@ fn build_realm_mls_admission_events_from_verified_claim(
             realm_id,
             None,
             authority,
-            actor_id,
             device_id,
             &member_key_package,
         )
@@ -231,7 +230,6 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
             realm_id,
             circle_id,
             authority,
-            actor_id,
             device_id,
             &member_key_packages,
             sidecar_binding.clone(),

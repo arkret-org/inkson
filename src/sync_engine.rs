@@ -938,7 +938,6 @@ pub(crate) fn circle_mls_removal_candidates(
     circle_id: &str,
     active_members: &BTreeSet<String>,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
 ) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
     let state = state_store.load();
@@ -953,7 +952,6 @@ pub(crate) fn circle_mls_removal_candidates(
         realm_id,
         Some(circle_id),
         authority,
-        actor_id,
         device_id,
     )?;
     mls_members.sort();
@@ -972,7 +970,6 @@ fn realm_default_mls_removal_candidates(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
 ) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
     let state = state_store.load();
@@ -983,7 +980,6 @@ fn realm_default_mls_removal_candidates(
         secure_store,
         realm_id,
         authority,
-        actor_id,
         device_id,
     )?;
     mls_members.sort();
@@ -1073,7 +1069,6 @@ async fn run_circle_scope_rotate_pass(
                 secure_store.as_ref(),
                 &realm_id,
                 &authority,
-                &actor_id,
                 &device_id,
             )
         });
@@ -1307,7 +1302,6 @@ async fn run_circle_scope_rotate_pass(
                         &circle_id,
                         &active_members,
                         &authority,
-                        &actor_id,
                         &device_id,
                     )
                 })?;
@@ -1836,7 +1830,6 @@ fn refresh_projection_events_from_sync_response(
     ctx: &SyncEngineContext,
 ) {
     let state_store = ctx.state_store.clone();
-    let principal_id = ctx.account.full_id().to_string();
     let synced_projection_events = state_store.read(|store| {
         crate::state::projection::projection_events_from_sync_realms(
             &response.realm_projections,
@@ -2336,9 +2329,9 @@ fn response_revokes_local_device(
     principal_id: &str,
     device_id: &str,
 ) -> bool {
-    let Ok(account_core_id) = crate::mls_api_helpers::principal_core_id(principal_id.trim()) else {
+    if crate::mls_api_helpers::principal_core_id(principal_id.trim()).is_err() {
         return false;
-    };
+    }
     let device_id = device_id.trim();
     if device_id.is_empty() {
         return false;
@@ -2875,7 +2868,6 @@ fn apply_notification_projection(
         || !response.updates.account_data.is_empty()
         || invite_notifications.is_some();
     let mut notification_projection = store.notification_projection();
-    let account_core_id = crate::mls_api_helpers::principal_core_id(principal_id).ok();
     let joined_realms = crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
         &response.realm_entries,
         principal_id,

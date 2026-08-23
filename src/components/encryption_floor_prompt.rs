@@ -27,7 +27,6 @@ pub fn EncryptionFloorPrompt(
     mut dismissed: Signal<bool>,
 ) -> Element {
     let session_context = crate::app::SessionContext::get();
-    let active_account = session_context.active_account;
     let state_store = session_context.state_store;
     use_effect(move || {
         let session = token();

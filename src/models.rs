@@ -488,7 +488,7 @@ mod tests {
     use arkret_sdk::contact_operations::ContactScope;
     use arkret_wire::SchemaId;
 
-    use super::{RealmTreeNode, RealmTreeNodeKind, projection_realm_id_for_known_node};
+    use super::projection_realm_id_for_known_node;
 
     #[test]
     fn submit_event_outcome_decodes_new_events_submit_wire() {
@@ -586,31 +586,6 @@ mod tests {
         );
         assert_eq!(outcome.status, arkret_sdk::EventsSubmitStatus::Duplicate);
         assert_eq!(outcome.cursor, "");
-    }
-
-    fn preview(
-        id: &str,
-        kind: RealmTreeNodeKind,
-        realm_id: &str,
-        parent: Option<&str>,
-    ) -> RealmTreeNode {
-        RealmTreeNode {
-            id: id.to_owned(),
-            title: id.to_owned(),
-            description: None,
-            tags: Default::default(),
-            public: true,
-            category: None,
-            direct_conversation: false,
-            parent_space_id: parent.map(ToOwned::to_owned),
-            child_space_ids: Vec::new(),
-            kind,
-            realm_id: if kind == RealmTreeNodeKind::Realm && realm_id.is_empty() {
-                id.to_owned()
-            } else {
-                realm_id.to_owned()
-            },
-        }
     }
 
     #[test]

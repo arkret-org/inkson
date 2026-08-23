@@ -1216,10 +1216,6 @@ pub struct ClientLocalState {
     /// tasks so ACK high-water and exact retries cannot be rolled back.
     #[serde(default)]
     pub(crate) history_runtime_state: garth::VersionedHistoryRuntimeSnapshot,
-    /// Crash-safe source-side manifest/chunk attempt markers. Canonical record
-    /// bytes live separately in the hardened content-addressed blob store.
-    #[serde(default)]
-    pub(crate) history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1395,6 +1391,7 @@ impl RootIndex {
             .find(|known| known.profile_id == profile_id)
     }
 
+    #[cfg(test)]
     pub fn authority_for_profile(
         &self,
         profile_id: &str,
@@ -1544,7 +1541,6 @@ impl Default for ClientLocalState {
             history_epoch_cipher_suites: BTreeMap::new(),
             history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger::default(),
             history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
-            history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot::default(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             accepted_human_contact_principals: BTreeSet::new(),

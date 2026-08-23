@@ -566,7 +566,6 @@ pub(super) fn KanbanEffects(
                             secure_store.as_ref(),
                             &authority,
                             &actor,
-                            device.as_str(),
                         );
                         report.private_plaintext_restored || report.restored > 0
                     };

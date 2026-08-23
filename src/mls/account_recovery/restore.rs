@@ -926,8 +926,6 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         state_store,
         secure_store,
         authority,
-        actor_id,
-        device_id,
         &mut report,
     );
     Ok(report)
@@ -987,8 +985,6 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
         state_store,
         secure_store,
         authority,
-        actor_id,
-        device_id,
         &mut report,
     );
     Ok(report)
@@ -1004,7 +1000,6 @@ pub fn restore_mls_history_with_local_secret_from_payload(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
     actor_id: &str,
-    device_id: &str,
 ) -> RestoreReport {
     let mut report = RestoreReport::default();
     if let Err(error) = observe_active_series_versions(list_payload, state_store, actor_id) {
@@ -1027,8 +1022,6 @@ pub fn restore_mls_history_with_local_secret_from_payload(
         state_store,
         secure_store,
         authority,
-        actor_id,
-        device_id,
         &mut report,
     );
     report
@@ -1043,8 +1036,6 @@ fn restore_history_and_sidecar(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    actor_id: &str,
-    _device_id: &str,
     report: &mut RestoreReport,
 ) {
     let portable_history_count = select_local_secret_mls_history_backups(list_payload).len();
@@ -1141,10 +1132,7 @@ pub fn mls_backup_prompt_required(
     list_payload: &Value,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    actor_id: &str,
-    device_id: &str,
 ) -> bool {
-    let _ = device_id;
     if select_preferred_mls_account_secret_backup(list_payload).is_some() {
         return false;
     }

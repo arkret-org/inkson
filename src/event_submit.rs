@@ -119,14 +119,14 @@ async fn persist_post_accept_action(
         PostAcceptAction::MlsSnapshot { realm_id, snapshot } => (realm_id, snapshot, None),
         PostAcceptAction::MlsAdmission {
             realm_id,
-            actor_id,
+            actor_id: _,
             device_id,
             stage: _,
             commit_ingress_receipts: _,
             commit_was_duplicate: _,
             welcomes: _,
             snapshot,
-        } => (realm_id, snapshot, Some((actor_id, device_id))),
+        } => (realm_id, snapshot, Some(device_id)),
     };
     let snapshot: crate::mls::persistence::MlsSnapshotEnvelope = snapshot.into();
     let snapshot_realm_id = realm_id.clone();
@@ -152,7 +152,7 @@ async fn persist_post_accept_action(
     barrier.wait().await.map_err(|error| {
         garth::Error::Protocol(format!("persist MLS post-accept snapshot: {error}"))
     })?;
-    if let Some((actor_id, device_id)) = retain_history_for {
+    if let Some(device_id) = retain_history_for {
         let device_id = arkret_sdk::DeviceId::new(device_id)
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -163,7 +163,6 @@ async fn persist_post_accept_action(
                     secure_store.as_ref(),
                     &realm_id,
                     authority,
-                    &actor_id,
                     &device_id,
                 )
             })

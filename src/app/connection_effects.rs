@@ -212,7 +212,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         let base = active
             .as_ref()
             .map(|account| account.server_url.to_string())
-            .unwrap_or_else(|| base_url());
+            .unwrap_or_else(|| base_url.read().clone());
         let mut session = token();
         if session.trim().is_empty() && secure_store_ready {
             let loaded = config_store.read().load();

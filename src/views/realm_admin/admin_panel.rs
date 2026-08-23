@@ -1516,7 +1516,6 @@ pub fn RealmAdminPanel(
                                         secure_store.as_ref(),
                                         &realm,
                                         &account.authority,
-                                        &actor_id,
                                         &account.device_id,
                                     )
                                     .map_err(|err| err.user_message())

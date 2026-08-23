@@ -16,7 +16,9 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use sha2::Sha256;
 
 use crate::transport::TransportClient;
@@ -451,37 +453,6 @@ impl PreparedFileTransfer {
     }
 }
 
-fn file_transfer_key_message_aad(
-    record: &FileTransferRecord,
-    recipient_actor_id: &str,
-    recipient_device_id: &str,
-    expires_at: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let aad = json!({
-        "kind": arkret_sdk::FILE_TRANSFER_KEY_MESSAGE_KIND,
-        "transfer_id": record.transfer_id.as_str(),
-        "blob_ref": record.blob_ref.as_str(),
-        "aead_profile": record.encryption.aead_profile.as_str(),
-        "nonce": record.encryption.nonce.as_str(),
-        "content_digest": record.content_digest.as_str(),
-        "recipient_actor_id": recipient_actor_id,
-        "recipient_device_id": recipient_device_id,
-        "expires_at": expires_at,
-    });
-    crate::canonical::canonical_json_bytes(&aad)
-}
-
-fn file_transfer_device_key_txn_id(
-    transfer_id: &str,
-    recipient_actor_id: &str,
-    recipient_device_id: &str,
-) -> String {
-    let digest_hex = arkret_sdk::canonical::sha256_hex(
-        format!("{transfer_id}\n{recipient_actor_id}\n{recipient_device_id}").as_bytes(),
-    );
-    format!("file-transfer-key-{transfer_id}-{}", &digest_hex[..16])
-}
-
 fn file_transfer_item_from_account_data(
     entry: &Value,
     crypto: &FileTransferCryptoContext,
@@ -813,8 +784,6 @@ mod tests {
 
     const ACTOR: &str = "did:web:alice.example";
     const DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
-    const RECIPIENT_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000002";
-    const OTHER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000003";
 
     fn test_pcr() -> arkret_sdk::RealmId {
         arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned())

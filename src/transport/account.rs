@@ -82,7 +82,6 @@ pub async fn resolve_active_account_context(
         device_id,
         server_url,
     )
-    .map_err(Into::into)
 }
 
 /// Author and sign the authenticated principal's profile Event, then hand its

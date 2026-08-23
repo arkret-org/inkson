@@ -320,7 +320,6 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         secure_store,
         realm_id,
         authority,
-        actor_id,
         account_device_id,
         KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE,
         &plaintext_values,
@@ -751,43 +750,41 @@ pub(super) fn dispatch_card_detail_update(
                     // and the snapshot would stay at the pre-commit epoch, so
                     // the next write retries at the correct `expected_prev_epoch`
                     // instead of skewing forever.
-                    if mls_new_snapshot.is_some() {
-                        if let (Some(effective_scope), Some(snapshot)) =
-                            (sidecar_effective_scope.as_ref(), mls_new_snapshot.clone())
-                        {
-                            // The accepted Event id from the submit outcome —
-                            // the build-time id died when the queue re-authored
-                            // the envelope.
-                            let accepted_commit_ref =
-                                match arkret_sdk::EventId::new(resp.event_id.clone()) {
-                                    Ok(event_id) => event_id,
-                                    Err(error) => {
-                                        board_status.set(format!(
+                    if let (Some(effective_scope), Some(snapshot)) =
+                        (sidecar_effective_scope.as_ref(), mls_new_snapshot.clone())
+                    {
+                        // The accepted Event id from the submit outcome —
+                        // the build-time id died when the queue re-authored
+                        // the envelope.
+                        let accepted_commit_ref =
+                            match arkret_sdk::EventId::new(resp.event_id.clone()) {
+                                Ok(event_id) => event_id,
+                                Err(error) => {
+                                    board_status.set(format!(
                                         "accepted MLS commit returned an invalid Event id: {error}"
                                     ));
-                                        return;
-                                    }
-                                };
-                            if let Err(error) =
-                                state_store.write().record_mls_group_state_ref_for_scope(
-                                    effective_scope,
-                                    snapshot.group_id.as_str(),
-                                    snapshot.epoch,
-                                    accepted_commit_ref,
-                                )
-                            {
-                                board_status
-                                    .set(format!("MLS commit reference persist failed: {error}"));
-                                return;
-                            }
-                            if let Err(error) = state_store
-                                .write()
-                                .save_mls_snapshot_for_scope(effective_scope, snapshot)
-                            {
-                                board_status
-                                    .set(format!("MLS commit snapshot persist failed: {error}"));
-                                return;
-                            }
+                                    return;
+                                }
+                            };
+                        if let Err(error) =
+                            state_store.write().record_mls_group_state_ref_for_scope(
+                                effective_scope,
+                                snapshot.group_id.as_str(),
+                                snapshot.epoch,
+                                accepted_commit_ref,
+                            )
+                        {
+                            board_status
+                                .set(format!("MLS commit reference persist failed: {error}"));
+                            return;
+                        }
+                        if let Err(error) = state_store
+                            .write()
+                            .save_mls_snapshot_for_scope(effective_scope, snapshot)
+                        {
+                            board_status
+                                .set(format!("MLS commit snapshot persist failed: {error}"));
+                            return;
                         }
                     }
                     if let Some(commit_operation_id) = mls_commit_operation_id {

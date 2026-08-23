@@ -602,12 +602,6 @@ mod tests {
         assert_eq!(first.jkt(), second.jkt());
     }
 
-    fn proof_payload(proof: &str) -> serde_json::Value {
-        let payload_b64 = proof.split('.').nth(1).expect("payload segment");
-        let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).expect("payload b64");
-        serde_json::from_slice(&payload_bytes).expect("payload json")
-    }
-
     #[test]
     fn seed_export_rebuilds_an_equivalent_handle() {
         // The durable hard-logout journal stashes seed_b64 + jkt and later

@@ -968,7 +968,6 @@ fn decrypt_sidecar_scoped_envelope(
         secure_store.as_ref(),
         realm_id,
         authority,
-        controller_id,
         device_id,
         &payload,
         &effective_scope,

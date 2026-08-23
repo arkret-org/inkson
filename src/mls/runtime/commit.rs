@@ -31,7 +31,6 @@ pub fn force_epoch_rotation_commit(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     authority: &PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &DeviceId,
 ) -> Result<
     (
@@ -47,7 +46,6 @@ pub fn force_epoch_rotation_commit(
         realm_id,
         None,
         authority,
-        actor_id,
         device_id,
     )
 }
@@ -58,7 +56,6 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &DeviceId,
 ) -> Result<
     (
@@ -124,7 +121,6 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &DeviceId,
     target_principal_ids: &[&str],
     revocation_membership_frontier: &[arkret_sdk::EventId],
@@ -246,7 +242,6 @@ pub fn build_add_member_commit_for_effective_scope(
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
 ) -> Result<
@@ -263,7 +258,6 @@ pub fn build_add_member_commit_for_effective_scope(
         realm_id,
         circle_id,
         authority,
-        actor_id,
         device_id,
         member_key_package,
         None,
@@ -277,7 +271,6 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
@@ -363,7 +356,6 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &DeviceId,
     member_key_packages: &[arkret_sdk::MlsKeyPackageRecord],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,

@@ -59,7 +59,6 @@ pub fn NotificationsPanel(
             base_url.clone(),
             token,
             authority.clone(),
-            principal_id.clone(),
             state_store,
             notifications,
             status_msg,
@@ -183,14 +182,12 @@ pub fn NotificationsPanel(
                         "aria-label": crate::i18n::tr("notifications.tooltip.refresh"),
                         onclick: {
                             let base_url = base_url.clone();
-                            let principal_id = principal_id.clone();
                             let authority = authority.clone();
                             move |_| {
                                 refresh_notifications(
                                     base_url.clone(),
                                     token,
                                     authority.clone(),
-                                    principal_id.clone(),
                                     state_store,
                                     notifications,
                                     status_msg,
@@ -374,7 +371,6 @@ pub fn NotificationsPanel(
                                 onclick: {
                                     let action_to_run = notification.action.clone();
                                     let base_url = base_url.clone();
-                                    let principal_id = principal_id.clone();
                                     let authority = authority.clone();
                                     let notification_id = notification.id.clone();
                                     // Translate now (default titles are i18n keys).
@@ -385,7 +381,6 @@ pub fn NotificationsPanel(
                                                 base_url.clone(),
                                                 token,
                                                 authority.clone(),
-                                                principal_id.clone(),
                                                 state_store,
                                                 notifications,
                                                 status_msg,

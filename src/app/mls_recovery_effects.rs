@@ -28,8 +28,8 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
         secure_store_bootstrap_ready,
         account_recovery_configured,
         token,
-        principal_id,
-        device_id,
+        principal_id: _,
+        device_id: _,
         sync_generation,
         session_boot_state,
         on_onboarding_route,
@@ -251,7 +251,6 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     secure_store.as_ref(),
                                     &authority,
                                     &actor,
-                                    device.as_str(),
                                 );
                                 if report.failed > 0 {
                                     tracing::warn!(
@@ -271,7 +270,6 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     secure_store.as_ref(),
                                     &authority,
                                     &actor,
-                                    device.as_str(),
                                 );
                                 if report.failed > 0 {
                                     tracing::warn!(
@@ -320,8 +318,6 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     &payload,
                                     secure_store.as_ref(),
                                     &authority,
-                                    &actor,
-                                    device.as_str(),
                                 );
                             if should_backup {
                                 crate::components::maybe_auto_backup_mls_after_encrypted_write(

@@ -471,7 +471,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         oninput: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
-                            let actor = principal_id.clone();
                             let typing_device_id = device_id.clone();
                             let selected_strand = selected_channel_value.clone();
                             move |event: FormEvent| {
@@ -513,7 +512,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 }
                                 let base = base.clone();
                                 let realm = realm.clone();
-                                let actor = actor.clone();
                                 let authority = typing_authority.clone();
                                 let device = typing_device_id.clone();
                                 if selected_strand.trim().is_empty() {
@@ -538,7 +536,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let base = base.clone();
                                     let typing_store = typing_store.clone();
                                     let realm = realm.clone();
-                                    let actor = actor.clone();
                                     let authority = authority.clone();
                                     let device = device.clone();
                                     let strand_id = strand_id.clone();

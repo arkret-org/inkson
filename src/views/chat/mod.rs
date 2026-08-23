@@ -1751,7 +1751,6 @@ pub fn ChatPanel(
                     secure_store.as_ref(),
                     &selected_realm_id,
                     &authority,
-                    &principal_id,
                     &account_device_id,
                 );
             if roster_matches == Some(false) {

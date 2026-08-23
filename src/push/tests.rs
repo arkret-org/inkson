@@ -27,6 +27,18 @@ fn build_register_request(
     )?)
 }
 
+fn register_outcome() -> PushRegisterDeviceOutcome {
+    PushRegisterDeviceOutcome {
+        ok: true,
+        push_target_id: arkret_identifiers::PushTargetId::new(
+            "ak:pseudonym:push:01HYZ8Z000000000000000".to_owned(),
+        )
+        .unwrap(),
+        registration_id: None,
+        expires_at: None,
+    }
+}
+
 #[test]
 fn builds_chime_register_request() {
     let request = build_register_request("dev_inkson").unwrap();
@@ -39,8 +51,7 @@ fn builds_chime_register_request() {
 #[test]
 fn builds_persistable_registration_state() {
     let request = build_register_request("dev_inkson").unwrap();
-    let mut response = PushRegisterDeviceOutcome::default();
-    response.ok = true;
+    let mut response = register_outcome();
     response.registration_id = Some(arkret_sdk::OpaqueLocalId::new("push:test").unwrap());
     let state = registration_state_from_response(&request, &response);
 
@@ -53,8 +64,7 @@ fn builds_persistable_registration_state() {
 #[test]
 fn builds_unregister_request_from_existing_state() {
     let request = build_register_request("dev_inkson").unwrap();
-    let mut response = PushRegisterDeviceOutcome::default();
-    response.ok = true;
+    let mut response = register_outcome();
     response.registration_id = Some(arkret_sdk::OpaqueLocalId::new("push:test").unwrap());
     let state = registration_state_from_response(&request, &response);
     let unregister = build_unregister_request("dev_inkson", Some(&state)).unwrap();
@@ -151,8 +161,7 @@ fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
 #[test]
 fn push_status_label_treats_state_without_registration_id_as_registered() {
     let request = build_register_request("dev_inkson").unwrap();
-    let mut response = PushRegisterDeviceOutcome::default();
-    response.ok = true;
+    let response = register_outcome();
     let state = registration_state_from_response(&request, &response);
 
     assert_eq!(push_status_label(Some(&state)), "registered");

@@ -37,8 +37,6 @@ struct PendingAgentRuntimeApproval {
 
 #[component]
 pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<String>) -> Element {
-    // A4 — base_url from session context instead of a prop.
-    let base_url = crate::app::SessionContext::get().base_url;
     let mut pending = use_signal(|| None::<PendingAgentRuntimeApproval>);
     let mut handled = use_signal(HashSet::<OpaqueLocalId>::new);
     let mut status = use_signal(String::new);

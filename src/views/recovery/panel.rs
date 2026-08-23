@@ -385,7 +385,6 @@ pub fn RecoveryPanel(
                         disabled: live_recovery_key().is_empty(),
                         title: tr("recovery.panel.clear_live_title"),
                         onclick: {
-                            let base_url = base_url.clone();
                             let actor_key = actor_key.clone();
                             let store = state_store;
                             move |_| {

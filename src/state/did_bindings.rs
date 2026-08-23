@@ -195,13 +195,6 @@ mod tests {
         (LocalStateStore::with_path(&path), path)
     }
 
-    fn switch_test_account(store: &mut LocalStateStore, full_id: &str) -> bool {
-        let full_id = DidFullId::new(full_id.to_owned()).unwrap();
-        store
-            .switch_active_account(&crate::state::tests::test_account_context(&full_id))
-            .unwrap()
-    }
-
     fn document(did: &str) -> arkret_sdk::DidDocument {
         arkret_sdk::DidDocument {
             id: DidFullId::new(did.to_owned()).expect("valid did"),

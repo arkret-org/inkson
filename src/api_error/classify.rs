@@ -343,21 +343,6 @@ pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bo
     })
 }
 
-pub(crate) fn is_snapshot_unavailable_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        let code = envelope.code();
-        status == StatusCode::NOT_FOUND
-            || matches!(
-                code,
-                code if code == arkret_sdk::error_codes::ErrorCode::NOT_IMPLEMENTED
-                    || code == arkret_sdk::error_codes::ErrorCode::SNAPSHOT_UNAVAILABLE
-                    || code == arkret_sdk::error_codes::ErrorCode::NOT_FOUND
-                    || code == arkret_sdk::error_codes::ErrorCode::UNRECOGNIZED_ENDPOINT
-                    || code == arkret_sdk::error_codes::ErrorCode::UNSUPPORTED_FEATURE
-            )
-    })
-}
-
 pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();

@@ -452,7 +452,6 @@ mod tests {
     fn late_recovery_rejects_receiver_not_member_at_event_epoch() {
         let decision = evaluate_late_recovery_guards(LateRecoveryGuardInput {
             receiver_joined_at_event_epoch: false,
-            ..base_guard_input()
         });
         assert_eq!(
             decision,

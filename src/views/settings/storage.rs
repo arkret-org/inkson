@@ -12,7 +12,6 @@ async fn retain_current_history_secrets_before_clear(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     scope: &E2eePlaintextCacheClearScope,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<usize> {
     let realms: Vec<String> = {
@@ -41,7 +40,6 @@ async fn retain_current_history_secrets_before_clear(
                 secure_store,
                 &realm_id,
                 authority,
-                actor_id,
                 device_id,
             )
         }
@@ -277,7 +275,6 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                     "data-testid": "e2ee-cache-clear-confirm",
                                     onclick: move |_| {
                                         let clear_scope = clear_scope_for_action.clone();
-                                        let actor_id = principal_id.clone();
                                         let active_device_id = active_device_id.clone();
                                         let authority = authority.clone();
                                         spawn(async move {
@@ -288,7 +285,6 @@ pub(super) fn E2eeStorageManagement(principal_id: String, device_id: String) -> 
                                                 secure_store.as_ref(),
                                                 &clear_scope,
                                                 &authority,
-                                                &actor_id,
                                                 &active_device_id,
                                             )
                                             .await;

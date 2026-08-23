@@ -341,8 +341,6 @@ fn AppBootstrap() -> Element {
         crate::runtime::session::SessionCoordinator::new(move || {
             Box::pin(refresh_session_credential_for_active_context(
                 base_url,
-                principal_id,
-                device_id,
                 state_store,
                 token,
                 config_store,
@@ -3565,7 +3563,6 @@ fn AppBootstrap() -> Element {
                                                 let session = session.clone();
                                                 let api_token = token();
                                                 let actor = principal_id();
-                                                let device = device_id();
                                                 let Some(active) = active_account.peek().clone() else {
                                                     account_session_state.set(
                                                         "Session identity is unavailable; sign in again."
@@ -3643,11 +3640,10 @@ fn AppBootstrap() -> Element {
                                                                                         .await
                                                                                         .ok()
                                                                                         .and_then(|account| {
-                                                                                            let canonical_actor = active_account
-                                                                                                .peek()
+                                                                                            active_account.peek()
                                                                                                 .as_ref()
                                                                                                 .filter(|context| context.principal_id() == &account.principal_id)
-                                                                                                .map(|context| context.full_id().to_string())?;
+                                                                                                ?;
                                                                                             if let Some(personal_handle) =
                                                                                                 personal_handle_from_account_handle(&account.handle)
                                                                                             {

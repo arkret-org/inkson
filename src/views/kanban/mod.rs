@@ -813,7 +813,6 @@ pub fn KanbanPanel(
         return rsx! {};
     };
     let authority = active_account.authority;
-    let account_device_id = active_account.device_id;
     let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     // Demo seed fallback remains explicit; normal boards derive from events.
     let seed_fallback_allowed = kanban_seed_fallback_allowed(&base_url);
@@ -943,7 +942,6 @@ pub fn KanbanPanel(
         let seed_realm_id = local_realm_id.clone();
         let decrypt_realm_id = selected_realm_id.clone();
         let decrypt_authority = authority.clone();
-        let decrypt_actor = principal_id.clone();
         let seed_columns = initial_columns.clone();
         move || {
             let board_id = selected_board()

@@ -94,7 +94,6 @@ fn build_remove_scope_rotate_draft(
             realm_id,
             circle_id,
             authority,
-            actor_id,
             device_id,
             target_principal_ids,
             revocation_membership_frontier,

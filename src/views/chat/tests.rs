@@ -4513,7 +4513,6 @@ fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
             &store,
             "ak:realm:AacL7ZYuTtiI1Wvq5aTmbQo8CihIcuFhJ4WKAZZMxlxY",
             &authority,
-            "did:web:alice.example",
             &device_id,
             None,
             &envelope,

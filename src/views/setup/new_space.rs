@@ -73,7 +73,6 @@ pub(super) fn NewSpaceSection(
     mut new_space_state: Signal<String>,
     mut new_space_created_id: Signal<String>,
 ) -> Element {
-    let active_account = crate::app::SessionContext::get().active_account;
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;

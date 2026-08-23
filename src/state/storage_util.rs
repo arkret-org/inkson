@@ -174,23 +174,6 @@ pub(super) fn active_user_local_store()
     crate::secure_key_store::UserLocalStore::new(scope.authority, scope.device_id)
 }
 
-pub(super) fn user_local_store_for_principal(
-    principal: &arkret_sdk::DidCoreId,
-) -> Result<crate::secure_key_store::UserLocalStore, crate::secure_key_store::SecureKeyStoreError> {
-    let scope = crate::secure_key_store::active_device_seed_scope().ok_or_else(|| {
-        crate::secure_key_store::SecureKeyStoreError::Backend(
-            "user local store is unavailable before an account authority/device is active"
-                .to_owned(),
-        )
-    })?;
-    if scope.authority.principal_id != *principal {
-        return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
-            "active account authority does not match the requested principal".to_owned(),
-        ));
-    }
-    crate::secure_key_store::UserLocalStore::new(scope.authority, scope.device_id)
-}
-
 pub(crate) fn load_identity_record_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<LocalIdentityRecord> {

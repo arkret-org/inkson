@@ -499,11 +499,6 @@ pub fn LoginPanel(
         } else {
             live_actor
         };
-        let persisted_device = loaded_config
-            .active_account
-            .as_ref()
-            .map(|account| account.device_id.to_string())
-            .unwrap_or_else(|| device_id());
         let persisted_account = loaded_config.active_account.clone();
         let returning_principal = {
             match returning_sign_in_principal(&persisted_actor) {

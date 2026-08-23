@@ -483,23 +483,3 @@ fn key_backup_put_request_rejects_path_body_mismatch() {
             .unwrap();
     assert_ne!(body.backup_id, path_backup_id);
 }
-
-fn delete_challenge() -> arkret_sdk::KeysBackupsDeleteChallenge {
-    let issued_at = chrono::DateTime::from_timestamp(1_800_000_000, 0).expect("timestamp");
-    arkret_sdk::KeysBackupsDeleteChallenge {
-        challenge_id: arkret_sdk::Base64UrlString::new("Y2hhbGxlbmdlLWlk").unwrap(),
-        challenge: arkret_sdk::Base64UrlString::new("Y2hhbGxlbmdl").unwrap(),
-        nonce: arkret_sdk::Base64UrlString::new("bm9uY2U").unwrap(),
-        operation: arkret_sdk::ServiceOperationId::SELF_KEYS_BACKUPS_RESOURCE_DELETE.to_owned(),
-        principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-        backup_id: arkret_sdk::BackupId::new(
-            "ak:backup:01964137-0000-7000-8000-00000000beef".to_owned(),
-        )
-        .unwrap(),
-        audience: arkret_sdk::NonEmptyString::new("https://soland.example").unwrap(),
-        service_id: crate::mls_api_helpers::principal_core_id("did:web:soland.example").unwrap(),
-        request_id: arkret_sdk::Base64UrlString::new("cmVxdWVzdC1pZA").unwrap(),
-        issued_at,
-        expires_at: issued_at + chrono::Duration::seconds(300),
-    }
-}

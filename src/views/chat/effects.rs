@@ -126,7 +126,6 @@ pub(super) fn ChatEffects(
         });
     }
 
-    let account_for_connectivity = principal_id.clone();
     let authority_for_connectivity = authority.clone();
     let realm_for_connectivity = selected_realm_id.clone();
     use_future(move || {
@@ -175,7 +174,6 @@ pub(super) fn ChatEffects(
 
     {
         let realm = selected_realm_id.clone();
-        let actor = principal_id.clone();
         let authority_for_receipt = authority.clone();
         let device = device_id.clone();
         let base = base_url.clone();
@@ -210,7 +208,6 @@ pub(super) fn ChatEffects(
             let api_token = token();
             let base = base.clone();
             let realm = realm.clone();
-            let actor = actor.clone();
             let authority = authority_for_receipt.clone();
             let device = device.clone();
             // No accepted MLS state for the scope means the Signal capability

@@ -150,7 +150,7 @@ pub(crate) async fn prefetch_from_realm_projections(
                         let Some(entry) = verify_for_cache(
                             http,
                             &anchor,
-                            evidence,
+                            *evidence,
                             &pending_selectors[selector_index],
                         )
                         .await
@@ -522,7 +522,7 @@ pub(crate) async fn prefetch_for_signal(
             continue;
         }
         let Some(entry) =
-            materialize_verified_cache_entry(http, &anchor, evidence, context.clone()).await
+            materialize_verified_cache_entry(http, &anchor, *evidence, context.clone()).await
         else {
             tracing::warn!(
                 target_realm_id = %envelope.realm_id,

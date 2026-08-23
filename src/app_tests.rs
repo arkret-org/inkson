@@ -232,11 +232,6 @@ fn unread_notification_count_ignores_read_and_archived_items() {
 
 fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
     let now = chrono::Utc::now();
-    let account = test_active_account(
-        "did:web:alice.example",
-        "https://local.host",
-        "ak:device:01964137-0000-7000-8000-000000000001",
-    );
     PersistedSessionGrant {
         grant_jwt: "grant.jwt".to_owned(),
         session_private_key_pem: "PEM".to_owned(),
@@ -256,11 +251,6 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
 #[test]
 fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
     let actor = "did:web:alice.example";
-    let account = test_active_account(
-        actor,
-        "https://local.host",
-        "ak:device:01964137-0000-7000-8000-000000000001",
-    );
     let mut store = crate::state::isolated_store_for_tests("account-scope-no-restore");
     store.switch_test_account(actor);
 

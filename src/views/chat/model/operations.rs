@@ -265,7 +265,6 @@ pub(crate) fn build_chat_reaction_add_operation(
         secure_store.as_ref(),
         &realm_id,
         authority,
-        actor,
         device_id,
         &target_ref,
         created_at,

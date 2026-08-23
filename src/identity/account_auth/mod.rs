@@ -35,7 +35,6 @@ pub struct OidcDiscoveryDocument {
     #[serde(default)]
     pub code_challenge_methods_supported: Vec<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     pub scopes_supported: Vec<String>,
 }
 

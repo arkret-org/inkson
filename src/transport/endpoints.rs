@@ -275,30 +275,6 @@ pub struct DirectoryEndpoints<'a> {
 }
 
 impl DirectoryEndpoints<'_> {
-    pub async fn snapshot_head(
-        &self,
-        realm_id: &str,
-    ) -> anyhow::Result<Option<arkret_sdk::SnapshotManifest>> {
-        let describe = self.transport.describe_cached().await?;
-        if !crate::models::service_supports_operation(
-            describe,
-            arkret_sdk::ServiceOperationId::SELF_SNAPSHOT_READ_MANIFEST_HEAD,
-        ) {
-            return Ok(None);
-        }
-        match self.transport.http().snapshot_head(realm_id).await {
-            Ok(manifest) => Ok(Some(manifest)),
-            Err(error) => {
-                let error = anyhow::Error::from(error);
-                if crate::api_error::is_snapshot_unavailable_error(&error) {
-                    Ok(None)
-                } else {
-                    Err(error)
-                }
-            }
-        }
-    }
-
     pub async fn list_handles_for_subject(
         &self,
         subject: &str,

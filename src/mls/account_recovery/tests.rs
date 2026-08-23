@@ -582,13 +582,7 @@ fn backup_prompt_not_required_when_no_local_secret() {
     // backup either. Don't nag.
     let store = MemorySecureKeyStore::new();
     let payload = serde_json::json!({ "backups": [] });
-    assert!(!mls_backup_prompt_required(
-        &payload,
-        &store,
-        &authority(),
-        ACTOR,
-        DEVICE
-    ));
+    assert!(!mls_backup_prompt_required(&payload, &store, &authority()));
 }
 
 #[test]
@@ -600,13 +594,7 @@ fn backup_prompt_required_when_local_secret_and_no_server_backup() {
     let payload = serde_json::json!({
         "backups": [ { "backup_id": "ak:backup:a", "backup_kind": "mls_history" } ]
     });
-    assert!(mls_backup_prompt_required(
-        &payload,
-        &store,
-        &authority(),
-        ACTOR,
-        DEVICE
-    ));
+    assert!(mls_backup_prompt_required(&payload, &store, &authority()));
 }
 
 #[test]
@@ -616,13 +604,7 @@ fn backup_prompt_not_required_when_server_backup_present() {
     let store = MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(&store, &authority(), ACCOUNT_SECRET).unwrap();
     let payload = payload_with_inferred_active_series(vec![recovery_hpke_backup()]);
-    assert!(!mls_backup_prompt_required(
-        &payload,
-        &store,
-        &authority(),
-        ACTOR,
-        DEVICE
-    ));
+    assert!(!mls_backup_prompt_required(&payload, &store, &authority()));
 }
 
 #[test]

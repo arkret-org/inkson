@@ -827,7 +827,7 @@ fn app_data_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, TimeZone as _, Utc};
+    use chrono::{TimeZone as _, Utc};
 
     use super::*;
 

@@ -1554,7 +1554,6 @@ async fn retain_current_history_secret_durable(
             secure_store,
             realm_id,
             &account.authority,
-            actor_id,
             &account.device_id,
         )
     }
@@ -1863,7 +1862,6 @@ pub(super) fn realm_mls_roster_matches_complete_membership_hint(
         secure_store,
         realm_id,
         &account.authority,
-        actor_id,
         &account.device_id,
     )
     .unwrap_or(false)
@@ -1969,7 +1967,6 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             secure_store.as_ref(),
             &realm_id,
             &account.authority,
-            &actor_id,
             &account.device_id,
         ) {
             Some(dids) => dids.into_iter().collect(),

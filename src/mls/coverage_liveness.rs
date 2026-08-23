@@ -198,7 +198,6 @@ pub(crate) async fn ensure_mls_governance_coverage(
                 realm_id,
                 circle_id,
                 authority,
-                actor_id,
                 device_id,
             )
             .map_err(|error| {

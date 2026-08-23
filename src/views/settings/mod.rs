@@ -534,14 +534,10 @@ pub fn SettingsPanel(
     let active_principal_id = active_account.principal_id().to_string();
     let active_device_id = active_account.device_id.to_string();
     let active_authority = active_account.authority.clone();
-    let active_storage_key =
-        crate::secure_key_store::principal_authority_storage_digest(&active_account.authority)
-            .unwrap_or_default();
     let base_url = use_signal(move || active_server_url.clone());
     let principal_id = use_signal(move || active_principal_id.clone());
     let device_id = use_signal(move || active_device_id.clone());
     let account_authority = use_signal(move || active_authority.clone());
-    let account_storage_key = use_signal(move || active_storage_key.clone());
     let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
     let route = use_route::<Route>();
     let active_section = SettingsSection::from_slug(route.settings_section());

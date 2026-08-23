@@ -218,6 +218,7 @@ impl MemberIdentityStore {
     /// `ak.member.identity.update` event but every effective event is
     /// still `decryption_pending`. Drives the "muted placeholder" UI
     /// state per MID-6.
+    #[cfg(test)]
     pub fn is_decryption_pending(&self, realm_id: &str, actor_id: &str) -> bool {
         let key = ActorKey {
             realm_id: realm_id.to_owned(),

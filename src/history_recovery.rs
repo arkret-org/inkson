@@ -650,7 +650,6 @@ fn verify_history_external_source_key(
                 &state_store.read(),
                 secure_store,
                 authority,
-                authority.principal_id.as_str(),
                 device_id,
                 &effective_scope,
                 &signer_evidence.mls_group_id,

@@ -227,35 +227,9 @@ fn verify_content_addressed_blob_bytes(blob_ref: &str, bytes: &[u8]) -> anyhow::
     Ok(())
 }
 
-fn download_max_bytes_for_declared_size(size_bytes: u64) -> anyhow::Result<usize> {
-    let size_bytes = usize::try_from(size_bytes)
-        .map_err(|_| anyhow::anyhow!("snapshot chunk size_bytes exceeds this platform"))?;
-    size_bytes
-        .checked_add(1)
-        .ok_or_else(|| anyhow::anyhow!("snapshot chunk size_bytes exceeds this platform"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn snapshot_chunk_download_limit_allows_one_extra_byte_for_mismatch_check() {
-        assert_eq!(download_max_bytes_for_declared_size(5).unwrap(), 6);
-    }
-
-    #[test]
-    fn snapshot_chunk_download_limit_rejects_usize_overflow() {
-        let oversized = usize::MAX as u64;
-        if usize::try_from(oversized).is_ok() {
-            let error = download_max_bytes_for_declared_size(oversized).unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains("snapshot chunk size_bytes exceeds this platform")
-            );
-        }
-    }
 
     #[test]
     fn content_addressed_download_rejects_digest_mismatch() {

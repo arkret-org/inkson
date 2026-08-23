@@ -425,7 +425,6 @@ async fn recover_mls_snapshot_for_encrypted_write(
                         secure_store.as_ref(),
                         authority,
                         actor_id,
-                        device_id.as_str(),
                     )
                 };
                 if report.failed > 0 {
