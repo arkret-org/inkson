@@ -42,15 +42,15 @@ impl AccountRecoveryState {
     }
 }
 
-/// Parse the `GET recovery-policy` response (`{ "active_policy": <summary|null> }`)
-/// into [`RecoveryPolicySummary`]. Returns `None` when no policy is accepted.
-pub fn parse_active_recovery_policy(response: &Value) -> Option<RecoveryPolicySummary> {
-    let outcome = serde_json::from_value::<RecoveryPolicyActiveOutcome>(response.clone()).ok()?;
-    let policy = outcome.active_policy?;
-    if policy.version == 0 {
-        return None;
-    }
-    Some(policy)
+/// Return the accepted policy from the already-validated transport DTO.
+pub fn active_recovery_policy(
+    outcome: &RecoveryPolicyActiveOutcome,
+) -> Option<RecoveryPolicySummary> {
+    outcome
+        .active_policy
+        .as_ref()
+        .filter(|policy| policy.version > 0)
+        .cloned()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,16 +65,16 @@ pub enum FirstBackupGateBlockReason {
     NoActiveRecoveryPolicy,
 }
 
-pub fn first_backup_gate_status_from_payloads(
+pub fn first_backup_gate_status(
     accepted_principal_control_seal: bool,
-    recovery_policy_response: &Value,
+    recovery_policy_outcome: &RecoveryPolicyActiveOutcome,
 ) -> FirstBackupGateStatus {
     if !accepted_principal_control_seal {
         return FirstBackupGateStatus::Blocked(
             FirstBackupGateBlockReason::NoAcceptedPrincipalControlSeal,
         );
     }
-    let Some(policy) = parse_active_recovery_policy(recovery_policy_response) else {
+    let Some(policy) = active_recovery_policy(recovery_policy_outcome) else {
         return FirstBackupGateStatus::Blocked(FirstBackupGateBlockReason::NoActiveRecoveryPolicy);
     };
     let _ = policy;
@@ -203,8 +203,8 @@ pub async fn verify_recovery_material_evidence(
     evidence: &crate::state::RecoveryMaterialEvidence,
 ) -> anyhow::Result<()> {
     verify_recovery_authority_evidence(api, evidence).await?;
-    let policy = serde_json::to_value(api.get_recovery_policy().await?)?;
-    match first_backup_gate_status_from_payloads(true, &policy) {
+    let policy = api.get_recovery_policy().await?;
+    match first_backup_gate_status(true, &policy) {
         FirstBackupGateStatus::Satisfied => Ok(()),
         FirstBackupGateStatus::Blocked(reason) => {
             anyhow::bail!("durable recovery-material evidence is incomplete: {reason:?}")
@@ -276,12 +276,12 @@ pub async fn verify_recovery_authority_evidence(
     Ok(())
 }
 
-pub fn account_recovery_state_from_payloads(
-    recovery_policy_response: &Value,
+pub fn account_recovery_state(
+    recovery_policy_outcome: &RecoveryPolicyActiveOutcome,
     backup_list_payload: &Value,
     local_recovery_key_fingerprint: Option<String>,
 ) -> AccountRecoveryState {
-    let active_policy = parse_active_recovery_policy(recovery_policy_response);
+    let active_policy = active_recovery_policy(recovery_policy_outcome);
     AccountRecoveryState {
         active_policy,
         recovery_public_key_secret_storage_backup_count: count_backups_by_class_and_method(
@@ -320,10 +320,8 @@ fn count_backups_by_class_and_method(
 pub async fn fetch_active_recovery_policy(
     api: &TransportClient,
 ) -> anyhow::Result<Option<RecoveryPolicySummary>> {
-    // Reuse the same typed parser for direct JSON and transport outcomes by
-    // serializing the already-validated transport DTO back to its wire shape.
-    let response = serde_json::to_value(&api.get_recovery_policy().await?)?;
-    Ok(parse_active_recovery_policy(&response))
+    let response = api.get_recovery_policy().await?;
+    Ok(active_recovery_policy(&response))
 }
 
 pub fn build_signed_genesis_recovery_policy_for_session_device(
@@ -524,21 +522,21 @@ fn principal_scoped_recovery_policy_verification_method_id(
 pub async fn ensure_active_recovery_policy(
     api: &TransportClient,
     principal_id: &arkret_sdk::DidFullId,
+    principal_authority: &arkret_sdk::PrincipalAuthorityKey,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
+    accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<RecoveryPolicySummary> {
     let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)?;
+    if principal_core_id != principal_authority.principal_id {
+        anyhow::bail!("recovery policy principal projection does not match account authority");
+    }
     if let Some(policy) = fetch_active_recovery_policy(api).await? {
         validate_active_policy_key_material(&policy, &principal_core_id, key_material)?;
         return Ok(policy);
     }
 
-    // DIAG (describe-storm): this describe fires only when no active recovery
-    // policy exists yet. If it repeats, a caller is re-running recovery-policy
-    // establishment in a loop (fetch=None -> describe -> put -> still None).
-    // Remove once the driver is fixed.
-    tracing::warn!(target: "recovery_diag", %principal_id, "ensure_active_recovery_policy: no policy -> describe + put");
     let description = api.describe().await?;
     let body = build_signed_genesis_recovery_policy_for_session_device(
         principal_id,
@@ -549,8 +547,10 @@ pub async fn ensure_active_recovery_policy(
     publish_recovery_policy(
         api,
         principal_id,
+        principal_authority,
         device_id,
         principal_control_realm_id,
+        accepted_pcr_genesis_unit,
         body,
     )
     .await?;
@@ -568,11 +568,16 @@ pub async fn ensure_active_recovery_policy(
 async fn publish_recovery_policy(
     api: &TransportClient,
     principal_id: &arkret_sdk::DidFullId,
+    principal_authority: &arkret_sdk::PrincipalAuthorityKey,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
+    accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     policy_value: Value,
 ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
     let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)?;
+    if principal_core_id != principal_authority.principal_id {
+        anyhow::bail!("recovery policy principal projection does not match account authority");
+    }
     let policy: RecoveryPolicy = serde_json::from_value(policy_value)?;
     policy.validate()?;
     let recovery_payload = arkret_sdk::RecoveryPolicySetPayload {
@@ -584,9 +589,12 @@ async fn publish_recovery_policy(
         policy_id: recovery_payload.policy_id,
         value: arkret_sdk::PolicyDocument::RecoveryPolicy(Box::new(recovery_payload.value)),
     };
-    let event = crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::PolicySet>(
+    let event = crate::operation::TypedOperationBuilder::new_for_principal_server::<
+        arkret_sdk::event_spec::PolicySet,
+    >(
         principal_control_realm_id.to_string(),
-        principal_core_id.as_str(),
+        principal_authority.principal_id.as_str(),
+        principal_authority.principal_server_id.clone(),
         payload,
     )
     .build_sdk_event("inkson-recovery-policy")?;
@@ -600,8 +608,11 @@ async fn publish_recovery_policy(
     )
     .await?;
     let submission =
-        crate::authorization_lease::delayed_initial_submission(&http, &event, event.digest_suite())
-            .await?;
+        crate::authorization_lease::delayed_authority_authored_self_principal_submission(
+            &event,
+            event.digest_suite(),
+            accepted_pcr_genesis_unit.create(),
+        )?;
     let request = arkret_sdk::RecoveryPolicyPublishRequest {
         event: submission.event,
         authorization_lease: submission
@@ -625,8 +636,14 @@ async fn publish_recovery_policy(
                     && attempt + 1 < FRONTIER_RETRY_ATTEMPTS =>
             {
                 if !successor_seal_submitted {
-                    submit_first_recovery_policy_seal(api, &principal_core_id, device_id, &event)
-                        .await?;
+                    submit_first_recovery_policy_seal(
+                        api,
+                        &principal_core_id,
+                        device_id,
+                        accepted_pcr_genesis_unit,
+                        &event,
+                    )
+                    .await?;
                     successor_seal_submitted = true;
                 }
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
@@ -641,30 +658,19 @@ async fn submit_first_recovery_policy_seal(
     api: &TransportClient,
     principal_id: &arkret_sdk::DidCoreId,
     device_id: &arkret_sdk::DeviceId,
+    accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     policy_event: &arkret_sdk::Event,
 ) -> anyhow::Result<()> {
     let http = api.sdk_http_client()?;
-    let events = http
-        .events_read_all_pages(policy_event.realm_id.as_str())
-        .await?;
-    let complete_events = crate::models::require_complete_event_rows(
-        &events.events,
-        "recovery policy successor Seal construction",
-    )?;
-    let create = complete_events
-        .iter()
-        .find(|event| {
-            event.kind == arkret_sdk::EventKind::RealmCreate && event.actor_id == *principal_id
-        })
-        .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap create Event"))?;
-    let authorize = complete_events
-        .iter()
-        .find(|event| {
-            event.kind == arkret_sdk::EventKind::DeviceAuthorize
-                && event.actor_id == *principal_id
-                && event.actor_seq == 1
-        })
-        .ok_or_else(|| anyhow::anyhow!("self-PCR history omitted its bootstrap authorize Event"))?;
+    let create = accepted_pcr_genesis_unit.create();
+    let authorize = accepted_pcr_genesis_unit.founding_authorize();
+    if create.actor_id != *principal_id
+        || authorize.actor_id != *principal_id
+        || create.realm_id != policy_event.realm_id
+        || authorize.realm_id != policy_event.realm_id
+    {
+        anyhow::bail!("accepted PCR genesis unit does not match the recovery-policy Event");
+    }
     let predecessor = api
         .event_submitter()?
         .events_frontier_realm_seal_head(policy_event.realm_id.as_str())
@@ -793,8 +799,10 @@ pub fn build_recovery_unlock_proof_from_words(
 pub async fn ensure_recovery_policy(
     api: &TransportClient,
     principal_id: &arkret_sdk::DidFullId,
+    principal_authority: &arkret_sdk::PrincipalAuthorityKey,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
+    accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     recovery_key: &str,
 ) -> anyhow::Result<RecoveryPolicySummary> {
     let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
@@ -805,8 +813,10 @@ pub async fn ensure_recovery_policy(
     ensure_active_recovery_policy(
         api,
         principal_id,
+        principal_authority,
         device_id,
         principal_control_realm_id,
+        accepted_pcr_genesis_unit,
         &key_material,
     )
     .await

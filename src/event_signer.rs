@@ -180,6 +180,43 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
     }
 }
 
+/// Seal-only adapter whose protected header binds the exact frozen notary
+/// verification method as `kid`.
+///
+/// Event proofs deliberately use [`InksonPayloadSignerAdapter`] and its
+/// alg-only protected header. A Seal has a different wire contract: its `kid`
+/// must equal both `SealSignature.verification_method` and the predecessor-state
+/// frozen descriptor. Keeping the adapters distinct prevents either proof
+/// profile from silently inheriting the other one's header shape.
+struct InksonSealSignerAdapter<'a> {
+    owner: &'a InksonEventSigner,
+    did: DidFullId,
+    verification_method: DidUrl,
+}
+
+impl PayloadSigner for InksonSealSignerAdapter<'_> {
+    fn signer_did(&self) -> &DidFullId {
+        &self.did
+    }
+
+    fn verification_method_id(&self) -> &DidUrl {
+        &self.verification_method
+    }
+
+    fn sign_payload(&self, canonical_bytes: &[u8]) -> Result<PayloadSignature, WireError> {
+        let jws = self
+            .owner
+            .detached_jws_over_payload_with_kid(self.verification_method.as_str(), canonical_bytes)
+            .map_err(|error| WireError::Protocol(error.to_string()))?;
+        Ok(PayloadSignature {
+            verification_method: self.verification_method.clone(),
+            payload_digest: Hash::new(arkret_sdk::canonical::sha256_digest(canonical_bytes))?,
+            created_at: crate::clock::now_utc(),
+            jws,
+        })
+    }
+}
+
 impl std::fmt::Debug for InksonEventSigner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InksonEventSigner")
@@ -435,7 +472,7 @@ impl InksonEventSigner {
                 "principal bootstrap Seal requires a bound device_id".to_owned(),
             )
         })?;
-        let signer = InksonPayloadSignerAdapter {
+        let signer = InksonSealSignerAdapter {
             owner: self,
             did: self.full_id_for_actor(&create.actor_id)?,
             verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
@@ -467,7 +504,7 @@ impl InksonEventSigner {
                 "principal successor Seal requires a bound device_id".to_owned(),
             )
         })?;
-        let signer = InksonPayloadSignerAdapter {
+        let signer = InksonSealSignerAdapter {
             owner: self,
             did: self.full_id_for_actor(&create.actor_id)?,
             verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
@@ -501,7 +538,7 @@ impl InksonEventSigner {
                 "principal successor Seal requires a bound device_id".to_owned(),
             )
         })?;
-        let signer = InksonPayloadSignerAdapter {
+        let signer = InksonSealSignerAdapter {
             owner: self,
             did: self.full_id_for_actor(&principal.actor_id)?,
             verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
@@ -532,7 +569,7 @@ impl InksonEventSigner {
                 "managed Agent PCR Seal requires a bound device_id".to_owned(),
             )
         })?;
-        let signer = InksonPayloadSignerAdapter {
+        let signer = InksonSealSignerAdapter {
             owner: self,
             did: controller_id.clone(),
             verification_method: DidUrl::new(format!("{controller_id}#{device_id}"))
@@ -1287,6 +1324,41 @@ mod tests {
             .verifying_key()
             .verify(signing_input.as_bytes(), &signature)
             .expect("signature verifies over JWS signing input");
+    }
+
+    #[test]
+    fn seal_signer_binds_and_verifies_the_frozen_descriptor_kid() {
+        let seed = [21_u8; 32];
+        let principal =
+            DidFullId::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
+        let verification_method = DidUrl::new(format!("{principal}#{TEST_DEVICE_ID}")).unwrap();
+        let owner = build_ed25519_device_signer(seed, principal.as_str(), TEST_DEVICE_ID);
+        let signer = InksonSealSignerAdapter {
+            owner: &owner,
+            did: principal.clone(),
+            verification_method: verification_method.clone(),
+        };
+        let canonical_body = br#"{"realm_id":"fixture"}"#;
+        let signature: arkret_sdk::SealSignature =
+            signer.sign_payload(canonical_body).unwrap().into();
+        let public_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        let descriptor = arkret_sdk::NotarySignerDescriptor {
+            actor_id: arkret_sdk::project_full_id_to_core_id(&principal).unwrap(),
+            verification_method,
+            key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+            jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+            frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
+            frozen_public_key_digest: Hash::new(arkret_sdk::canonical::sha256_digest(public_key))
+                .unwrap(),
+        };
+
+        arkret_signatures::verify_frozen_notary_signature(
+            &signature,
+            &descriptor,
+            canonical_body,
+            arkret_sdk::canonical::DigestSuite::Sha256,
+        )
+        .expect("Seal JWS must bind and verify against the frozen descriptor");
     }
 
     #[test]

@@ -1979,10 +1979,8 @@ pub(crate) async fn issue_bound_handoff_session(
     let principal = TransportClient::unauthenticated(principal_server_url)
         .map_err(|error| format!("Invalid principal server URL: {error}"))?;
     let authed_principal = principal
-        .with_bearer(session_grant.grant_jwt.clone())
-        .map_err(|error| format!("Attach returning session grant: {error}"))?
-        .with_dpop_device(dpop_handle.clone())
-        .map_err(|error| format!("Attach returning DPoP key: {error}"))?;
+        .with_session_grant_dpop(session_grant.grant_jwt.clone(), dpop_handle.clone())
+        .map_err(|error| format!("Attach returning SessionGrant + DPoP: {error}"))?;
     let principal_http = authed_principal
         .sdk_http_client()
         .map_err(|error| format!("Build authenticated Principal Server client: {error}"))?;

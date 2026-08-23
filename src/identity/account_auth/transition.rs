@@ -291,7 +291,6 @@ pub enum OnboardingCompletionOrigin {
     ResumeRestore,
     ResumeReissue,
     RecoveryCompletion,
-    PanelRepair,
 }
 
 impl OnboardingCompletionOrigin {
@@ -301,7 +300,6 @@ impl OnboardingCompletionOrigin {
             Self::ResumeRestore => "resume_restore",
             Self::ResumeReissue => "resume_reissue",
             Self::RecoveryCompletion => "recovery_completion",
-            Self::PanelRepair => "panel_repair",
         }
     }
 }
@@ -338,6 +336,7 @@ fn material_state_name(state: garth::BoundCompletionMaterialState) -> &'static s
         garth::BoundCompletionMaterialState::Present => "present",
         garth::BoundCompletionMaterialState::Absent => "absent",
         garth::BoundCompletionMaterialState::ReadError => "read_error",
+        garth::BoundCompletionMaterialState::NotRequired => "not_required",
     }
 }
 
@@ -635,7 +634,7 @@ mod tests {
         let facts = garth::BoundCompletionResumeFacts {
             handoff: garth::BoundCompletionHandoffState::ActiveBound,
             checkpoint_stage: garth::BoundCompletionCheckpointStage::Accepted,
-            recovery_policy: garth::BoundCompletionMaterialState::Absent,
+            recovery_policy: garth::BoundCompletionMaterialState::NotRequired,
             device_id: garth::BoundCompletionMaterialState::Present,
             signing_seed: garth::BoundCompletionMaterialState::Present,
             grant_binding_key: garth::BoundCompletionMaterialState::Absent,

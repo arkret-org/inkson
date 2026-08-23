@@ -108,8 +108,13 @@ impl TransportClient {
         Self::new(base_url, RequestContext::new(""))
     }
 
-    pub fn with_bearer(mut self, credential: impl Into<String>) -> anyhow::Result<Self> {
+    pub fn with_session_grant_dpop(
+        mut self,
+        credential: impl Into<String>,
+        handle: crate::identity::account_auth::grant_dpop::DpopHandle,
+    ) -> anyhow::Result<Self> {
         self.context.credential = credential.into();
+        self.context.dpop = Some(handle);
         Self::new(self.base_url.as_str(), self.context)
     }
 

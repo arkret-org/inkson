@@ -4,27 +4,51 @@
 //! stale cached wasm bundle (the recurring "is the browser running old wasm?"
 //! question during MLS debugging).
 //!
-//! No `rerun-if-*` directives are emitted, so Cargo re-runs this script — and
-//! re-stamps the id — whenever the package is recompiled. A no-change rebuild
-//! keeps the previous id (the wasm is unchanged), which is exactly the signal
-//! we want.
+//! Cargo does not treat Git metadata as a package input. Track HEAD and its
+//! current loose ref explicitly so a commit-only change cannot leave a fresh
+//! bundle stamped with the previous source identity.
 
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn main() {
-    let built_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %z");
-
-    let git_short = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
+fn git_output(manifest_dir: &Path, args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(args)
+        .current_dir(manifest_dir)
         .output()
         .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
-        .filter(|hash| !hash.is_empty())
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|output| !output.is_empty())
+}
+
+fn main() {
+    let manifest_dir = PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
+    );
+    if let Some(git_dir) = git_output(&manifest_dir, &["rev-parse", "--absolute-git-dir"]) {
+        let git_dir = PathBuf::from(git_dir);
+        let head_path = git_dir.join("HEAD");
+        println!("cargo:rerun-if-changed={}", head_path.display());
+        if let Ok(head) = fs::read_to_string(&head_path)
+            && let Some(reference) = head.trim().strip_prefix("ref: ")
+        {
+            println!(
+                "cargo:rerun-if-changed={}",
+                git_dir.join(reference).display()
+            );
+        }
+    }
+
+    let built_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %z");
+
+    let git_short = git_output(&manifest_dir, &["rev-parse", "--short", "HEAD"])
         .unwrap_or_else(|| "nogit".to_owned());
 
     let dirty = Command::new("git")
         .args(["status", "--porcelain"])
+        .current_dir(&manifest_dir)
         .output()
         .ok()
         .map(|out| !out.stdout.is_empty())

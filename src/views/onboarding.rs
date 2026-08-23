@@ -427,121 +427,6 @@ async fn commit_completed_account(
     result
 }
 
-fn bound_completion_evidence_matches(
-    handoff: &crate::state::PendingAccountHandoff,
-    evidence: &crate::state::RecoveryMaterialEvidence,
-) -> bool {
-    handoff.bound_principal_id.as_ref() == Some(&evidence.principal_id)
-        && handoff.device_id == evidence.device_id.as_str()
-}
-
-/// Repair only the narrow state produced by the old Bound reconciler: the
-/// public checkpoint is gone, but exact server-verifiable PCR evidence, this
-/// account's Standard grant, this device id and the retained Recovery Key all
-/// remain. No identity/device is recreated and no completion is inferred from
-/// Bound alone.
-async fn repair_pruned_bound_completion(
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
-) -> anyhow::Result<Option<CompletedIdentityCreation>> {
-    let (handoff, evidence) = {
-        let store = state_store.peek();
-        if store.pending_principal_registration().is_some() {
-            return Ok(None);
-        }
-        let Some(handoff) = store.pending_account_handoff() else {
-            return Ok(None);
-        };
-        if handoff.bound_principal_id.is_none() {
-            return Ok(None);
-        }
-        let evidence = store
-            .recovery_material_evidence()
-            .context("pruned bound completion has no durable recovery evidence")?;
-        if !bound_completion_evidence_matches(&handoff, &evidence) {
-            anyhow::bail!("bound onboarding evidence belongs to another principal or device");
-        }
-        (handoff, evidence)
-    };
-    let Some(recovery_key) =
-        crate::identity::account_auth::load_pending_identity_creation_recovery_key(&handoff)?
-    else {
-        return Ok(None);
-    };
-    crate::identity::principal_registration::validate_published_identity_recovery_key(
-        &handoff.principal_server_url,
-        &evidence.principal_id,
-        &recovery_key,
-    )
-    .await?;
-    let account = resolve_handoff_active_account(
-        &handoff,
-        &evidence.principal_id,
-        evidence.device_id.clone(),
-        state_store,
-    )
-    .await?;
-    if evidence.controller_authority.as_ref() != Some(&account.authority) {
-        anyhow::bail!("bound onboarding recovery evidence belongs to another authority");
-    }
-    let restored = restore_accepted_account_runtime(&account, &handoff.holder_jkt)
-        .context("restore the pruned bound onboarding session")?;
-
-    let evidence_for_verify = evidence.clone();
-    let recovery_key_for_policy = recovery_key.clone();
-    let actor = arkret_sdk::project_full_id_to_core_id(&evidence.principal_id)?.to_string();
-    let actor_for_policy = evidence.principal_id.clone();
-    let device = evidence.device_id.to_string();
-    let device_for_policy = evidence.device_id.clone();
-    let realm = evidence.principal_control_realm_id.clone();
-    let governance_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
-    crate::transport::auth::with_authed_api(
-        &handoff.principal_server_url,
-        restored.persisted_grant.grant_jwt.clone(),
-        |api| async move {
-            crate::recovery_strand::submit_principal_bootstrap_seal(
-                &api,
-                &evidence_for_verify.bootstrap_seal,
-            )
-            .await?;
-            crate::recovery_strand::ensure_principal_bootstrap_governance_checkpoint(
-                &api,
-                &governance_state_store,
-                &evidence_for_verify.bootstrap_seal,
-            )
-            .await?;
-            crate::recovery_strand::ensure_recovery_policy(
-                &api,
-                &actor_for_policy,
-                &device_for_policy,
-                &realm,
-                &recovery_key_for_policy,
-            )
-            .await?;
-            crate::recovery_strand::verify_recovery_material_evidence(&api, &evidence_for_verify)
-                .await
-        },
-    )
-    .await
-    .map_err(|error| anyhow::anyhow!(error.display()))?;
-
-    crate::event_submit::remember_verified_recovery_gate(&actor, &device);
-    crate::views::recovery::save_generated_recovery_key_metadata(
-        &mut state_store,
-        &actor,
-        &recovery_key,
-    )
-    .context("save repaired recovery metadata")?;
-    crate::views::recovery::local_recovery_public_key_result(&state_store.read(), &actor)
-        .map_err(|error| anyhow::anyhow!("verify repaired recovery metadata: {error}"))?;
-    state_store.read().begin_durable_flush()?.wait().await?;
-    Ok(Some(CompletedIdentityCreation {
-        account,
-        persisted_grant: restored.persisted_grant,
-        dpop_device_key: restored.dpop_device_key,
-        origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin::PanelRepair,
-    }))
-}
-
 /// A server reservation always outranks a local draft when selecting the key
 /// entry mode. A full-page authentication callback loses the in-memory key;
 /// generating a replacement phrase at that point can never control the
@@ -564,7 +449,6 @@ pub fn OnboardingPanel(
     device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let session_context = crate::app::SessionContext::get();
-    let active_account = session_context.active_account;
     let state_store = session_context.state_store;
     if !secure_store_ready {
         return rsx! {
@@ -591,48 +475,7 @@ pub fn OnboardingPanel(
         }
         spawn(async move {
             match crate::identity::account_auth::refresh_pending_onboarding(state_store).await {
-                Ok(()) => match repair_pruned_bound_completion(state_store).await {
-                    Ok(Some(repaired)) => {
-                        match commit_completed_account(
-                            &repaired,
-                            state_store,
-                            config_store,
-                            active_account,
-                            token,
-                            principal_id,
-                            device_id,
-                            needs_device_authorization,
-                            device_authorization_check_complete,
-                        )
-                        .await
-                        {
-                            Ok(()) => match clear_pending_principal_setup(state_store).await {
-                                Ok(()) => {
-                                    server_reconciliation.set(ServerReconciliationStatus::Ready)
-                                }
-                                Err(error) => server_reconciliation.set(
-                                    ServerReconciliationStatus::Failed(format!(
-                                        "Panel repair committed, but cleanup failed: {error:#}"
-                                    )),
-                                ),
-                            },
-                            Err(error) => {
-                                server_reconciliation.set(ServerReconciliationStatus::Failed(
-                                    format!("Commit repaired onboarding account: {error:#}"),
-                                ))
-                            }
-                        }
-                    }
-                    Ok(None) => server_reconciliation.set(ServerReconciliationStatus::Ready),
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            "failed to repair pruned bound onboarding continuation"
-                        );
-                        server_reconciliation
-                            .set(ServerReconciliationStatus::Failed(format!("{error:#}")));
-                    }
-                },
+                Ok(()) => server_reconciliation.set(ServerReconciliationStatus::Ready),
                 Err(error) => {
                     tracing::warn!(
                         error = %error,
@@ -1310,7 +1153,7 @@ async fn recover_bound_principal_device(
         principal_id,
         replacement_device_id,
     )?;
-    let api = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?;
+    let api = issue_recovery_session_transport(handoff, state_store).await?;
     if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
         &api,
         state_store,
@@ -1329,6 +1172,7 @@ async fn recover_bound_principal_device(
         .ok_or_else(|| anyhow::anyhow!("the identity has no active Recovery Key policy"))?;
     let session = api
         .create_recovery_session(&arkret_models_crypto::RecoverySessionCreateRequestBody {
+            request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
             principal_authority: arkret_sdk::PrincipalAuthorityKey::new(
                 arkret_sdk::project_full_id_to_core_id(principal_id)?,
                 crate::operation::authoring_principal_server_id()?,
@@ -1365,6 +1209,63 @@ async fn recover_bound_principal_device(
         issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store).await?;
     completed.standard_grant_installed = true;
     Ok((completed, account))
+}
+
+async fn issue_recovery_session_transport(
+    handoff: &crate::state::PendingAccountHandoff,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> anyhow::Result<crate::transport::TransportClient> {
+    let holder = {
+        let mut store = state_store.write();
+        crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
+            .ok_or_else(|| anyhow::anyhow!("recovery grant holder key is unavailable"))?
+    };
+    if holder.jkt() != handoff.holder_jkt {
+        anyhow::bail!("account handoff holder key changed before recovery grant issuance");
+    }
+    let handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
+        .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
+    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
+        &handoff.gate_account_base,
+    )?;
+    let account_http = arkret_sdk::http_client::ClientBuilder::new(account_base)
+        .allow_insecure_localhost()
+        .auth(arkret_sdk::http_client::Auth::Dpop(
+            holder.sdk_account_handoff_auth(handoff_grant),
+        ))
+        .build()?;
+    let principal_id = handoff
+        .bound_principal_id
+        .as_ref()
+        .context("bound recovery handoff has no principal")?;
+    let request =
+        arkret_sdk::SessionGrantRequestBody::Recovery(arkret_sdk::RecoverySessionGrantRequest {
+            credential_class: arkret_sdk::SessionGrantCredentialClass::RecoverySession,
+            request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
+            principal_id: arkret_sdk::project_full_id_to_core_id(principal_id)?,
+            device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
+            audience: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+        });
+    request.validate()?;
+    let outcome = account_http.auth_issue_session_grant(&request).await?;
+    let expected_session_public_key = holder.canonical_session_public_jwk()?;
+    let expected_granted_scope = arkret_sdk::RECOVERY_SESSION_GRANT_OPERATIONS
+        .iter()
+        .map(|operation| (*operation).to_owned())
+        .collect::<Vec<_>>();
+    if outcome.principal_id != arkret_sdk::project_full_id_to_core_id(principal_id)?
+        || outcome.device_id.as_ref().map(arkret_sdk::DeviceId::as_str)
+            != Some(handoff.device_id.as_str())
+        || outcome.audience.as_str() != handoff.audience
+        || outcome.session_public_key != expected_session_public_key
+        || outcome.expires_at > handoff.expires_at
+        || outcome.granted_scope != expected_granted_scope
+        || outcome.scope_details.is_some()
+    {
+        anyhow::bail!("recovery SessionGrant outcome changed its frozen authority binding");
+    }
+    crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?
+        .with_session_grant_dpop(outcome.session_grant, holder)
 }
 
 async fn activate_recovery_replacement_signer(
@@ -1579,6 +1480,7 @@ impl BoundCompletionResumeInventory {
                 State::Present => "present",
                 State::Absent => "absent",
                 State::ReadError => "read error",
+                State::NotRequired => "not required",
             };
             format!("{label}: {value}")
         }
@@ -1607,6 +1509,54 @@ fn observe_resume_material<T, E: std::fmt::Display>(
             (garth::BoundCompletionMaterialState::ReadError, None)
         }
     }
+}
+
+fn accepted_account_session_client(
+    account: &crate::config::ActiveAccountContext,
+    expected_holder_jkt: &str,
+    grant: &crate::state::PersistedSessionGrant,
+    dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
+) -> anyhow::Result<crate::transport::TransportClient> {
+    if !crate::identity::session_refresh::grant_matches_principal_server(
+        grant,
+        account.server_url.as_str(),
+    ) || !crate::identity::session_refresh::grant_matches_full_principal(
+        grant,
+        account.full_id(),
+    ) || grant.device_id != account.device_id
+        || grant.audience != account.authority.principal_server_id.as_str()
+    {
+        anyhow::bail!("session grant does not belong to the accepted onboarding account");
+    }
+    if crate::identity::session_refresh::grant_is_dead(grant) {
+        anyhow::bail!("session grant is no longer live");
+    }
+    if dpop.jkt() != expected_holder_jkt {
+        anyhow::bail!("grant-binding key does not match the accepted account handoff");
+    }
+    crate::transport::TransportClient::new(
+        account.server_url.as_str(),
+        crate::transport::RequestContext::new(grant.grant_jwt.clone()),
+    )?
+    .with_dpop_device(dpop.clone())
+}
+
+fn accepted_account_session_client_from_secure_store(
+    account: &crate::config::ActiveAccountContext,
+    expected_holder_jkt: &str,
+    grant: &crate::state::PersistedSessionGrant,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<crate::transport::TransportClient> {
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    )?;
+    let dpop = crate::identity::account_auth::grant_dpop::load_user_device_key_with_secure_store(
+        &user_store,
+        secure_store,
+    )?
+    .context("accepted onboarding account has no durable grant-binding key")?;
+    accepted_account_session_client(account, expected_holder_jkt, grant, &dpop)
 }
 
 async fn collect_bound_completion_resume_inventory(
@@ -1703,17 +1653,35 @@ async fn collect_bound_completion_resume_inventory(
     } else {
         garth::BoundCompletionMaterialState::Absent
     };
-    let api = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url);
-    let (recovery_policy_state, _) = match api {
-        Ok(api) => observe_resume_material(
-            "active recovery policy",
-            crate::recovery_strand::fetch_active_recovery_policy(&api).await,
-            &mut read_errors,
-        ),
-        Err(error) => {
-            read_errors.push(format!("active recovery policy client: {error}"));
-            (garth::BoundCompletionMaterialState::ReadError, None)
+    let recovery_policy_state = if signing_seed_state == garth::BoundCompletionMaterialState::Absent
+    {
+        let client = match (session_grant.as_ref(), grant_binding.as_ref()) {
+            (Some(grant), Some(dpop)) => {
+                accepted_account_session_client(account, &handoff.holder_jkt, grant, dpop)
+            }
+            (None, _) => Err(anyhow::anyhow!(
+                "active recovery policy read requires an accepted account session grant"
+            )),
+            (_, None) => Err(anyhow::anyhow!(
+                "active recovery policy read requires the accepted grant-binding key"
+            )),
+        };
+        match client {
+            Ok(api) => {
+                observe_resume_material(
+                    "active recovery policy",
+                    crate::recovery_strand::fetch_active_recovery_policy(&api).await,
+                    &mut read_errors,
+                )
+                .0
+            }
+            Err(error) => {
+                read_errors.push(format!("active recovery policy client: {error}"));
+                garth::BoundCompletionMaterialState::ReadError
+            }
         }
+    } else {
+        garth::BoundCompletionMaterialState::NotRequired
     };
     let authority_matches = arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)
         .is_ok_and(|principal_id| principal_id == account.authority.principal_id)
@@ -1731,6 +1699,7 @@ async fn collect_bound_completion_resume_inventory(
             grant,
             account.full_id(),
         ) && grant.device_id == account.device_id
+            && grant.audience == account.authority.principal_server_id.as_str()
     });
     let grant_is_live = session_grant
         .as_ref()
@@ -3164,7 +3133,7 @@ async fn create_and_bind_identity(
         )
     } else {
         // Registration already returned a verified PCR receipt. Rebuild the
-        // continuation from server truth plus a three-state durable inventory;
+        // continuation from server truth plus a closed durable inventory;
         // exact restoration is only the fast path.
         let account = resolve_handoff_active_account(
             handoff,
@@ -3360,8 +3329,8 @@ async fn create_and_bind_identity(
     finish_principal_setup(
         &registration,
         recovery_key,
-        completed.session_credential(),
-        &completed.account,
+        &completed,
+        &handoff.holder_jkt,
         state_store,
     )
     .await?;
@@ -3579,8 +3548,8 @@ async fn finish_local_recovery_metadata(
 async fn finish_principal_setup(
     registration: &crate::state::PendingPrincipalRegistration,
     recovery_key: &str,
-    session: &str,
-    account: &crate::config::ActiveAccountContext,
+    completed: &CompletedIdentityCreation,
+    expected_holder_jkt: &str,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<()> {
     crate::identity::principal_registration::validate_checkpoint_recovery_key(
@@ -3588,7 +3557,7 @@ async fn finish_principal_setup(
         recovery_key,
     )?;
     let mut registration = registration.clone();
-    let active_session = session.to_owned();
+    let account = &completed.account;
     let actor = account.principal_id().as_str();
     let device = account.device_id.as_str();
 
@@ -3645,33 +3614,34 @@ async fn finish_principal_setup(
         .context("bootstrap Seal was not frozen in the durable checkpoint")?;
     validate_exact_bootstrap_seal_replay(frozen_bootstrap_seal, &bootstrap_seal_for_submit)?;
     let governance_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
-    crate::transport::auth::with_authed_api(
-        account.server_url.as_str(),
-        active_session,
-        |api| async move {
-            crate::recovery_strand::submit_principal_bootstrap_seal(
-                &api,
-                &bootstrap_seal_for_submit,
-            )
-            .await?;
-            crate::recovery_strand::ensure_principal_bootstrap_governance_checkpoint(
-                &api,
-                &governance_state_store,
-                &bootstrap_seal_for_submit,
-            )
-            .await?;
-            crate::recovery_strand::ensure_recovery_policy(
-                &api,
-                &recovery_actor,
-                &recovery_device,
-                &principal_control_realm_id,
-                &recovery_key_value,
-            )
-            .await
-        },
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let api = accepted_account_session_client_from_secure_store(
+        account,
+        expected_holder_jkt,
+        &completed.persisted_grant,
+        secure_store.as_ref(),
+    )?;
+    crate::recovery_strand::submit_principal_bootstrap_seal(&api, &bootstrap_seal_for_submit)
+        .await?;
+    crate::recovery_strand::ensure_principal_bootstrap_governance_checkpoint(
+        &api,
+        &governance_state_store,
+        &bootstrap_seal_for_submit,
     )
-    .await
-    .map_err(|error| anyhow::anyhow!(error.display()))?;
+    .await?;
+    crate::recovery_strand::ensure_recovery_policy(
+        &api,
+        &recovery_actor,
+        &account.authority,
+        &recovery_device,
+        &principal_control_realm_id,
+        registration
+            .pcr_genesis_unit
+            .as_ref()
+            .context("recovery policy publication omits its accepted PCR genesis unit")?,
+        &recovery_key_value,
+    )
+    .await?;
     registration
         .advance_registration_stage(
             crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
@@ -3789,7 +3759,7 @@ mod tests {
         garth::BoundCompletionResumeFacts {
             handoff: garth::BoundCompletionHandoffState::ActiveBound,
             checkpoint_stage: garth::BoundCompletionCheckpointStage::Accepted,
-            recovery_policy: garth::BoundCompletionMaterialState::Absent,
+            recovery_policy: garth::BoundCompletionMaterialState::NotRequired,
             device_id: garth::BoundCompletionMaterialState::Present,
             signing_seed: garth::BoundCompletionMaterialState::Present,
             grant_binding_key: garth::BoundCompletionMaterialState::Present,
@@ -3872,6 +3842,24 @@ mod tests {
                 reason: garth::BoundCompletionContradiction::CompletedStageMissingEvidence
             }
         );
+        assert_eq!(
+            garth::classify_bound_completion_resume(garth::BoundCompletionResumeFacts {
+                recovery_policy: Material::NotRequired,
+                ..live
+            })
+            .unwrap(),
+            Disposition::RestoreRuntime,
+            "a present signer/session must not read recovery-policy state"
+        );
+        assert!(
+            garth::classify_bound_completion_resume(garth::BoundCompletionResumeFacts {
+                signing_seed: Material::Absent,
+                recovery_policy: Material::ReadError,
+                ..live
+            })
+            .is_err(),
+            "a missing signer still requires proved server recovery-policy state"
+        );
     }
 
     #[test]
@@ -3921,6 +3909,47 @@ mod tests {
         assert_eq!(present, garth::BoundCompletionMaterialState::Present);
         assert_eq!(material.unwrap().seed, [17_u8; 32]);
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn accepted_account_client_uses_the_accepted_dpop_session() {
+        use base64::Engine as _;
+
+        let account = test_active_account();
+        let seed = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([23_u8; 32]);
+        let record =
+            crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(&seed)
+                .unwrap();
+        let dpop = crate::identity::account_auth::grant_dpop::device_handle_from_seed(
+            &record.seed_b64,
+            &record.jkt,
+        )
+        .unwrap();
+        let grant = crate::state::PersistedSessionGrant {
+            grant_jwt: "signed.session.grant".to_owned(),
+            session_private_key_pem: String::new(),
+            grant_id: "ak:session_grant:Af0GheZX08ev4L1fQoFdngIpe5c_9Lk7SQqfN4jztzDW".to_owned(),
+            audience: account.authority.principal_server_id.to_string(),
+            principal_id: account.authority.principal_id.clone(),
+            device_id: account.device_id.clone(),
+            principal_server_url: account.server_url.clone(),
+            grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            stored_at: chrono::Utc::now(),
+        };
+
+        let api = accepted_account_session_client(&account, dpop.jkt(), &grant, &dpop).unwrap();
+
+        assert_eq!(api.context().credential, grant.grant_jwt);
+        assert_eq!(
+            api.context().dpop.as_ref().map(|handle| handle.jkt()),
+            Some(dpop.jkt())
+        );
+
+        let mut wrong_audience = grant;
+        wrong_audience.audience = "ak:did_core:webvh:z6mkfixture:other.example".to_owned();
+        assert!(
+            accepted_account_session_client(&account, dpop.jkt(), &wrong_audience, &dpop,).is_err()
+        );
     }
 
     #[test]

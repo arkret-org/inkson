@@ -138,7 +138,8 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         apply_test_session_grant_expiry_override(
                             &mut state_store_for_secure_upgrade,
                             secure_store.as_ref(),
-                        );
+                        )
+                        .await;
                     }
                     let loaded_config = config_store_for_secure_upgrade
                         .read()
@@ -508,7 +509,7 @@ mod account_signer_boot_tests {
 const TEST_SESSION_GRANT_EXPIRY_OVERRIDE_KEY: &str = "inkson.test.session_grant_expiry_override.v1";
 
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-fn apply_test_session_grant_expiry_override(
+async fn apply_test_session_grant_expiry_override(
     state_store: &mut SyncSignal<LocalStateStore>,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) {
@@ -547,7 +548,7 @@ fn apply_test_session_grant_expiry_override(
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
 
-    let applied = (|| {
+    let applied = async {
         if expected_grant_jwt.is_empty() || seconds_from_now <= 0 {
             return false;
         }
@@ -568,11 +569,12 @@ fn apply_test_session_grant_expiry_override(
             return false;
         };
         if user_store
-            .save_secret(
+            .save_secret_durable(
                 secure_store,
                 crate::state::LocalStateStore::SECURE_SESSION_GRANT_KEY,
                 &encoded,
             )
+            .await
             .is_err()
         {
             return false;
@@ -584,7 +586,8 @@ fn apply_test_session_grant_expiry_override(
         // expiry and exercises the real due-refresh path.
         crate::identity::session_refresh::reset_session_grant_runtime();
         true
-    })();
+    }
+    .await;
 
     if !result_key.is_empty()
         && let Ok(Some(session_storage)) = window.session_storage()

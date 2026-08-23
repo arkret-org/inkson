@@ -1587,9 +1587,9 @@ impl EventSubmitter {
             .get("/_arkret/root/identity/recovery-policy")
             .await
             .map_err(anyhow::Error::from)?;
-        match crate::recovery_strand::first_backup_gate_status_from_payloads(
+        match crate::recovery_strand::first_backup_gate_status(
             accepted_principal_control_seal,
-            &serde_json::to_value(policy)?,
+            &policy,
         ) {
             crate::recovery_strand::FirstBackupGateStatus::Satisfied => Ok(()),
             crate::recovery_strand::FirstBackupGateStatus::Blocked(reason) => {

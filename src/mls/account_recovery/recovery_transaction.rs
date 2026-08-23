@@ -322,7 +322,7 @@ fn exact_device_reanchor_payload(
         previous_device_generation,
         new_device_generation,
         did_root_evidence_digest: None,
-        pre_fence_seal_frontier: session.accepted_seal_frontier.clone(),
+        pre_fence_seal_frontier: Some(session.accepted_seal_frontier.clone()),
         replacement_authorize_payload_digest,
     };
     payload.validate().map_err(anyhow::Error::msg)?;

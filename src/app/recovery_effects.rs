@@ -63,7 +63,7 @@ pub(super) fn AccountRecoveryEffects(
         let session_coordinator = session_coordinator.clone();
         spawn(async move {
             match crate::transport::auth::with_authed_api(&base, credential, |api| async move {
-                let policy = serde_json::to_value(&api.get_recovery_policy().await?)?;
+                let policy = api.get_recovery_policy().await?;
                 let backups = serde_json::to_value(&api.list_key_backups().await?)?;
                 let gate_verified = match recovery_material_evidence.as_ref() {
                     Some(evidence)
@@ -76,11 +76,14 @@ pub(super) fn AccountRecoveryEffects(
                     }
                     _ => false,
                 };
-                Ok::<(serde_json::Value, serde_json::Value, bool), anyhow::Error>((
-                    policy,
-                    backups,
-                    gate_verified,
-                ))
+                Ok::<
+                    (
+                        arkret_sdk::RecoveryPolicyActiveOutcome,
+                        serde_json::Value,
+                        bool,
+                    ),
+                    anyhow::Error,
+                >((policy, backups, gate_verified))
             })
             .await
             {
@@ -91,7 +94,7 @@ pub(super) fn AccountRecoveryEffects(
                             &remember_device,
                         );
                     }
-                    let state = crate::recovery_strand::account_recovery_state_from_payloads(
+                    let state = crate::recovery_strand::account_recovery_state(
                         &policy,
                         &backups,
                         local_fingerprint,

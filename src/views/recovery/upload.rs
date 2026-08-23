@@ -122,8 +122,10 @@ pub(crate) fn upload_recovery_key_account_backup(
             crate::recovery_strand::ensure_recovery_policy(
                 &api,
                 &evidence.principal_id,
+                &authority,
                 &evidence.device_id,
                 &evidence.principal_control_realm_id,
+                &evidence.pcr_genesis_unit,
                 &recovery_secret,
             )
             .await?;

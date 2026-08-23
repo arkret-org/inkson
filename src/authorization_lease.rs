@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
+use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::{AuthorizationLease, ControlProposalAuthorityAck};
 
 /// No usable lease covers this Event's actor and signed scope.
@@ -416,6 +417,27 @@ pub async fn delayed_initial_submission(
     Ok(submission)
 }
 
+/// Build a delayed publication for an authority-authored human self-PCR Move.
+///
+/// The caller supplies the accepted founding create it has already verified as
+/// part of the PCR bootstrap evidence. A recovery-material gate cannot depend
+/// on the ordinary Realm scan exposing that create before the gate completes;
+/// the signed create plus its accepted bootstrap Seal are the authority basis.
+/// This constructor therefore validates the exact immutable self-PCR notary
+/// locally and always omits a separate Control Proposal Ack.
+pub fn delayed_authority_authored_self_principal_submission(
+    event: &arkret_sdk::Event,
+    digest_suite: arkret_sdk::DigestSuite,
+    accepted_create: &arkret_sdk::Event,
+) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+    self_principal_pcr_authority_set_ref_from_events(event, std::slice::from_ref(accepted_create))?;
+    let submission = initial_submission(event)?;
+    submission
+        .validate_structural_in_context(arkret_wire::EventSubmitContext::Standard, digest_suite)
+        .map_err(anyhow::Error::from)?;
+    Ok(submission)
+}
+
 /// Who signs a Control Move's Control Proposal Ack.
 ///
 /// This is the single place in Inkson that answers the question. Every caller —
@@ -559,7 +581,15 @@ fn classify_proposal_authority_route(
     if is_managed_agent_pcr_control(event) {
         return Ok(ProposalAuthorityRouteKind::ManagedAgentPcr);
     }
-    if event.kind == arkret_sdk::EventKind::AgentProvision {
+    let recovery_policy_set = if event.kind == arkret_sdk::EventKind::PolicySet {
+        let payload = event
+            .typed_payload::<arkret_sdk::event_spec::PolicySet>()
+            .map_err(|error| anyhow::anyhow!("decode policy-set authority route: {error}"))?;
+        matches!(payload.value, arkret_sdk::PolicyDocument::RecoveryPolicy(_))
+    } else {
+        false
+    };
+    if event.kind == arkret_sdk::EventKind::AgentProvision || recovery_policy_set {
         return Ok(ProposalAuthorityRouteKind::SelfPrincipalPcr);
     }
     Ok(ProposalAuthorityRouteKind::PrincipalServerAdmission)

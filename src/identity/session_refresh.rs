@@ -415,6 +415,9 @@ pub(crate) fn load_account_session_grant_with_secure_store(
     if grant.device_id != account.device_id {
         anyhow::bail!("session grant does not match the accepted account device");
     }
+    if grant.audience != account.authority.principal_server_id.as_str() {
+        anyhow::bail!("session grant does not match the accepted account audience");
+    }
     Ok(grant)
 }
 
@@ -950,10 +953,23 @@ mod tests {
         assert_eq!(restored.grant_id, grant.grant_id);
         assert!(crate::secure_key_store::active_device_seed_scope().is_none());
 
-        let mut wrong_server = account;
+        let mut wrong_server = account.clone();
         wrong_server.server_url = url::Url::parse("https://other.example").unwrap();
         let error =
             load_account_session_grant_with_secure_store(&wrong_server, &secure_store).unwrap_err();
         assert!(error.to_string().contains("account server"));
+
+        let mut wrong_audience = grant;
+        wrong_audience.audience = "ak:did_core:webvh:z6mkfixture:other.example".to_owned();
+        user_store
+            .save_secret(
+                &secure_store,
+                LocalStateStore::SECURE_SESSION_GRANT_KEY,
+                &serde_json::to_string(&wrong_audience).unwrap(),
+            )
+            .unwrap();
+        let error =
+            load_account_session_grant_with_secure_store(&account, &secure_store).unwrap_err();
+        assert!(error.to_string().contains("account audience"));
     }
 }
