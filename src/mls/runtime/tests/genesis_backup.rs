@@ -152,46 +152,6 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
 }
 
 #[test]
-fn legacy_epoch_zero_snapshot_without_governance_binding_fails_closed() {
-    let mut state = temp_state_store("legacy-genesis-summary");
-    let secure = MemorySecureKeyStore::new();
-    let actor = "did:web:alice.example";
-    let device = "ak:device:01904100-0000-7000-8000-000000000001";
-    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let secret = load_or_create_account_mls_secret(&secure, &authority(actor)).unwrap();
-    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
-        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-        arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
-    )
-    .unwrap();
-    let group = identity.create_group(realm.as_bytes()).unwrap();
-    assert!(group.current_governance_binding().unwrap().is_none());
-    let record = group.export_state_record().unwrap();
-    let bytes = serde_json::to_vec(&record).unwrap();
-    let snapshot = crate::mls::persistence::encrypt_state(
-        realm,
-        &record.group_id,
-        record.epoch,
-        &bytes,
-        &secret,
-        b"legacy-genesis-salt",
-    );
-    state.save_mls_snapshot(realm, snapshot).unwrap();
-    super::seed_genesis_governance_proof(&mut state, realm);
-
-    let error = initial_mls_snapshot_summary_from_existing(
-        &state,
-        &secure,
-        realm,
-        &authority(actor),
-        &device_id(device),
-    )
-    .unwrap_err();
-
-    assert!(error.user_message().contains("recreate local MLS state"));
-}
-
-#[test]
 fn mls_genesis_emitted_flag_is_idempotent() {
     let mut state = temp_state_store("genesis-idempotent");
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";

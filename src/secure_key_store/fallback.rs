@@ -13,8 +13,8 @@
 //!
 //! Every write therefore mirrors into the fallback tier: the reader of that
 //! mirror is the *next* page load's pre-initialization seam, which can see
-//! nothing but `localStorage`. Dropping the mirror would not remove a legacy
-//! path, it would make first-paint reads miss values this session wrote.
+//! nothing but `localStorage`. Dropping the mirror would make first-paint
+//! reads miss values this session wrote.
 //!
 //! Durability is the only thing the mirror buys, never a weaker protection
 //! level: `is_wasm_indexeddb_required_secret_key` makes the fallback tier

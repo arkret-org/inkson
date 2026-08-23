@@ -17,7 +17,7 @@ async fn large_entry_round_trips_across_reopen() {
     writer
         .store_secret_durable(key, &secret)
         .await
-        .expect("persist entry larger than the legacy localStorage quota");
+        .expect("persist entry larger than the localStorage quota");
     drop(writer);
 
     let reader = IndexedDbSecureKeyStore::new_async(&service_name)

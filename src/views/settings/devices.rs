@@ -1345,7 +1345,7 @@ fn render_pair_strand(
                                     return;
                                 }
                             };
-                            let challenge_proof = match (
+                            let (requesting_device, challenge_proof) = match (
                                 arkret_sdk::DeviceId::new(requesting_device_id.clone()),
                                 arkret_sdk::NonEmptyString::new(signer.algorithm().to_owned()),
                                 arkret_sdk::Base64UrlString::new(
@@ -1353,17 +1353,18 @@ fn render_pair_strand(
                                 ),
                             ) {
                                 (Ok(kid), Ok(signature_algorithm), Ok(signature)) => {
-                                    arkret_sdk::DevicePairingChallengeProof {
+                                    let proof = arkret_sdk::DevicePairingChallengeProof {
                                         transcript: arkret_sdk::DevicePairingChallengeTranscriptKind::ServerMediated,
                                         // Device-local selector, not a DID URL —
                                         // the field was renamed away from
                                         // `verification_method` precisely to stop
                                         // the two being confused.
-                                        kid,
+                                        kid: kid.clone(),
                                         signature_algorithm,
                                         transcript_digest,
                                         signature,
-                                    }
+                                    };
+                                    (kid, proof)
                                 }
                                 _ => {
                                     pair_status.set(
@@ -1376,7 +1377,7 @@ fn render_pair_strand(
                             let target_attestation = match crate::identity::device_pairing::sign_target_attestation(
                                 &signer,
                                 &authority,
-                                &arkret_sdk::DeviceId::new(requesting_device_id.clone()).expect("active account device id is typed before rendering"),
+                                &requesting_device,
                                 challenge_proof.transcript_digest.clone(),
                             ).await {
                                 Ok(attestation) => attestation,

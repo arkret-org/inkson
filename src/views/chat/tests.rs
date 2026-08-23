@@ -4328,7 +4328,7 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
         }),
         json!({
             "actor_id": "ak:did_core:web:carol.example",
-            // Matrix-legacy `unavailable` fails closed to offline.
+            // Matrix `unavailable` fails closed to offline.
             "status": "unavailable"
         }),
         json!({

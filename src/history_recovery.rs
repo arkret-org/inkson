@@ -1,5 +1,3 @@
-use std::future::Future;
-
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
@@ -20,46 +18,44 @@ struct ResponseCapabilityOpener<'a> {
 }
 
 impl garth::HistoryResponseCapabilityOpener for ResponseCapabilityOpener<'_> {
-    fn open_response_capability<'a>(
-        &'a self,
-        outcome: &'a arkret_sdk::HistoryKeyRequestCreateOutcome,
-    ) -> impl Future<Output = garth::Result<String>> + garth::MaybeSend + 'a {
-        async move {
-            let private_key = crate::mls::runtime::load_device_hpke_private_key(
-                self.secure_store,
-                self.authority,
-                self.device_id,
+    async fn open_response_capability(
+        &self,
+        outcome: &arkret_sdk::HistoryKeyRequestCreateOutcome,
+    ) -> garth::Result<String> {
+        let private_key = crate::mls::runtime::load_device_hpke_private_key(
+            self.secure_store,
+            self.authority,
+            self.device_id,
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?
+        .ok_or_else(|| {
+            garth::Error::Protocol(
+                "history request HPKE private key is not durably available".to_owned(),
             )
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?
-            .ok_or_else(|| {
-                garth::Error::Protocol(
-                    "history request HPKE private key is not durably available".to_owned(),
-                )
-            })?;
-            let receipt = &outcome.request_receipt;
-            let context = arkret_sdk::HistoryResponseCapabilitySealContext {
-                purpose: arkret_sdk::HistoryResponseCapabilitySealPurpose::Value,
-                request_digest: receipt.request_digest.clone(),
-                response_capability_commitment: receipt.response_capability_commitment.clone(),
-                effective_scope: receipt.effective_scope.clone(),
-                release_service_id: receipt.release_service_id.clone(),
-                release_service_binding_ref: receipt.release_service_binding_ref.clone(),
-                release_service_resolution_ref: receipt.release_service_resolution_ref.clone(),
-                release_service_resolution_sequence: receipt.release_service_resolution_sequence,
-                release_service_resolution_record_digest: receipt
-                    .release_service_resolution_record_digest
-                    .clone(),
-                release_service_route_digest: receipt.release_service_route_digest.clone(),
-                expires_at: receipt.expires_at,
-            };
-            arkret_crypto::secret_share::open_history_response_capability(
-                &URL_SAFE_NO_PAD.encode(private_key),
-                &context,
-                &outcome.sealed_history_response_capability,
-            )
-            .map(|plaintext| plaintext.response_capability_b64u)
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
-        }
+        })?;
+        let receipt = &outcome.request_receipt;
+        let context = arkret_sdk::HistoryResponseCapabilitySealContext {
+            purpose: arkret_sdk::HistoryResponseCapabilitySealPurpose::Value,
+            request_digest: receipt.request_digest.clone(),
+            response_capability_commitment: receipt.response_capability_commitment.clone(),
+            effective_scope: receipt.effective_scope.clone(),
+            release_service_id: receipt.release_service_id.clone(),
+            release_service_binding_ref: receipt.release_service_binding_ref.clone(),
+            release_service_resolution_ref: receipt.release_service_resolution_ref.clone(),
+            release_service_resolution_sequence: receipt.release_service_resolution_sequence,
+            release_service_resolution_record_digest: receipt
+                .release_service_resolution_record_digest
+                .clone(),
+            release_service_route_digest: receipt.release_service_route_digest.clone(),
+            expires_at: receipt.expires_at,
+        };
+        arkret_crypto::secret_share::open_history_response_capability(
+            &URL_SAFE_NO_PAD.encode(private_key),
+            &context,
+            &outcome.sealed_history_response_capability,
+        )
+        .map(|plaintext| plaintext.response_capability_b64u)
+        .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
 }
 
@@ -69,80 +65,77 @@ struct ReceiptTraversal<'a> {
 }
 
 impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
-    fn acquire_and_verify<'a>(
-        &'a self,
-        retention: &'a arkret_sdk::HistoryGovernanceTraversalRetention,
-        access: &'a arkret_sdk::SelfHistoryTraversalAccess,
-    ) -> impl Future<Output = garth::Result<garth::VerifiedHistoryTraversal>> + garth::MaybeSend + 'a
-    {
-        async move {
-            let (realm_id, base_basis) = match &retention.traversal_intent {
-                arkret_sdk::HistoryGovernanceTraversalIntent::MemberHistoryDelivery {
-                    effective_scope,
-                    trusted_history_base_basis,
-                    ..
-                }
-                | arkret_sdk::HistoryGovernanceTraversalIntent::OrganizationRecoveryArchive {
-                    effective_scope,
-                    trusted_history_base_basis,
-                    ..
-                } => {
-                    let realm_id = match effective_scope {
-                        arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
-                        | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => {
-                            realm_id.clone()
-                        }
-                    };
-                    (realm_id, trusted_history_base_basis)
-                }
-            };
-            let existing = self
-                .state_store
-                .read()
-                .trusted_mls_governance_checkpoint(realm_id.as_str())
-                .ok_or_else(|| {
-                    garth::Error::Protocol(
-                        "history traversal has no complete locally verified checkpoint".to_owned(),
-                    )
-                })?;
-            let base = arkret_sdk::derive_verified_mls_governance_checkpoint_at_basis(
-                &existing,
-                base_basis,
-                |event, digest_suite, evidence, dependencies| {
-                    crate::mls::governance_proof::verify_native_agent_history_key(
-                        &self.state_store,
-                        event,
-                        digest_suite,
-                        evidence,
-                        dependencies,
-                    )
-                },
-            )
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-            let cut = crate::mls::governance_acquisition::resolve_history_governance_cut(
-                self.api, retention, access,
-            )
-            .await
-            .map_err(garth::Error::Protocol)?;
-            let checkpoint = arkret_sdk::verify_mls_governance_cut(
-                &base,
-                &cut.target_basis,
-                &cut.seals,
-                &cut.events,
-                &cut.dependencies,
-                |event, digest_suite, evidence, dependencies| {
-                    crate::mls::governance_proof::verify_native_agent_history_key(
-                        &self.state_store,
-                        event,
-                        digest_suite,
-                        evidence,
-                        dependencies,
-                    )
-                },
-            )
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-            Ok(garth::VerifiedHistoryTraversal { checkpoint })
-        }
+    async fn acquire_and_verify(
+        &self,
+        retention: &arkret_sdk::HistoryGovernanceTraversalRetention,
+        access: &arkret_sdk::SelfHistoryTraversalAccess,
+    ) -> garth::Result<garth::VerifiedHistoryTraversal> {
+        let (realm_id, base_basis) = match &retention.traversal_intent {
+            arkret_sdk::HistoryGovernanceTraversalIntent::MemberHistoryDelivery {
+                effective_scope,
+                trusted_history_base_basis,
+                ..
+            }
+            | arkret_sdk::HistoryGovernanceTraversalIntent::OrganizationRecoveryArchive {
+                effective_scope,
+                trusted_history_base_basis,
+                ..
+            } => {
+                let realm_id = match effective_scope {
+                    arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
+                    | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => {
+                        realm_id.clone()
+                    }
+                };
+                (realm_id, trusted_history_base_basis)
+            }
+        };
+        let existing = self
+            .state_store
+            .read()
+            .trusted_mls_governance_checkpoint(realm_id.as_str())
+            .ok_or_else(|| {
+                garth::Error::Protocol(
+                    "history traversal has no complete locally verified checkpoint".to_owned(),
+                )
+            })?;
+        let base = arkret_sdk::derive_verified_mls_governance_checkpoint_at_basis(
+            &existing,
+            base_basis,
+            |event, digest_suite, evidence, dependencies| {
+                crate::mls::governance_proof::verify_native_agent_history_key(
+                    &self.state_store,
+                    event,
+                    digest_suite,
+                    evidence,
+                    dependencies,
+                )
+            },
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let cut = crate::mls::governance_acquisition::resolve_history_governance_cut(
+            self.api, retention, access,
+        )
+        .await
+        .map_err(garth::Error::Protocol)?;
+        let checkpoint = arkret_sdk::verify_mls_governance_cut(
+            &base,
+            &cut.target_basis,
+            &cut.seals,
+            &cut.events,
+            &cut.dependencies,
+            |event, digest_suite, evidence, dependencies| {
+                crate::mls::governance_proof::verify_native_agent_history_key(
+                    &self.state_store,
+                    event,
+                    digest_suite,
+                    evidence,
+                    dependencies,
+                )
+            },
+        )
+        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        Ok(garth::VerifiedHistoryTraversal { checkpoint })
     }
 }
 

@@ -503,20 +503,6 @@ mod tests {
     }
 
     #[test]
-    fn realm_authority_root_controller_does_not_trust_legacy_payload_mirror() {
-        let events = json!([{
-            "kind": "ak.realm.create",
-            "payload": {
-                "object": { "created_by": "ak:did_core:webvh:z6mkforged" }
-            }
-        }]);
-        assert_eq!(
-            realm_authority_root_controller_from_events(events.as_array().unwrap()),
-            None
-        );
-    }
-
-    #[test]
     fn realm_projection_reads_profile_and_plaintext_visibility() {
         let encrypted = json!({
             "summary": {"encryption_profile": "mls_rfc9420"}

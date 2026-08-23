@@ -1558,18 +1558,16 @@ struct ResumeTerminal {
     kind: ResumeTerminalKind,
     reason: String,
     inventory: Vec<String>,
-    legacy_layout_detected: bool,
 }
 
 enum IdentityCreationCommandOutcome {
-    Completed(CompletedIdentityCreation),
+    Completed(Box<CompletedIdentityCreation>),
     Terminal(ResumeTerminal),
 }
 
 struct BoundCompletionResumeInventory {
     facts: garth::BoundCompletionResumeFacts,
     read_errors: Vec<String>,
-    legacy_layout_detected: bool,
 }
 
 impl BoundCompletionResumeInventory {
@@ -1751,24 +1749,6 @@ async fn collect_bound_completion_resume_inventory(
         }
         _ => garth::BoundCompletionCheckpointStage::Accepted,
     };
-    let legacy_layout_detected = secure_store
-        .list_secret_keys(Some("inkson."))
-        .map(|keys| {
-            keys.into_iter().any(|key| {
-                !key.starts_with("inkson.authority.")
-                    && !key.starts_with("inkson.pending.")
-                    && !key.starts_with("inkson.global.")
-                    && [
-                        crate::state::LocalStateStore::SECURE_SESSION_GRANT_KEY,
-                        crate::state::LocalStateStore::SECURE_DPOP_DEVICE_KEY,
-                        "device.ed25519.signing_seed.v1",
-                        "device.ed25519.grant_binding.v1",
-                    ]
-                    .iter()
-                    .any(|suffix| key.ends_with(suffix))
-            })
-        })
-        .unwrap_or(false);
     BoundCompletionResumeInventory {
         facts: garth::BoundCompletionResumeFacts {
             handoff: handoff_state,
@@ -1787,7 +1767,6 @@ async fn collect_bound_completion_resume_inventory(
             grant_binding_matches_handoff,
         },
         read_errors,
-        legacy_layout_detected,
     }
 }
 
@@ -2173,11 +2152,6 @@ fn PendingAccountIdentityCreation(
                 ul { class: "muted", "data-testid": "onboarding-resume-inventory",
                     for item in terminal.inventory.iter() {
                         li { "{item}" }
-                    }
-                }
-                if terminal.legacy_layout_detected {
-                    div { class: "form-hint-warn",
-                        "Keys from a non-current local layout were detected. Inkson listed their names for diagnostics but did not read or adopt them."
                     }
                 }
                 div { class: "onboarding-footer-actions",
@@ -2707,7 +2681,6 @@ fn PendingAccountIdentityCreation(
                                             },
                                             reason: command_error,
                                             inventory: Vec::new(),
-                                            legacy_layout_detected: false,
                                         }));
                                         status.set(String::new());
                                     }
@@ -3101,7 +3074,7 @@ async fn create_and_bind_identity(
                         state_store,
                     )
                     .await?;
-                    return Ok(IdentityCreationCommandOutcome::Completed(completed));
+                    return Ok(IdentityCreationCommandOutcome::Completed(Box::new(completed)));
                 }
                 Err(error) => return Err(error),
             };
@@ -3226,7 +3199,6 @@ async fn create_and_bind_identity(
                     kind: ResumeTerminalKind::HydrationFailed,
                     reason: detail,
                     inventory: inventory.checklist(),
-                    legacy_layout_detected: inventory.legacy_layout_detected,
                 }));
             }
         };
@@ -3280,7 +3252,6 @@ async fn create_and_bind_identity(
                             kind: ResumeTerminalKind::RetryableFailure,
                             reason: format!("Reissue the accepted onboarding session: {error:#}"),
                             inventory: inventory.checklist(),
-                            legacy_layout_detected: inventory.legacy_layout_detected,
                         }));
                     }
                     Err(AcceptedSessionReissueError::ReauthRequired(error)) => {
@@ -3297,7 +3268,6 @@ async fn create_and_bind_identity(
                                 "A fresh sign-in is required before this accepted setup can continue: {error:#}"
                             ),
                             inventory: inventory.checklist(),
-                            legacy_layout_detected: inventory.legacy_layout_detected,
                         }));
                     }
                     Err(AcceptedSessionReissueError::Contradiction(error)) => {
@@ -3314,7 +3284,6 @@ async fn create_and_bind_identity(
                                 "The accepted setup cannot issue a session for the retained account and device: {error:#}"
                             ),
                             inventory: inventory.checklist(),
-                            legacy_layout_detected: inventory.legacy_layout_detected,
                         }));
                     }
                 };
@@ -3337,7 +3306,9 @@ async fn create_and_bind_identity(
                 )
                 .await
                 .context("recover the accepted device with its active policy")?;
-                return Ok(IdentityCreationCommandOutcome::Completed(completed));
+                return Ok(IdentityCreationCommandOutcome::Completed(Box::new(
+                    completed,
+                )));
             }
             Disposition::StrandedIdentity => {
                 crate::identity::account_auth::transition::record_onboarding_completion_transition(
@@ -3351,7 +3322,6 @@ async fn create_and_bind_identity(
                     kind: ResumeTerminalKind::StrandedIdentity,
                     reason: "The founding device key is not present on this device, and the server confirms that no Recovery Key policy was completed for this identity. The client API has no credential that can continue it.".to_owned(),
                     inventory: inventory.checklist(),
-                    legacy_layout_detected: inventory.legacy_layout_detected,
                 }));
             }
             Disposition::ReauthRequired => {
@@ -3366,7 +3336,6 @@ async fn create_and_bind_identity(
                     kind: ResumeTerminalKind::ReauthRequired,
                     reason: "The accepted setup no longer has a live account handoff. Sign in again to obtain a fresh handoff; the accepted identity and device checkpoint will be retained.".to_owned(),
                     inventory: inventory.checklist(),
-                    legacy_layout_detected: inventory.legacy_layout_detected,
                 }));
             }
             Disposition::Contradiction { reason } => {
@@ -3383,7 +3352,6 @@ async fn create_and_bind_identity(
                         "The accepted setup contradicts the retained account state: {reason:?}."
                     ),
                     inventory: inventory.checklist(),
-                    legacy_layout_detected: inventory.legacy_layout_detected,
                 }));
             }
         }
@@ -3397,7 +3365,9 @@ async fn create_and_bind_identity(
         state_store,
     )
     .await?;
-    Ok(IdentityCreationCommandOutcome::Completed(completed))
+    Ok(IdentityCreationCommandOutcome::Completed(Box::new(
+        completed,
+    )))
 }
 
 /// Drop the durable identity draft together with the handoff it is fenced to,

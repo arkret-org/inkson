@@ -102,7 +102,7 @@ impl ClientConfig {
 fn default_principal_servers() -> Vec<Url> {
     DEFAULT_PRINCIPAL_SERVERS
         .iter()
-        .map(|server| Url::parse(server).expect("default Principal Server URL"))
+        .filter_map(|server| Url::parse(server).ok())
         .collect()
 }
 

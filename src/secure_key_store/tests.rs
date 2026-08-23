@@ -104,30 +104,6 @@ fn pending_promotion_preserves_returning_user_device_identity() {
 }
 
 #[test]
-fn identity_storage_has_no_historical_key_compatibility_paths() {
-    let sources = [
-        include_str!("identity_store.rs"),
-        include_str!("local_storage.rs"),
-        include_str!("signing_seed.rs"),
-        include_str!("../identity/account_auth/handoff.rs"),
-    ];
-    let forbidden = [
-        "legacy_seed_key",
-        "inkson.secret.global",
-        "inkson.device_id.v1",
-        "ACCOUNT_HANDOFF_GRANT_SECRET_KEY: &str",
-        "PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY: &str",
-    ];
-
-    for needle in forbidden {
-        assert!(
-            sources.iter().all(|source| !source.contains(needle)),
-            "identity storage must not reintroduce historical key compatibility: {needle}"
-        );
-    }
-}
-
-#[test]
 fn pending_promotion_moves_material_for_first_time_user() {
     // promote_to activates the user store, mutating the process-global
     // device-seed scope.

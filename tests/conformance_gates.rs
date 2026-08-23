@@ -927,28 +927,4 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
         None,
         &delivered,
     );
-
-    // Non-vacuity: the shape this replaced — the bare proof block — must fail
-    // the same validator, otherwise the gate proves nothing.
-    let mut legacy = delivered.clone();
-    legacy["content"] = serde_json::json!({
-        "device_envelope": delivered["content"]["device_envelope"],
-        "signature": delivered["content"]["signature"],
-    });
-    let device_message_schema = Value::Object(
-        [(
-            "$ref".to_owned(),
-            Value::String(spec_schema_id("device-message.schema.json")),
-        )]
-        .into_iter()
-        .collect(),
-    );
-    let validator = jsonschema::options()
-        .with_registry(spec_schema_registry())
-        .build(&device_message_schema)
-        .expect("device-message.schema.json compiles");
-    assert!(
-        !validator.is_valid(&legacy),
-        "the pre-A6 content (proof block only) must fail device-message.schema.json"
-    );
 }

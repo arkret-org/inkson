@@ -6,8 +6,7 @@ mod request;
 mod token_provider;
 mod token_source;
 
-// Re-export the full public surface so external callers keep using the
-// historical `crate::push::*` paths unchanged after the structural split.
+// Expose the push API as the module's public surface.
 // Imports kept at the module root so the (glob-importing) `tests`
 // submodule resolves the chime types and `std::sync::Arc` it references.
 #[cfg(test)]

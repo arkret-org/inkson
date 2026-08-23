@@ -349,18 +349,21 @@ pub(crate) async fn fetch_route_material(
     candidate_origins: &[String],
     now: DateTime<Utc>,
 ) -> anyhow::Result<FetchedRouteMaterial> {
-    anyhow::ensure!(
-        !candidate_origins.is_empty(),
-        "realm media_service cell carries no endpoint origin for {service_id}"
-    );
-    let mut last_error = None;
-    for origin in candidate_origins {
+    let Some((first_origin, remaining_origins)) = candidate_origins.split_first() else {
+        anyhow::bail!("realm media_service cell carries no endpoint origin for {service_id}");
+    };
+    let mut last_error =
+        match fetch_route_material_from_origin(http, service_id, first_origin, now).await {
+            Ok(material) => return Ok(material),
+            Err(error) => error,
+        };
+    for origin in remaining_origins {
         match fetch_route_material_from_origin(http, service_id, origin, now).await {
             Ok(material) => return Ok(material),
-            Err(error) => last_error = Some(error),
+            Err(error) => last_error = error,
         }
     }
-    Err(last_error.expect("at least one origin was tried"))
+    Err(last_error)
 }
 
 async fn fetch_route_material_from_origin(

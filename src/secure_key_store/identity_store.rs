@@ -222,6 +222,9 @@ impl UserLocalStore {
         store.get_secret(&self.key(logical_key))
     }
 
+    /// Synchronous fixture write used only by native unit tests. Production
+    /// identity transitions must wait for [`Self::save_secret_durable`].
+    #[cfg(test)]
     pub(crate) fn save_secret(
         &self,
         store: &dyn SecureKeyStore,

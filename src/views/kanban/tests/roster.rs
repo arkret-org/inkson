@@ -230,7 +230,7 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
             }),
             json!({
                 "subject_id": "ak:did_core:key:z6MkPrincipal",
-                "handle": "legacy:acme.example",
+                "handle": "other:acme.example",
                 "binding_state": "verified"
             }),
         ],

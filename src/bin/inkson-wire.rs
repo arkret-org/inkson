@@ -303,7 +303,7 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
                 .map_err(anyhow::Error::msg)?,
                 key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
                 jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-                frozen_public_key_b64u: arkret_sdk::base64url_encode(&notary_public_key),
+                frozen_public_key_b64u: arkret_sdk::base64url_encode(notary_public_key),
                 frozen_public_key_digest: arkret_sdk::Hash::new(
                     arkret_sdk::canonical::sha256_digest(notary_public_key),
                 )?,
