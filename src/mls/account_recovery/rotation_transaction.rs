@@ -4,9 +4,8 @@ use arkret_models_collaboration::events_payloads::key_backup::resolve_controller
 use arkret_models_crypto::{BackupKind, BackupSeriesEraseRequestBody, BackupSeriesEraseStatus};
 use arkret_wire::{
     BackupObjectRef, BackupRotationKind, BackupSeriesId, Base64UrlString, DidFullId,
-    EventsSubmitBatchRequestBody, Hash, LeaseBasisRef, RiskTier, SchemaId,
-    SecurityTransactionState, SecurityTransactionStep, TransactionId,
-    UnsignedClientStepAttestation,
+    EventsSubmitBatchRequestBody, Hash, LeaseBasisRef, RiskTier, SchemaId, SecurityTransactionStep,
+    TransactionId, UnsignedClientStepAttestation,
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -381,7 +380,7 @@ async fn drive_security_rotation(
         secure_store.clone(),
     );
     let workflow = crate::fresh_device_recovery::DeviceRevokeSecurityRotation::new(engine);
-    if transaction.state == SecurityTransactionState::Completed {
+    if transaction.is_completed() {
         clear_pending_rotation(secure_store.as_ref(), target_device_id)?;
         let version =
             crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority)?
@@ -534,7 +533,7 @@ async fn drive_security_rotation(
         )
         .await
         .map_err(anyhow::Error::from)?;
-    if completed.state != SecurityTransactionState::Completed {
+    if !completed.is_completed() {
         return Err(anyhow!("security rotation local commit was not accepted"));
     }
     clear_pending_rotation(secure_store.as_ref(), target_device_id)?;

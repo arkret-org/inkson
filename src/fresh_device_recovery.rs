@@ -14,8 +14,8 @@ use arkret_wire::{
     IssueRecoveryCompletionGrantOutcome, IssueRecoveryCompletionGrantRequest, PreparedEventUnit,
     RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
     SecurityRotationTransactionCreateRequest, SecurityTransaction,
-    SecurityTransactionCreateRequest, SecurityTransactionPreparedPlan, SecurityTransactionState,
-    SecurityTransactionStep, TransactionId, UnsignedClientStepAttestation,
+    SecurityTransactionCreateRequest, SecurityTransactionPreparedPlan, SecurityTransactionStep,
+    TransactionId, UnsignedClientStepAttestation,
 };
 use garth::{SecurityTransactionEngine, SecurityTransactionStore, SecurityTransactionTransport};
 use zeroize::{Zeroize, Zeroizing};
@@ -282,7 +282,7 @@ where
             .last_observed_resource
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("recovery transaction has no authoritative resource"))?;
-        if resource.state != SecurityTransactionState::Completed {
+        if !resource.is_completed() {
             anyhow::bail!("recovery completion grant requires a completed transaction");
         }
         let completion_attestation = resource

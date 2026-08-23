@@ -13,7 +13,7 @@ use arkret_wire::{
     EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash, NonEmptyString,
     PcrPolicyRecoveryBinding, PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId,
     RecoveryIdentityModel, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
-    SecurityTransaction, SecurityTransactionCreateRequest, SecurityTransactionState,
+    SecurityTransaction, SecurityTransactionCreateRequest, SecurityTransactionResultKind,
     SecurityTransactionStep, TransactionId,
 };
 use dioxus::prelude::WritableExt as _;
@@ -387,9 +387,11 @@ fn reject_terminal_recovery_transaction(
     transaction: &SecurityTransaction,
     secure_store: &(dyn garth::SecureKeyStore + Send + Sync),
 ) -> anyhow::Result<()> {
-    if transaction.state.is_terminal() && transaction.state != SecurityTransactionState::Completed {
+    if let Some(result) = transaction.terminal_kind()
+        && result != SecurityTransactionResultKind::Completed
+    {
         crate::security_transaction::clear_pending_fresh_device_recovery(secure_store)?;
-        anyhow::bail!("recovery transaction ended in {:?}", transaction.state);
+        anyhow::bail!("recovery transaction ended in {result:?}");
     }
     Ok(())
 }
@@ -473,7 +475,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
     while transaction.next_required_step()? == Some(SecurityTransactionStep::SubmitReanchorUnit) {
         transaction = workflow.continue_server_step(&transaction).await?;
     }
-    if transaction.state != SecurityTransactionState::Completed {
+    if !transaction.is_completed() {
         let signer = crate::event_signer::active_signer()
             .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
         let terminal = crate::fresh_device_recovery::sign_terminal_receipt_continue(
@@ -501,7 +503,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
             .await?;
     }
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    if transaction.state != SecurityTransactionState::Completed {
+    if !transaction.is_completed() {
         anyhow::bail!("recovery transaction did not reach completed state");
     }
     let binding = transaction
@@ -612,7 +614,7 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
     while transaction.next_required_step()? == Some(SecurityTransactionStep::SubmitReanchorUnit) {
         transaction = workflow.continue_server_step(&transaction).await?;
     }
-    if transaction.state != SecurityTransactionState::Completed {
+    if !transaction.is_completed() {
         let signer = crate::event_signer::active_signer()
             .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
         let terminal = crate::fresh_device_recovery::sign_terminal_receipt_continue(
@@ -640,7 +642,7 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
             .await?;
     }
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    if transaction.state != SecurityTransactionState::Completed {
+    if !transaction.is_completed() {
         anyhow::bail!("pending recovery did not reach completed state");
     }
     let binding = transaction

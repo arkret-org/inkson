@@ -13,7 +13,7 @@ use garth::{
 use serde_json::Value;
 use zeroize::Zeroizing;
 
-const SECURITY_TRANSACTION_STATE_KEY: &str = "security_transaction.state.v1";
+const SECURITY_TRANSACTION_RECORD_KEY: &str = "security_transaction.record.v1";
 const SECURITY_TRANSACTION_STAGED_SECRET_KEY: &str = "security_transaction.staged_secret.v1";
 const PENDING_FRESH_DEVICE_RECOVERY_KEY: &str = "fresh_device_recovery.pending.v1";
 const SECURITY_TRANSACTION_STAGED_SECRET_REF_PREFIX: &str = "secure-store://security-transaction/";
@@ -30,7 +30,7 @@ impl InksonSecurityTransactionStore {
 
     fn storage_key(transaction_id: &arkret_sdk::TransactionId) -> garth::Result<String> {
         crate::secure_key_store::account_scoped_device_key(&format!(
-            "{SECURITY_TRANSACTION_STATE_KEY}.{}",
+            "{SECURITY_TRANSACTION_RECORD_KEY}.{}",
             transaction_id.as_str()
         ))
         .map_err(|error| garth::Error::Protocol(error.to_string()))
