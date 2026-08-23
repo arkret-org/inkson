@@ -1,8 +1,8 @@
 //! Active-write event signer wired against the SDK's unified
 //! `EventProofBuilder` / `Ed25519DetachedJwsSigner` pipeline.
 //!
-//! T5.2 (Round 22, 2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner`,
-//! `EventProofBuilder`, and `ProductionVerifier` in the SDK
+//! T5.2 (Round 22, 2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner` and
+//! `EventProofBuilder` in the SDK
 //! (`arkret-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
 //! inkson's previous Event signing helper hand-rolled
 //! the same canonical-bytes → JWS pipeline, which meant a bug fixed in
@@ -50,7 +50,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use arkret_sdk::signatures::proof::{EventSigner as SdkEventSigner, ProofType};
+use arkret_sdk::signatures::proof::EventSigner as SdkEventSigner;
 use arkret_sdk::{DidFullId, DidUrl, Hash, PayloadSigner, WireError};
 use arkret_wire::PayloadSignature;
 use base64::Engine as _;
@@ -418,7 +418,6 @@ impl InksonEventSigner {
         if let Ok(mut guard) = self.last_signed_at.lock() {
             *guard = Some(crate::clock::now_utc());
         }
-        let _proof_type = Self::proof_type_tag();
         Ok(())
     }
 
@@ -623,14 +622,6 @@ impl InksonEventSigner {
             }
         };
         DidUrl::new(raw).map_err(|error| EventSignerError::Encoding(error.to_string()))
-    }
-
-    /// The [`ProofType`] tag every proof emitted by this signer carries.
-    /// Always `Production(detached_jws / <algorithm>)`. Exposed so
-    /// receivers / tests can wrap a verifier with the matching tag
-    /// without re-deriving it.
-    pub fn proof_type_tag() -> ProofType {
-        ProofType::production("detached_jws", "Ed25519")
     }
 }
 
@@ -1643,11 +1634,5 @@ mod tests {
         clear_active_device_signer();
 
         assert!(signer_status().is_none());
-    }
-
-    #[test]
-    fn proof_type_tag_is_production() {
-        let pt = InksonEventSigner::proof_type_tag();
-        assert!(!pt.is_development());
     }
 }
