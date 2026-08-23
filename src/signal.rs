@@ -326,7 +326,7 @@ impl SignalPayload {
         actor_id: &arkret_sdk::DidCoreId,
         sequence: SignalSequence,
     ) -> anyhow::Result<Vec<u8>> {
-        let plaintext = |result: Result<Vec<u8>, arkret_wire::Error>, what: &str| {
+        let plaintext = |result: Result<Vec<u8>, arkret_wire::WireError>, what: &str| {
             result.map_err(|error| anyhow::anyhow!("{what} plaintext encoding failed: {error}"))
         };
         match self {
