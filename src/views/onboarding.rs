@@ -861,7 +861,7 @@ fn DeviceSetupRequired(
         .unwrap_or_default();
     if recovery_selected() {
         return rsx! {
-            RootAnchoredDeviceRecovery {
+            PcrPolicyDeviceRecovery {
                 state_store,
                 token,
                 principal_id,
@@ -1052,7 +1052,7 @@ fn DeviceSetupRequired(
 }
 
 #[component]
-fn RootAnchoredDeviceRecovery(
+fn PcrPolicyDeviceRecovery(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     mut token: Signal<String>,
     mut principal_id: Signal<String>,
@@ -1066,7 +1066,7 @@ fn RootAnchoredDeviceRecovery(
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
     rsx! {
-        div { class: "event onboarding-card", "data-testid": "root-anchored-device-recovery",
+        div { class: "event onboarding-card", "data-testid": "pcr-policy-device-recovery",
             h2 { "Recover this identity" }
             p { class: "muted",
                 "This account already has an identity. Enter its 24-word Recovery Key to prove root control and authorize this device. No approval from another device or administrator is required."
@@ -1094,7 +1094,7 @@ fn RootAnchoredDeviceRecovery(
                     let recovery_words = words();
                     let replacement_device_id = replacement_device_id.clone();
                     busy.set(true);
-                    status.set("Verifying Recovery Key and preparing a root-anchored device authorization…".to_owned());
+                    status.set("Verifying Recovery Key and preparing a PCR-policy device recovery…".to_owned());
                     spawn(async move {
                         let result = recover_bound_principal_device(
                             &handoff,
@@ -1150,13 +1150,12 @@ async fn recover_bound_principal_device(
         replacement_device_id,
     )?;
     let api = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?;
-    if let Some(mut completed) =
-        crate::mls::account_recovery::resume_pending_root_anchored_recovery(
-            &api,
-            state_store,
-            recovery_words,
-        )
-        .await?
+    if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
+        &api,
+        state_store,
+        recovery_words,
+    )
+    .await?
     {
         let account =
             issue_recovery_completion_grant(handoff, &completed.transaction_id, state_store)
@@ -1192,7 +1191,7 @@ async fn recover_bound_principal_device(
             &arkret_models_crypto::RecoverySessionProofSubmitRequestBody { proof },
         )
         .await?;
-    let mut completed = crate::mls::account_recovery::execute_root_anchored_recovery(
+    let mut completed = crate::mls::account_recovery::execute_pcr_policy_recovery(
         &api,
         state_store,
         principal_id,

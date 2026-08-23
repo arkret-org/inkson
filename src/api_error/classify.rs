@@ -139,7 +139,7 @@ pub fn is_device_not_authorized_error(error: &anyhow::Error) -> bool {
 
 /// The create-once PCR race has already been won. The client must never
 /// author a second genesis; it switches the same Recovery Key and replacement
-/// device into the root-anchored re-anchor continuation.
+/// device into the PCR-policy re-anchor continuation.
 pub fn is_pcr_genesis_already_accepted_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         let reason = envelope

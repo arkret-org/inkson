@@ -39,8 +39,9 @@ or administrator approval is required.
 ## 4. Submit once and finish
 
 Inkson submits the identity-creation registration through the Bound handoff.
-The Account Authority verifies the account/holder/lease/root proof, publishes
-the DID operation, relays the exact two-Event PCR unit and returns:
+The Account Authority verifies the account/holder/lease/root proof, submits the
+already prepared DID operation through the standard DID endpoint, relays the
+exact two-Event PCR unit and returns:
 
 - an account binding receipt;
 - a PCR genesis receipt binding both accepted Events and the founding device;

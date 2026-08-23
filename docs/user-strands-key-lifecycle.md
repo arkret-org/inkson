@@ -44,11 +44,12 @@ PCR genesis 固定为两个有序 Event：
 - 已有可用设备添加新设备时，当前 accepted 设备签署授权；目标设备只证明持有
   自己的私钥。PCR 写入 `authorization_binding_kind=accepted_device` 的
   `ak.device.authorize`。
-- 所有旧设备都不可用时，用户以 Recovery Key 完成 DID root rotation，并在同一
+- 所有旧设备都不可用时，用户以 Recovery Key 满足已接受 recovery policy，并在同一
   security transaction 中提交 `ak.device.reanchor` 与 replacement
-  `ak.device.authorize`。终态 receipt 必须同时绑定 DID 版本、PCR 当前投影和新设备。
+  `ak.device.authorize`。该事务不发布 DID operation；终态 receipt 只绑定 PCR policy/session、
+  PCR 当前投影和新设备。
 - 如果首次账号注册/DID 创建后、PCR genesis 接受前设备物理损毁，换机后重新认证
-  同一账号并提供 Recovery Key；客户端恢复或重建公开 draft，走 root-anchored
+  同一账号并提供 Recovery Key；客户端恢复或重建公开 draft，走 PCR-policy
   create-once/re-anchor 路径。不得要求已经损毁的设备批准。
 - root recovery completion 后，仍然有效且绑定同一 DPoP holder 的 Account Handoff
   可凭终态 receipt 直接换取 Standard grant；不创建临时受限 grant，也不再次 OIDC。
@@ -69,7 +70,7 @@ conflicted 或证据不完整时，在同一次 durable mutation 中 quarantine 
 - DID 文档中没有账号权威、设备目录或业务授权条目；
 - 首次注册只需账号认证、Recovery Key custody confirmation 和首设备私钥持有证明；
 - PCR genesis 的两个 Event 不可拆分、替换键或修改任一摘要；
-- 新设备授权严格区分 `root_anchored` 与 `accepted_device` 两种证据；
+- 新设备授权严格区分 `pcr_recovery` 与 `accepted_device` 两种证据；
 - root recovery receipt、completion attestation、设备/generation 和 session DPoP
   任一不匹配都 fail closed；
 - 本地序列化状态中不存在助记词或任何派生私钥。

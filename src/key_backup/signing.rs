@@ -103,9 +103,7 @@ pub fn build_key_backup_unlock_proof(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("verified recovery session missing proof_summary"))?;
         let kind = match summary.kind {
-            arkret_sdk::RecoveryProofKind::PrincipalSigning => {
-                arkret_sdk::ProofKind::PrincipalSigning
-            }
+            arkret_sdk::RecoveryProofKind::DidRoot => arkret_sdk::ProofKind::PrincipalSigning,
             arkret_sdk::RecoveryProofKind::RecoveryUnlock => arkret_sdk::ProofKind::RecoveryUnlock,
             arkret_sdk::RecoveryProofKind::DeviceQuorum => arkret_sdk::ProofKind::DeviceQuorum,
             arkret_sdk::RecoveryProofKind::TrustedRecoveryService => {

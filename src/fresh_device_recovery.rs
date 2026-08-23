@@ -1,7 +1,7 @@
 //! Durable device-revocation security-rotation helpers.
 //!
-//! Fresh-device account recovery is root-anchored: the Recovery Key controls
-//! the DID rotation and the replacement device proves possession of its key.
+//! Fresh-device account recovery is authorized by the accepted PCR policy;
+//! the replacement device proves possession of its key in the closed unit.
 
 use arkret_models_crypto::{
     ClientStepAttestationArtifact, RecoveryBackupClassUnlocked, RecoveryProofSummary,
@@ -64,7 +64,6 @@ pub struct RecoveryReadinessEvidence {
     pub transaction_id: TransactionId,
     pub terminal_receipt_id: arkret_sdk::ReceiptId,
     pub authorization_event_id: EventId,
-    pub did_entry_ref: String,
 }
 
 pub struct RecoveryTerminalObservation {
@@ -79,7 +78,7 @@ pub struct RecoveryTerminalObservation {
     pub completed_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Sign the one client-authored terminal artifact for a root-anchored
+/// Sign the one client-authored terminal artifact for a PCR-policy
 /// recovery. All earlier steps are server continuations over a byte-identical
 /// durable plan.
 pub fn sign_terminal_receipt_continue(
@@ -94,11 +93,11 @@ pub fn sign_terminal_receipt_continue(
         anyhow::bail!("terminal receipt requires authoritative awaiting-device-attestation state");
     }
     let (
-        SecurityTransactionBinding::Recovery(RecoveryBinding::RootAnchored(binding)),
-        SecurityTransactionPreparedPlan::Recovery(RecoveryPreparedPlan::RootAnchored(plan)),
+        SecurityTransactionBinding::Recovery(RecoveryBinding::PcrPolicy(binding)),
+        SecurityTransactionPreparedPlan::Recovery(RecoveryPreparedPlan::PcrPolicy(plan)),
     ) = (&resource.binding, &resource.prepared_plan)
     else {
-        anyhow::bail!("terminal receipt requires a root-anchored recovery transaction");
+        anyhow::bail!("terminal receipt requires a PCR-policy recovery transaction");
     };
     if observation.policy_version == 0
         || observation.proof_summary.proof_digest != plan.proof_digest
@@ -127,7 +126,7 @@ pub fn sign_terminal_receipt_continue(
             policy_version: observation.policy_version,
             trust_domain: observation.trust_domain,
             new_device_id: binding.replacement_device_id.clone(),
-            identity_model: arkret_sdk::RecoveryIdentityModel::RootAnchored,
+            identity_model: arkret_sdk::RecoveryIdentityModel::PcrPolicy,
             previous_model_generation_ref: plan.previous_model_generation_ref,
             result_model_generation_ref: plan.result_model_generation_ref,
             authorization_event_id: binding.authorize_event_id.clone(),
@@ -136,7 +135,6 @@ pub fn sign_terminal_receipt_continue(
             reanchor_batch_receipt_id: Some(arkret_sdk::ReceiptId::new(
                 batch_receipt.output_ref.clone(),
             )?),
-            did_entry_ref: Some(binding.did_entry_ref.clone()),
             proof_summary: observation.proof_summary,
             backup_classes_unlocked: observation.backup_classes_unlocked,
             welcome_count: observation.welcome_count,

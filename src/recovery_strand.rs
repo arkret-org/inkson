@@ -407,7 +407,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         .map_err(|error| anyhow::anyhow!(error))?;
     let backup_hpke_ref = DidUrl::new(format!("{principal_id}#backup-hpke-0"))
         .map_err(|error| anyhow::anyhow!(error))?;
-    let principal_signing_ref =
+    let did_root_signing_ref =
         DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
     let policy_body = UnsignedRecoveryPolicyBody {
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
@@ -416,17 +416,17 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         supersedes: None,
         trust_domain: TrustDomainId::new(trust_domain.to_owned())?,
         allowed_proof_kinds: vec![
-            RecoveryProofKind::PrincipalSigning,
+            RecoveryProofKind::DidRoot,
             RecoveryProofKind::RecoveryUnlock,
         ],
         publication_authorization_rules: vec![
             RecoveryPublicationAuthorizationRule {
-                rule_id: "principal_signing".to_owned(),
-                proof_kind: RecoveryProofKind::PrincipalSigning,
+                rule_id: "did_root".to_owned(),
+                proof_kind: RecoveryProofKind::DidRoot,
                 issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
                 allowed_actions: vec![event_kind_str::DEVICE_REANCHOR.to_owned()],
                 issuers: vec![AuthoritySetIssuer {
-                    verification_method: principal_signing_ref,
+                    verification_method: did_root_signing_ref,
                 }],
                 threshold: 1,
             },

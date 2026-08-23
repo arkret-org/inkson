@@ -1,4 +1,4 @@
-//! Root-anchored fresh-device recovery.
+//! PCR-policy fresh-device recovery.
 //!
 //! Recovery is deliberately a closed two-event unit. The Recovery Key derives
 //! the current DID root and signs `ak.device.reanchor`; the replacement device
@@ -10,12 +10,11 @@ use arkret_models_collaboration::events_payloads::device_identity::{
     RecoveryAuthorityKind, UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
 };
 use arkret_wire::{
-    CanonicalPublicMaterial, EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash,
-    NonEmptyString, PreparedDidPublication, PreparedEventUnit, ReceiptId, RecoveryBinding,
+    EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash, NonEmptyString,
+    PcrPolicyRecoveryBinding, PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId, RecoveryBinding,
     RecoveryIdentityModel, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
-    RootAnchoredRecoveryBinding, RootAnchoredRecoveryPlan, SecurityTransaction,
-    SecurityTransactionBinding, SecurityTransactionCreateRequest, SecurityTransactionState,
-    SecurityTransactionStep, TransactionId,
+    SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
+    SecurityTransactionState, SecurityTransactionStep, TransactionId,
 };
 use dioxus::prelude::WritableExt as _;
 use zeroize::Zeroizing;
@@ -24,7 +23,7 @@ fn non_empty(value: String) -> anyhow::Result<NonEmptyString> {
     NonEmptyString::new(value).map_err(anyhow::Error::msg)
 }
 
-pub(crate) struct PreparedRootAnchoredRecovery {
+pub(crate) struct PreparedPcrPolicyRecovery {
     pub create_request: RecoveryTransactionCreateRequest,
     pub proof_summary: arkret_sdk::ProofSummary,
     pub recovery_private_key: Zeroizing<[u8; 32]>,
@@ -37,13 +36,13 @@ pub(crate) struct CompletedFreshDeviceRecovery {
     pub standard_grant_installed: bool,
 }
 
-pub(crate) async fn prepare_root_anchored_recovery(
+pub(crate) async fn prepare_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     principal_full_id: &arkret_sdk::DidFullId,
     session: &arkret_sdk::RecoverySessionState,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
-) -> anyhow::Result<PreparedRootAnchoredRecovery> {
+) -> anyhow::Result<PreparedPcrPolicyRecovery> {
     if proof_outcome.recovery_session_id != session.recovery_session_id
         || proof_outcome.state != arkret_sdk::SessionState::Verified
     {
@@ -59,11 +58,11 @@ pub(crate) async fn prepare_root_anchored_recovery(
         anyhow::bail!("selected recovery principal full_id does not match the verified session");
     }
     if verified_session.state != arkret_sdk::SessionState::Verified
-        || verified_session.identity_model != arkret_sdk::RecoveryIdentityModel::RootAnchored
+        || verified_session.identity_model != arkret_sdk::RecoveryIdentityModel::PcrPolicy
         || verified_session.recovery_session_id != session.recovery_session_id
         || verified_session.proof_summary != proof_outcome.proof_summary
     {
-        anyhow::bail!("recovery session is not the verified root-anchored snapshot");
+        anyhow::bail!("recovery session is not the verified PCR-policy snapshot");
     }
 
     let previous_device_generation = verified_session.current_device_generation_ref;
@@ -107,39 +106,21 @@ pub(crate) async fn prepare_root_anchored_recovery(
     {
         anyhow::bail!("DID history head changed after the recovery snapshot");
     }
-    let document = http
-        .identity_document(principal_full_id.as_str(), None)
-        .await?;
-    if document.head_event_digest.as_ref() != Some(&verified_session.registry_head) {
-        anyhow::bail!("DID document head changed after the recovery snapshot");
+    let active_update_keys = previous_entry
+        .pointer("/parameters/updateKeys")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("DID history head omits active update keys"))?;
+    if active_update_keys.as_slice()
+        != [serde_json::Value::String(
+            root_material.root_public_key_multikey.clone(),
+        )]
+    {
+        anyhow::bail!("recovery secret does not control the accepted DID history head");
     }
-    let document_state = serde_json::Value::Object(
-        document
-            .did_document
-            .clone()
-            .into_iter()
-            .collect::<serde_json::Map<_, _>>(),
+    let root_verification_method = format!(
+        "did:key:{key}#{key}",
+        key = root_material.root_public_key_multikey.as_str()
     );
-    let local_id = principal_full_id
-        .as_str()
-        .rsplit(':')
-        .next()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("principal did:webvh has no local id"))?;
-    let rotation = arkret_sdk::webvh::prepare_principal_rotation(
-        &arkret_sdk::webvh::PrincipalRotationInput {
-            did: principal_full_id.as_str(),
-            local_id,
-            previous_entries: &history.entries,
-            version_time: crate::clock::now_utc(),
-            current_root_seed: &root_material.root_seed,
-            next_root_public_key_multibase: &root_material.next_root_public_key_multikey,
-            state: &document_state,
-        },
-    )?;
-    if rotation.previous_version_id != previous_did_version {
-        anyhow::bail!("prepared DID rotation does not immediately follow the recovery snapshot");
-    }
 
     let submitter = api.event_submitter()?;
     let scope_ref = verified_session
@@ -223,7 +204,7 @@ pub(crate) async fn prepare_root_anchored_recovery(
     )?
     .with_prev_refs(frontier.frontier_event_ids)
     .with_ref(EventRef::new(
-        rotation.version_id.clone(),
+        previous_did_version.to_owned(),
         "did_recovery_anchor",
     ))
     .author_with_digest_suite(
@@ -233,17 +214,13 @@ pub(crate) async fn prepare_root_anchored_recovery(
         digest_suite,
     )?;
     let root_did = arkret_sdk::DidFullId::new(
-        rotation
-            .current_root_verification_method
+        root_verification_method
             .split_once('#')
-            .map_or(
-                rotation.current_root_verification_method.as_str(),
-                |(did, _)| did,
-            )
+            .map_or(root_verification_method.as_str(), |(did, _)| did)
             .to_owned(),
     )?;
-    let root_method = arkret_sdk::DidUrl::new(rotation.current_root_verification_method.clone())
-        .map_err(anyhow::Error::msg)?;
+    let root_method =
+        arkret_sdk::DidUrl::new(root_verification_method).map_err(anyhow::Error::msg)?;
     let root_signer = arkret_sdk::Ed25519PayloadSigner::from_did_key_seed(
         root_material.root_seed,
         root_did,
@@ -283,40 +260,19 @@ pub(crate) async fn prepare_root_anchored_recovery(
         ],
     };
 
-    let previous_entry_ref = format!(
-        "{}?versionId={}",
-        verified_session.principal_authority.principal_id, rotation.previous_version_id
-    );
-    let expected_entry_ref = format!(
-        "{}?versionId={}",
-        verified_session.principal_authority.principal_id, rotation.version_id
-    );
-    let did_entry = CanonicalPublicMaterial::canonical_json(rotation.log_entry)?;
     let coordinator_service_id = arkret_sdk::DidCoreId::new(submitter.service_id().await?)?;
-    let did_publication = PreparedDidPublication {
-        registry_service_id: coordinator_service_id.clone(),
-        registry_endpoint: http
-            .base_url()
-            .join("/_arkret/root/identity/submit-did-operation")?
-            .to_string(),
-        previous_entry_ref,
-        expected_entry_ref: expected_entry_ref.clone(),
-        canonical_entry_base64url: did_entry.canonical_bytes_base64url,
-        entry_digest: did_entry.digest,
-    };
     let proof_summary = verified_session
         .proof_summary
         .clone()
         .ok_or_else(|| anyhow::anyhow!("verified recovery session omitted proof summary"))?;
-    let plan = RootAnchoredRecoveryPlan {
-        identity_model: RecoveryIdentityModel::RootAnchored,
+    let plan = PcrPolicyRecoveryPlan {
+        identity_model: RecoveryIdentityModel::PcrPolicy,
         recovery_session_snapshot_digest: Hash::new(arkret_sdk::canonical::canonical_sha256(
             &verified_session,
         )?)?,
         proof_digest: proof_summary.proof_digest.clone(),
         previous_model_generation_ref: previous_device_generation,
         result_model_generation_ref: result_device_generation,
-        did_publication,
         reanchor_unit: PreparedEventUnit::new(
             coordinator_service_id,
             serde_json::to_value(reanchor_submission)?,
@@ -329,11 +285,10 @@ pub(crate) async fn prepare_root_anchored_recovery(
             verified_session.expires_at,
             crate::clock::now_utc() + chrono::Duration::hours(1),
         ),
-        RecoveryBinding::RootAnchored(RootAnchoredRecoveryBinding {
-            identity_model: RecoveryIdentityModel::RootAnchored,
+        RecoveryBinding::PcrPolicy(PcrPolicyRecoveryBinding {
+            identity_model: RecoveryIdentityModel::PcrPolicy,
             recovery_session_id: verified_session.recovery_session_id.clone(),
             replacement_device_id: verified_session.requesting_device_id.clone(),
-            did_entry_ref: expected_entry_ref,
             reanchor_event_id,
             authorize_event_id,
             terminal_receipt_id: ReceiptId::new(format!(
@@ -341,9 +296,9 @@ pub(crate) async fn prepare_root_anchored_recovery(
                 crate::operation::uuid_v7()
             ))?,
         }),
-        RecoveryPreparedPlan::RootAnchored(plan),
+        RecoveryPreparedPlan::PcrPolicy(plan),
     )?;
-    Ok(PreparedRootAnchoredRecovery {
+    Ok(PreparedPcrPolicyRecovery {
         create_request,
         proof_summary,
         recovery_private_key: Zeroizing::new(backup_material.backup_hpke_serialized_private_key),
@@ -440,7 +395,7 @@ fn reject_terminal_recovery_transaction(
     Ok(())
 }
 
-pub(crate) async fn execute_root_anchored_recovery(
+pub(crate) async fn execute_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
     principal_full_id: &arkret_sdk::DidFullId,
@@ -448,7 +403,7 @@ pub(crate) async fn execute_root_anchored_recovery(
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
 ) -> anyhow::Result<CompletedFreshDeviceRecovery> {
-    let prepared = prepare_root_anchored_recovery(
+    let prepared = prepare_pcr_policy_recovery(
         api,
         principal_full_id,
         session,
@@ -516,12 +471,7 @@ pub(crate) async fn execute_root_anchored_recovery(
         transaction = retried;
     }
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    while matches!(
-        transaction.next_required_step,
-        Some(
-            SecurityTransactionStep::PublishDidEntry | SecurityTransactionStep::SubmitReanchorUnit
-        )
-    ) {
+    while transaction.next_required_step == Some(SecurityTransactionStep::SubmitReanchorUnit) {
         transaction = workflow.continue_server_step(&transaction).await?;
     }
     if transaction.state != SecurityTransactionState::Completed {
@@ -555,10 +505,10 @@ pub(crate) async fn execute_root_anchored_recovery(
     if transaction.state != SecurityTransactionState::Completed {
         anyhow::bail!("recovery transaction did not reach completed state");
     }
-    let SecurityTransactionBinding::Recovery(RecoveryBinding::RootAnchored(binding)) =
+    let SecurityTransactionBinding::Recovery(RecoveryBinding::PcrPolicy(binding)) =
         &transaction.binding
     else {
-        anyhow::bail!("completed transaction lost its root-anchored binding");
+        anyhow::bail!("completed transaction lost its PCR-policy binding");
     };
     crate::security_transaction::clear_pending_fresh_device_recovery(secure_store.as_ref())?;
     Ok(CompletedFreshDeviceRecovery {
@@ -567,7 +517,6 @@ pub(crate) async fn execute_root_anchored_recovery(
             transaction_id: transaction.transaction_id,
             terminal_receipt_id: binding.terminal_receipt_id.clone(),
             authorization_event_id: binding.authorize_event_id.clone(),
-            did_entry_ref: binding.did_entry_ref.clone(),
         },
         standard_grant_installed: false,
     })
@@ -575,7 +524,7 @@ pub(crate) async fn execute_root_anchored_recovery(
 
 /// Resume the byte-identical durable request after reload or response loss.
 /// Recovery words are re-entered; they are never part of the persisted plan.
-pub(crate) async fn resume_pending_root_anchored_recovery(
+pub(crate) async fn resume_pending_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
     recovery_words: &str,
@@ -617,10 +566,10 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
         transaction = retried;
     }
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    let SecurityTransactionBinding::Recovery(RecoveryBinding::RootAnchored(binding)) =
+    let SecurityTransactionBinding::Recovery(RecoveryBinding::PcrPolicy(binding)) =
         &transaction.binding
     else {
-        anyhow::bail!("pending recovery lost its root-anchored binding");
+        anyhow::bail!("pending recovery lost its PCR-policy binding");
     };
     let session = api
         .recovery_session(binding.recovery_session_id.as_str())
@@ -663,12 +612,7 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
         drop(store);
         barrier.wait().await?;
     }
-    while matches!(
-        transaction.next_required_step,
-        Some(
-            SecurityTransactionStep::PublishDidEntry | SecurityTransactionStep::SubmitReanchorUnit
-        )
-    ) {
+    while transaction.next_required_step == Some(SecurityTransactionStep::SubmitReanchorUnit) {
         transaction = workflow.continue_server_step(&transaction).await?;
     }
     if transaction.state != SecurityTransactionState::Completed {
@@ -702,7 +646,7 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
     if transaction.state != SecurityTransactionState::Completed {
         anyhow::bail!("pending recovery did not reach completed state");
     }
-    let SecurityTransactionBinding::Recovery(RecoveryBinding::RootAnchored(binding)) =
+    let SecurityTransactionBinding::Recovery(RecoveryBinding::PcrPolicy(binding)) =
         &transaction.binding
     else {
         unreachable!("binding was checked above")
@@ -711,7 +655,6 @@ pub(crate) async fn resume_pending_root_anchored_recovery(
         transaction_id: transaction.transaction_id.clone(),
         terminal_receipt_id: binding.terminal_receipt_id.clone(),
         authorization_event_id: binding.authorize_event_id.clone(),
-        did_entry_ref: binding.did_entry_ref.clone(),
     };
     crate::security_transaction::clear_pending_fresh_device_recovery(secure_store.as_ref())?;
     Ok(Some(CompletedFreshDeviceRecovery {

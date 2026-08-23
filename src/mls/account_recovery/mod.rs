@@ -44,8 +44,7 @@ pub use backup_body::{
     open_mls_account_secret_recovery_public_key_backup,
 };
 pub(crate) use recovery_transaction::{
-    CompletedFreshDeviceRecovery, execute_root_anchored_recovery,
-    resume_pending_root_anchored_recovery,
+    CompletedFreshDeviceRecovery, execute_pcr_policy_recovery, resume_pending_pcr_policy_recovery,
 };
 pub use restore::{
     RestoreReport, auto_restore_mls_history_with_passphrase, fetch_mls_account_secret_backup,
