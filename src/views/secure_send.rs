@@ -26,9 +26,6 @@ use dioxus::prelude::*;
 
 use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 
-/// The structured MLS payload before minimal wire-envelope assembly.
-pub(crate) type LocalEncryptedMessage = arkret_sdk::EncryptedPayload;
-
 /// Result of the local MLS encrypt step.
 ///
 /// * `schedule_hash` — post-encrypt group key-schedule hash (B3d governance).
@@ -41,8 +38,8 @@ pub(crate) type LocalEncryptedMessage = arkret_sdk::EncryptedPayload;
 pub(crate) type LocalMlsEncryptResult = (
     Option<arkret_sdk::Hash>,
     Vec<arkret_sdk::DidCoreId>,
-    Option<LocalEncryptedMessage>,
-    Option<LocalEncryptedMessage>,
+    Option<arkret_sdk::EncryptedPayload>,
+    Option<arkret_sdk::EncryptedPayload>,
     Option<crate::mls::runtime::PreparedMlsCommit>,
     Option<crate::mls::persistence::MlsSnapshotEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
