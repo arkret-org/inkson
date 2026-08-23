@@ -595,36 +595,10 @@ fn sign_prepared_sidecar_event(
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
     let controller_actor = arkret_sdk::project_full_id_to_core_id(controller_id)?;
-    if draft.kind.as_str() != expected_kind {
-        anyhow::bail!(
-            "prepared Sidecar Event kind mismatch: expected {expected_kind}, got {}",
-            draft.kind.as_str()
-        );
-    }
-    let unsigned_bytes =
-        arkret_sdk::base64url_decode(draft.unsigned_event_bytes.as_str().as_bytes())
-            .map_err(|error| anyhow::anyhow!("invalid prepared Sidecar Event bytes: {error}"))?;
-    let mut digest_payload: Value = serde_json::from_slice(&unsigned_bytes)
-        .map_err(|error| anyhow::anyhow!("invalid prepared Sidecar Event payload: {error}"))?;
-    let canonical_bytes = arkret_sdk::canonical::canonical_json_bytes(&digest_payload)?;
-    if canonical_bytes != unsigned_bytes {
-        anyhow::bail!("prepared Sidecar Event bytes are not canonical JSON");
-    }
-    let object = digest_payload
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("prepared Sidecar Event payload is not an object"))?;
-    if object.contains_key("proofs")
-        || object.contains_key("unsigned")
-        || object.contains_key("actor_kind")
-    {
-        anyhow::bail!("prepared Sidecar Event payload contains a non-digest field");
-    }
-    object.insert("proofs".to_owned(), Value::Array(Vec::new()));
-    let event: arkret_sdk::Event = serde_json::from_value(digest_payload)
-        .map_err(|error| anyhow::anyhow!("invalid prepared Sidecar Event: {error}"))?;
+    let mut event = draft.unsigned_event()?;
     let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
-    if event.event_id != draft.event_id
-        || event.kind != draft.kind
+    if event.digest_suite() != digest_suite
+        || event.kind.as_str() != expected_kind
         || event.realm_id != *source_realm_id
         || event.actor_id != controller_actor
         || digest != draft.event_digest
@@ -634,11 +608,6 @@ fn sign_prepared_sidecar_event(
     {
         anyhow::bail!("prepared Sidecar Event metadata does not match its canonical bytes");
     }
-    // Authoring finished on the preparing side. Proving that here is what makes
-    // the reservation binding meaningful: signing must not be able to move the
-    // identity the server reserved.
-    let mut event =
-        arkret_sdk::AuthoredEvent::from_verified_with_digest_suite(event, digest_suite)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Sidecar commit"))?;
     let expected_verification_method =
@@ -783,16 +752,11 @@ async fn ensure_owned_agent_sidecar(
                             operation_id,
                             reservation_handle,
                             expires_at,
-                            sidecar_id,
-                            create_event_id,
-                            context_attach_event_id,
                             create_event_draft,
                             context_attach_event_draft,
                         } => {
                             if operation_id != ceremony_operation_id
                                 || expires_at <= crate::clock::now_utc()
-                                || create_event_id != create_event_draft.event_id
-                                || context_attach_event_id != context_attach_event_draft.event_id
                             {
                                 anyhow::bail!("new native Sidecar prepare returned inconsistent reservation bindings");
                             }
@@ -804,6 +768,9 @@ async fn ensure_owned_agent_sidecar(
                                 &ceremony_device,
                                 &ceremony_realm,
                             )?;
+                            let sidecar_id = arkret_sdk::SidecarId::from_event_id(
+                                create_event.event_id(),
+                            );
                             let context_attach_event = sign_prepared_sidecar_event(
                                 &context_attach_event_draft,
                                 source_digest_suite,
@@ -861,12 +828,10 @@ async fn ensure_owned_agent_sidecar(
                             reservation_handle,
                             expires_at,
                             sidecar_id,
-                            context_attach_event_id,
                             context_attach_event_draft,
                         } => {
                             if operation_id != ceremony_operation_id
                                 || expires_at <= crate::clock::now_utc()
-                                || context_attach_event_id != context_attach_event_draft.event_id
                             {
                                 anyhow::bail!("existing native Sidecar prepare returned inconsistent reservation bindings");
                             }

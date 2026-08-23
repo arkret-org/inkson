@@ -12,8 +12,8 @@ use arkret_wire::{
     BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan, BackupSeriesId,
     CanonicalPublicMaterial, DidCoreId, DidFullId, EventId, EventsSubmitBatchRequestBody, Hash,
     IssueRecoveryCompletionGrantOutcome, IssueRecoveryCompletionGrantRequest, PreparedEventUnit,
-    RecoveryBinding, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
-    SecurityRotationTransactionCreateRequest, SecurityTransaction, SecurityTransactionBinding,
+    RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
+    SecurityRotationTransactionCreateRequest, SecurityTransaction,
     SecurityTransactionCreateRequest, SecurityTransactionPreparedPlan, SecurityTransactionState,
     SecurityTransactionStep, TransactionId, UnsignedClientStepAttestation,
 };
@@ -88,17 +88,16 @@ pub fn sign_terminal_receipt_continue(
 ) -> anyhow::Result<SecurityTransactionContinueRequest> {
     resource.validate_structural()?;
     if resource.state != SecurityTransactionState::AwaitingDeviceAttestation
-        || resource.next_required_step != Some(SecurityTransactionStep::IssueTerminalReceipt)
+        || resource.next_required_step()? != Some(SecurityTransactionStep::IssueTerminalReceipt)
     {
         anyhow::bail!("terminal receipt requires authoritative awaiting-device-attestation state");
     }
-    let (
-        SecurityTransactionBinding::Recovery(RecoveryBinding::PcrPolicy(binding)),
-        SecurityTransactionPreparedPlan::Recovery(RecoveryPreparedPlan::PcrPolicy(plan)),
-    ) = (&resource.binding, &resource.prepared_plan)
+    let SecurityTransactionPreparedPlan::Recovery(RecoveryPreparedPlan::PcrPolicy(plan)) =
+        &resource.prepared_plan
     else {
         anyhow::bail!("terminal receipt requires a PCR-policy recovery transaction");
     };
+    let binding = &plan.binding;
     if observation.policy_version == 0
         || observation.proof_summary.proof_digest != plan.proof_digest
     {
@@ -106,8 +105,7 @@ pub fn sign_terminal_receipt_continue(
     }
     let batch_receipt = resource
         .accepted_steps
-        .iter()
-        .find(|step| step.step == SecurityTransactionStep::SubmitReanchorUnit)
+        .first()
         .ok_or_else(|| anyhow::anyhow!("accepted re-anchor unit is missing"))?;
     let signer_full_id = DidFullId::new(signer.signer_did().to_owned())?;
     if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != resource.principal_id {
@@ -174,7 +172,7 @@ pub fn sign_terminal_receipt_continue(
     Ok(SecurityTransactionContinueRequest {
         request_digest: resource.request_digest.clone(),
         prepared_plan_digest: resource.prepared_plan_digest.clone(),
-        expected_next_step: SecurityTransactionStep::IssueTerminalReceipt,
+        expected_accepted_step_count: resource.accepted_steps.len().try_into()?,
         client_attestation: Some(attestation),
     })
 }
@@ -217,7 +215,7 @@ where
         &self,
         transaction: &SecurityTransaction,
     ) -> garth::Result<SecurityTransaction> {
-        let step = transaction.next_required_step.ok_or_else(|| {
+        let step = transaction.next_required_step()?.ok_or_else(|| {
             garth::Error::Protocol("recovery transaction has no next step".to_owned())
         })?;
         if step == SecurityTransactionStep::IssueTerminalReceipt {
@@ -231,7 +229,15 @@ where
                 &SecurityTransactionContinueRequest {
                     request_digest: transaction.request_digest.clone(),
                     prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-                    expected_next_step: step,
+                    expected_accepted_step_count: transaction
+                        .accepted_steps
+                        .len()
+                        .try_into()
+                        .map_err(|_| {
+                            garth::Error::Protocol(
+                                "recovery transaction progress exceeds wire limit".to_owned(),
+                            )
+                        })?,
                     client_attestation: None,
                 },
             )
@@ -361,7 +367,6 @@ impl SecurityRotationDraft {
         self,
         coordinator_service_id: DidCoreId,
     ) -> anyhow::Result<SecurityRotationTransactionCreateRequest> {
-        let revoke_event_id = exactly_one_event_id(&self.revoke_submission, "revoke")?;
         let revoke_unit = PreparedEventUnit::new(
             coordinator_service_id.clone(),
             serde_json::to_value(&self.revoke_submission)?,
@@ -402,7 +407,6 @@ impl SecurityRotationDraft {
             self.transaction_id,
             self.principal_id,
             self.expires_at,
-            revoke_event_id,
             revoke_unit,
             self.new_secret_commitment,
             prepared,
@@ -465,7 +469,7 @@ where
         &self,
         transaction: &SecurityTransaction,
     ) -> garth::Result<SecurityTransaction> {
-        let step = transaction.next_required_step.ok_or_else(|| {
+        let step = transaction.next_required_step()?.ok_or_else(|| {
             garth::Error::Protocol("security rotation has no next server step".to_owned())
         })?;
         if matches!(
@@ -483,7 +487,15 @@ where
                 &SecurityTransactionContinueRequest {
                     request_digest: transaction.request_digest.clone(),
                     prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-                    expected_next_step: step,
+                    expected_accepted_step_count: transaction
+                        .accepted_steps
+                        .len()
+                        .try_into()
+                        .map_err(|_| {
+                            garth::Error::Protocol(
+                                "security rotation progress exceeds wire limit".to_owned(),
+                            )
+                        })?,
                     client_attestation: None,
                 },
             )

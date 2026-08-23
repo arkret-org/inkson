@@ -396,8 +396,6 @@ pub async fn author_pairing_request_body(
     let request = arkret_sdk::AccountDevicePairRequestBody {
         pairing_code,
         new_device_pubkey,
-        hpke_key: attestation.hpke_key.clone(),
-        device_signature: attestation.device_signature.clone(),
         challenge_proof,
         authorize_event,
         display_name,

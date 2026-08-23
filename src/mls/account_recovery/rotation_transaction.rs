@@ -5,7 +5,7 @@ use arkret_models_crypto::{BackupKind, BackupSeriesEraseRequestBody, BackupSerie
 use arkret_wire::{
     BackupObjectRef, BackupRotationKind, BackupSeriesId, Base64UrlString, DidFullId,
     EventsSubmitBatchRequestBody, Hash, LeaseBasisRef, RiskTier, SchemaId,
-    SecurityTransactionBinding, SecurityTransactionState, SecurityTransactionStep, TransactionId,
+    SecurityTransactionState, SecurityTransactionStep, TransactionId,
     UnsignedClientStepAttestation,
 };
 use base64::Engine as _;
@@ -396,7 +396,7 @@ async fn drive_security_rotation(
         });
     }
     while matches!(
-        transaction.next_required_step,
+        transaction.next_required_step()?,
         Some(
             SecurityTransactionStep::Revoke
                 | SecurityTransactionStep::UploadNewMaterial
@@ -408,12 +408,11 @@ async fn drive_security_rotation(
             .await
             .map_err(anyhow::Error::from)?;
     }
-    let SecurityTransactionBinding::SecurityRotation(binding) = transaction.binding.clone() else {
-        return Err(anyhow!(
-            "server returned a non-rotation transaction binding"
-        ));
-    };
-    if transaction.next_required_step == Some(SecurityTransactionStep::EraseOldMaterial) {
+    let plan = transaction
+        .security_rotation_plan()
+        .ok_or_else(|| anyhow!("server returned a non-rotation transaction plan"))?
+        .clone();
+    if transaction.next_required_step()? == Some(SecurityTransactionStep::EraseOldMaterial) {
         let digest_suite = state_store
             .read()
             .trusted_mls_governance_checkpoint(control_realm.as_str())
@@ -442,8 +441,12 @@ async fn drive_security_rotation(
             transaction_id: transaction.transaction_id.clone(),
             transaction_request_digest: transaction.request_digest.clone(),
             prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-            erase_confirmation_digest: binding.erase_confirmation_digest.clone(),
-            series: binding.backup_rotations.clone(),
+            erase_confirmation_digest: plan.erase_confirmation_digest.clone(),
+            series: plan
+                .backup_rotations
+                .iter()
+                .map(|rotation| rotation.binding.clone())
+                .collect(),
             authorization_lease: erase_lease,
             cba_proof_bundles: Vec::new(),
         };
@@ -468,7 +471,7 @@ async fn drive_security_rotation(
             .await
             .map_err(anyhow::Error::from)?;
     }
-    if transaction.next_required_step != Some(SecurityTransactionStep::LocalCommit) {
+    if transaction.next_required_step()? != Some(SecurityTransactionStep::LocalCommit) {
         return Err(anyhow!("security rotation did not reach local commit"));
     }
 
@@ -493,8 +496,8 @@ async fn drive_security_rotation(
         transaction_id: transaction.transaction_id.clone(),
         transaction_request_digest: transaction.request_digest.clone(),
         prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-        local_commit_digest: binding.local_commit_digest.clone(),
-        erase_confirmation_digest: binding.erase_confirmation_digest.clone(),
+        local_commit_digest: plan.local_commit_digest.clone(),
+        erase_confirmation_digest: plan.erase_confirmation_digest.clone(),
         device_id: arkret_sdk::DeviceId::new(current_device_id.to_owned())?,
         committed_at: crate::clock::now_utc(),
     };
@@ -506,7 +509,7 @@ async fn drive_security_rotation(
         .ok_or_else(|| anyhow!("active device signer is required for local commit"))?;
     let attestation = UnsignedClientStepAttestation::new(
         SecurityTransactionStep::LocalCommit,
-        binding.local_commit_digest.as_str().to_owned(),
+        plan.local_commit_digest.as_str().to_owned(),
         transaction.transaction_id.clone(),
         transaction.request_digest.clone(),
         transaction.prepared_plan_digest.clone(),
@@ -525,7 +528,7 @@ async fn drive_security_rotation(
             &arkret_models_crypto::SecurityTransactionContinueRequest {
                 request_digest: transaction.request_digest.clone(),
                 prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-                expected_next_step: SecurityTransactionStep::LocalCommit,
+                expected_accepted_step_count: transaction.accepted_steps.len().try_into()?,
                 client_attestation: Some(attestation),
             },
         )
@@ -538,10 +541,10 @@ async fn drive_security_rotation(
     Ok(CompletedSecurityRotation {
         transaction_id,
         new_secret_version: rotation.new_version,
-        replacement_backup_count: binding
+        replacement_backup_count: plan
             .backup_rotations
             .iter()
-            .map(|rotation| rotation.new_backups.len())
+            .map(|rotation| rotation.binding.new_backups.len())
             .sum(),
     })
 }
@@ -629,15 +632,13 @@ fn clear_pending_rotation(secure_store: &dyn SecureKeyStore, target_device_id: &
 }
 
 fn rotation_backup_count(transaction: &arkret_wire::SecurityTransaction) -> Result<usize> {
-    let SecurityTransactionBinding::SecurityRotation(binding) = &transaction.binding else {
-        return Err(anyhow!(
-            "server returned a non-rotation transaction binding"
-        ));
-    };
-    Ok(binding
+    let plan = transaction
+        .security_rotation_plan()
+        .ok_or_else(|| anyhow!("server returned a non-rotation transaction plan"))?;
+    Ok(plan
         .backup_rotations
         .iter()
-        .map(|rotation| rotation.new_backups.len())
+        .map(|rotation| rotation.binding.new_backups.len())
         .sum())
 }
 

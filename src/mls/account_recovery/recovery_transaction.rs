@@ -11,10 +11,10 @@ use arkret_models_collaboration::events_payloads::device_identity::{
 };
 use arkret_wire::{
     EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash, NonEmptyString,
-    PcrPolicyRecoveryBinding, PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId, RecoveryBinding,
+    PcrPolicyRecoveryBinding, PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId,
     RecoveryIdentityModel, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
-    SecurityTransaction, SecurityTransactionBinding, SecurityTransactionCreateRequest,
-    SecurityTransactionState, SecurityTransactionStep, TransactionId,
+    SecurityTransaction, SecurityTransactionCreateRequest, SecurityTransactionState,
+    SecurityTransactionStep, TransactionId,
 };
 use dioxus::prelude::WritableExt as _;
 use zeroize::Zeroizing;
@@ -266,7 +266,17 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("verified recovery session omitted proof summary"))?;
     let plan = PcrPolicyRecoveryPlan {
-        identity_model: RecoveryIdentityModel::PcrPolicy,
+        binding: PcrPolicyRecoveryBinding {
+            identity_model: RecoveryIdentityModel::PcrPolicy,
+            recovery_session_id: verified_session.recovery_session_id.clone(),
+            replacement_device_id: verified_session.requesting_device_id.clone(),
+            reanchor_event_id,
+            authorize_event_id,
+            terminal_receipt_id: ReceiptId::new(format!(
+                "ak:receipt:{}",
+                crate::operation::uuid_v7()
+            ))?,
+        },
         recovery_session_snapshot_digest: Hash::new(arkret_sdk::canonical::canonical_sha256(
             &verified_session,
         )?)?,
@@ -285,17 +295,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
             verified_session.expires_at,
             crate::clock::now_utc() + chrono::Duration::hours(1),
         ),
-        RecoveryBinding::PcrPolicy(PcrPolicyRecoveryBinding {
-            identity_model: RecoveryIdentityModel::PcrPolicy,
-            recovery_session_id: verified_session.recovery_session_id.clone(),
-            replacement_device_id: verified_session.requesting_device_id.clone(),
-            reanchor_event_id,
-            authorize_event_id,
-            terminal_receipt_id: ReceiptId::new(format!(
-                "ak:receipt:{}",
-                crate::operation::uuid_v7()
-            ))?,
-        }),
         RecoveryPreparedPlan::PcrPolicy(plan),
     )?;
     Ok(PreparedPcrPolicyRecovery {
@@ -471,7 +470,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
         transaction = retried;
     }
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    while transaction.next_required_step == Some(SecurityTransactionStep::SubmitReanchorUnit) {
+    while transaction.next_required_step()? == Some(SecurityTransactionStep::SubmitReanchorUnit) {
         transaction = workflow.continue_server_step(&transaction).await?;
     }
     if transaction.state != SecurityTransactionState::Completed {
@@ -505,18 +504,17 @@ pub(crate) async fn execute_pcr_policy_recovery(
     if transaction.state != SecurityTransactionState::Completed {
         anyhow::bail!("recovery transaction did not reach completed state");
     }
-    let SecurityTransactionBinding::Recovery(RecoveryBinding::PcrPolicy(binding)) =
-        &transaction.binding
-    else {
-        anyhow::bail!("completed transaction lost its PCR-policy binding");
-    };
+    let binding = transaction
+        .recovery_binding()
+        .ok_or_else(|| anyhow::anyhow!("completed transaction lost its PCR-policy binding"))?
+        .clone();
     crate::security_transaction::clear_pending_fresh_device_recovery(secure_store.as_ref())?;
     Ok(CompletedFreshDeviceRecovery {
         transaction_id,
         readiness: crate::fresh_device_recovery::RecoveryReadinessEvidence {
             transaction_id: transaction.transaction_id,
-            terminal_receipt_id: binding.terminal_receipt_id.clone(),
-            authorization_event_id: binding.authorize_event_id.clone(),
+            terminal_receipt_id: binding.terminal_receipt_id,
+            authorization_event_id: binding.authorize_event_id,
         },
         standard_grant_installed: false,
     })
@@ -566,11 +564,10 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         transaction = retried;
     }
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    let SecurityTransactionBinding::Recovery(RecoveryBinding::PcrPolicy(binding)) =
-        &transaction.binding
-    else {
-        anyhow::bail!("pending recovery lost its PCR-policy binding");
-    };
+    let binding = transaction
+        .recovery_binding()
+        .ok_or_else(|| anyhow::anyhow!("pending recovery lost its PCR-policy binding"))?
+        .clone();
     let session = api
         .recovery_session(binding.recovery_session_id.as_str())
         .await?;
@@ -612,7 +609,7 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         drop(store);
         barrier.wait().await?;
     }
-    while transaction.next_required_step == Some(SecurityTransactionStep::SubmitReanchorUnit) {
+    while transaction.next_required_step()? == Some(SecurityTransactionStep::SubmitReanchorUnit) {
         transaction = workflow.continue_server_step(&transaction).await?;
     }
     if transaction.state != SecurityTransactionState::Completed {
@@ -646,11 +643,9 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
     if transaction.state != SecurityTransactionState::Completed {
         anyhow::bail!("pending recovery did not reach completed state");
     }
-    let SecurityTransactionBinding::Recovery(RecoveryBinding::PcrPolicy(binding)) =
-        &transaction.binding
-    else {
-        unreachable!("binding was checked above")
-    };
+    let binding = transaction
+        .recovery_binding()
+        .expect("binding was checked above");
     let readiness = crate::fresh_device_recovery::RecoveryReadinessEvidence {
         transaction_id: transaction.transaction_id.clone(),
         terminal_receipt_id: binding.terminal_receipt_id.clone(),
