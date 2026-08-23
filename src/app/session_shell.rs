@@ -35,3 +35,47 @@ pub(super) fn SessionShell(
         {children}
     }
 }
+
+/// Keeps the auth/app-shell boundary as one stable component node while only
+/// mounting the active surface. The small conditional template here prevents
+/// either surface's internal RSX from changing the parent template shape.
+#[component]
+pub(super) fn SessionSurface(
+    is_app_shell: bool,
+    auth_shell: Element,
+    children: Element,
+) -> Element {
+    rsx! {
+        if is_app_shell {
+            {children}
+        } else {
+            {auth_shell}
+        }
+    }
+}
+
+/// Owns the complete mobile drawer template. Keeping the drawer root and its
+/// primary links in one component prevents surrounding shell reconciliation
+/// from moving those links outside the hidden navigation container.
+#[component]
+pub(super) fn MobileNavDrawer(
+    mobile_nav_open: Signal<bool>,
+    status: Element,
+    realm_tree: Element,
+) -> Element {
+    rsx! {
+        nav {
+            id: "mobile-navigation-drawer",
+            class: if mobile_nav_open() { "mobile-drawer open" } else { "mobile-drawer" },
+            "data-testid": "mobile-nav-drawer",
+            {status}
+            div { class: "mobile-primary-nav",
+                Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.dashboard")} }
+                Link { class: "secondary", "data-testid": "mobile-file-transfer-nav-button", to: Route::FileTransfer, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.files")} }
+                Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
+                Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
+            }
+            {realm_tree}
+        }
+    }
+}

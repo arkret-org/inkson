@@ -439,6 +439,23 @@ pub fn load_or_recover_device_key_with_secure_store(
     }
 }
 
+/// Load the grant-binding key from one explicit accepted account scope without
+/// consulting or changing the process-wide active scope.
+pub(crate) fn load_user_device_key_with_secure_store(
+    user_store: &crate::secure_key_store::UserLocalStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<Option<DpopHandle>, AuthDpopError> {
+    let Some(material) = user_store
+        .load_grant_binding_seed(secure_store)
+        .map_err(|error| {
+            AuthDpopError::SecureStore(format!("load account grant-binding seed: {error}"))
+        })?
+    else {
+        return Ok(None);
+    };
+    handle_and_record_from_seed(material.seed).map(|(handle, _)| Some(handle))
+}
+
 /// Read the DPoP holder for one pre-principal authentication transaction.
 ///
 /// The pending device id is the storage boundary until the authority returns
@@ -693,6 +710,28 @@ mod tests {
         .expect("pending holder");
 
         assert_eq!(recovered.jkt(), created.jkt());
+        assert!(crate::secure_key_store::active_device_seed_scope().is_none());
+    }
+
+    #[tokio::test]
+    async fn accepted_account_holder_load_does_not_depend_on_the_active_scope() {
+        let authority = test_authority("ak:did_core:web:accepted.example");
+        let device_id = test_device_id();
+        let _scope = DeviceSeedScopeTestGuard::replace(None);
+        let user_store =
+            crate::secure_key_store::UserLocalStore::new(authority, device_id).unwrap();
+        let secure = MemorySecureKeyStore::default();
+        let seed = [31_u8; 32];
+        user_store
+            .save_grant_binding_seed_b64url_durable(&secure, &URL_SAFE_NO_PAD.encode(seed))
+            .await
+            .unwrap();
+
+        let restored = load_user_device_key_with_secure_store(&user_store, &secure)
+            .unwrap()
+            .expect("accepted holder");
+
+        assert_eq!(restored.seed_b64().as_str(), URL_SAFE_NO_PAD.encode(seed));
         assert!(crate::secure_key_store::active_device_seed_scope().is_none());
     }
 

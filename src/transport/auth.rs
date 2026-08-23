@@ -166,7 +166,15 @@ where
     ensure_self_path_auth_material_ready().await?;
     let http = crate::identity::session_refresh::provide_authenticated_sdk_client(base_url)
         .await
-        .map_err(ApiCallError::Unavailable)?;
+        .map_err(|error| {
+            tracing::warn!(
+                target: "session_boot",
+                server_url = %base_url,
+                %error,
+                "authenticated transport initialization failed"
+            );
+            ApiCallError::Unavailable(error)
+        })?;
     let api = crate::transport::TransportClient::from_http(
         http,
         crate::transport::RequestContext::new(""),

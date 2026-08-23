@@ -113,7 +113,7 @@ use route_surface::{RouteSurface, RouteSurfaceState};
 use secure_store_effects::{SecureStoreEffectState, SecureStoreEffects};
 use session_boot::*;
 pub(crate) use session_context::SessionContext;
-use session_shell::SessionShell;
+use session_shell::{MobileNavDrawer, SessionShell, SessionSurface};
 use shell_effects::{ShellEffectState, ShellEffects};
 use sidebar::*;
 use sidebar_width::*;
@@ -1035,14 +1035,9 @@ fn AppBootstrap() -> Element {
             ""
         }
     );
-    // Unified single-root render: the auth surface (Restoring / Login /
-    // Callback) and the full app shell are rendered from ONE `rsx!` template
-    // below, branched by an inner `if/else`. Returning two *different* root
-    // templates from separate `return rsx!{…}` sites made Dioxus skip the
-    // root-template swap (the freshly-rendered AppShell tree was computed but
-    // never committed, leaving the stale auth-card DOM on screen — the
-    // invitee "stuck on Restoring session" bug). A single template with a
-    // dynamic if/else node reconciles reliably.
+    // The auth surface and app shell are mounted through one stable component
+    // boundary below. SessionSurface owns the small conditional template, so
+    // neither surface's internal RSX can alter this parent template's shape.
     let auth_class = format!(
         "auth-shell{}",
         if active_direction == TextDirection::Rtl {
@@ -1203,74 +1198,164 @@ fn AppBootstrap() -> Element {
     let mobile_connect_session = runtime_services.session.clone();
     let server_connect_session = runtime_services.session.clone();
     let manual_refresh_session = runtime_services.session.clone();
+    let mobile_status = rsx! {
+        div { class: "mobile-status", "data-testid": "mobile-connection-status",
+            span { "data-testid": "mobile-status-label", "{connection_status}" }
+            span { class: "muted mono", "data-testid": "mobile-sync-cursor", "cursor {sync_cursor}" }
+            Button {
+                variant: ButtonVariant::Primary,
+                "data-testid": "mobile-connect-button",
+                title: "Refresh server metadata and sync state",
+                "aria-label": "Refresh server metadata and sync state",
+                onclick: move |_| {
+                    sync_generation.set(sync_generation() + 1);
+                    sync_bootstrap_complete.set(false);
+                    connect(
+                        base_url(),
+                        principal_id(),
+                        device_id(),
+                        ConnectContext {
+                            session: mobile_connect_session.clone(),
+                            connection_status,
+                            sync_cursor,
+                            token,
+                            principal_id,
+                            device_id,
+                            selected_realm_id,
+                            realm_tree_nodes,
+                            projection_events,
+                            device_queue,
+                            frontier_state,
+                            crypto_state,
+                            config_store,
+                            state_store,
+                            network_state,
+                            last_error,
+                            server_description,
+                            server_probe_status,
+                            account_primary_handle,
+                            personal_handles,
+                            personal_handles_status,
+                            theme,
+                            sync_generation,
+                            needs_device_authorization,
+                            device_authorization_check_complete,
+                            account_has_other_devices,
+                            sync_bootstrap_complete,
+                            session_boot_state,
+                            did_cache,
+                            did_resolution_health,
+                        },
+                    )
+                },
+                "Refresh"
+            }
+        }
+    };
+    let mobile_realm_tree = rsx! {
+        if !loaded_realm_tree_nodes.is_empty() {
+            div { class: "muted", "{crate::i18n::tr(\"command_palette.realms\")} ({realm_tree.len()})" }
+            Input {
+                class: "mobile-realm-tree-filter",
+                "data-testid": "mobile-realm-tree-filter",
+                value: "{mobile_space_query}",
+                placeholder: crate::i18n::tr("mobile.filter_realms"),
+                oninput: move |event: FormEvent| mobile_space_query.set(event.value()),
+            }
+            div { class: "mobile-realm-tree-list", "data-testid": "mobile-realm-tree-list",
+                {
+                    let q = mobile_space_query();
+                    let q_lc = q.trim().to_lowercase();
+                    let filtered: Vec<_> = realm_tree
+                        .iter()
+                        .filter(|item| {
+                            q_lc.is_empty()
+                                || item.node.title.to_lowercase().contains(&q_lc)
+                                || item.node.id.to_lowercase().contains(&q_lc)
+                        })
+                        .collect();
+                    if filtered.is_empty() {
+                        rsx! {
+                            div { class: "muted", "data-testid": "mobile-realm-tree-empty", {crate::i18n::tr("mobile.no_match")} }
+                        }
+                    } else {
+                        rsx! {
+                            for item in filtered.iter() {
+                                Link {
+                                    class: "secondary",
+                                    "data-testid": "mobile-realm-tree-nav-button",
+                                    to: Route::Realm {
+                                        realm_id: item.node.projection_realm_id().to_owned()
+                                    },
+                                    onclick: {
+                                        let id = item.node.projection_realm_id().to_owned();
+                                        move |_| {
+                                            selected_realm_id.set(id.clone());
+                                            mobile_nav_open.set(false);
+                                            mobile_space_query.set(String::new());
+                                        }
+                                    },
+                                    "{item.node.title}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
 
     rsx! {
-        SessionShell {
-            locale,
-            i18n_signal,
-            base_url,
-            token,
-            state_store,
-            connection_status,
-            last_error,
-            session_boot_state,
-            is_server_admin,
-            theme,
-            system_theme_is_night,
-            ConnectionEffects {
-                state: ConnectionEffectState {
-                    connection_status,
-                    sync_cursor,
-                    token,
-                    principal_id,
-                    device_id,
-                    selected_realm_id,
-                    realm_tree_nodes,
-                    projection_events,
-                    device_queue,
-                    frontier_state,
-                    crypto_state,
-                    config_store,
-                    network_state,
-                    last_error,
-                    server_description,
-                    server_probe_status,
-                    account_primary_handle,
-                    personal_handles,
-                    personal_handles_status,
-                    theme,
-                    sync_generation,
-                    needs_device_authorization,
-                    device_authorization_check_complete,
-                    account_has_other_devices,
-                    sync_bootstrap_complete,
-                    session_boot_state,
-                    secure_store_bootstrap_ready,
-                    session_generation,
-                    did_resolution_health,
-                    bootstrap_pending,
-                }
-            }
-            AccountRecoveryEffects {
-                account_recovery_configured,
-                account_recovery_detection_key_seen,
+            SessionShell {
+                locale,
+                i18n_signal,
+                base_url,
+                token,
+                state_store,
+                connection_status,
                 last_error,
-                token,
-                principal_id,
-                device_id,
-                sync_generation,
                 session_boot_state,
-                on_onboarding_route: matches!(&content_route, Route::Onboarding),
-            }
-            MlsRecoveryEffects {
-                state: MlsRecoveryEffectState {
-                    mls_unlock_detection_key_seen,
-                    needs_mls_unlock,
-                    needs_mls_backup,
-                    needs_mls_recovery_setup,
-                    mls_restore_payload_cache,
-                    secure_store_bootstrap_ready,
+                is_server_admin,
+                theme,
+                system_theme_is_night,
+                ConnectionEffects {
+                    state: ConnectionEffectState {
+                        connection_status,
+                        sync_cursor,
+                        token,
+                        principal_id,
+                        device_id,
+                        selected_realm_id,
+                        realm_tree_nodes,
+                        projection_events,
+                        device_queue,
+                        frontier_state,
+                        crypto_state,
+                        config_store,
+                        network_state,
+                        last_error,
+                        server_description,
+                        server_probe_status,
+                        account_primary_handle,
+                        personal_handles,
+                        personal_handles_status,
+                        theme,
+                        sync_generation,
+                        needs_device_authorization,
+                        device_authorization_check_complete,
+                        account_has_other_devices,
+                        sync_bootstrap_complete,
+                        session_boot_state,
+                        secure_store_bootstrap_ready,
+                        session_generation,
+                        did_resolution_health,
+                        bootstrap_pending,
+                    }
+                }
+                AccountRecoveryEffects {
                     account_recovery_configured,
+                    account_recovery_detection_key_seen,
+                    last_error,
                     token,
                     principal_id,
                     device_id,
@@ -1278,577 +1363,454 @@ fn AppBootstrap() -> Element {
                     session_boot_state,
                     on_onboarding_route: matches!(&content_route, Route::Onboarding),
                 }
-            }
-            RecoveryReminderEffects {
-                state: RecoveryReminderEffectState {
-                    recovery_key_setup_prompt,
-                    recovery_auto_prompt_fired,
-                    token,
-                    principal_id,
-                    sync_bootstrap_complete,
-                    secure_store_bootstrap_ready,
-                    on_onboarding_route: matches!(&content_route, Route::Onboarding),
-                    device_authorization_check_complete,
-                    account_recovery_configured,
-                    needs_device_authorization,
-                    needs_mls_unlock,
-                    needs_mls_backup,
-                    needs_mls_recovery_setup,
-                    account_has_other_devices,
+                MlsRecoveryEffects {
+                    state: MlsRecoveryEffectState {
+                        mls_unlock_detection_key_seen,
+                        needs_mls_unlock,
+                        needs_mls_backup,
+                        needs_mls_recovery_setup,
+                        mls_restore_payload_cache,
+                        secure_store_bootstrap_ready,
+                        account_recovery_configured,
+                        token,
+                        principal_id,
+                        device_id,
+                        sync_generation,
+                        session_boot_state,
+                        on_onboarding_route: matches!(&content_route, Route::Onboarding),
+                    }
                 }
-            }
-            MlsRuntimeEffects {
-                state: MlsRuntimeEffectState {
-                    route_uses_realm_context,
-                    context_realm_id: context_realm_id.clone(),
-                    mls_key_package_publish_key_seen,
-                    secure_store_bootstrap_ready,
-                    device_authorization_check_complete,
-                    needs_device_authorization,
+                RecoveryReminderEffects {
+                    state: RecoveryReminderEffectState {
+                        recovery_key_setup_prompt,
+                        recovery_auto_prompt_fired,
+                        token,
+                        principal_id,
+                        sync_bootstrap_complete,
+                        secure_store_bootstrap_ready,
+                        on_onboarding_route: matches!(&content_route, Route::Onboarding),
+                        device_authorization_check_complete,
+                        account_recovery_configured,
+                        needs_device_authorization,
+                        needs_mls_unlock,
+                        needs_mls_backup,
+                        needs_mls_recovery_setup,
+                        account_has_other_devices,
+                    }
+                }
+                MlsRuntimeEffects {
+                    state: MlsRuntimeEffectState {
+                        route_uses_realm_context,
+                        context_realm_id: context_realm_id.clone(),
+                        mls_key_package_publish_key_seen,
+                        secure_store_bootstrap_ready,
+                        device_authorization_check_complete,
+                        needs_device_authorization,
+                        token,
+                        principal_id,
+                        device_id,
+                        server_description,
+                        sync_bootstrap_complete,
+                        sync_cursor,
+                        realm_live_epoch,
+                        mls_admission_reconcile_in_flight,
+                        mls_admission_reconcile_pending,
+                        last_error,
+                        mls_admission_diag_last,
+                        realm_events_route_enabled,
+                        selected_realm_id,
+                        device_queue,
+                        mls_welcome_bootstrap_key_seen,
+                        crypto_state,
+                        needs_mls_backup,
+                    }
+                }
+                ShellEffects {
+                    state: ShellEffectState {
+                        account_primary_handle,
+                        principal_id,
+                        token,
+                        server_description,
+                        personal_handles,
+                        personal_handles_status,
+                        personal_handles_lookup_key,
+                        device_id,
+                        current_account_display_name,
+                        current_account_avatar_blob_ref,
+                        current_device_display_name,
+                        account_identity_lookup_key,
+                        contact_handles_lookup_key,
+                        contact_handles_fetching,
+                        direct_contact_rows,
+                    }
+                }
+                SecureStoreEffects {
+                    state: SecureStoreEffectState {
+                        config_store,
+                        principal_id,
+                        device_id,
+                        secure_store_bootstrap_ready,
+                        token,
+                    }
+                }
+                SidecarFoldEvidenceEffects {
+                    state: SidecarFoldEvidenceEffectState { principal_id }
+                }
+                SyncEffects {
+                    sync_generation,
+                    sync_engine_active_generation,
+                    realm_events_engine_active_key,
+                    signal_receive_engine_active_generation,
+                    websocket_rail_active_generation,
+                    sync_bootstrap_complete,
                     token,
                     principal_id,
                     device_id,
-                    server_description,
-                    sync_bootstrap_complete,
-                    sync_cursor,
-                    realm_live_epoch,
-                    mls_admission_reconcile_in_flight,
-                    mls_admission_reconcile_pending,
-                    last_error,
-                    mls_admission_diag_last,
-                    realm_events_route_enabled,
                     selected_realm_id,
-                    device_queue,
-                    mls_welcome_bootstrap_key_seen,
-                    crypto_state,
-                    needs_mls_backup,
+                    realm_events_route_enabled,
+                    realm_live_epoch,
+                    profiles: profiles_signal,
                 }
-            }
-            ShellEffects {
-                state: ShellEffectState {
+                style { "{DXC_THEME}" }
+                style { "{DXC_BUTTON_STYLE}" }
+                style { "{STYLE}" }
+                style { "{DESIGN_STYLE}" }
+                style { "{APP_OVERRIDES}" }
+                document::Title { "{document_title}" }
+                SessionSurface {
+                    is_app_shell: matches!(auth_surface, AuthSurface::AppShell),
+                    auth_shell: auth_shell_node,
+                        style { "html, body, #main {{ height: 100%; overflow: hidden; }}" }
+                        div {
+                class: shell_class,
+                style: "{sidebar_style}",
+                "dir": direction_attr,
+                "lang": locale_attr,
+                "data-direction": direction_attr,
+                "data-locale": locale_attr,
+                "data-theme": theme_attr,
+                "data-testid": "client-shell",
+                tabindex: "-1",
+                onclick: move |_| {
+                    if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                        palette_open.set(false);
+                        topbar_search_expanded.set(false);
+                        global_query.set(String::new());
+                    }
+                },
+                onmousemove: move |event| {
+                    if sidebar_resizing() && !sidebar_collapsed() {
+                        let next_width = clamp_sidebar_width(event.client_coordinates().x);
+                        sidebar_width.set(next_width);
+                    }
+                },
+                onmouseup: move |_| {
+                    if sidebar_resizing() {
+                        let mut store = state_store.write();
+                        save_sidebar_width_preference(&mut store, sidebar_width());
+                    }
+                    sidebar_resizing.set(false);
+                },
+                onmouseleave: move |_| {
+                    if sidebar_resizing() {
+                        let mut store = state_store.write();
+                        save_sidebar_width_preference(&mut store, sidebar_width());
+                    }
+                    sidebar_resizing.set(false);
+                },
+                // Unified feedback (docs/design/unified-feedback-system.md
+                // Wave 0). AppBanner: single-slot persistent banner; the
+                // offline condition is derived from the sync engine's
+                // network state ("offline"/"reconnecting"/"online") and
+                // gated on an active session so the pre-connect boot frame
+                // does not flash the banner.
+                crate::components::AppBanner {
+                    offline: !token().is_empty() && network_state() == "offline",
+                }
+                // ToastHost: stacked transient toasts. Drains the generic
+                // toast queue plus the policy-deny queue (fed by
+                // `api_error::decode_arkret_error`'s policy-deny dispatch,
+                // G3.Y3) and the AKP-0007 circle-error queue (fed by
+                // `maybe_dispatch_circle_error`), so any 403 / Circle error
+                // is surfaced without each call site wiring its own UI.
+                crate::components::ToastHost {}
+                crate::components::DidResolutionHealthBanner { health: did_resolution_health }
+                Outlet::<Route> {}
+                if active_prompt == AccountHealthPrompt::DeviceAuthorization {
+                    crate::components::DeviceAuthorizationPrompt {
+                        needs_device_authorization,
+                    }
+                }
+                // device-lifecycle.md §2.1/§7 — surface an incoming same-principal
+                // pairing request on this (authorized) device so the user can
+                // compare the pairing code and approve/reject without navigating to
+                // the devices settings page.
+                crate::components::DevicePairApprovalPrompt {
+                    token,
+                    device_id,
+                }
+                crate::components::AgentRuntimeApprovalPrompt {
+                    token,
+                    principal_id,
+                }
+                if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
+                    && !recovery_key_setup_prompt()
+                    && !encryption_floor_prompt_dismissed()
+                    && !encryption_floor_prompt_acknowledged
+                {
+                    crate::components::EncryptionFloorPrompt {
+                        token,
+                        principal_id,
+                        sync_bootstrap_complete,
+                        device_authorization_check_complete,
+                        needs_device_authorization,
+                        needs_mls_unlock,
+                        needs_mls_backup,
+                        recovery_key_setup_prompt,
+                        account_recovery_configured,
+                        dismissed: encryption_floor_prompt_dismissed,
+                    }
+                }
+                crate::components::RecoveryKeySetupPrompt {
+                    token,
+                    principal_id,
+                    device_id,
+                    open: recovery_key_setup_prompt,
                     account_primary_handle,
-                    principal_id,
-                    token,
-                    server_description,
-                    personal_handles,
-                    personal_handles_status,
-                    personal_handles_lookup_key,
-                    device_id,
-                    current_account_display_name,
-                    current_account_avatar_blob_ref,
-                    current_device_display_name,
-                    account_identity_lookup_key,
-                    contact_handles_lookup_key,
-                    contact_handles_fetching,
-                    direct_contact_rows,
+                    on_server_configured: move |_| account_recovery_configured.set(Some(true)),
                 }
-            }
-            SecureStoreEffects {
-                state: SecureStoreEffectState {
-                    config_store,
-                    principal_id,
-                    device_id,
-                    secure_store_bootstrap_ready,
-                    token,
-                }
-            }
-            SidecarFoldEvidenceEffects {
-                state: SidecarFoldEvidenceEffectState { principal_id }
-            }
-            SyncEffects {
-                sync_generation,
-                sync_engine_active_generation,
-                realm_events_engine_active_key,
-                signal_receive_engine_active_generation,
-                websocket_rail_active_generation,
-                sync_bootstrap_complete,
-                token,
-                principal_id,
-                device_id,
-                selected_realm_id,
-                realm_events_route_enabled,
-                realm_live_epoch,
-                profiles: profiles_signal,
-            }
-            style { "{DXC_THEME}" }
-            style { "{DXC_BUTTON_STYLE}" }
-            style { "{STYLE}" }
-            style { "{DESIGN_STYLE}" }
-            style { "{APP_OVERRIDES}" }
-            document::Title { "{document_title}" }
-            if matches!(auth_surface, AuthSurface::AppShell) {
-        style { "html, body, #main {{ height: 100%; overflow: hidden; }}" }
-        div {
-            class: shell_class,
-            style: "{sidebar_style}",
-            "dir": direction_attr,
-            "lang": locale_attr,
-            "data-direction": direction_attr,
-            "data-locale": locale_attr,
-            "data-theme": theme_attr,
-            "data-testid": "client-shell",
-            tabindex: "-1",
-            onclick: move |_| {
-                if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
-                    palette_open.set(false);
-                    topbar_search_expanded.set(false);
-                    global_query.set(String::new());
-                }
-            },
-            onmousemove: move |event| {
-                if sidebar_resizing() && !sidebar_collapsed() {
-                    let next_width = clamp_sidebar_width(event.client_coordinates().x);
-                    sidebar_width.set(next_width);
-                }
-            },
-            onmouseup: move |_| {
-                if sidebar_resizing() {
-                    let mut store = state_store.write();
-                    save_sidebar_width_preference(&mut store, sidebar_width());
-                }
-                sidebar_resizing.set(false);
-            },
-            onmouseleave: move |_| {
-                if sidebar_resizing() {
-                    let mut store = state_store.write();
-                    save_sidebar_width_preference(&mut store, sidebar_width());
-                }
-                sidebar_resizing.set(false);
-            },
-            // Unified feedback (docs/design/unified-feedback-system.md
-            // Wave 0). AppBanner: single-slot persistent banner; the
-            // offline condition is derived from the sync engine's
-            // network state ("offline"/"reconnecting"/"online") and
-            // gated on an active session so the pre-connect boot frame
-            // does not flash the banner.
-            crate::components::AppBanner {
-                offline: !token().is_empty() && network_state() == "offline",
-            }
-            // ToastHost: stacked transient toasts. Drains the generic
-            // toast queue plus the policy-deny queue (fed by
-            // `api_error::decode_arkret_error`'s policy-deny dispatch,
-            // G3.Y3) and the AKP-0007 circle-error queue (fed by
-            // `maybe_dispatch_circle_error`), so any 403 / Circle error
-            // is surfaced without each call site wiring its own UI.
-            crate::components::ToastHost {}
-            crate::components::DidResolutionHealthBanner { health: did_resolution_health }
-            Outlet::<Route> {}
-            if active_prompt == AccountHealthPrompt::DeviceAuthorization {
-                crate::components::DeviceAuthorizationPrompt {
-                    needs_device_authorization,
-                }
-            }
-            // device-lifecycle.md §2.1/§7 — surface an incoming same-principal
-            // pairing request on this (authorized) device so the user can
-            // compare the pairing code and approve/reject without navigating to
-            // the devices settings page.
-            crate::components::DevicePairApprovalPrompt {
-                token,
-                device_id,
-            }
-            crate::components::AgentRuntimeApprovalPrompt {
-                token,
-                principal_id,
-            }
-            if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
-                && !recovery_key_setup_prompt()
-                && !encryption_floor_prompt_dismissed()
-                && !encryption_floor_prompt_acknowledged
-            {
-                crate::components::EncryptionFloorPrompt {
-                    token,
-                    principal_id,
-                    sync_bootstrap_complete,
-                    device_authorization_check_complete,
-                    needs_device_authorization,
-                    needs_mls_unlock,
-                    needs_mls_backup,
-                    recovery_key_setup_prompt,
-                    account_recovery_configured,
-                    dismissed: encryption_floor_prompt_dismissed,
-                }
-            }
-            crate::components::RecoveryKeySetupPrompt {
-                token,
-                principal_id,
-                device_id,
-                open: recovery_key_setup_prompt,
-                account_primary_handle,
-                on_server_configured: move |_| account_recovery_configured.set(Some(true)),
-            }
-            if show_recovery_setup_prompt {
-                div {
-                    class: "event recovery-setup-banner",
-                    "data-testid": "recovery-setup-banner",
-                    role: "region",
-                    "aria-label": "Recovery setup is incomplete",
-                    div { class: "event-head",
-                        strong { "Recovery setup is incomplete" }
-                        span { class: "muted", "first-time setup" }
-                    }
-                    div { class: "muted",
-                        "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Arkret cannot recover the 24 words for you."
-                    }
-                    div { class: "actions",
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            "data-testid": "recovery-setup-open-recovery",
-                            onclick: move |_| recovery_key_setup_prompt.set(true),
-                            UiIcon { name: "key" }
-                            "Configure recovery"
+                if show_recovery_setup_prompt {
+                    div {
+                        class: "event recovery-setup-banner",
+                        "data-testid": "recovery-setup-banner",
+                        role: "region",
+                        "aria-label": "Recovery setup is incomplete",
+                        div { class: "event-head",
+                            strong { "Recovery setup is incomplete" }
+                            span { class: "muted", "first-time setup" }
                         }
-                        Link {
-                            class: "secondary",
-                            "data-testid": "recovery-setup-open-encryption",
-                            to: Route::SettingsSection {
-                                section: "encryption".to_owned(),
-                                filter: String::new(),
-                            },
-                            UiIcon { name: "lock" }
-                            "Encrypted history status"
+                        div { class: "muted",
+                            "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Arkret cannot recover the 24 words for you."
+                        }
+                        div { class: "actions",
+                            Button {
+                                variant: ButtonVariant::Primary,
+                                "data-testid": "recovery-setup-open-recovery",
+                                onclick: move |_| recovery_key_setup_prompt.set(true),
+                                UiIcon { name: "key" }
+                                "Configure recovery"
+                            }
+                            Link {
+                                class: "secondary",
+                                "data-testid": "recovery-setup-open-encryption",
+                                to: Route::SettingsSection {
+                                    section: "encryption".to_owned(),
+                                    filter: String::new(),
+                                },
+                                UiIcon { name: "lock" }
+                                "Encrypted history status"
+                            }
+                        }
+                        div { class: "muted",
+                            "Encrypted-history recovery needs an account MLS secret; if this is a brand-new account, the app will prompt again after your first encrypted write creates material that can be backed up."
                         }
                     }
-                    div { class: "muted",
-                        "Encrypted-history recovery needs an account MLS secret; if this is a brand-new account, the app will prompt again after your first encrypted write creates material that can be backed up."
+                }
+                // Fresh-device diagnostic: encrypted history exists, but no
+                // passphrase-backed account-secret backup is available to unlock
+                // on this browser.
+                if active_prompt == AccountHealthPrompt::RecoverySetupMissing
+                    && !recovery_key_setup_prompt()
+                {
+                    crate::components::MlsRecoverySetupMissingBanner {
+                        needs_mls_recovery_setup,
+                        actor_id: principal_id,
                     }
                 }
-            }
-            // Fresh-device diagnostic: encrypted history exists, but no
-            // passphrase-backed account-secret backup is available to unlock
-            // on this browser.
-            if active_prompt == AccountHealthPrompt::RecoverySetupMissing
-                && !recovery_key_setup_prompt()
-            {
-                crate::components::MlsRecoverySetupMissingBanner {
-                    needs_mls_recovery_setup,
-                    actor_id: principal_id,
-                }
-            }
-            // Step 3 of the account-MLS-secret auto-unlock strand: a
-            // recovery-passphrase banner that restores encrypted history on
-            // a fresh device. Renders nothing unless boot detection flagged
-            // `needs_mls_unlock`.
-            if active_prompt == AccountHealthPrompt::MlsUnlock
-                && !recovery_key_setup_prompt()
-            {
-                crate::components::MlsUnlockPrompt {
-                    token,
-                    actor_id: principal_id,
-                    device_id,
-                    needs_mls_unlock,
-                    restore_payload_cache: mls_restore_payload_cache,
-                }
-            }
-            // Task X3 — one-time account-secret BACKUP prompt (mirror of the
-            // unlock banner). Renders nothing unless detection flagged
-            // `needs_mls_backup` (local secret exists, no server backup yet).
-            if active_prompt == AccountHealthPrompt::MlsBackup
-                && !recovery_key_setup_prompt()
-            {
-                crate::components::MlsBackupPrompt {
-                    token,
-                    actor_id: principal_id,
-                    device_id,
-                    needs_mls_backup,
-                    account_recovery_configured,
-                    account_primary_handle,
-                }
-            }
-            div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
-                    class: "btn icon",
-                    "data-testid": "mobile-nav-toggle",
-                    title: if mobile_nav_open() { "Close menu" } else { "Open menu" },
-                    "aria-label": if mobile_nav_open() { "Close menu" } else { "Open menu" },
-                    "aria-controls": "mobile-navigation-drawer",
-                    "aria-expanded": "{mobile_nav_open()}",
-                    onclick: move |_| mobile_nav_open.toggle(),
-                    if mobile_nav_open() {
-                        UiIcon { name: "x" }
-                    } else {
-                        UiIcon { name: "menu" }
+                // Step 3 of the account-MLS-secret auto-unlock strand: a
+                // recovery-passphrase banner that restores encrypted history on
+                // a fresh device. Renders nothing unless boot detection flagged
+                // `needs_mls_unlock`.
+                if active_prompt == AccountHealthPrompt::MlsUnlock
+                    && !recovery_key_setup_prompt()
+                {
+                    crate::components::MlsUnlockPrompt {
+                        token,
+                        actor_id: principal_id,
+                        device_id,
+                        needs_mls_unlock,
+                        restore_payload_cache: mls_restore_payload_cache,
                     }
                 }
-                div { class: "brand", "Arkret" }
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
-                    class: "btn icon",
-                    "data-testid": "mobile-theme-toggle",
-                    title: "{theme_toggle_title}",
-                    "aria-label": "{theme_toggle_title}",
-                    onclick: move |_| {
-                        let current_theme = theme();
-                        let next = next_manual_theme(&current_theme);
-                        theme.set(next.clone());
-                        state_store.write().save_private_data(&principal_id(), "theme", next.clone());
-                        // A4a — best-effort cross-device sync via
-                        // `ak.account_data.set(ak.client.ui_state)`.
-                        crate::views::settings::push_client_ui_account_data(
-                            base_url(),
-                            token(),
-                            next,
-                        );
-                    },
-                    UiIcon { name: theme_toggle_icon }
-                }
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
-                    r#type: "button",
-                    class: "btn icon",
-                    "data-testid": "mobile-shortcuts-button",
-                    title: crate::i18n::tr("shortcuts.title"),
-                    "aria-label": crate::i18n::tr("shortcuts.title"),
-                    onclick: move |event: dioxus::events::MouseEvent| {
-                        event.stop_propagation();
-                        mobile_nav_open.set(false);
-                        shortcut_help_open.set(true);
-                    },
-                    UiIcon { name: "keyboard" }
-                }
-                Button {
-                    variant: ButtonVariant::Ghost,
-                    size: ButtonSize::Sm,
-                    r#type: "button",
-                    class: if notifications_drawer_open() { "btn icon topbar-notifications-link is-active" } else { "btn icon topbar-notifications-link" },
-                    "data-testid": "mobile-topbar-notifications-button",
-                    title: "Notifications",
-                    "aria-label": "Notifications",
-                    "aria-expanded": "{notifications_drawer_open()}",
-                    onclick: move |event: dioxus::events::MouseEvent| {
-                        event.stop_propagation();
-                        mobile_nav_open.set(false);
-                        account_menu_open.set(false);
-                        server_menu_open.set(false);
-                        if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
-                            palette_open.set(false);
-                            topbar_search_expanded.set(false);
-                            global_query.set(String::new());
-                        }
-                        notifications_drawer_open.toggle();
-                    },
-                    UiIcon { name: "bell" }
-                    if has_topbar_unread_notifications {
-                        span { class: "topbar-notifications-badge", "aria-hidden": "true" }
+                // Task X3 — one-time account-secret BACKUP prompt (mirror of the
+                // unlock banner). Renders nothing unless detection flagged
+                // `needs_mls_backup` (local secret exists, no server backup yet).
+                if active_prompt == AccountHealthPrompt::MlsBackup
+                    && !recovery_key_setup_prompt()
+                {
+                    crate::components::MlsBackupPrompt {
+                        token,
+                        actor_id: principal_id,
+                        device_id,
+                        needs_mls_backup,
+                        account_recovery_configured,
+                        account_primary_handle,
                     }
                 }
-            }
-            nav {
-                id: "mobile-navigation-drawer",
-                class: if mobile_nav_open() { "mobile-drawer open" } else { "mobile-drawer" },
-                "data-testid": "mobile-nav-drawer",
-                div { class: "mobile-status", "data-testid": "mobile-connection-status",
-                    span { "data-testid": "mobile-status-label", "{connection_status}" }
-                    span { class: "muted mono", "data-testid": "mobile-sync-cursor", "cursor {sync_cursor}" }
+                div { class: "mobile-shellbar", "data-testid": "mobile-shellbar",
                     Button {
-                        variant: ButtonVariant::Primary,
-                        "data-testid": "mobile-connect-button",
-                        title: "Refresh server metadata and sync state",
-                        "aria-label": "Refresh server metadata and sync state",
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        class: "btn icon",
+                        "data-testid": "mobile-nav-toggle",
+                        title: if mobile_nav_open() { "Close menu" } else { "Open menu" },
+                        "aria-label": if mobile_nav_open() { "Close menu" } else { "Open menu" },
+                        "aria-controls": "mobile-navigation-drawer",
+                        "aria-expanded": "{mobile_nav_open()}",
+                        onclick: move |_| mobile_nav_open.toggle(),
+                        if mobile_nav_open() {
+                            UiIcon { name: "x" }
+                        } else {
+                            UiIcon { name: "menu" }
+                        }
+                    }
+                    div { class: "brand", "Arkret" }
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        class: "btn icon",
+                        "data-testid": "mobile-theme-toggle",
+                        title: "{theme_toggle_title}",
+                        "aria-label": "{theme_toggle_title}",
                         onclick: move |_| {
-                            sync_generation.set(sync_generation() + 1);
-                            sync_bootstrap_complete.set(false);
-                            connect(
+                            let current_theme = theme();
+                            let next = next_manual_theme(&current_theme);
+                            theme.set(next.clone());
+                            state_store.write().save_private_data(&principal_id(), "theme", next.clone());
+                            // A4a — best-effort cross-device sync via
+                            // `ak.account_data.set(ak.client.ui_state)`.
+                            crate::views::settings::push_client_ui_account_data(
                                 base_url(),
-                                principal_id(),
-                                device_id(),
-                ConnectContext {
-                    session: mobile_connect_session.clone(),
-                                    connection_status,
-                                    sync_cursor,
-                                    token,
-                                    principal_id,
-                                    device_id,
-                                    selected_realm_id,
-                                    realm_tree_nodes,
-                                    projection_events,
-                                    device_queue,
-                                    frontier_state,
-                                    crypto_state,
-                                    config_store,
-                                    state_store,
-                                    network_state,
-                                    last_error,
-                                    server_description,
-                                    server_probe_status,
-                                    account_primary_handle,
-                                    personal_handles,
-                                    personal_handles_status,
-                                    theme,
-                                    sync_generation,
-                                    needs_device_authorization,
-                                    device_authorization_check_complete,
-                                    account_has_other_devices,
-                                    sync_bootstrap_complete,
-                                    session_boot_state,
-                                    did_cache,
-                                    did_resolution_health,
-                                    },
-                                )
-                            }
+                                token(),
+                                next,
+                            );
                         },
-                        "Refresh"
+                        UiIcon { name: theme_toggle_icon }
                     }
-                }
-                Link { class: "secondary", "data-testid": "mobile-dashboard-nav-button", to: Route::Dashboard, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.dashboard")} }
-                Link { class: "secondary", "data-testid": "mobile-file-transfer-nav-button", to: Route::FileTransfer, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.files")} }
-                Link { class: "secondary", "data-testid": "mobile-directory-nav-button", to: Route::Directory, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.directory")} }
-                Link { class: "secondary", "data-testid": "mobile-settings-nav-button", to: Route::Settings, onclick: move |_| mobile_nav_open.set(false), {crate::i18n::tr("nav.settings")} }
-                if !loaded_realm_tree_nodes.is_empty() {
-                    div { class: "muted", "{crate::i18n::tr(\"command_palette.realms\")} ({realm_tree.len()})" }
-                    Input {
-                        class: "mobile-realm-tree-filter",
-                        "data-testid": "mobile-realm-tree-filter",
-                        value: "{mobile_space_query}",
-                        placeholder: crate::i18n::tr("mobile.filter_realms"),
-                        oninput: move |event: FormEvent| mobile_space_query.set(event.value()),
-                    }
-                    div { class: "mobile-realm-tree-list", "data-testid": "mobile-realm-tree-list",
-                        {
-                            let q = mobile_space_query();
-                            let q_lc = q.trim().to_lowercase();
-                            let filtered: Vec<_> = realm_tree
-                                .iter()
-                                .filter(|item| {
-                                    q_lc.is_empty()
-                                        || item.node.title.to_lowercase().contains(&q_lc)
-                                        || item.node.id.to_lowercase().contains(&q_lc)
-                                })
-                                .collect();
-                            if filtered.is_empty() {
-                                rsx! {
-                                    div { class: "muted", "data-testid": "mobile-realm-tree-empty", {crate::i18n::tr("mobile.no_match")} }
-                                }
-                            } else {
-                                rsx! {
-                                    for item in filtered.iter() {
-                                        Link {
-                                            class: "secondary",
-                                            "data-testid": "mobile-realm-tree-nav-button",
-                                            to: Route::Realm {
-                                                realm_id: item.node.projection_realm_id().to_owned()
-                                            },
-                                            onclick: {
-                                                let id = item.node.projection_realm_id().to_owned();
-                                                move |_| {
-                                                    selected_realm_id.set(id.clone());
-                                                    mobile_nav_open.set(false);
-                                                    mobile_space_query.set(String::new());
-                                                }
-                                            },
-                                            "{item.node.title}"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
-                div {
-                    class: "sidebar-resize-handle",
-                    "data-testid": "sidebar-resize-handle",
-                    title: "Drag to resize menu",
-                    "aria-hidden": "true",
-                    onmousedown: move |event| {
-                        event.prevent_default();
-                        sidebar_resizing.set(true);
-                    },
-                }
-                div { class: "sidebar-header",
-                    Link { class: "brand", to: Route::Dashboard, "aria-label": "Inkson | Arkret Home",
-                        span { class: "logo", "⌘" }
-                        span { class: "product-meta",
-                            span { class: "product-name", "Inkson | Arkret" }
-                        }
-                    }
-                }
-
-                div { class: "server-switch", "data-testid": "principal-context", "aria-label": "Current server context",
                     Button {
-                        variant: ButtonVariant::Secondary,
-                        class: "server-switch-button",
-                        "data-testid": "server-switch-button",
-                        title: "Switch server",
-                        "aria-label": "Switch server",
-                        "aria-expanded": if server_menu_is_open { "true" } else { "false" },
-                        onclick: move |_| {
-                            server_menu_open.toggle();
-                            account_menu_open.set(false);
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        r#type: "button",
+                        class: "btn icon",
+                        "data-testid": "mobile-shortcuts-button",
+                        title: crate::i18n::tr("shortcuts.title"),
+                        "aria-label": crate::i18n::tr("shortcuts.title"),
+                        onclick: move |event: dioxus::events::MouseEvent| {
+                            event.stop_propagation();
+                            mobile_nav_open.set(false);
+                            shortcut_help_open.set(true);
                         },
-                        span { class: "server-switch-icon",
-                            UiIcon { name: "server" }
+                        UiIcon { name: "keyboard" }
+                    }
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        size: ButtonSize::Sm,
+                        r#type: "button",
+                        class: if notifications_drawer_open() { "btn icon topbar-notifications-link is-active" } else { "btn icon topbar-notifications-link" },
+                        "data-testid": "mobile-topbar-notifications-button",
+                        title: "Notifications",
+                        "aria-label": "Notifications",
+                        "aria-expanded": "{notifications_drawer_open()}",
+                        onclick: move |event: dioxus::events::MouseEvent| {
+                            event.stop_propagation();
+                            mobile_nav_open.set(false);
+                            account_menu_open.set(false);
+                            server_menu_open.set(false);
+                            if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                                palette_open.set(false);
+                                topbar_search_expanded.set(false);
+                                global_query.set(String::new());
+                            }
+                            notifications_drawer_open.toggle();
+                        },
+                        UiIcon { name: "bell" }
+                        if has_topbar_unread_notifications {
+                            span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                         }
-                        span { class: "server-switch-title",
-                            span { class: "v", "{active_server_label}" }
-                        }
-                        span { class: "server-switch-state",
-                            if server_menu_is_open {
-                                UiIcon { name: "chevron-up" }
-                            } else {
-                                UiIcon { name: "chevron-down" }
+                    }
+                }
+                MobileNavDrawer {
+                    mobile_nav_open,
+                    status: mobile_status,
+                    realm_tree: mobile_realm_tree,
+                }
+                aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
+                    div {
+                        class: "sidebar-resize-handle",
+                        "data-testid": "sidebar-resize-handle",
+                        title: "Drag to resize menu",
+                        "aria-hidden": "true",
+                        onmousedown: move |event| {
+                            event.prevent_default();
+                            sidebar_resizing.set(true);
+                        },
+                    }
+                    div { class: "sidebar-header",
+                        Link { class: "brand", to: Route::Dashboard, "aria-label": "Inkson | Arkret Home",
+                            span { class: "logo", "⌘" }
+                            span { class: "product-meta",
+                                span { class: "product-name", "Inkson | Arkret" }
                             }
                         }
                     }
 
-                    if server_menu_is_open && !sidebar_is_collapsed {
-                        div { class: "server-switch-menu", "data-testid": "server-switch-menu",
-                            div { class: "server-option-list", "aria-label": "Server choices",
-                                for option_url in server_options.clone() {
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        class: if same_server_url(&option_url, &base_url()) { "server-option active" } else { "server-option" },
-                                        "data-testid": "server-option",
-                                        title: "Switch to {option_url}",
-                                        "aria-label": "Switch to {option_url}",
-                                        onclick: {
-                                            let option_url = option_url.clone();
-                                            let server_connect_session =
-                                                server_connect_session.clone();
-                                            move |_| {
-                                                let next_url = normalize_server_url(&option_url);
-                                                select_server(next_url.clone(), ServerSelectionContext {
-                                                    base_url,
-                                                    token,
-                                                    sync_cursor,
-                                                    selected_realm_id,
-                                                    realm_tree_nodes,
-                                                    projection_events,
-                                                    device_queue,
-                                                    frontier_state,
-                                                    crypto_state,
-                                                    config_store,
-                                                    state_store,
-                                                    network_state,
-                                                    last_error,
-                                                    server_description,
-                                                    server_probe_status,
-                                                    connection_status,
-                                                    principal_id,
-                                                    device_id,
-                                                    account_primary_handle,
-                                                    personal_handles,
-                                                    personal_handles_status,
-                                                    personal_handles_lookup_key,
-                                                    sync_generation,
-                                                });
-                                                server_menu_open.set(false);
-                                                sync_bootstrap_complete.set(false);
-                                                connect(
-                                                    next_url,
-                                                    principal_id(),
-                                                    device_id(),
-                ConnectContext {
-                    session: server_connect_session.clone(),
-                                                        connection_status,
-                                                        sync_cursor,
+                    div { class: "server-switch", "data-testid": "principal-context", "aria-label": "Current server context",
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            class: "server-switch-button",
+                            "data-testid": "server-switch-button",
+                            title: "Switch server",
+                            "aria-label": "Switch server",
+                            "aria-expanded": if server_menu_is_open { "true" } else { "false" },
+                            onclick: move |_| {
+                                server_menu_open.toggle();
+                                account_menu_open.set(false);
+                            },
+                            span { class: "server-switch-icon",
+                                UiIcon { name: "server" }
+                            }
+                            span { class: "server-switch-title",
+                                span { class: "v", "{active_server_label}" }
+                            }
+                            span { class: "server-switch-state",
+                                if server_menu_is_open {
+                                    UiIcon { name: "chevron-up" }
+                                } else {
+                                    UiIcon { name: "chevron-down" }
+                                }
+                            }
+                        }
+
+                        if server_menu_is_open && !sidebar_is_collapsed {
+                            div { class: "server-switch-menu", "data-testid": "server-switch-menu",
+                                div { class: "server-option-list", "aria-label": "Server choices",
+                                    for option_url in server_options.clone() {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            class: if same_server_url(&option_url, &base_url()) { "server-option active" } else { "server-option" },
+                                            "data-testid": "server-option",
+                                            title: "Switch to {option_url}",
+                                            "aria-label": "Switch to {option_url}",
+                                            onclick: {
+                                                let option_url = option_url.clone();
+                                                let server_connect_session =
+                                                    server_connect_session.clone();
+                                                move |_| {
+                                                    let next_url = normalize_server_url(&option_url);
+                                                    select_server(next_url.clone(), ServerSelectionContext {
+                                                        base_url,
                                                         token,
-                                                        principal_id,
-                                                        device_id,
+                                                        sync_cursor,
                                                         selected_realm_id,
                                                         realm_tree_nodes,
                                                         projection_events,
@@ -1861,167 +1823,102 @@ fn AppBootstrap() -> Element {
                                                         last_error,
                                                         server_description,
                                                         server_probe_status,
+                                                        connection_status,
+                                                        principal_id,
+                                                        device_id,
                                                         account_primary_handle,
                                                         personal_handles,
                                                         personal_handles_status,
-                                                        theme,
+                                                        personal_handles_lookup_key,
                                                         sync_generation,
-                                                        needs_device_authorization,
-                                                        device_authorization_check_complete,
-                                                        account_has_other_devices,
-                                                        sync_bootstrap_complete,
-                                                        session_boot_state,
-                                                                            did_cache,
-                                                        did_resolution_health,
-                                                    },
-                                                );
+                                                    });
+                                                    server_menu_open.set(false);
+                                                    sync_bootstrap_complete.set(false);
+                                                    connect(
+                                                        next_url,
+                                                        principal_id(),
+                                                        device_id(),
+                    ConnectContext {
+                        session: server_connect_session.clone(),
+                                                            connection_status,
+                                                            sync_cursor,
+                                                            token,
+                                                            principal_id,
+                                                            device_id,
+                                                            selected_realm_id,
+                                                            realm_tree_nodes,
+                                                            projection_events,
+                                                            device_queue,
+                                                            frontier_state,
+                                                            crypto_state,
+                                                            config_store,
+                                                            state_store,
+                                                            network_state,
+                                                            last_error,
+                                                            server_description,
+                                                            server_probe_status,
+                                                            account_primary_handle,
+                                                            personal_handles,
+                                                            personal_handles_status,
+                                                            theme,
+                                                            sync_generation,
+                                                            needs_device_authorization,
+                                                            device_authorization_check_complete,
+                                                            account_has_other_devices,
+                                                            sync_bootstrap_complete,
+                                                            session_boot_state,
+                                                                                did_cache,
+                                                            did_resolution_health,
+                                                        },
+                                                    );
+                                                }
+                                            },
+                                            span { class: "server-option-text",
+                                                span { class: "server-option-main mono", "{option_url}" }
                                             }
-                                        },
-                                        span { class: "server-option-text",
-                                            span { class: "server-option-main mono", "{option_url}" }
-                                        }
-                                        if same_server_url(&option_url, &base_url()) {
-                                            span { class: "pill muted xs", "current" }
+                                            if same_server_url(&option_url, &base_url()) {
+                                                span { class: "pill muted xs", "current" }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                div { class: "sidebar-nav-group",
-                    Link { class: "sidebar-nav-item", to: Route::Dashboard,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
-                        span { class: "grow", {crate::i18n::tr("nav.dashboard")} }
-                    }
-                    Link { class: "sidebar-nav-item", to: Route::FileTransfer,
-                        span { class: "sidebar-nav-icon", UiIcon { name: "file" } }
-                        span { class: "grow", {crate::i18n::tr("nav.files")} }
-                    }
-                }
-
-                div { class: "sidebar-nav-group workspace-tab-group", "data-testid": "realm-tree-list",
-                    if !sidebar_is_collapsed {
-                        div { class: "sidebar-scope-toggle workspace-tabs", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": "Collaboration and contacts",
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                class: if realm_sidebar_tab() == "collaboration" { "scope-chip active" } else { "scope-chip" },
-                                "data-testid": "realm-sidebar-tab-collaboration",
-                                role: "tab",
-                                "aria-selected": if realm_sidebar_tab() == "collaboration" { "true" } else { "false" },
-                                onclick: move |_| realm_sidebar_tab.set("collaboration".to_owned()),
-                                {crate::i18n::tr("nav.collaboration")}
-                            }
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                class: if realm_sidebar_tab() == "direct" { "scope-chip active" } else { "scope-chip" },
-                                "data-testid": "realm-sidebar-tab-direct",
-                                role: "tab",
-                                "aria-selected": if realm_sidebar_tab() == "direct" { "true" } else { "false" },
-                                onclick: {
-                                    let base = base_url();
-                                    move |_| {
-                                        realm_sidebar_tab.set("direct".to_owned());
-                                        if direct_contacts_loaded() || token().trim().is_empty() {
-                                            return;
-                                        }
-                                        load_direct_contacts_and_agents_for_sidebar(
-                                            base.clone(),
-                                            token(),
-                                            state_store,
-                                            direct_contact_rows,
-                                            direct_contacts_loaded,
-                                            own_agent_rows,
-                                            own_agents_loaded,
-                                        );
-                                    }
-                                },
-                                {crate::i18n::tr("nav.contacts")}
-                            }
+                    div { class: "sidebar-nav-group",
+                        Link { class: "sidebar-nav-item", to: Route::Dashboard,
+                            span { class: "sidebar-nav-icon", UiIcon { name: "home" } }
+                            span { class: "grow", {crate::i18n::tr("nav.dashboard")} }
                         }
-                        div { class: "sidebar-tab-toolbar", "data-testid": "realm-sidebar-toolbar",
-                            div { class: "sidebar-tab-search",
-                                if realm_sidebar_tab() == "collaboration" {
-                                    Input {
-                                        "data-testid": "realm-sidebar-search-input",
-                                        value: "{collaboration_sidebar_query}",
-                                        placeholder: crate::i18n::tr("sidebar.search_realms"),
-                                        oninput: move |event: FormEvent| collaboration_sidebar_query.set(event.value()),
-                                    }
-                                } else {
-                                    Input {
-                                        "data-testid": "contacts-sidebar-search-input",
-                                        value: "{direct_sidebar_query}",
-                                        placeholder: crate::i18n::tr("sidebar.search_contacts"),
-                                        oninput: move |event: FormEvent| direct_sidebar_query.set(event.value()),
-                                    }
+                        Link { class: "sidebar-nav-item", to: Route::FileTransfer,
+                            span { class: "sidebar-nav-icon", UiIcon { name: "file" } }
+                            span { class: "grow", {crate::i18n::tr("nav.files")} }
+                        }
+                    }
+
+                    div { class: "sidebar-nav-group workspace-tab-group", "data-testid": "realm-tree-list",
+                        if !sidebar_is_collapsed {
+                            div { class: "sidebar-scope-toggle workspace-tabs", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": "Collaboration and contacts",
+                                Button {
+                                    variant: ButtonVariant::Secondary,
+                                    class: if realm_sidebar_tab() == "collaboration" { "scope-chip active" } else { "scope-chip" },
+                                    "data-testid": "realm-sidebar-tab-collaboration",
+                                    role: "tab",
+                                    "aria-selected": if realm_sidebar_tab() == "collaboration" { "true" } else { "false" },
+                                    onclick: move |_| realm_sidebar_tab.set("collaboration".to_owned()),
+                                    {crate::i18n::tr("nav.collaboration")}
                                 }
                                 Button {
                                     variant: ButtonVariant::Secondary,
-                                    size: ButtonSize::IconXs,
-                                    class: "sidebar-toolbar-action sidebar-tab-search-submit",
-                                    r#type: "button",
-                                    "data-testid": "realm-sidebar-search-button",
-                                    title: crate::i18n::tr("sidebar.search"),
-                                    "aria-label": crate::i18n::tr("sidebar.search"),
+                                    class: if realm_sidebar_tab() == "direct" { "scope-chip active" } else { "scope-chip" },
+                                    "data-testid": "realm-sidebar-tab-direct",
+                                    role: "tab",
+                                    "aria-selected": if realm_sidebar_tab() == "direct" { "true" } else { "false" },
                                     onclick: {
                                         let base = base_url();
                                         move |_| {
-                                            if realm_sidebar_tab() == "direct" && !direct_contacts_loaded() {
-                                                load_direct_contacts_and_agents_for_sidebar(
-                                                    base.clone(),
-                                                    token(),
-                                                    state_store,
-                                                    direct_contact_rows,
-                                                    direct_contacts_loaded,
-                                                    own_agent_rows,
-                                                    own_agents_loaded,
-                                                );
-                                            }
-                                        }
-                                    },
-                                    UiIcon { name: "search" }
-                                }
-                            }
-                            if realm_sidebar_tab() == "collaboration" {
-                                Link {
-                                    class: "sidebar-toolbar-action sidebar-toolbar-link add-realm-cta",
-                                    "data-testid": "sidebar-new-realm-cta",
-                                    title: crate::i18n::tr("setup.new_realm"),
-                                    "aria-label": crate::i18n::tr("setup.new_realm"),
-                                    to: Route::SetupSection { section: "realms".to_owned() },
-                                    UiIcon { name: "plus" }
-                                }
-                            } else {
-                                Link {
-                                    class: "sidebar-toolbar-action sidebar-toolbar-link add-contact-cta",
-                                    "data-testid": "sidebar-new-contact-cta",
-                                    title: "Add a contact",
-                                    "aria-label": "Add a contact",
-                                    to: Route::Contacts,
-                                    UiIcon { name: "user-plus" }
-                                }
-                            }
-                            if realm_sidebar_tab() == "collaboration" {
-                                Link {
-                                    class: if matches!(content_route, Route::RealmsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
-                                    "data-testid": "realm-sidebar-manage-home-button",
-                                    title: crate::i18n::tr("manage.realms_title"),
-                                    "aria-label": crate::i18n::tr("manage.realms_title"),
-                                    to: Route::RealmsManage,
-                                    UiIcon { name: "home" }
-                                }
-                            } else {
-                                Link {
-                                    class: if matches!(content_route, Route::ContactsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
-                                    "data-testid": "realm-sidebar-manage-home-button",
-                                    title: crate::i18n::tr("manage.contacts_title"),
-                                    "aria-label": crate::i18n::tr("manage.contacts_title"),
-                                    to: Route::ContactsManage,
-                                    onclick: {
-                                        let base = base_url();
-                                        move |_| {
+                                            realm_sidebar_tab.set("direct".to_owned());
                                             if direct_contacts_loaded() || token().trim().is_empty() {
                                                 return;
                                             }
@@ -2036,107 +1933,665 @@ fn AppBootstrap() -> Element {
                                             );
                                         }
                                     },
-                                    UiIcon { name: "home" }
+                                    {crate::i18n::tr("nav.contacts")}
+                                }
+                            }
+                            div { class: "sidebar-tab-toolbar", "data-testid": "realm-sidebar-toolbar",
+                                div { class: "sidebar-tab-search",
+                                    if realm_sidebar_tab() == "collaboration" {
+                                        Input {
+                                            "data-testid": "realm-sidebar-search-input",
+                                            value: "{collaboration_sidebar_query}",
+                                            placeholder: crate::i18n::tr("sidebar.search_realms"),
+                                            oninput: move |event: FormEvent| collaboration_sidebar_query.set(event.value()),
+                                        }
+                                    } else {
+                                        Input {
+                                            "data-testid": "contacts-sidebar-search-input",
+                                            value: "{direct_sidebar_query}",
+                                            placeholder: crate::i18n::tr("sidebar.search_contacts"),
+                                            oninput: move |event: FormEvent| direct_sidebar_query.set(event.value()),
+                                        }
+                                    }
+                                    Button {
+                                        variant: ButtonVariant::Secondary,
+                                        size: ButtonSize::IconXs,
+                                        class: "sidebar-toolbar-action sidebar-tab-search-submit",
+                                        r#type: "button",
+                                        "data-testid": "realm-sidebar-search-button",
+                                        title: crate::i18n::tr("sidebar.search"),
+                                        "aria-label": crate::i18n::tr("sidebar.search"),
+                                        onclick: {
+                                            let base = base_url();
+                                            move |_| {
+                                                if realm_sidebar_tab() == "direct" && !direct_contacts_loaded() {
+                                                    load_direct_contacts_and_agents_for_sidebar(
+                                                        base.clone(),
+                                                        token(),
+                                                        state_store,
+                                                        direct_contact_rows,
+                                                        direct_contacts_loaded,
+                                                        own_agent_rows,
+                                                        own_agents_loaded,
+                                                    );
+                                                }
+                                            }
+                                        },
+                                        UiIcon { name: "search" }
+                                    }
+                                }
+                                if realm_sidebar_tab() == "collaboration" {
+                                    Link {
+                                        class: "sidebar-toolbar-action sidebar-toolbar-link add-realm-cta",
+                                        "data-testid": "sidebar-new-realm-cta",
+                                        title: crate::i18n::tr("setup.new_realm"),
+                                        "aria-label": crate::i18n::tr("setup.new_realm"),
+                                        to: Route::SetupSection { section: "realms".to_owned() },
+                                        UiIcon { name: "plus" }
+                                    }
+                                } else {
+                                    Link {
+                                        class: "sidebar-toolbar-action sidebar-toolbar-link add-contact-cta",
+                                        "data-testid": "sidebar-new-contact-cta",
+                                        title: "Add a contact",
+                                        "aria-label": "Add a contact",
+                                        to: Route::Contacts,
+                                        UiIcon { name: "user-plus" }
+                                    }
+                                }
+                                if realm_sidebar_tab() == "collaboration" {
+                                    Link {
+                                        class: if matches!(content_route, Route::RealmsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
+                                        "data-testid": "realm-sidebar-manage-home-button",
+                                        title: crate::i18n::tr("manage.realms_title"),
+                                        "aria-label": crate::i18n::tr("manage.realms_title"),
+                                        to: Route::RealmsManage,
+                                        UiIcon { name: "home" }
+                                    }
+                                } else {
+                                    Link {
+                                        class: if matches!(content_route, Route::ContactsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
+                                        "data-testid": "realm-sidebar-manage-home-button",
+                                        title: crate::i18n::tr("manage.contacts_title"),
+                                        "aria-label": crate::i18n::tr("manage.contacts_title"),
+                                        to: Route::ContactsManage,
+                                        onclick: {
+                                            let base = base_url();
+                                            move |_| {
+                                                if direct_contacts_loaded() || token().trim().is_empty() {
+                                                    return;
+                                                }
+                                                load_direct_contacts_and_agents_for_sidebar(
+                                                    base.clone(),
+                                                    token(),
+                                                    state_store,
+                                                    direct_contact_rows,
+                                                    direct_contacts_loaded,
+                                                    own_agent_rows,
+                                                    own_agents_loaded,
+                                                );
+                                            }
+                                        },
+                                        UiIcon { name: "home" }
+                                    }
                                 }
                             }
                         }
-                    }
-                    if realm_sidebar_tab() == "direct" {
-                        if has_session && (direct_sidebar_query_value.is_empty()
-                            || own_agent_rows_for_sidebar.iter().any(|agent| {
-                                sidebar_text_matches_query(
+                        if realm_sidebar_tab() == "direct" {
+                            if has_session && (direct_sidebar_query_value.is_empty()
+                                || own_agent_rows_for_sidebar.iter().any(|agent| {
+                                    sidebar_text_matches_query(
+                                        &direct_sidebar_query_value,
+                                        &[
+                                            agent.agent_id.as_str(),
+                                            agent.display_name.as_deref().unwrap_or_default(),
+                                                    &agent.slug,
+                                        ],
+                                    )
+                                })
+                                || sidebar_text_matches_query(
                                     &direct_sidebar_query_value,
-                                    &[
-                                        agent.agent_id.as_str(),
-                                        agent.display_name.as_deref().unwrap_or_default(),
-                                                &agent.slug,
-                                    ],
-                                )
-                            })
-                            || sidebar_text_matches_query(
-                                &direct_sidebar_query_value,
-                                &[&principal_id(), &actor_display_label(&state_store.read(), &principal_id()), &account_primary_handle()],
-                            ))
-                        {
+                                    &[&principal_id(), &actor_display_label(&state_store.read(), &principal_id()), &account_primary_handle()],
+                                ))
                             {
-                                let active_principal_id = principal_id();
-                                let self_did = if active_principal_id.trim().is_empty() {
-                                    let configured = config_store
-                                        .read()
-                                        .load()
-                                        .active_account
-                                        .map(|account| account.full_id().to_string())
-                                        .unwrap_or_default();
-                                    if configured.trim().is_empty() {
-                                        state_store
+                                {
+                                    let active_principal_id = principal_id();
+                                    let self_did = if active_principal_id.trim().is_empty() {
+                                        let configured = config_store
                                             .read()
-                                            .session_grant()
-                                            .map(|grant| grant.principal_id.to_string())
-                                            .unwrap_or_default()
+                                            .load()
+                                            .active_account
+                                            .map(|account| account.full_id().to_string())
+                                            .unwrap_or_default();
+                                        if configured.trim().is_empty() {
+                                            state_store
+                                                .read()
+                                                .session_grant()
+                                                .map(|grant| grant.principal_id.to_string())
+                                                .unwrap_or_default()
+                                        } else {
+                                            configured
+                                        }
                                     } else {
-                                        configured
-                                    }
-                                } else {
-                                    active_principal_id
-                                };
-                                let primary_handle = account_primary_handle();
-                                let self_label = if primary_handle.trim().is_empty() {
-                                    actor_display_label(&state_store.read(), &self_did)
-                                } else {
-                                    primary_handle
-                                };
-                                let self_agents_button_label = if own_agents_expanded() {
-                                    "Hide your AI agents"
-                                } else {
-                                    "Show your AI agents"
-                                };
-                                rsx! {
-                                    div {
-                                        class: "contact-sidebar-group is-self",
-                                        "data-testid": "contact-sidebar-self-group",
-                                        button {
-                                            class: "sidebar-nav-item contact-sidebar-row contact-sidebar-user-row",
-                                            r#type: "button",
-                                            "data-testid": "contact-sidebar-self-row",
-                                            "data-peer": "{self_did}",
-                                            "aria-expanded": if own_agents_expanded() { "true" } else { "false" },
-                                            "aria-label": "{self_agents_button_label}",
-                                            title: "{self_agents_button_label}",
-                                            onclick: move |_| own_agents_expanded.toggle(),
-                                            span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
-                                                crate::components::IdentityAvatar {
-                                                    seed: self_did.clone(),
-                                                    alt_text: self_label.clone(),
-                                                    blob_ref: Some(topbar_avatar_blob_ref.clone()),
-                                                    class: "avatar-img".to_owned(),
+                                        active_principal_id
+                                    };
+                                    let primary_handle = account_primary_handle();
+                                    let self_label = if primary_handle.trim().is_empty() {
+                                        actor_display_label(&state_store.read(), &self_did)
+                                    } else {
+                                        primary_handle
+                                    };
+                                    let self_agents_button_label = if own_agents_expanded() {
+                                        "Hide your AI agents"
+                                    } else {
+                                        "Show your AI agents"
+                                    };
+                                    rsx! {
+                                        div {
+                                            class: "contact-sidebar-group is-self",
+                                            "data-testid": "contact-sidebar-self-group",
+                                            button {
+                                                class: "sidebar-nav-item contact-sidebar-row contact-sidebar-user-row",
+                                                r#type: "button",
+                                                "data-testid": "contact-sidebar-self-row",
+                                                "data-peer": "{self_did}",
+                                                "aria-expanded": if own_agents_expanded() { "true" } else { "false" },
+                                                "aria-label": "{self_agents_button_label}",
+                                                title: "{self_agents_button_label}",
+                                                onclick: move |_| own_agents_expanded.toggle(),
+                                                span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
+                                                    crate::components::IdentityAvatar {
+                                                        seed: self_did.clone(),
+                                                        alt_text: self_label.clone(),
+                                                        blob_ref: Some(topbar_avatar_blob_ref.clone()),
+                                                        class: "avatar-img".to_owned(),
+                                                    }
+                                                }
+                                                span { class: "grow truncate", "{self_label}" }
+                                                SelfAttributionBadge {
+                                                    test_id: Some("contact-sidebar-self-badge".to_owned()),
+                                                }
+                                                span {
+                                                    class: "contact-agent-chevron",
+                                                    "data-testid": "contact-sidebar-self-agent-toggle",
+                                                    UiIcon { name: if own_agents_expanded() { "chevron-down" } else { "chevron-right" } }
                                                 }
                                             }
-                                            span { class: "grow truncate", "{self_label}" }
-                                            SelfAttributionBadge {
-                                                test_id: Some("contact-sidebar-self-badge".to_owned()),
-                                            }
-                                            span {
-                                                class: "contact-agent-chevron",
-                                                "data-testid": "contact-sidebar-self-agent-toggle",
-                                                UiIcon { name: if own_agents_expanded() { "chevron-down" } else { "chevron-right" } }
+                                            if own_agents_expanded() {
+                                                div { class: "contact-agent-list", "data-testid": "contact-sidebar-self-agents",
+                                                    for agent in own_agent_rows_for_sidebar.iter() {
+                                                        {
+                                                            let agent_id = agent.agent_id.to_string();
+                                                            let agent_label = agent
+                                                                .display_name
+                                                                .clone()
+                                                                .unwrap_or_else(|| agent.slug.clone());
+                                                            let avatar_blob_ref = agent
+                                                                .avatar_blob_ref
+                                                                .as_ref()
+                                                                .map(ToString::to_string)
+                                                                .unwrap_or_default();
+                                                            let controller_id = self_did.clone();
+                                                            let opening_key = format!("owned-agent:{agent_id}");
+                                                            let opening_target = direct_chat_opening();
+                                                            let chat_open_blocked = opening_target.is_some();
+                                                            let is_opening = opening_target.as_deref()
+                                                                == Some(opening_key.as_str());
+                                                            let agent_button_label = if is_opening {
+                                                                format!("Opening chat with {agent_label}")
+                                                            } else {
+                                                                format!("Chat with {agent_label}")
+                                                            };
+                                                            rsx! {
+                                                                button {
+                                                                    key: "{agent_id}",
+                                                                    class: "sidebar-nav-item contact-sidebar-agent-row",
+                                                                    r#type: "button",
+                                                                    "data-testid": "contact-sidebar-agent-row",
+                                                                    "data-agent": "{agent_id}",
+                                                                    "data-controller": "{controller_id}",
+                                                                    "data-opening": if is_opening { "true" } else { "false" },
+                                                                    "aria-busy": if is_opening { "true" } else { "false" },
+                                                                    "aria-label": "{agent_button_label}",
+                                                                    title: "{agent_button_label}",
+                                                                    disabled: chat_open_blocked,
+                                                                    onclick: {
+                                                                        let base = base_url();
+                                                                        let agent_id = agent_id.clone();
+                                                                        let controller_id = controller_id.clone();
+                                                                        let opening_key = opening_key.clone();
+                                                                        move |event: dioxus::events::MouseEvent| {
+                                                                            event.prevent_default();
+                                                                            event.stop_propagation();
+                                                                            if direct_chat_opening.read().is_some() {
+                                                                                return;
+                                                                            }
+                                                                            direct_chat_opening.set(Some(opening_key.clone()));
+                                                                            let api_token = token();
+                                                                            let base = base.clone();
+                                                                            let agent_id = agent_id.clone();
+                                                                            let controller_id = controller_id.clone();
+                                                                            spawn(async move {
+                                                                                let agent_id_for_log = agent_id.clone();
+                                                                                let route = match crate::transport::auth::with_authed_api(
+                                                                                    &base,
+                                                                                    api_token,
+                                                                                    |api| async move {
+                                                                                        crate::transport::account::direct_conversation_resolve(
+                                                                                            &api,
+                                                                                            state_store,
+                                                                                            &agent_id,
+                                                                                            Some(&controller_id),
+                                                                                            true,
+                                                                                        ).await
+                                                                                    },
+                                                                                ).await {
+                                                                                    Ok(ref response)
+                                                                                        if let Some(coordinates) =
+                                                                                            crate::transport::account::direct_conversation_coordinates(response) =>
+                                                                                    {
+                                                                                        Some(Route::DirectConversation {
+                                                                                            realm_id: coordinates.realm_id.to_string(),
+                                                                                            strand_id: coordinates.main_strand_id.to_string(),
+                                                                                        })
+                                                                                    },
+                                                                                    Ok(response) => {
+                                                                                        crate::components::feedback::toast_error(
+                                                                                            "feedback.direct_open_failed",
+                                                                                            vec![],
+                                                                                            Some(format!("outcome: {response:?}")),
+                                                                                        );
+                                                                                        None
+                                                                                    }
+                                                                                    Err(err) => {
+                                                                                        tracing::error!(
+                                                                                            error = %err.display_diagnostic(),
+                                                                                            agent_id = %agent_id_for_log,
+                                                                                            "owned agent direct conversation open failed"
+                                                                                        );
+                                                                                        crate::components::feedback::toast_error(
+                                                                                            "feedback.direct_open_failed", vec![], Some(err.display_diagnostic()),
+                                                                                        );
+                                                                                        None
+                                                                                    }
+                                                                                };
+                                                                                direct_chat_opening.set(None);
+                                                                                if let Some(route) = route {
+                                                                                    let _ = navigator.push(route);
+                                                                                }
+                                                                            });
+                                                                        }
+                                                                    },
+                                                                    span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
+                                                                        crate::components::IdentityAvatar {
+                                                                            seed: agent_id.clone(),
+                                                                            alt_text: agent_label.clone(),
+                                                                            blob_ref: Some(avatar_blob_ref),
+                                                                            class: "avatar-img".to_owned(),
+                                                                        }
+                                                                    }
+                                                                    span { class: "grow truncate", "{agent_label}" }
+                                                                    span { class: "pill muted xs", if is_opening { "Opening..." } else { "AI agent" } }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
-                                        if own_agents_expanded() {
-                                            div { class: "contact-agent-list", "data-testid": "contact-sidebar-self-agents",
-                                                for agent in own_agent_rows_for_sidebar.iter() {
+                                    }
+                                }
+                            }
+                            if !has_session {
+                                div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-empty-state",
+                                    span { class: "sidebar-nav-icon", UiIcon { name: "users" } }
+                                    span { class: "grow truncate", {crate::i18n::tr("contacts.sign_in")} }
+                                }
+                            } else if filtered_direct_contact_rows.is_empty() && !direct_sidebar_query_value.is_empty() {
+                                div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-no-results",
+                                    span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
+                                    span { class: "grow truncate", "No matching contacts" }
+                                }
+                            } else {
+                                for contact in filtered_direct_contact_rows.iter() {
+                                    {
+                                        let peer = crate::models::contact_peer_id(contact).to_string();
+                                        let state_label =
+                                            crate::models::contact_state_wire(contact.state).to_owned();
+                                        let scopes_label = contact
+                                            .bidirectional_scopes
+                                            .iter()
+                                            .map(|scope| crate::models::contact_scope_wire(*scope))
+                                            .collect::<Vec<_>>()
+                                            .join(", ");
+                                        let direct = contact.direct_conversation.clone();
+                                        let has_direct_scope = contact
+                                            .bidirectional_scopes
+                                            .iter()
+                                            .chain(contact.effective_scopes.iter().flatten())
+                                            .any(|scope| *scope == ContactScope::DirectMessage);
+                                        let has_active_direct = direct
+                                            .as_ref()
+                                            .is_some_and(|summary| {
+                                                summary.state
+                                                    == arkret_sdk::DirectConversationSummaryState::Found
+                                            });
+                                        let can_resolve =
+                                            contact.state == arkret_sdk::ContactState::Accepted
+                                                && (has_direct_scope || has_active_direct);
+                                        let can_edit_contact_remark =
+                                            contact.state == arkret_sdk::ContactState::Accepted
+                                                && matches!(
+                                                    &contact.peer,
+                                                    arkret_sdk::contact_operations::ContactPeer::Human { .. }
+                                                );
+                                        let contact_remark =
+                                            contact_remarks_for_sidebar.get(&peer).cloned();
+                                        let display_name = actor_display_label(&state_store.read(), &peer);
+                                        let opening_key = format!("contact:{peer}");
+                                        let opening_target = direct_chat_opening();
+                                        let chat_open_blocked = opening_target.is_some();
+                                        let is_opening = opening_target.as_deref()
+                                            == Some(opening_key.as_str());
+                                        let row_title = if is_opening {
+                                            format!("Opening chat with {display_name}")
+                                        } else if can_resolve {
+                                            format!("Chat with {display_name}")
+                                        } else {
+                                            crate::i18n::tr("direct.unavailable")
+                                        };
+                                        let state_badge_label = if is_opening {
+                                            "Opening...".to_owned()
+                                        } else {
+                                            state_label.clone()
+                                        };
+                                                                            let has_contact_remark = contact_remark
+                                            .as_ref()
+                                            .is_some_and(|remark| !remark.petname.trim().is_empty());
+                                        let is_pinned_contact =
+                                            contact_remark.as_ref().is_some_and(|remark| remark.pinned);
+                                        let pin_contact_label = if is_pinned_contact {
+                                            crate::i18n::tr("contact.unpin")
+                                        } else {
+                                            crate::i18n::tr("contact.pin")
+                                        };
+                                        let pinned_contact_badge_label =
+                                            crate::i18n::tr("contact.pinned");
+                                        let contact_menu_key = format!("contact:{peer}");
+                                        let contact_menu_is_open =
+                                            sidebar_row_menu_open().as_deref()
+                                                == Some(contact_menu_key.as_str());
+                                        let contact_agent_count = contact.agents.len();
+                                        let contact_agents_expanded = expanded_contact_agents.read().contains(&peer);
+                                        let show_contact_agents = contact_agents_expanded
+                                            || (!direct_sidebar_query_value.is_empty()
+                                                && contact.agents.iter().any(|agent| {
+                                                    sidebar_text_matches_query(
+                                                        &direct_sidebar_query_value,
+                                                        &[
+                                                            agent.agent_id.as_str(),
+                                                            agent.display_name.as_deref().unwrap_or_default(),
+                                                            agent.agent_slug.as_deref().unwrap_or_default(),
+                                                        ],
+                                                    )
+                                                }));
+                                        rsx! {
+                                            div { class: "contact-sidebar-group", key: "{peer}", "data-controller": "{peer}",
+                                              div { class: "sidebar-row contact-sidebar-action-row",
+                                                button {
+                                                    class: if can_resolve { "sidebar-nav-item contact-sidebar-row sidebar-row-main" } else { "sidebar-nav-item contact-sidebar-row sidebar-row-main is-dim" },
+                                                    r#type: "button",
+                                                    "data-testid": "direct-conversation-row",
+                                                    "data-peer": "{peer}",
+                                                    "data-state": "{state_label}",
+                                                    "data-opening": if is_opening { "true" } else { "false" },
+                                                    "aria-busy": if is_opening { "true" } else { "false" },
+                                                    "aria-label": "{row_title}",
+                                                    title: "{row_title}",
+                                                    disabled: chat_open_blocked,
+                                                    onclick: {
+                                                        let peer = peer.clone();
+                                                        let direct = direct.clone();
+                                                        let base = base_url();
+                                                        let opening_key = opening_key.clone();
+                                                        move |event: dioxus::events::MouseEvent| {
+                                                            event.prevent_default();
+                                                            event.stop_propagation();
+                                                            if direct_chat_opening.read().is_some() {
+                                                                return;
+                                                            }
+                                                            if !can_resolve {
+                                                                crate::components::feedback::toast_info("direct.unavailable", vec![]);
+                                                                return;
+                                                            }
+                                                            if let Some(summary) = direct.clone()
+                                                                && summary.state
+                                                                    == arkret_sdk::DirectConversationSummaryState::Found
+                                                            {
+                                                                let _ = navigator.push(Route::DirectConversation {
+                                                                    realm_id: summary.realm_id.to_string(),
+                                                                    strand_id: summary.main_strand_id.to_string(),
+                                                                });
+                                                                return;
+                                                            }
+                                                            direct_chat_opening.set(Some(opening_key.clone()));
+                                                            let api_token = token();
+                                                            let base = base.clone();
+                                                            let peer_for_task = peer.clone();
+                                                            let peer_for_log = peer_for_task.clone();
+                                                            spawn(async move {
+                                                                let result = crate::transport::auth::with_authed_api(
+                                                                    &base,
+                                                                    api_token,
+                                                                    |api| async move {
+                                                                        crate::transport::account::direct_conversation_resolve(
+                                                                            &api,
+                                                                            state_store,
+                                                                            &peer_for_task,
+                                                                            None,
+                                                                            false,
+                                                                        ).await
+                                                                    },
+                                                                ).await;
+                                                                let route = match result {
+                                                                    Ok(response) => {
+                                                                        if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&response) {
+                                                                            Some(Route::DirectConversation {
+                                                                                realm_id: coordinates.realm_id.to_string(),
+                                                                                strand_id: coordinates.main_strand_id.to_string(),
+                                                                            })
+                                                                        } else {
+                                                                            crate::components::feedback::toast_error(
+                                                                                "feedback.direct_open_failed",
+                                                                                vec![],
+                                                                                Some(format!("outcome: {response:?}")),
+                                                                            );
+                                                                            None
+                                                                        }
+                                                                    }
+                                                                    Err(err) => {
+                                                                        tracing::error!(
+                                                                            error = %err.display_diagnostic(),
+                                                                            peer = %peer_for_log,
+                                                                            "direct conversation open failed"
+                                                                        );
+                                                                        crate::components::feedback::toast_error(
+                                                                            "feedback.direct_open_failed",
+                                                                            vec![],
+                                                                            Some(err.display_diagnostic()),
+                                                                        );
+                                                                        None
+                                                                    }
+                                                                };
+                                                                direct_chat_opening.set(None);
+                                                                if let Some(route) = route {
+                                                                    let _ = navigator.push(route);
+                                                                }
+                                                            });
+                                                        }
+                                                    },
+                                                    span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
+                                                        crate::components::IdentityAvatar {
+                                                            seed: peer.clone(),
+                                                            alt_text: display_name.clone(),
+                                                            class: "avatar-img".to_owned(),
+                                                        }
+                                                    }
+                                                    span { class: "grow truncate", "{display_name}" }
+                                                    if has_contact_remark {
+                                                        span {
+                                                            class: "pill muted xs",
+                                                            "data-testid": "contact-sidebar-remark-badge",
+                                                            title: "Local remark (private to this account)",
+                                                            "Remark"
+                                                        }
+                                                    }
+                                                    if is_pinned_contact {
+                                                        span {
+                                                            class: "pill muted xs realm-pin-badge",
+                                                            "data-testid": "contact-sidebar-pinned-badge",
+                                                            title: "{pinned_contact_badge_label}",
+                                                            UiIcon { name: "pin" }
+                                                        }
+                                                    }
+                                                    span { class: "pill muted xs", "{state_badge_label}" }
+                                                    if has_direct_scope {
+                                                        span { class: "pill muted xs", title: "{scopes_label}", "DM" }
+                                                    }
+                                                    if contact_agent_count > 0 {
+                                                        span {
+                                                            class: "pill muted xs contact-agent-count",
+                                                            role: "button",
+                                                            tabindex: "0",
+                                                            "data-testid": "contact-sidebar-agent-toggle",
+                                                            "aria-expanded": if contact_agents_expanded { "true" } else { "false" },
+                                                            onclick: {
+                                                                let peer = peer.clone();
+                                                                move |event: dioxus::events::MouseEvent| {
+                                                                    event.prevent_default();
+                                                                    event.stop_propagation();
+                                                                    if expanded_contact_agents.read().contains(&peer) {
+                                                                        expanded_contact_agents.write().remove(&peer);
+                                                                    } else {
+                                                                        expanded_contact_agents.write().insert(peer.clone());
+                                                                    }
+                                                                }
+                                                            },
+                                                            "Agents {contact_agent_count}"
+                                                        }
+                                                    }
+                                                }
+                                                div {
+                                                    class: if contact_menu_is_open { "sidebar-row-menu-host is-open" } else { "sidebar-row-menu-host" },
+                                                    button {
+                                                        class: "sidebar-row-menu-button",
+                                                        r#type: "button",
+                                                        "data-testid": "direct-conversation-row-menu-button",
+                                                        title: "Contact actions",
+                                                        "aria-label": "Contact actions",
+                                                        "aria-haspopup": "menu",
+                                                        "aria-expanded": if contact_menu_is_open { "true" } else { "false" },
+                                                        onclick: {
+                                                            let key = contact_menu_key.clone();
+                                                            move |event: dioxus::events::MouseEvent| {
+                                                                event.prevent_default();
+                                                                event.stop_propagation();
+                                                                if sidebar_row_menu_open().as_deref() == Some(key.as_str()) {
+                                                                    sidebar_row_menu_open.set(None);
+                                                                } else {
+                                                                    sidebar_row_menu_open.set(Some(key.clone()));
+                                                                }
+                                                            }
+                                                        },
+                                                        UiIcon { name: "more-horizontal" }
+                                                    }
+                                                    if contact_menu_is_open {
+                                                        div {
+                                                            class: "sidebar-row-menu-scrim",
+                                                            "aria-label": "Close row actions",
+                                                            onclick: move |_| sidebar_row_menu_open.set(None),
+                                                        }
+                                                        div {
+                                                            class: "sidebar-row-menu-panel",
+                                                            role: "menu",
+                                                            "aria-label": "Contact actions",
+                                                            if can_edit_contact_remark {
+                                                            button {
+                                                                class: "sidebar-row-menu-item",
+                                                                r#type: "button",
+                                                                role: "menuitem",
+                                                                "data-testid": "direct-conversation-row-pin-action",
+                                                                title: "{pin_contact_label}",
+                                                                "aria-label": "{pin_contact_label}",
+                                                                onclick: {
+                                                                    let peer = peer.clone();
+                                                                    let existing = contact_remark.clone();
+                                                                    let next_pinned = !is_pinned_contact;
+                                                                    move |event: dioxus::events::MouseEvent| {
+                                                                        event.prevent_default();
+                                                                        event.stop_propagation();
+                                                                        toggle_sidebar_contact_pin(
+                                                                            peer.clone(),
+                                                                            existing.clone(),
+                                                                            next_pinned,
+                                                                            state_store,
+                                                                            base_url(),
+                                                                            token(),
+                                                                        );
+                                                                        sidebar_row_menu_open.set(None);
+                                                                    }
+                                                                },
+                                                                UiIcon { name: "pin" }
+                                                                span { "{pin_contact_label}" }
+                                                            }
+                                                            }
+                                                            button {
+                                                                class: "sidebar-row-menu-item danger",
+                                                                r#type: "button",
+                                                                role: "menuitem",
+                                                                "data-testid": "direct-conversation-row-delete-action",
+                                                                title: "Delete Contact",
+                                                                "aria-label": "Delete Contact",
+                                                                disabled: true,
+                                                                onclick: {
+                                                                    let peer = peer.clone();
+                                                                    move |event: dioxus::events::MouseEvent| {
+                                                                        event.prevent_default();
+                                                                        event.stop_propagation();
+                                                                        delete_sidebar_contact(
+                                                                            base_url(),
+                                                                            token(),
+                                                                            peer.clone(),
+                                                                            state_store,
+                                                                            direct_contact_rows,
+                                                                            direct_contacts_loaded,
+                                                                        );
+                                                                        sidebar_row_menu_open.set(None);
+                                                                    }
+                                                                },
+                                                                UiIcon { name: "x" }
+                                                                span { "Delete" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                              }
+                                              if show_contact_agents {
+                                                div { class: "contact-agent-list", "data-testid": "contact-sidebar-contact-agents",
+                                                  for agent in contact.agents.iter() {
                                                     {
                                                         let agent_id = agent.agent_id.to_string();
-                                                        let agent_label = agent
-                                                            .display_name
-                                                            .clone()
-                                                            .unwrap_or_else(|| agent.slug.clone());
+                                                        let agent_label = agent.display_name.clone()
+                                                            .or_else(|| agent.agent_slug.clone())
+                                                            .unwrap_or_else(|| short_protocol_id(&agent_id));
+                                                        let agent_direct = agent.direct_conversation.clone();
                                                         let avatar_blob_ref = agent
                                                             .avatar_blob_ref
                                                             .as_ref()
                                                             .map(ToString::to_string)
                                                             .unwrap_or_default();
-                                                        let controller_id = self_did.clone();
-                                                        let opening_key = format!("owned-agent:{agent_id}");
+                                                        let controller = peer.clone();
+                                                        let opening_key = format!("contact-agent:{agent_id}");
                                                         let opening_target = direct_chat_opening();
                                                         let chat_open_blocked = opening_target.is_some();
                                                         let is_opening = opening_target.as_deref()
@@ -2153,7 +2608,7 @@ fn AppBootstrap() -> Element {
                                                                 r#type: "button",
                                                                 "data-testid": "contact-sidebar-agent-row",
                                                                 "data-agent": "{agent_id}",
-                                                                "data-controller": "{controller_id}",
+                                                                "data-controller": "{controller}",
                                                                 "data-opening": if is_opening { "true" } else { "false" },
                                                                 "aria-busy": if is_opening { "true" } else { "false" },
                                                                 "aria-label": "{agent_button_label}",
@@ -2162,7 +2617,8 @@ fn AppBootstrap() -> Element {
                                                                 onclick: {
                                                                     let base = base_url();
                                                                     let agent_id = agent_id.clone();
-                                                                    let controller_id = controller_id.clone();
+                                                                    let agent_direct = agent_direct.clone();
+                                                                    let controller = controller.clone();
                                                                     let opening_key = opening_key.clone();
                                                                     move |event: dioxus::events::MouseEvent| {
                                                                         event.prevent_default();
@@ -2170,11 +2626,21 @@ fn AppBootstrap() -> Element {
                                                                         if direct_chat_opening.read().is_some() {
                                                                             return;
                                                                         }
+                                                                        if let Some(summary) = agent_direct.clone()
+                                                                            && summary.state
+                                                                                == arkret_sdk::DirectConversationSummaryState::Found
+                                                                        {
+                                                                            let _ = navigator.push(Route::DirectConversation {
+                                                                                realm_id: summary.realm_id.to_string(),
+                                                                                strand_id: summary.main_strand_id.to_string(),
+                                                                            });
+                                                                            return;
+                                                                        }
                                                                         direct_chat_opening.set(Some(opening_key.clone()));
                                                                         let api_token = token();
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
-                                                                        let controller_id = controller_id.clone();
+                                                                        let controller = controller.clone();
                                                                         spawn(async move {
                                                                             let agent_id_for_log = agent_id.clone();
                                                                             let route = match crate::transport::auth::with_authed_api(
@@ -2185,8 +2651,8 @@ fn AppBootstrap() -> Element {
                                                                                         &api,
                                                                                         state_store,
                                                                                         &agent_id,
-                                                                                        Some(&controller_id),
-                                                                                        true,
+                                                                                        Some(&controller),
+                                                                                        false,
                                                                                     ).await
                                                                                 },
                                                                             ).await {
@@ -2211,7 +2677,7 @@ fn AppBootstrap() -> Element {
                                                                                     tracing::error!(
                                                                                         error = %err.display_diagnostic(),
                                                                                         agent_id = %agent_id_for_log,
-                                                                                        "owned agent direct conversation open failed"
+                                                                                        "contact agent direct conversation open failed"
                                                                                     );
                                                                                     crate::components::feedback::toast_error(
                                                                                         "feedback.direct_open_failed", vec![], Some(err.display_diagnostic()),
@@ -2239,1730 +2705,1258 @@ fn AppBootstrap() -> Element {
                                                             }
                                                         }
                                                     }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if !has_session {
-                            div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-empty-state",
-                                span { class: "sidebar-nav-icon", UiIcon { name: "users" } }
-                                span { class: "grow truncate", {crate::i18n::tr("contacts.sign_in")} }
-                            }
-                        } else if filtered_direct_contact_rows.is_empty() && !direct_sidebar_query_value.is_empty() {
-                            div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-no-results",
-                                span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
-                                span { class: "grow truncate", "No matching contacts" }
-                            }
-                        } else {
-                            for contact in filtered_direct_contact_rows.iter() {
-                                {
-                                    let peer = crate::models::contact_peer_id(contact).to_string();
-                                    let state_label =
-                                        crate::models::contact_state_wire(contact.state).to_owned();
-                                    let scopes_label = contact
-                                        .bidirectional_scopes
-                                        .iter()
-                                        .map(|scope| crate::models::contact_scope_wire(*scope))
-                                        .collect::<Vec<_>>()
-                                        .join(", ");
-                                    let direct = contact.direct_conversation.clone();
-                                    let has_direct_scope = contact
-                                        .bidirectional_scopes
-                                        .iter()
-                                        .chain(contact.effective_scopes.iter().flatten())
-                                        .any(|scope| *scope == ContactScope::DirectMessage);
-                                    let has_active_direct = direct
-                                        .as_ref()
-                                        .is_some_and(|summary| {
-                                            summary.state
-                                                == arkret_sdk::DirectConversationSummaryState::Found
-                                        });
-                                    let can_resolve =
-                                        contact.state == arkret_sdk::ContactState::Accepted
-                                            && (has_direct_scope || has_active_direct);
-                                    let can_edit_contact_remark =
-                                        contact.state == arkret_sdk::ContactState::Accepted
-                                            && matches!(
-                                                &contact.peer,
-                                                arkret_sdk::contact_operations::ContactPeer::Human { .. }
-                                            );
-                                    let contact_remark =
-                                        contact_remarks_for_sidebar.get(&peer).cloned();
-                                    let display_name = actor_display_label(&state_store.read(), &peer);
-                                    let opening_key = format!("contact:{peer}");
-                                    let opening_target = direct_chat_opening();
-                                    let chat_open_blocked = opening_target.is_some();
-                                    let is_opening = opening_target.as_deref()
-                                        == Some(opening_key.as_str());
-                                    let row_title = if is_opening {
-                                        format!("Opening chat with {display_name}")
-                                    } else if can_resolve {
-                                        format!("Chat with {display_name}")
-                                    } else {
-                                        crate::i18n::tr("direct.unavailable")
-                                    };
-                                    let state_badge_label = if is_opening {
-                                        "Opening...".to_owned()
-                                    } else {
-                                        state_label.clone()
-                                    };
-                                                                        let has_contact_remark = contact_remark
-                                        .as_ref()
-                                        .is_some_and(|remark| !remark.petname.trim().is_empty());
-                                    let is_pinned_contact =
-                                        contact_remark.as_ref().is_some_and(|remark| remark.pinned);
-                                    let pin_contact_label = if is_pinned_contact {
-                                        crate::i18n::tr("contact.unpin")
-                                    } else {
-                                        crate::i18n::tr("contact.pin")
-                                    };
-                                    let pinned_contact_badge_label =
-                                        crate::i18n::tr("contact.pinned");
-                                    let contact_menu_key = format!("contact:{peer}");
-                                    let contact_menu_is_open =
-                                        sidebar_row_menu_open().as_deref()
-                                            == Some(contact_menu_key.as_str());
-                                    let contact_agent_count = contact.agents.len();
-                                    let contact_agents_expanded = expanded_contact_agents.read().contains(&peer);
-                                    let show_contact_agents = contact_agents_expanded
-                                        || (!direct_sidebar_query_value.is_empty()
-                                            && contact.agents.iter().any(|agent| {
-                                                sidebar_text_matches_query(
-                                                    &direct_sidebar_query_value,
-                                                    &[
-                                                        agent.agent_id.as_str(),
-                                                        agent.display_name.as_deref().unwrap_or_default(),
-                                                        agent.agent_slug.as_deref().unwrap_or_default(),
-                                                    ],
-                                                )
-                                            }));
-                                    rsx! {
-                                        div { class: "contact-sidebar-group", key: "{peer}", "data-controller": "{peer}",
-                                          div { class: "sidebar-row contact-sidebar-action-row",
-                                            button {
-                                                class: if can_resolve { "sidebar-nav-item contact-sidebar-row sidebar-row-main" } else { "sidebar-nav-item contact-sidebar-row sidebar-row-main is-dim" },
-                                                r#type: "button",
-                                                "data-testid": "direct-conversation-row",
-                                                "data-peer": "{peer}",
-                                                "data-state": "{state_label}",
-                                                "data-opening": if is_opening { "true" } else { "false" },
-                                                "aria-busy": if is_opening { "true" } else { "false" },
-                                                "aria-label": "{row_title}",
-                                                title: "{row_title}",
-                                                disabled: chat_open_blocked,
-                                                onclick: {
-                                                    let peer = peer.clone();
-                                                    let direct = direct.clone();
-                                                    let base = base_url();
-                                                    let opening_key = opening_key.clone();
-                                                    move |event: dioxus::events::MouseEvent| {
-                                                        event.prevent_default();
-                                                        event.stop_propagation();
-                                                        if direct_chat_opening.read().is_some() {
-                                                            return;
-                                                        }
-                                                        if !can_resolve {
-                                                            crate::components::feedback::toast_info("direct.unavailable", vec![]);
-                                                            return;
-                                                        }
-                                                        if let Some(summary) = direct.clone()
-                                                            && summary.state
-                                                                == arkret_sdk::DirectConversationSummaryState::Found
-                                                        {
-                                                            let _ = navigator.push(Route::DirectConversation {
-                                                                realm_id: summary.realm_id.to_string(),
-                                                                strand_id: summary.main_strand_id.to_string(),
-                                                            });
-                                                            return;
-                                                        }
-                                                        direct_chat_opening.set(Some(opening_key.clone()));
-                                                        let api_token = token();
-                                                        let base = base.clone();
-                                                        let peer_for_task = peer.clone();
-                                                        let peer_for_log = peer_for_task.clone();
-                                                        spawn(async move {
-                                                            let result = crate::transport::auth::with_authed_api(
-                                                                &base,
-                                                                api_token,
-                                                                |api| async move {
-                                                                    crate::transport::account::direct_conversation_resolve(
-                                                                        &api,
-                                                                        state_store,
-                                                                        &peer_for_task,
-                                                                        None,
-                                                                        false,
-                                                                    ).await
-                                                                },
-                                                            ).await;
-                                                            let route = match result {
-                                                                Ok(response) => {
-                                                                    if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&response) {
-                                                                        Some(Route::DirectConversation {
-                                                                            realm_id: coordinates.realm_id.to_string(),
-                                                                            strand_id: coordinates.main_strand_id.to_string(),
-                                                                        })
-                                                                    } else {
-                                                                        crate::components::feedback::toast_error(
-                                                                            "feedback.direct_open_failed",
-                                                                            vec![],
-                                                                            Some(format!("outcome: {response:?}")),
-                                                                        );
-                                                                        None
-                                                                    }
-                                                                }
-                                                                Err(err) => {
-                                                                    tracing::error!(
-                                                                        error = %err.display_diagnostic(),
-                                                                        peer = %peer_for_log,
-                                                                        "direct conversation open failed"
-                                                                    );
-                                                                    crate::components::feedback::toast_error(
-                                                                        "feedback.direct_open_failed",
-                                                                        vec![],
-                                                                        Some(err.display_diagnostic()),
-                                                                    );
-                                                                    None
-                                                                }
-                                                            };
-                                                            direct_chat_opening.set(None);
-                                                            if let Some(route) = route {
-                                                                let _ = navigator.push(route);
-                                                            }
-                                                        });
-                                                    }
-                                                },
-                                                span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
-                                                    crate::components::IdentityAvatar {
-                                                        seed: peer.clone(),
-                                                        alt_text: display_name.clone(),
-                                                        class: "avatar-img".to_owned(),
-                                                    }
-                                                }
-                                                span { class: "grow truncate", "{display_name}" }
-                                                if has_contact_remark {
-                                                    span {
-                                                        class: "pill muted xs",
-                                                        "data-testid": "contact-sidebar-remark-badge",
-                                                        title: "Local remark (private to this account)",
-                                                        "Remark"
-                                                    }
-                                                }
-                                                if is_pinned_contact {
-                                                    span {
-                                                        class: "pill muted xs realm-pin-badge",
-                                                        "data-testid": "contact-sidebar-pinned-badge",
-                                                        title: "{pinned_contact_badge_label}",
-                                                        UiIcon { name: "pin" }
-                                                    }
-                                                }
-                                                span { class: "pill muted xs", "{state_badge_label}" }
-                                                if has_direct_scope {
-                                                    span { class: "pill muted xs", title: "{scopes_label}", "DM" }
-                                                }
-                                                if contact_agent_count > 0 {
-                                                    span {
-                                                        class: "pill muted xs contact-agent-count",
-                                                        role: "button",
-                                                        tabindex: "0",
-                                                        "data-testid": "contact-sidebar-agent-toggle",
-                                                        "aria-expanded": if contact_agents_expanded { "true" } else { "false" },
-                                                        onclick: {
-                                                            let peer = peer.clone();
-                                                            move |event: dioxus::events::MouseEvent| {
-                                                                event.prevent_default();
-                                                                event.stop_propagation();
-                                                                if expanded_contact_agents.read().contains(&peer) {
-                                                                    expanded_contact_agents.write().remove(&peer);
-                                                                } else {
-                                                                    expanded_contact_agents.write().insert(peer.clone());
-                                                                }
-                                                            }
-                                                        },
-                                                        "Agents {contact_agent_count}"
-                                                    }
-                                                }
-                                            }
-                                            div {
-                                                class: if contact_menu_is_open { "sidebar-row-menu-host is-open" } else { "sidebar-row-menu-host" },
-                                                button {
-                                                    class: "sidebar-row-menu-button",
-                                                    r#type: "button",
-                                                    "data-testid": "direct-conversation-row-menu-button",
-                                                    title: "Contact actions",
-                                                    "aria-label": "Contact actions",
-                                                    "aria-haspopup": "menu",
-                                                    "aria-expanded": if contact_menu_is_open { "true" } else { "false" },
-                                                    onclick: {
-                                                        let key = contact_menu_key.clone();
-                                                        move |event: dioxus::events::MouseEvent| {
-                                                            event.prevent_default();
-                                                            event.stop_propagation();
-                                                            if sidebar_row_menu_open().as_deref() == Some(key.as_str()) {
-                                                                sidebar_row_menu_open.set(None);
-                                                            } else {
-                                                                sidebar_row_menu_open.set(Some(key.clone()));
-                                                            }
-                                                        }
-                                                    },
-                                                    UiIcon { name: "more-horizontal" }
-                                                }
-                                                if contact_menu_is_open {
-                                                    div {
-                                                        class: "sidebar-row-menu-scrim",
-                                                        "aria-label": "Close row actions",
-                                                        onclick: move |_| sidebar_row_menu_open.set(None),
-                                                    }
-                                                    div {
-                                                        class: "sidebar-row-menu-panel",
-                                                        role: "menu",
-                                                        "aria-label": "Contact actions",
-                                                        if can_edit_contact_remark {
-                                                        button {
-                                                            class: "sidebar-row-menu-item",
-                                                            r#type: "button",
-                                                            role: "menuitem",
-                                                            "data-testid": "direct-conversation-row-pin-action",
-                                                            title: "{pin_contact_label}",
-                                                            "aria-label": "{pin_contact_label}",
-                                                            onclick: {
-                                                                let peer = peer.clone();
-                                                                let existing = contact_remark.clone();
-                                                                let next_pinned = !is_pinned_contact;
-                                                                move |event: dioxus::events::MouseEvent| {
-                                                                    event.prevent_default();
-                                                                    event.stop_propagation();
-                                                                    toggle_sidebar_contact_pin(
-                                                                        peer.clone(),
-                                                                        existing.clone(),
-                                                                        next_pinned,
-                                                                        state_store,
-                                                                        base_url(),
-                                                                        token(),
-                                                                    );
-                                                                    sidebar_row_menu_open.set(None);
-                                                                }
-                                                            },
-                                                            UiIcon { name: "pin" }
-                                                            span { "{pin_contact_label}" }
-                                                        }
-                                                        }
-                                                        button {
-                                                            class: "sidebar-row-menu-item danger",
-                                                            r#type: "button",
-                                                            role: "menuitem",
-                                                            "data-testid": "direct-conversation-row-delete-action",
-                                                            title: "Delete Contact",
-                                                            "aria-label": "Delete Contact",
-                                                            disabled: true,
-                                                            onclick: {
-                                                                let peer = peer.clone();
-                                                                move |event: dioxus::events::MouseEvent| {
-                                                                    event.prevent_default();
-                                                                    event.stop_propagation();
-                                                                    delete_sidebar_contact(
-                                                                        base_url(),
-                                                                        token(),
-                                                                        peer.clone(),
-                                                                        state_store,
-                                                                        direct_contact_rows,
-                                                                        direct_contacts_loaded,
-                                                                    );
-                                                                    sidebar_row_menu_open.set(None);
-                                                                }
-                                                            },
-                                                            UiIcon { name: "x" }
-                                                            span { "Delete" }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                          }
-                                          if show_contact_agents {
-                                            div { class: "contact-agent-list", "data-testid": "contact-sidebar-contact-agents",
-                                              for agent in contact.agents.iter() {
-                                                {
-                                                    let agent_id = agent.agent_id.to_string();
-                                                    let agent_label = agent.display_name.clone()
-                                                        .or_else(|| agent.agent_slug.clone())
-                                                        .unwrap_or_else(|| short_protocol_id(&agent_id));
-                                                    let agent_direct = agent.direct_conversation.clone();
-                                                    let avatar_blob_ref = agent
-                                                        .avatar_blob_ref
-                                                        .as_ref()
-                                                        .map(ToString::to_string)
-                                                        .unwrap_or_default();
-                                                    let controller = peer.clone();
-                                                    let opening_key = format!("contact-agent:{agent_id}");
-                                                    let opening_target = direct_chat_opening();
-                                                    let chat_open_blocked = opening_target.is_some();
-                                                    let is_opening = opening_target.as_deref()
-                                                        == Some(opening_key.as_str());
-                                                    let agent_button_label = if is_opening {
-                                                        format!("Opening chat with {agent_label}")
-                                                    } else {
-                                                        format!("Chat with {agent_label}")
-                                                    };
-                                                    rsx! {
-                                                        button {
-                                                            key: "{agent_id}",
-                                                            class: "sidebar-nav-item contact-sidebar-agent-row",
-                                                            r#type: "button",
-                                                            "data-testid": "contact-sidebar-agent-row",
-                                                            "data-agent": "{agent_id}",
-                                                            "data-controller": "{controller}",
-                                                            "data-opening": if is_opening { "true" } else { "false" },
-                                                            "aria-busy": if is_opening { "true" } else { "false" },
-                                                            "aria-label": "{agent_button_label}",
-                                                            title: "{agent_button_label}",
-                                                            disabled: chat_open_blocked,
-                                                            onclick: {
-                                                                let base = base_url();
-                                                                let agent_id = agent_id.clone();
-                                                                let agent_direct = agent_direct.clone();
-                                                                let controller = controller.clone();
-                                                                let opening_key = opening_key.clone();
-                                                                move |event: dioxus::events::MouseEvent| {
-                                                                    event.prevent_default();
-                                                                    event.stop_propagation();
-                                                                    if direct_chat_opening.read().is_some() {
-                                                                        return;
-                                                                    }
-                                                                    if let Some(summary) = agent_direct.clone()
-                                                                        && summary.state
-                                                                            == arkret_sdk::DirectConversationSummaryState::Found
-                                                                    {
-                                                                        let _ = navigator.push(Route::DirectConversation {
-                                                                            realm_id: summary.realm_id.to_string(),
-                                                                            strand_id: summary.main_strand_id.to_string(),
-                                                                        });
-                                                                        return;
-                                                                    }
-                                                                    direct_chat_opening.set(Some(opening_key.clone()));
-                                                                    let api_token = token();
-                                                                    let base = base.clone();
-                                                                    let agent_id = agent_id.clone();
-                                                                    let controller = controller.clone();
-                                                                    spawn(async move {
-                                                                        let agent_id_for_log = agent_id.clone();
-                                                                        let route = match crate::transport::auth::with_authed_api(
-                                                                            &base,
-                                                                            api_token,
-                                                                            |api| async move {
-                                                                                crate::transport::account::direct_conversation_resolve(
-                                                                                    &api,
-                                                                                    state_store,
-                                                                                    &agent_id,
-                                                                                    Some(&controller),
-                                                                                    false,
-                                                                                ).await
-                                                                            },
-                                                                        ).await {
-                                                                            Ok(ref response)
-                                                                                if let Some(coordinates) =
-                                                                                    crate::transport::account::direct_conversation_coordinates(response) =>
-                                                                            {
-                                                                                Some(Route::DirectConversation {
-                                                                                    realm_id: coordinates.realm_id.to_string(),
-                                                                                    strand_id: coordinates.main_strand_id.to_string(),
-                                                                                })
-                                                                            },
-                                                                            Ok(response) => {
-                                                                                crate::components::feedback::toast_error(
-                                                                                    "feedback.direct_open_failed",
-                                                                                    vec![],
-                                                                                    Some(format!("outcome: {response:?}")),
-                                                                                );
-                                                                                None
-                                                                            }
-                                                                            Err(err) => {
-                                                                                tracing::error!(
-                                                                                    error = %err.display_diagnostic(),
-                                                                                    agent_id = %agent_id_for_log,
-                                                                                    "contact agent direct conversation open failed"
-                                                                                );
-                                                                                crate::components::feedback::toast_error(
-                                                                                    "feedback.direct_open_failed", vec![], Some(err.display_diagnostic()),
-                                                                                );
-                                                                                None
-                                                                            }
-                                                                        };
-                                                                        direct_chat_opening.set(None);
-                                                                        if let Some(route) = route {
-                                                                            let _ = navigator.push(route);
-                                                                        }
-                                                                    });
-                                                                }
-                                                            },
-                                                            span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
-                                                                crate::components::IdentityAvatar {
-                                                                    seed: agent_id.clone(),
-                                                                    alt_text: agent_label.clone(),
-                                                                    blob_ref: Some(avatar_blob_ref),
-                                                                    class: "avatar-img".to_owned(),
-                                                                }
-                                                            }
-                                                            span { class: "grow truncate", "{agent_label}" }
-                                                            span { class: "pill muted xs", if is_opening { "Opening..." } else { "AI agent" } }
-                                                        }
-                                                    }
+                                                  }
                                                 }
                                               }
                                             }
-                                          }
                                         }
                                     }
                                 }
                             }
-                        }
-                    } else if collaboration_realm_tree_nodes.is_empty() {
-                        div { class: "sidebar-nav-item is-dim", "data-testid": "realm-tree-empty-state",
-                            span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
-                            span { class: "grow truncate",
-                                {
-                                    if has_session {
-                                        crate::i18n::tr("sidebar.realms_empty")
-                                    } else {
-                                        crate::i18n::tr("sidebar.realms_sign_in")
-                                    }
-                                }
-                            }
-                        }
-                        // Diagnostic line: when an authenticated user sees an
-                        // empty sidebar, surface the latest connect status and
-                        // (if any) last_error directly so QA / users can tell
-                        // "sync failed" from "no Realms yet" without opening
-                        // devtools. Truncated to keep the sidebar tidy.
-                        if has_session && !sidebar_is_collapsed {
-                            div { class: "sidebar-nav-meta",
-                                "data-testid": "realm-tree-empty-state-status",
-                                style: "padding: 4px 12px; font-size: 11px; line-height: 1.4; opacity: 0.7;",
-                                {
-                                    let raw_status = connection_status();
-                                    let status_text = match raw_status.as_str() {
-                                        "Online" => crate::i18n::tr("common.online"),
-                                        "Offline" => crate::i18n::tr("common.offline"),
-                                        _ => raw_status,
-                                    };
-                                    let error_text = last_error();
-                                    // Truncate by characters, not bytes: these
-                                    // strings carry server `reason` / error text
-                                    // that can contain non-ASCII (CJK / emoji),
-                                    // and a byte slice mid-character would panic
-                                    // the whole shell to a white screen.
-                                    let trimmed_status = if status_text.chars().count() > 96 {
-                                        format!("{}…", status_text.chars().take(96).collect::<String>())
-                                    } else {
-                                        status_text
-                                    };
-                                    let trimmed_error = error_text
-                                        .as_ref()
-                                        .map(|err| if err.chars().count() > 96 {
-                                            format!("{}…", err.chars().take(96).collect::<String>())
+                        } else if collaboration_realm_tree_nodes.is_empty() {
+                            div { class: "sidebar-nav-item is-dim", "data-testid": "realm-tree-empty-state",
+                                span { class: "sidebar-nav-icon", UiIcon { name: "folder" } }
+                                span { class: "grow truncate",
+                                    {
+                                        if has_session {
+                                            crate::i18n::tr("sidebar.realms_empty")
                                         } else {
-                                            err.clone()
-                                        });
-                                    rsx! {
-                                        div { "data-testid": "realm-tree-empty-state-status-line",
-                                            "{trimmed_status}"
-                                        }
-                                        if let Some(err) = trimmed_error {
-                                            div {
-                                                "data-testid": "realm-tree-empty-state-error-line",
-                                                style: "color: var(--danger, #d33);",
-                                                "{err}"
-                                            }
+                                            crate::i18n::tr("sidebar.realms_sign_in")
                                         }
                                     }
                                 }
                             }
-                        }
-                    } else if filtered_realm_tree.is_empty() {
-                        div { class: "sidebar-nav-item is-dim", "data-testid": "realm-tree-no-results",
-                            span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
-                            span { class: "grow truncate", {crate::i18n::tr("sidebar.realms_no_results")} }
-                        }
-                    } else {
-                        for item in filtered_realm_tree.iter() {
-                            {
-                                let item_node = item.node.clone();
-                                let depth_px = item.depth * 14;
-                                let target_realm_id = item_node.projection_realm_id().to_owned();
-                                let is_active = item_node.kind == RealmTreeNodeKind::Realm
-                                    && effective_realm_id.as_deref() == Some(item_node.id.as_str());
-                                let item_class = if is_active {
-                                    "sidebar-nav-item realm-tree-item is-active"
-                                } else {
-                                    "sidebar-nav-item realm-tree-item"
-                                };
-                                // Spec client-preferences.md §3.7: when the
-                                // user has a private Realm remark, prefer its
-                                // local_name; fall back to the public title.
-                                // Use a "(remark)" badge so duplicate-titled
-                                // Realms can be distinguished without leaking
-                                // the remark beyond this device.
-                                let remark = if item_node.kind == RealmTreeNodeKind::Realm {
-                                    state_store.read().realm_remark(&item_node.id)
-                                } else {
-                                    None
-                                };
-                                let display_name = remark
-                                    .as_ref()
-                                    .map(|r| r.display_name(&item_node.title).to_owned())
-                                    .unwrap_or_else(|| item_node.title.clone());
-                                let has_remark = remark
-                                    .as_ref()
-                                    .is_some_and(|r| !r.local_name.trim().is_empty());
-                                let is_pinned_realm = remark.as_ref().is_some_and(|r| r.pinned);
-                                let can_pin_realm = item_node.kind == RealmTreeNodeKind::Realm
-                                    && !realm_tree_node_is_direct_conversation(&item_node);
-                                let pin_action_label = if is_pinned_realm {
-                                    crate::i18n::tr("realm.unpin")
-                                } else {
-                                    crate::i18n::tr("realm.pin")
-                                };
-                                let pinned_badge_label = crate::i18n::tr("realm.pinned");
-                                let add_child_title = match item_node.kind {
-                                    RealmTreeNodeKind::Realm => "Create a new Space at the root of this Realm",
-                                    RealmTreeNodeKind::Space => "Create a new Space under this one (this Space becomes the parent)",
-                                };
-                                let menu_key = format!("realm:{}", item_node.id);
-                                let menu_is_open =
-                                    sidebar_row_menu_open().as_deref() == Some(menu_key.as_str());
-                                // Add Member / Settings are Realm-scoped write
-                                // actions: only surface them once the lazy authz
-                                // probe (fired on menu open) has confirmed the
-                                // actor may perform them. Absent / pending / denied
-                                // all read as hidden (fail-closed).
-                                let row_perms = if item_node.kind == RealmTreeNodeKind::Realm {
-                                    sidebar_row_perms.read().get(&item_node.id).copied()
-                                } else {
-                                    None
-                                };
-                                let can_add_member =
-                                    row_perms.map(|p| p.can_add_member).unwrap_or(false);
-                                let can_open_settings =
-                                    row_perms.map(|p| p.can_settings).unwrap_or(false);
-                                let add_member_label = crate::i18n::tr("realm.add_member");
-                                let settings_label = crate::i18n::tr("realm.settings");
-                                let actions_title = match item_node.kind {
-                                    RealmTreeNodeKind::Realm => "Realm actions",
-                                    RealmTreeNodeKind::Space => "Space actions",
-                                };
-                                let (icon_name, icon_class, icon_title) = match item_node.kind {
-                                    RealmTreeNodeKind::Realm => {
-                                        let is_encrypted = realm_tree_projections
-                                            .get(&item_node.id)
-                                            .and_then(crate::security_state::realm_projection_security_state)
-                                            .unwrap_or_else(|| realm_ids_with_local_mls.contains(&item_node.id));
-                                        if is_encrypted {
-                                            (
-                                                "lock",
-                                                "sidebar-nav-icon realm-security-secure",
-                                                "Encrypted Realm",
-                                            )
+                            // Diagnostic line: when an authenticated user sees an
+                            // empty sidebar, surface the latest connect status and
+                            // (if any) last_error directly so QA / users can tell
+                            // "sync failed" from "no Realms yet" without opening
+                            // devtools. Truncated to keep the sidebar tidy.
+                            if has_session && !sidebar_is_collapsed {
+                                div { class: "sidebar-nav-meta",
+                                    "data-testid": "realm-tree-empty-state-status",
+                                    style: "padding: 4px 12px; font-size: 11px; line-height: 1.4; opacity: 0.7;",
+                                    {
+                                        let raw_status = connection_status();
+                                        let status_text = match raw_status.as_str() {
+                                            "Online" => crate::i18n::tr("common.online"),
+                                            "Offline" => crate::i18n::tr("common.offline"),
+                                            _ => raw_status,
+                                        };
+                                        let error_text = last_error();
+                                        // Truncate by characters, not bytes: these
+                                        // strings carry server `reason` / error text
+                                        // that can contain non-ASCII (CJK / emoji),
+                                        // and a byte slice mid-character would panic
+                                        // the whole shell to a white screen.
+                                        let trimmed_status = if status_text.chars().count() > 96 {
+                                            format!("{}…", status_text.chars().take(96).collect::<String>())
                                         } else {
-                                            (
-                                                "unlock",
-                                                "sidebar-nav-icon realm-security-unsafe",
-                                                "Unencrypted Realm",
-                                            )
-                                        }
-                                    }
-                                    RealmTreeNodeKind::Space => (
-                                        "folder",
-                                        "sidebar-nav-icon",
-                                        "Space",
-                                    ),
-                                };
-                                rsx! {
-                            div { class: "sidebar-row",
-                            key: "{item_node.id}",
-                            Link {
-                                class: "{item_class} sidebar-row-main",
-                                "data-testid": "realm-tree-node-button",
-                                title: "{item_node.title}",
-                                style: "padding-left: calc(10px + {depth_px}px);",
-                                to: Route::Realm { realm_id: target_realm_id.clone() },
-                                onclick: {
-                                    let id = target_realm_id.clone();
-                                    move |_| selected_realm_id.set(id.clone())
-                                },
-                                span {
-                                    class: "{icon_class}",
-                                    title: "{icon_title}",
-                                    UiIcon { name: icon_name.to_owned() }
-                                }
-                                span { class: "grow truncate", "{display_name}" }
-                                if has_remark {
-                                    span {
-                                        class: "pill muted xs",
-                                        "data-testid": "realm-tree-realm-remark-badge",
-                                        title: "Local remark (private to this account)",
-                                        "Remark"
-                                    }
-                                }
-                                if is_pinned_realm {
-                                    span {
-                                        class: "pill muted xs realm-pin-badge",
-                                        "data-testid": "realm-tree-pinned-badge",
-                                        title: "{pinned_badge_label}",
-                                        UiIcon { name: "pin" }
-                                    }
-                                }
-                                // Two-tier classification badge: Realm
-                                // (security boundary) vs Space (nav
-                                // container inside a Realm). When a
-                                // Realm has descendants, show the count
-                                // instead of the kind tag so the user
-                                // sees the tree structure at a glance.
-                                if item.descendant_count > 0 && item_node.kind == RealmTreeNodeKind::Realm {
-                                    span { class: "pill muted xs", "{item.descendant_count}" }
-                                } else {
-                                    match item_node.kind {
-                                        RealmTreeNodeKind::Realm => rsx! {
-                                            span {
-                                                class: "pill muted xs",
-                                                "data-testid": "realm-tree-kind-realm",
-                                                title: crate::i18n::tr("friendly.realm.description"),
-                                                {crate::i18n::tr("friendly.realm")}
-                                            }
-                                        },
-                                        RealmTreeNodeKind::Space => rsx! {
-                                            span {
-                                                class: "pill muted xs",
-                                                "data-testid": "realm-tree-kind-space",
-                                                title: crate::i18n::tr("friendly.space.description"),
-                                                {crate::i18n::tr("friendly.space")}
-                                            }
-                                        },
-                                    }
-                                }
-                            }
-                            div {
-                                class: if menu_is_open { "sidebar-row-menu-host is-open" } else { "sidebar-row-menu-host" },
-                                button {
-                                    class: "sidebar-row-menu-button",
-                                    r#type: "button",
-                                    "data-testid": "realm-tree-row-menu-button",
-                                    title: "{actions_title}",
-                                    "aria-label": "{actions_title}",
-                                    "aria-haspopup": "menu",
-                                    "aria-expanded": if menu_is_open { "true" } else { "false" },
-                                    onclick: {
-                                        let key = menu_key.clone();
-                                        let perms_realm_id = item_node.id.clone();
-                                        let probe_perms = item_node.kind == RealmTreeNodeKind::Realm;
-                                        move |event: dioxus::events::MouseEvent| {
-                                            event.prevent_default();
-                                            event.stop_propagation();
-                                            if sidebar_row_menu_open().as_deref() == Some(key.as_str()) {
-                                                sidebar_row_menu_open.set(None);
+                                            status_text
+                                        };
+                                        let trimmed_error = error_text
+                                            .as_ref()
+                                            .map(|err| if err.chars().count() > 96 {
+                                                format!("{}…", err.chars().take(96).collect::<String>())
                                             } else {
-                                                sidebar_row_menu_open.set(Some(key.clone()));
-                                                // Lazily resolve Add Member / Settings
-                                                // visibility for just this Realm the
-                                                // moment its menu opens.
-                                                if probe_perms {
-                                                    ensure_sidebar_row_perms(
-                                                        base_url(),
-                                                        token(),
-                                                        principal_id(),
-                                                        perms_realm_id.clone(),
-                                                        sidebar_row_perms,
-                                                    );
+                                                err.clone()
+                                            });
+                                        rsx! {
+                                            div { "data-testid": "realm-tree-empty-state-status-line",
+                                                "{trimmed_status}"
+                                            }
+                                            if let Some(err) = trimmed_error {
+                                                div {
+                                                    "data-testid": "realm-tree-empty-state-error-line",
+                                                    style: "color: var(--danger, #d33);",
+                                                    "{err}"
                                                 }
                                             }
                                         }
-                                    },
-                                    UiIcon { name: "more-horizontal" }
-                                }
-                                if menu_is_open {
-                                    div {
-                                        class: "sidebar-row-menu-scrim",
-                                        "aria-label": "Close row actions",
-                                        onclick: move |_| sidebar_row_menu_open.set(None),
                                     }
-                                    div {
-                                        class: "sidebar-row-menu-panel",
-                                        role: "menu",
-                                        "aria-label": "{actions_title}",
-                                        if can_pin_realm {
-                                            button {
-                                                class: "sidebar-row-menu-item",
-                                                r#type: "button",
-                                                role: "menuitem",
-                                                "data-testid": "realm-tree-row-pin-action",
-                                                title: "{pin_action_label}",
-                                                "aria-label": "{pin_action_label}",
-                                                onclick: {
-                                                    let id = item_node.id.clone();
-                                                    let existing = remark.clone();
-                                                    let next_pinned = !is_pinned_realm;
-                                                    move |event: dioxus::events::MouseEvent| {
-                                                        event.prevent_default();
-                                                        event.stop_propagation();
-                                                        toggle_sidebar_realm_pin(
-                                                            id.clone(),
-                                                            existing.clone(),
-                                                            next_pinned,
-                                                            state_store,
-                                                            base_url(),
-                                                            token(),
-                                                        );
-                                                        sidebar_row_menu_open.set(None);
-                                                    }
-                                                },
-                                                UiIcon { name: "pin" }
-                                                span { "{pin_action_label}" }
+                                }
+                            }
+                        } else if filtered_realm_tree.is_empty() {
+                            div { class: "sidebar-nav-item is-dim", "data-testid": "realm-tree-no-results",
+                                span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
+                                span { class: "grow truncate", {crate::i18n::tr("sidebar.realms_no_results")} }
+                            }
+                        } else {
+                            for item in filtered_realm_tree.iter() {
+                                {
+                                    let item_node = item.node.clone();
+                                    let depth_px = item.depth * 14;
+                                    let target_realm_id = item_node.projection_realm_id().to_owned();
+                                    let is_active = item_node.kind == RealmTreeNodeKind::Realm
+                                        && effective_realm_id.as_deref() == Some(item_node.id.as_str());
+                                    let item_class = if is_active {
+                                        "sidebar-nav-item realm-tree-item is-active"
+                                    } else {
+                                        "sidebar-nav-item realm-tree-item"
+                                    };
+                                    // Spec client-preferences.md §3.7: when the
+                                    // user has a private Realm remark, prefer its
+                                    // local_name; fall back to the public title.
+                                    // Use a "(remark)" badge so duplicate-titled
+                                    // Realms can be distinguished without leaking
+                                    // the remark beyond this device.
+                                    let remark = if item_node.kind == RealmTreeNodeKind::Realm {
+                                        state_store.read().realm_remark(&item_node.id)
+                                    } else {
+                                        None
+                                    };
+                                    let display_name = remark
+                                        .as_ref()
+                                        .map(|r| r.display_name(&item_node.title).to_owned())
+                                        .unwrap_or_else(|| item_node.title.clone());
+                                    let has_remark = remark
+                                        .as_ref()
+                                        .is_some_and(|r| !r.local_name.trim().is_empty());
+                                    let is_pinned_realm = remark.as_ref().is_some_and(|r| r.pinned);
+                                    let can_pin_realm = item_node.kind == RealmTreeNodeKind::Realm
+                                        && !realm_tree_node_is_direct_conversation(&item_node);
+                                    let pin_action_label = if is_pinned_realm {
+                                        crate::i18n::tr("realm.unpin")
+                                    } else {
+                                        crate::i18n::tr("realm.pin")
+                                    };
+                                    let pinned_badge_label = crate::i18n::tr("realm.pinned");
+                                    let add_child_title = match item_node.kind {
+                                        RealmTreeNodeKind::Realm => "Create a new Space at the root of this Realm",
+                                        RealmTreeNodeKind::Space => "Create a new Space under this one (this Space becomes the parent)",
+                                    };
+                                    let menu_key = format!("realm:{}", item_node.id);
+                                    let menu_is_open =
+                                        sidebar_row_menu_open().as_deref() == Some(menu_key.as_str());
+                                    // Add Member / Settings are Realm-scoped write
+                                    // actions: only surface them once the lazy authz
+                                    // probe (fired on menu open) has confirmed the
+                                    // actor may perform them. Absent / pending / denied
+                                    // all read as hidden (fail-closed).
+                                    let row_perms = if item_node.kind == RealmTreeNodeKind::Realm {
+                                        sidebar_row_perms.read().get(&item_node.id).copied()
+                                    } else {
+                                        None
+                                    };
+                                    let can_add_member =
+                                        row_perms.map(|p| p.can_add_member).unwrap_or(false);
+                                    let can_open_settings =
+                                        row_perms.map(|p| p.can_settings).unwrap_or(false);
+                                    let add_member_label = crate::i18n::tr("realm.add_member");
+                                    let settings_label = crate::i18n::tr("realm.settings");
+                                    let actions_title = match item_node.kind {
+                                        RealmTreeNodeKind::Realm => "Realm actions",
+                                        RealmTreeNodeKind::Space => "Space actions",
+                                    };
+                                    let (icon_name, icon_class, icon_title) = match item_node.kind {
+                                        RealmTreeNodeKind::Realm => {
+                                            let is_encrypted = realm_tree_projections
+                                                .get(&item_node.id)
+                                                .and_then(crate::security_state::realm_projection_security_state)
+                                                .unwrap_or_else(|| realm_ids_with_local_mls.contains(&item_node.id));
+                                            if is_encrypted {
+                                                (
+                                                    "lock",
+                                                    "sidebar-nav-icon realm-security-secure",
+                                                    "Encrypted Realm",
+                                                )
+                                            } else {
+                                                (
+                                                    "unlock",
+                                                    "sidebar-nav-icon realm-security-unsafe",
+                                                    "Unencrypted Realm",
+                                                )
                                             }
                                         }
-                                        Link {
-                                            class: "sidebar-row-menu-item",
-                                            role: "menuitem",
-                                            "data-testid": "realm-tree-row-add-action",
-                                            title: "{add_child_title}",
-                                            "aria-label": "{add_child_title}",
-                                            to: Route::SetupSection { section: "new-space".to_owned() },
-                                            onclick: {
-                                                let id = item_node.id.clone();
-                                                let home_realm_id = target_realm_id.clone();
-                                                move |_| {
-                                                    selected_realm_id.set(home_realm_id.clone());
-                                                    new_space_context_node.set(id.clone());
-                                                    sidebar_row_menu_open.set(None);
+                                        RealmTreeNodeKind::Space => (
+                                            "folder",
+                                            "sidebar-nav-icon",
+                                            "Space",
+                                        ),
+                                    };
+                                    rsx! {
+                                div { class: "sidebar-row",
+                                key: "{item_node.id}",
+                                Link {
+                                    class: "{item_class} sidebar-row-main",
+                                    "data-testid": "realm-tree-node-button",
+                                    title: "{item_node.title}",
+                                    style: "padding-left: calc(10px + {depth_px}px);",
+                                    to: Route::Realm { realm_id: target_realm_id.clone() },
+                                    onclick: {
+                                        let id = target_realm_id.clone();
+                                        move |_| selected_realm_id.set(id.clone())
+                                    },
+                                    span {
+                                        class: "{icon_class}",
+                                        title: "{icon_title}",
+                                        UiIcon { name: icon_name.to_owned() }
+                                    }
+                                    span { class: "grow truncate", "{display_name}" }
+                                    if has_remark {
+                                        span {
+                                            class: "pill muted xs",
+                                            "data-testid": "realm-tree-realm-remark-badge",
+                                            title: "Local remark (private to this account)",
+                                            "Remark"
+                                        }
+                                    }
+                                    if is_pinned_realm {
+                                        span {
+                                            class: "pill muted xs realm-pin-badge",
+                                            "data-testid": "realm-tree-pinned-badge",
+                                            title: "{pinned_badge_label}",
+                                            UiIcon { name: "pin" }
+                                        }
+                                    }
+                                    // Two-tier classification badge: Realm
+                                    // (security boundary) vs Space (nav
+                                    // container inside a Realm). When a
+                                    // Realm has descendants, show the count
+                                    // instead of the kind tag so the user
+                                    // sees the tree structure at a glance.
+                                    if item.descendant_count > 0 && item_node.kind == RealmTreeNodeKind::Realm {
+                                        span { class: "pill muted xs", "{item.descendant_count}" }
+                                    } else {
+                                        match item_node.kind {
+                                            RealmTreeNodeKind::Realm => rsx! {
+                                                span {
+                                                    class: "pill muted xs",
+                                                    "data-testid": "realm-tree-kind-realm",
+                                                    title: crate::i18n::tr("friendly.realm.description"),
+                                                    {crate::i18n::tr("friendly.realm")}
                                                 }
                                             },
-                                            UiIcon { name: "plus" }
-                                            span { "New Space" }
-                                        }
-                                        if can_add_member {
-                                            Link {
-                                                class: "sidebar-row-menu-item",
-                                                role: "menuitem",
-                                                "data-testid": "realm-tree-row-add-member-action",
-                                                title: "{add_member_label}",
-                                                "aria-label": "{add_member_label}",
-                                                to: Route::RealmMembers { realm_id: target_realm_id.clone() },
-                                                onclick: {
-                                                    let home_realm_id = target_realm_id.clone();
-                                                    move |_| {
-                                                        selected_realm_id.set(home_realm_id.clone());
-                                                        sidebar_row_menu_open.set(None);
-                                                    }
-                                                },
-                                                UiIcon { name: "user-plus" }
-                                                span { "{add_member_label}" }
-                                            }
-                                        }
-                                        if can_open_settings {
-                                            Link {
-                                                class: "sidebar-row-menu-item",
-                                                role: "menuitem",
-                                                "data-testid": "realm-tree-row-settings-action",
-                                                title: "{settings_label}",
-                                                "aria-label": "{settings_label}",
-                                                to: Route::RealmAdmin { realm_id: target_realm_id.clone() },
-                                                onclick: {
-                                                    let home_realm_id = target_realm_id.clone();
-                                                    move |_| {
-                                                        selected_realm_id.set(home_realm_id.clone());
-                                                        sidebar_row_menu_open.set(None);
-                                                    }
-                                                },
-                                                UiIcon { name: "settings" }
-                                                span { "{settings_label}" }
-                                            }
-                                        }
-                                        if item_node.kind == RealmTreeNodeKind::Realm {
-                                            Link {
-                                                class: "sidebar-row-menu-item",
-                                                role: "menuitem",
-                                                "data-testid": "realm-tree-row-circles-action",
-                                                title: "Circles",
-                                                "aria-label": "Circles",
-                                                to: Route::Circles { realm_id: target_realm_id.clone() },
-                                                onclick: {
-                                                    let home_realm_id = target_realm_id.clone();
-                                                    move |_| {
-                                                        selected_realm_id.set(home_realm_id.clone());
-                                                        sidebar_row_menu_open.set(None);
-                                                    }
-                                                },
-                                                UiIcon { name: "users" }
-                                                span { "Circles" }
-                                            }
-                                            button {
-                                                class: "sidebar-row-menu-item danger",
-                                                r#type: "button",
-                                                role: "menuitem",
-                                                "data-testid": "realm-tree-row-leave-action",
-                                                title: "Leave Realm",
-                                                "aria-label": "Leave Realm",
-                                                disabled: !has_session,
-                                                onclick: {
-                                                    let id = item_node.id.clone();
-                                                    move |event: dioxus::events::MouseEvent| {
-                                                        event.prevent_default();
-                                                        event.stop_propagation();
-                                                        leave_sidebar_realm(
-                                                            base_url(),
-                                                            token(),
-                                                            id.clone(),
-                                                            principal_id(),
-                                                            state_store,
-                                                            realm_tree_nodes,
-                                                            selected_realm_id,
-                                                            sync_cursor,
-                                                        );
-                                                        sidebar_row_menu_open.set(None);
-                                                    }
-                                                },
-                                                UiIcon { name: "x" }
-                                                span { "Leave" }
-                                            }
+                                            RealmTreeNodeKind::Space => rsx! {
+                                                span {
+                                                    class: "pill muted xs",
+                                                    "data-testid": "realm-tree-kind-space",
+                                                    title: crate::i18n::tr("friendly.space.description"),
+                                                    {crate::i18n::tr("friendly.space")}
+                                                }
+                                            },
                                         }
                                     }
                                 }
-                            }
-                            }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if sidebar_is_resizing {
-                div {
-                    class: "sidebar-resize-shield",
-                    "data-testid": "sidebar-resize-shield",
-                    onmousemove: move |event| {
-                        if !sidebar_collapsed() {
-                            let next_width = clamp_sidebar_width(event.client_coordinates().x);
-                            sidebar_width.set(next_width);
-                        }
-                    },
-                    onmouseup: move |_| {
-                        let mut store = state_store.write();
-                        save_sidebar_width_preference(&mut store, sidebar_width());
-                        sidebar_resizing.set(false);
-                    },
-                }
-                }
-
-            main { class: "main workspace", "data-testid": "main-view", role: "main", "aria-label": "Main content",
-                div { class: "topbar workspace-header",
-                    div { class: "topbar-left",
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            size: ButtonSize::Sm,
-                            class: "btn icon sidebar-collapse-toggle",
-                            "data-testid": "sidebar-collapse-toggle",
-                            title: if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
-                            "aria-label": if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
-                            onclick: move |_| sidebar_collapsed.toggle(),
-                            if sidebar_is_collapsed {
-                                UiIcon { name: "panel-left-open" }
-                            } else {
-                                UiIcon { name: "panel-left-close" }
-                            }
-                        }
-                        div { class: "topbar-context", "data-testid": "topbar-crumbs",
-                            if route_uses_realm_context && !active_realm_id.is_empty() {
-                                SecurityStateBadge {
-                                    encrypted: active_realm_security_encrypted,
-                                    compact: false,
-                                    test_id: Some("realm-security-state".to_owned()),
-                                }
-                            }
-                            span { class: "topbar-context-title", "data-testid": "realm-title", "{topbar_context_title}" }
-                            if route_uses_realm_context && !active_realm_id.is_empty() {
-                                {
-                                    let (current_surface_label, current_surface_icon) = match resolved_realm_surface {
-                                        Some(surface) => (surface.short_label(), surface.icon_name()),
-                                        None if realm_members_active => ("Members", "users"),
-                                        None => ("Settings", "settings"),
-                                    };
-                                    rsx! {
-                                        span {
-                                            class: "topbar-current-surface",
-                                            "data-testid": "current-realm-surface",
-                                            title: "Current view: {current_surface_label}",
-                                            UiIcon { name: current_surface_icon }
-                                            span { class: "topbar-current-surface-label", "{current_surface_label}" }
-                                        }
-                                    }
-                                }
-                            }
-                            if !active_realm_id.is_empty() {
-                                span { class: "sr-only mono", "data-testid": "selected-realm-id", "{active_realm_id}" }
-                            }
-                        }
-                    }
-                    if route_uses_realm_context && !active_realm_id.is_empty() {
-                        RealmContextBar {
-                            realm_id: active_realm_id.clone(),
-                            current_surface: resolved_realm_surface,
-                            principal_id: principal_id(),
-                            members_active: realm_members_active,
-                            minimal_ready,
-                            kanban_ready,
-                            full_ready,
-                        }
-                    }
-                    div { class: "actions",
-                        button {
-                            class: "sr-only",
-                            r#type: "button",
-                            tabindex: "-1",
-                            "aria-hidden": "true",
-                            "data-testid": "global-search-shortcut-target",
-                            onclick: move |_| {
-                                let _ = navigator.push(Route::Search);
-                            },
-                            "Open global search"
-                        }
-                        div {
-                            class: if topbar_search_is_open {
-                                "topbar-command-search is-open"
-                            } else {
-                                "topbar-command-search"
-                            },
-                            onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
-                            onkeydown: move |event| {
-                                if event.key().to_string() == "Escape" {
-                                    palette_open.set(false);
-                                    topbar_search_expanded.set(false);
-                                    global_query.set(String::new());
-                                    event.prevent_default();
-                                    event.stop_propagation();
-                                }
-                            },
-                            if !topbar_search_is_open {
-                                Button {
-                                    variant: ButtonVariant::Ghost,
-                                    size: ButtonSize::Sm,
-                                    r#type: "button",
-                                    class: "btn icon",
-                                    "data-testid": "topbar-search-button",
-                                    title: crate::i18n::tr("topbar.search_placeholder"),
-                                    "aria-label": crate::i18n::tr("topbar.search_placeholder"),
-                                    onclick: move |_| {
-                                        topbar_search_expanded.set(true);
-                                        palette_open.set(true);
-                                    },
-                                    UiIcon { name: "search" }
-                                }
-                            } else {
-                                div { class: "topbar-command-search-field",
-                                    UiIcon { name: "search" }
-                                    input {
-                                        "data-testid": "global-search-input",
-                                        value: "{global_query}",
-                                        placeholder: crate::i18n::tr("topbar.search_placeholder"),
-                                        autofocus: true,
-                                        onmounted: move |event| async move {
-                                            let _ = event.set_focus(true).await;
-                                        },
-                                        onfocusin: move |_| palette_open.set(true),
-                                        oninput: move |event| {
-                                            global_query.set(event.value());
-                                            palette_open.set(true);
-                                        },
-                                        onkeydown: move |event| {
-                                            let key = event.key().to_string();
-                                            if key == "Escape" {
-                                                palette_open.set(false);
-                                                topbar_search_expanded.set(false);
-                                                global_query.set(String::new());
+                                div {
+                                    class: if menu_is_open { "sidebar-row-menu-host is-open" } else { "sidebar-row-menu-host" },
+                                    button {
+                                        class: "sidebar-row-menu-button",
+                                        r#type: "button",
+                                        "data-testid": "realm-tree-row-menu-button",
+                                        title: "{actions_title}",
+                                        "aria-label": "{actions_title}",
+                                        "aria-haspopup": "menu",
+                                        "aria-expanded": if menu_is_open { "true" } else { "false" },
+                                        onclick: {
+                                            let key = menu_key.clone();
+                                            let perms_realm_id = item_node.id.clone();
+                                            let probe_perms = item_node.kind == RealmTreeNodeKind::Realm;
+                                            move |event: dioxus::events::MouseEvent| {
                                                 event.prevent_default();
                                                 event.stop_propagation();
-                                            } else if key == "Enter"
-                                                && !global_query().trim().is_empty()
-                                            {
-                                                view.set(Route::to_view(&Route::Directory));
-                                                let _ = navigator.push(Route::Directory);
-                                                palette_open.set(false);
-                                                topbar_search_expanded.set(false);
+                                                if sidebar_row_menu_open().as_deref() == Some(key.as_str()) {
+                                                    sidebar_row_menu_open.set(None);
+                                                } else {
+                                                    sidebar_row_menu_open.set(Some(key.clone()));
+                                                    // Lazily resolve Add Member / Settings
+                                                    // visibility for just this Realm the
+                                                    // moment its menu opens.
+                                                    if probe_perms {
+                                                        ensure_sidebar_row_perms(
+                                                            base_url(),
+                                                            token(),
+                                                            principal_id(),
+                                                            perms_realm_id.clone(),
+                                                            sidebar_row_perms,
+                                                        );
+                                                    }
+                                                }
                                             }
                                         },
+                                        UiIcon { name: "more-horizontal" }
                                     }
-                                    kbd { "⌘K" }
+                                    if menu_is_open {
+                                        div {
+                                            class: "sidebar-row-menu-scrim",
+                                            "aria-label": "Close row actions",
+                                            onclick: move |_| sidebar_row_menu_open.set(None),
+                                        }
+                                        div {
+                                            class: "sidebar-row-menu-panel",
+                                            role: "menu",
+                                            "aria-label": "{actions_title}",
+                                            if can_pin_realm {
+                                                button {
+                                                    class: "sidebar-row-menu-item",
+                                                    r#type: "button",
+                                                    role: "menuitem",
+                                                    "data-testid": "realm-tree-row-pin-action",
+                                                    title: "{pin_action_label}",
+                                                    "aria-label": "{pin_action_label}",
+                                                    onclick: {
+                                                        let id = item_node.id.clone();
+                                                        let existing = remark.clone();
+                                                        let next_pinned = !is_pinned_realm;
+                                                        move |event: dioxus::events::MouseEvent| {
+                                                            event.prevent_default();
+                                                            event.stop_propagation();
+                                                            toggle_sidebar_realm_pin(
+                                                                id.clone(),
+                                                                existing.clone(),
+                                                                next_pinned,
+                                                                state_store,
+                                                                base_url(),
+                                                                token(),
+                                                            );
+                                                            sidebar_row_menu_open.set(None);
+                                                        }
+                                                    },
+                                                    UiIcon { name: "pin" }
+                                                    span { "{pin_action_label}" }
+                                                }
+                                            }
+                                            Link {
+                                                class: "sidebar-row-menu-item",
+                                                role: "menuitem",
+                                                "data-testid": "realm-tree-row-add-action",
+                                                title: "{add_child_title}",
+                                                "aria-label": "{add_child_title}",
+                                                to: Route::SetupSection { section: "new-space".to_owned() },
+                                                onclick: {
+                                                    let id = item_node.id.clone();
+                                                    let home_realm_id = target_realm_id.clone();
+                                                    move |_| {
+                                                        selected_realm_id.set(home_realm_id.clone());
+                                                        new_space_context_node.set(id.clone());
+                                                        sidebar_row_menu_open.set(None);
+                                                    }
+                                                },
+                                                UiIcon { name: "plus" }
+                                                span { "New Space" }
+                                            }
+                                            if can_add_member {
+                                                Link {
+                                                    class: "sidebar-row-menu-item",
+                                                    role: "menuitem",
+                                                    "data-testid": "realm-tree-row-add-member-action",
+                                                    title: "{add_member_label}",
+                                                    "aria-label": "{add_member_label}",
+                                                    to: Route::RealmMembers { realm_id: target_realm_id.clone() },
+                                                    onclick: {
+                                                        let home_realm_id = target_realm_id.clone();
+                                                        move |_| {
+                                                            selected_realm_id.set(home_realm_id.clone());
+                                                            sidebar_row_menu_open.set(None);
+                                                        }
+                                                    },
+                                                    UiIcon { name: "user-plus" }
+                                                    span { "{add_member_label}" }
+                                                }
+                                            }
+                                            if can_open_settings {
+                                                Link {
+                                                    class: "sidebar-row-menu-item",
+                                                    role: "menuitem",
+                                                    "data-testid": "realm-tree-row-settings-action",
+                                                    title: "{settings_label}",
+                                                    "aria-label": "{settings_label}",
+                                                    to: Route::RealmAdmin { realm_id: target_realm_id.clone() },
+                                                    onclick: {
+                                                        let home_realm_id = target_realm_id.clone();
+                                                        move |_| {
+                                                            selected_realm_id.set(home_realm_id.clone());
+                                                            sidebar_row_menu_open.set(None);
+                                                        }
+                                                    },
+                                                    UiIcon { name: "settings" }
+                                                    span { "{settings_label}" }
+                                                }
+                                            }
+                                            if item_node.kind == RealmTreeNodeKind::Realm {
+                                                Link {
+                                                    class: "sidebar-row-menu-item",
+                                                    role: "menuitem",
+                                                    "data-testid": "realm-tree-row-circles-action",
+                                                    title: "Circles",
+                                                    "aria-label": "Circles",
+                                                    to: Route::Circles { realm_id: target_realm_id.clone() },
+                                                    onclick: {
+                                                        let home_realm_id = target_realm_id.clone();
+                                                        move |_| {
+                                                            selected_realm_id.set(home_realm_id.clone());
+                                                            sidebar_row_menu_open.set(None);
+                                                        }
+                                                    },
+                                                    UiIcon { name: "users" }
+                                                    span { "Circles" }
+                                                }
+                                                button {
+                                                    class: "sidebar-row-menu-item danger",
+                                                    r#type: "button",
+                                                    role: "menuitem",
+                                                    "data-testid": "realm-tree-row-leave-action",
+                                                    title: "Leave Realm",
+                                                    "aria-label": "Leave Realm",
+                                                    disabled: !has_session,
+                                                    onclick: {
+                                                        let id = item_node.id.clone();
+                                                        move |event: dioxus::events::MouseEvent| {
+                                                            event.prevent_default();
+                                                            event.stop_propagation();
+                                                            leave_sidebar_realm(
+                                                                base_url(),
+                                                                token(),
+                                                                id.clone(),
+                                                                principal_id(),
+                                                                state_store,
+                                                                realm_tree_nodes,
+                                                                selected_realm_id,
+                                                                sync_cursor,
+                                                            );
+                                                            sidebar_row_menu_open.set(None);
+                                                        }
+                                                    },
+                                                    UiIcon { name: "x" }
+                                                    span { "Leave" }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                                if palette_open() {
-                                    CommandPalette {
-                                        query: global_query(),
-                                        nodes: realm_tree_nodes(),
-                                        on_navigate: move |route: Route| {
-                                            view.set(Route::to_view(&route));
-                                            let _ = navigator.push(route);
-                                            palette_open.set(false);
-                                            topbar_search_expanded.set(false);
-                                            global_query.set(String::new());
-                                        },
-                                        on_pick_realm: move |realm_id: String| {
-                                            selected_realm_id.set(realm_id.clone());
-                                            view.set(crate::views::AppView::Kanban);
-                                            let _ = navigator.push(Route::Realm { realm_id });
-                                            palette_open.set(false);
-                                            topbar_search_expanded.set(false);
-                                            global_query.set(String::new());
-                                        },
-                                        on_close: move |_: ()| {
-                                            palette_open.set(false);
-                                            topbar_search_expanded.set(false);
-                                            global_query.set(String::new());
-                                        },
+                                }
                                     }
                                 }
                             }
                         }
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            size: ButtonSize::Sm,
-                            class: "btn icon theme-toggle-button",
-                            "data-testid": "theme-toggle",
-                            title: "{theme_toggle_title}",
-                            "aria-label": "{theme_toggle_title}",
-                            onclick: move |_| {
-                                let current_theme = theme();
-                                let next = next_manual_theme(&current_theme);
-                                theme.set(next.clone());
-                                state_store.write().save_private_data(&principal_id(), "theme", next.clone());
-                                // A4a — best-effort cross-device sync
-                                // via `ak.account_data.set(ak.client.ui_state)`.
-                                crate::views::settings::push_client_ui_account_data(
-                                    base_url(),
-                                    token(),
-                                    next,
-                                );
-                            },
-                            UiIcon { name: theme_toggle_icon }
-                        }
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            size: ButtonSize::Sm,
-                            r#type: "button",
-                            class: "btn icon",
-                            "data-testid": "topbar-shortcuts-button",
-                            title: crate::i18n::tr("shortcuts.title"),
-                            "aria-label": crate::i18n::tr("shortcuts.title"),
-                            onclick: move |event: dioxus::events::MouseEvent| {
-                                event.stop_propagation();
-                                shortcut_help_open.set(true);
-                            },
-                            UiIcon { name: "keyboard" }
-                        }
-                        div { class: "sr-only", "data-testid": "connection-status", role: "status", "aria-live": "polite",
-                            span { "data-testid": "status-label", "{connection_status}" }
-                            span { "data-testid": "network-state-badge", "{network_state}" }
-                            span { class: "mono", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
-                            if let Some(ref err) = last_error() {
-                                span { "data-testid": "last-error", "{err}" }
+                    }
+                }
+
+                if sidebar_is_resizing {
+                    div {
+                        class: "sidebar-resize-shield",
+                        "data-testid": "sidebar-resize-shield",
+                        onmousemove: move |event| {
+                            if !sidebar_collapsed() {
+                                let next_width = clamp_sidebar_width(event.client_coordinates().x);
+                                sidebar_width.set(next_width);
                             }
-                        }
-                        Button {
-                            variant: ButtonVariant::Ghost,
-                            size: ButtonSize::Sm,
-                            r#type: "button",
-                            class: if notifications_drawer_open() { "btn icon topbar-notifications-link is-active" } else { "btn icon topbar-notifications-link" },
-                            "data-testid": "topbar-notifications-button",
-                            title: crate::i18n::tr("nav.notifications"),
-                            "aria-label": crate::i18n::tr("nav.notifications"),
-                            "aria-expanded": "{notifications_drawer_open()}",
-                            onclick: move |event: dioxus::events::MouseEvent| {
-                                event.stop_propagation();
-                                mobile_nav_open.set(false);
-                                account_menu_open.set(false);
-                                server_menu_open.set(false);
-                                if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
-                                    palette_open.set(false);
-                                    topbar_search_expanded.set(false);
-                                    global_query.set(String::new());
-                                }
-                                notifications_drawer_open.toggle();
-                            },
-                            UiIcon { name: "bell" }
-                            if has_topbar_unread_notifications {
-                                span { class: "topbar-notifications-badge", "aria-hidden": "true" }
-                            }
-                        }
-                        // M-UX-CONTEXT-1: the old "+ New Space"
-                        // topbar shortcut is gone. Realm + Space
-                        // creation now live in the sidebar where the
-                        // tree hierarchy makes the parent explicit:
-                        // a `+R` button at the section header for a
-                        // new Realm, and a per-row `+` (on every Realm
-                        // / Space) that scopes the new Space to that
-                        // parent. A floating "+ New Space" with no
-                        // parent context was confusing — it actually
-                        // opened the Realm bootstrap strand.
-                        div { class: "account-menu-wrap",
+                        },
+                        onmouseup: move |_| {
+                            let mut store = state_store.write();
+                            save_sidebar_width_preference(&mut store, sidebar_width());
+                            sidebar_resizing.set(false);
+                        },
+                    }
+                    }
+
+                main { class: "main workspace", "data-testid": "main-view", role: "main", "aria-label": "Main content",
+                    div { class: "topbar workspace-header",
+                        div { class: "topbar-left",
                             Button {
                                 variant: ButtonVariant::Ghost,
                                 size: ButtonSize::Sm,
-                                class: "btn icon account-menu-button",
-                                "data-testid": "account-menu-button",
-                                title: crate::i18n::tr("topbar.account_menu"),
-                                "aria-label": crate::i18n::tr("topbar.account_menu"),
+                                class: "btn icon sidebar-collapse-toggle",
+                                "data-testid": "sidebar-collapse-toggle",
+                                title: if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
+                                "aria-label": if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
+                                onclick: move |_| sidebar_collapsed.toggle(),
+                                if sidebar_is_collapsed {
+                                    UiIcon { name: "panel-left-open" }
+                                } else {
+                                    UiIcon { name: "panel-left-close" }
+                                }
+                            }
+                            div { class: "topbar-context", "data-testid": "topbar-crumbs",
+                                if route_uses_realm_context && !active_realm_id.is_empty() {
+                                    SecurityStateBadge {
+                                        encrypted: active_realm_security_encrypted,
+                                        compact: false,
+                                        test_id: Some("realm-security-state".to_owned()),
+                                    }
+                                }
+                                span { class: "topbar-context-title", "data-testid": "realm-title", "{topbar_context_title}" }
+                                if route_uses_realm_context && !active_realm_id.is_empty() {
+                                    {
+                                        let (current_surface_label, current_surface_icon) = match resolved_realm_surface {
+                                            Some(surface) => (surface.short_label(), surface.icon_name()),
+                                            None if realm_members_active => ("Members", "users"),
+                                            None => ("Settings", "settings"),
+                                        };
+                                        rsx! {
+                                            span {
+                                                class: "topbar-current-surface",
+                                                "data-testid": "current-realm-surface",
+                                                title: "Current view: {current_surface_label}",
+                                                UiIcon { name: current_surface_icon }
+                                                span { class: "topbar-current-surface-label", "{current_surface_label}" }
+                                            }
+                                        }
+                                    }
+                                }
+                                if !active_realm_id.is_empty() {
+                                    span { class: "sr-only mono", "data-testid": "selected-realm-id", "{active_realm_id}" }
+                                }
+                            }
+                        }
+                        if route_uses_realm_context && !active_realm_id.is_empty() {
+                            RealmContextBar {
+                                realm_id: active_realm_id.clone(),
+                                current_surface: resolved_realm_surface,
+                                principal_id: principal_id(),
+                                members_active: realm_members_active,
+                                minimal_ready,
+                                kanban_ready,
+                                full_ready,
+                            }
+                        }
+                        div { class: "actions",
+                            button {
+                                class: "sr-only",
+                                r#type: "button",
+                                tabindex: "-1",
+                                "aria-hidden": "true",
+                                "data-testid": "global-search-shortcut-target",
+                                onclick: move |_| {
+                                    let _ = navigator.push(Route::Search);
+                                },
+                                "Open global search"
+                            }
+                            div {
+                                class: if topbar_search_is_open {
+                                    "topbar-command-search is-open"
+                                } else {
+                                    "topbar-command-search"
+                                },
+                                onclick: move |event: dioxus::events::MouseEvent| event.stop_propagation(),
+                                onkeydown: move |event| {
+                                    if event.key().to_string() == "Escape" {
+                                        palette_open.set(false);
+                                        topbar_search_expanded.set(false);
+                                        global_query.set(String::new());
+                                        event.prevent_default();
+                                        event.stop_propagation();
+                                    }
+                                },
+                                if !topbar_search_is_open {
+                                    Button {
+                                        variant: ButtonVariant::Ghost,
+                                        size: ButtonSize::Sm,
+                                        r#type: "button",
+                                        class: "btn icon",
+                                        "data-testid": "topbar-search-button",
+                                        title: crate::i18n::tr("topbar.search_placeholder"),
+                                        "aria-label": crate::i18n::tr("topbar.search_placeholder"),
+                                        onclick: move |_| {
+                                            topbar_search_expanded.set(true);
+                                            palette_open.set(true);
+                                        },
+                                        UiIcon { name: "search" }
+                                    }
+                                } else {
+                                    div { class: "topbar-command-search-field",
+                                        UiIcon { name: "search" }
+                                        input {
+                                            "data-testid": "global-search-input",
+                                            value: "{global_query}",
+                                            placeholder: crate::i18n::tr("topbar.search_placeholder"),
+                                            autofocus: true,
+                                            onmounted: move |event| async move {
+                                                let _ = event.set_focus(true).await;
+                                            },
+                                            onfocusin: move |_| palette_open.set(true),
+                                            oninput: move |event| {
+                                                global_query.set(event.value());
+                                                palette_open.set(true);
+                                            },
+                                            onkeydown: move |event| {
+                                                let key = event.key().to_string();
+                                                if key == "Escape" {
+                                                    palette_open.set(false);
+                                                    topbar_search_expanded.set(false);
+                                                    global_query.set(String::new());
+                                                    event.prevent_default();
+                                                    event.stop_propagation();
+                                                } else if key == "Enter"
+                                                    && !global_query().trim().is_empty()
+                                                {
+                                                    view.set(Route::to_view(&Route::Directory));
+                                                    let _ = navigator.push(Route::Directory);
+                                                    palette_open.set(false);
+                                                    topbar_search_expanded.set(false);
+                                                }
+                                            },
+                                        }
+                                        kbd { "⌘K" }
+                                    }
+                                    if palette_open() {
+                                        CommandPalette {
+                                            query: global_query(),
+                                            nodes: realm_tree_nodes(),
+                                            on_navigate: move |route: Route| {
+                                                view.set(Route::to_view(&route));
+                                                let _ = navigator.push(route);
+                                                palette_open.set(false);
+                                                topbar_search_expanded.set(false);
+                                                global_query.set(String::new());
+                                            },
+                                            on_pick_realm: move |realm_id: String| {
+                                                selected_realm_id.set(realm_id.clone());
+                                                view.set(crate::views::AppView::Kanban);
+                                                let _ = navigator.push(Route::Realm { realm_id });
+                                                palette_open.set(false);
+                                                topbar_search_expanded.set(false);
+                                                global_query.set(String::new());
+                                            },
+                                            on_close: move |_: ()| {
+                                                palette_open.set(false);
+                                                topbar_search_expanded.set(false);
+                                                global_query.set(String::new());
+                                            },
+                                        }
+                                    }
+                                }
+                            }
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                class: "btn icon theme-toggle-button",
+                                "data-testid": "theme-toggle",
+                                title: "{theme_toggle_title}",
+                                "aria-label": "{theme_toggle_title}",
+                                onclick: move |_| {
+                                    let current_theme = theme();
+                                    let next = next_manual_theme(&current_theme);
+                                    theme.set(next.clone());
+                                    state_store.write().save_private_data(&principal_id(), "theme", next.clone());
+                                    // A4a — best-effort cross-device sync
+                                    // via `ak.account_data.set(ak.client.ui_state)`.
+                                    crate::views::settings::push_client_ui_account_data(
+                                        base_url(),
+                                        token(),
+                                        next,
+                                    );
+                                },
+                                UiIcon { name: theme_toggle_icon }
+                            }
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                r#type: "button",
+                                class: "btn icon",
+                                "data-testid": "topbar-shortcuts-button",
+                                title: crate::i18n::tr("shortcuts.title"),
+                                "aria-label": crate::i18n::tr("shortcuts.title"),
                                 onclick: move |event: dioxus::events::MouseEvent| {
                                     event.stop_propagation();
+                                    shortcut_help_open.set(true);
+                                },
+                                UiIcon { name: "keyboard" }
+                            }
+                            div { class: "sr-only", "data-testid": "connection-status", role: "status", "aria-live": "polite",
+                                span { "data-testid": "status-label", "{connection_status}" }
+                                span { "data-testid": "network-state-badge", "{network_state}" }
+                                span { class: "mono", "data-testid": "sync-cursor", "cursor {sync_cursor}" }
+                                if let Some(ref err) = last_error() {
+                                    span { "data-testid": "last-error", "{err}" }
+                                }
+                            }
+                            Button {
+                                variant: ButtonVariant::Ghost,
+                                size: ButtonSize::Sm,
+                                r#type: "button",
+                                class: if notifications_drawer_open() { "btn icon topbar-notifications-link is-active" } else { "btn icon topbar-notifications-link" },
+                                "data-testid": "topbar-notifications-button",
+                                title: crate::i18n::tr("nav.notifications"),
+                                "aria-label": crate::i18n::tr("nav.notifications"),
+                                "aria-expanded": "{notifications_drawer_open()}",
+                                onclick: move |event: dioxus::events::MouseEvent| {
+                                    event.stop_propagation();
+                                    mobile_nav_open.set(false);
+                                    account_menu_open.set(false);
+                                    server_menu_open.set(false);
                                     if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
                                         palette_open.set(false);
                                         topbar_search_expanded.set(false);
                                         global_query.set(String::new());
                                     }
-                                    server_menu_open.set(false);
-                                    account_menu_open.toggle();
+                                    notifications_drawer_open.toggle();
                                 },
-                                crate::components::IdentityAvatar {
-                                    seed: principal_id_value.clone(),
-                                    alt_text: crate::i18n::tr("topbar.account_menu"),
-                                    blob_ref: Some(topbar_avatar_blob_ref.clone()),
-                                    class: "avatar-img topbar-account-avatar".to_owned(),
-                                    test_id: Some("topbar-account-avatar".to_owned()),
-                                }
-                                if has_session {
-                                    span { class: "dot-online", title: "online" }
+                                UiIcon { name: "bell" }
+                                if has_topbar_unread_notifications {
+                                    span { class: "topbar-notifications-badge", "aria-hidden": "true" }
                                 }
                             }
-                            if account_menu_open() {
-                                div {
-                                    class: "account-menu-scrim",
-                                    "aria-hidden": "true",
-                                    onclick: move |_| account_menu_open.set(false),
+                            // M-UX-CONTEXT-1: the old "+ New Space"
+                            // topbar shortcut is gone. Realm + Space
+                            // creation now live in the sidebar where the
+                            // tree hierarchy makes the parent explicit:
+                            // a `+R` button at the section header for a
+                            // new Realm, and a per-row `+` (on every Realm
+                            // / Space) that scopes the new Space to that
+                            // parent. A floating "+ New Space" with no
+                            // parent context was confusing — it actually
+                            // opened the Realm bootstrap strand.
+                            div { class: "account-menu-wrap",
+                                Button {
+                                    variant: ButtonVariant::Ghost,
+                                    size: ButtonSize::Sm,
+                                    class: "btn icon account-menu-button",
+                                    "data-testid": "account-menu-button",
+                                    title: crate::i18n::tr("topbar.account_menu"),
+                                    "aria-label": crate::i18n::tr("topbar.account_menu"),
+                                    onclick: move |event: dioxus::events::MouseEvent| {
+                                        event.stop_propagation();
+                                        if palette_open() || topbar_search_expanded() || !global_query().trim().is_empty() {
+                                            palette_open.set(false);
+                                            topbar_search_expanded.set(false);
+                                            global_query.set(String::new());
+                                        }
+                                        server_menu_open.set(false);
+                                        account_menu_open.toggle();
+                                    },
+                                    crate::components::IdentityAvatar {
+                                        seed: principal_id_value.clone(),
+                                        alt_text: crate::i18n::tr("topbar.account_menu"),
+                                        blob_ref: Some(topbar_avatar_blob_ref.clone()),
+                                        class: "avatar-img topbar-account-avatar".to_owned(),
+                                        test_id: Some("topbar-account-avatar".to_owned()),
+                                    }
+                                    if has_session {
+                                        span { class: "dot-online", title: "online" }
+                                    }
                                 }
-                                div { class: "account-menu", "data-testid": "account-menu", role: "menu",
-                                    div { class: "account-menu__head",
-                                        crate::components::IdentityAvatar {
-                                            seed: principal_id_value.clone(),
-                                            alt_text: account_label.clone(),
-                                            blob_ref: Some(topbar_avatar_blob_ref.clone()),
-                                            class: "avatar-img account-menu__avatar".to_owned(),
-                                            test_id: Some("account-menu-avatar".to_owned()),
-                                        }
-                                        span { class: "grow",
-                                            span { class: "who", "data-testid": "account-menu-display-name", "{account_label}" }
-                                            span { class: "handle", "data-testid": "account-menu-account-detail", "{account_detail}" }
-                                        }
-                                        Link {
-                                            class: "btn icon sm ghost account-menu__qr",
-                                            "data-testid": "account-menu-settings-qr",
-                                            title: "Settings",
-                                            "aria-label": "Open settings",
-                                            to: Route::Settings,
-                                            onclick: move |_| account_menu_open.set(false),
-                                            UiIcon { name: "qr-code" }
-                                        }
+                                if account_menu_open() {
+                                    div {
+                                        class: "account-menu-scrim",
+                                        "aria-hidden": "true",
+                                        onclick: move |_| account_menu_open.set(false),
                                     }
-                                    div { class: "account-menu__rows",
-                                        div { class: "account-menu__row",
-                                            strong { "DID" }
-                                            div { class: "account-menu__value",
-                                                span { class: "mono", "data-testid": "account-menu-did", title: "{principal_id_value}", "{principal_id_label}" }
-                                                Button {
-                                                    variant: ButtonVariant::Ghost,
-                                                    size: ButtonSize::Sm,
-                                                    class: "btn icon account-menu__copy",
-                                                    "data-testid": "account-menu-copy-did",
-                                                    title: "Copy DID",
-                                                    "aria-label": "Copy DID",
-                                                    onclick: {
-                                                        let value = principal_id_value.clone();
-                                                        move |_| {
-                                                            copy_text_to_clipboard(&value);
-                                                            crate::components::feedback::toast_success("feedback.copied_did", vec![]);
-                                                        }
-                                                    },
-                                                    UiIcon { name: "copy" }
-                                                }
+                                    div { class: "account-menu", "data-testid": "account-menu", role: "menu",
+                                        div { class: "account-menu__head",
+                                            crate::components::IdentityAvatar {
+                                                seed: principal_id_value.clone(),
+                                                alt_text: account_label.clone(),
+                                                blob_ref: Some(topbar_avatar_blob_ref.clone()),
+                                                class: "avatar-img account-menu__avatar".to_owned(),
+                                                test_id: Some("account-menu-avatar".to_owned()),
+                                            }
+                                            span { class: "grow",
+                                                span { class: "who", "data-testid": "account-menu-display-name", "{account_label}" }
+                                                span { class: "handle", "data-testid": "account-menu-account-detail", "{account_detail}" }
+                                            }
+                                            Link {
+                                                class: "btn icon sm ghost account-menu__qr",
+                                                "data-testid": "account-menu-settings-qr",
+                                                title: "Settings",
+                                                "aria-label": "Open settings",
+                                                to: Route::Settings,
+                                                onclick: move |_| account_menu_open.set(false),
+                                                UiIcon { name: "qr-code" }
                                             }
                                         }
-                                        div { class: "account-menu__row",
-                                            strong { "Handles" }
-                                            div { class: "account-menu__value",
-                                                span {
-                                                    class: "mono",
-                                                    "data-testid": "account-menu-handles",
-                                                    title: "{account_handles_title}",
-                                                    "{account_handles_label}"
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Ghost,
-                                                    size: ButtonSize::Sm,
-                                                    class: "btn icon account-menu__copy",
-                                                    "data-testid": "account-menu-copy-handles",
-                                                    title: "Copy handles",
-                                                    "aria-label": "Copy handles",
-                                                    onclick: {
-                                                        let value = account_handles_title.clone();
-                                                        move |_| {
-                                                            copy_text_to_clipboard(&value);
-                                                            crate::components::feedback::toast_success("feedback.copied_handles", vec![]);
-                                                        }
-                                                    },
-                                                    UiIcon { name: "copy" }
-                                                }
-                                            }
-                                        }
-                                        div { class: "account-menu__row",
-                                            strong { "Device" }
-                                            div { class: "account-menu__value",
-                                                div { class: "account-menu__device-text",
-                                                    span {
-                                                        class: "account-menu__device-name",
-                                                        "data-testid": "account-menu-device-name",
-                                                        if device_display_name.trim().is_empty() { "This device" } else { "{device_display_name}" }
-                                                    }
-                                                    span {
-                                                        class: "mono account-menu__device-id",
-                                                        "data-testid": "account-menu-device",
-                                                        title: "{device_id_value}",
-                                                        "{device_id_label}"
-                                                    }
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Ghost,
-                                                    size: ButtonSize::Sm,
-                                                    class: "btn icon account-menu__copy",
-                                                    "data-testid": "account-menu-copy-device",
-                                                    title: "Copy device ID",
-                                                    "aria-label": "Copy device ID",
-                                                    onclick: {
-                                                        let value = device_id_value.clone();
-                                                        move |_| {
-                                                            copy_text_to_clipboard(&value);
-                                                            crate::components::feedback::toast_success("feedback.copied_device_id", vec![]);
-                                                        }
-                                                    },
-                                                    UiIcon { name: "copy" }
-                                                }
-                                            }
-                                        }
-                                        div { class: "account-menu__row",
-                                            strong { "Server" }
-                                            span { "{active_server_label}" }
-                                        }
-                                    }
-                                    div { class: "account-menu__actions",
-                                        Button {
-                                            variant: ButtonVariant::Ghost,
-                                            size: ButtonSize::Sm,
-                                            class: "btn",
-                                            "data-testid": "account-menu-session-refresh",
-                                            "aria-label": "Refresh session",
-                                            disabled: !has_session,
-                                            onclick: {
-                                                let base = base_url();
-                                                let session = manual_refresh_session.clone();
-                                                move |_| {
-                                                    let base = base.clone();
-                                                let session = session.clone();
-                                                let api_token = token();
-                                                let actor = principal_id();
-                                                let Some(active) = active_account.peek().clone() else {
-                                                    account_session_state.set(
-                                                        "Session identity is unavailable; sign in again."
-                                                            .to_owned(),
-                                                    );
-                                                    return;
-                                                };
-                                                    personal_handles_lookup_key.set(String::new());
-                                                    account_identity_lookup_key.set(String::new());
-                                                    account_session_state.set("Refreshing session".to_owned());
-                                                    spawn(async move {
-                                                        match self_authed_api(&base, api_token.clone()) {
-                                                            Ok(api) => match async {
-                                                                crate::transport::account::account_me(&api.sdk_http_client()?).await
+                                        div { class: "account-menu__rows",
+                                            div { class: "account-menu__row",
+                                                strong { "DID" }
+                                                div { class: "account-menu__value",
+                                                    span { class: "mono", "data-testid": "account-menu-did", title: "{principal_id_value}", "{principal_id_label}" }
+                                                    Button {
+                                                        variant: ButtonVariant::Ghost,
+                                                        size: ButtonSize::Sm,
+                                                        class: "btn icon account-menu__copy",
+                                                        "data-testid": "account-menu-copy-did",
+                                                        title: "Copy DID",
+                                                        "aria-label": "Copy DID",
+                                                        onclick: {
+                                                            let value = principal_id_value.clone();
+                                                            move |_| {
+                                                                copy_text_to_clipboard(&value);
+                                                                crate::components::feedback::toast_success("feedback.copied_did", vec![]);
                                                             }
-                                                            .await
-                                                            {
-                                                                Ok(account) => {
-                                                                    let canonical_actor = match active_account.peek().as_ref() {
-                                                                        Some(context) if context.principal_id() == &account.principal_id => context.full_id().to_string(),
-                                                                        _ => {
-                                                                            last_error.set(Some("account viewer authority does not match the accepted active context".to_owned()));
-                                                                            account_session_state.set(
-                                                                                "Session identity could not be restored; sign in again."
-                                                                                    .to_owned(),
-                                                                            );
-                                                                            return;
-                                                                        }
-                                                                    };
-                                                                    if let Some(personal_handle) =
-                                                                        personal_handle_from_account_handle(&account.handle)
-                                                                    {
-                                                                        account_primary_handle
-                                                                            .set(personal_handle.clone());
-                                                                        let handles = merge_personal_handles(
-                                                                            &personal_handles(),
-                                                                            [personal_handle],
-                                                                        );
-                                                                        personal_handles_status
-                                                                            .set(personal_handles_status_for(&handles));
-                                                                        personal_handles.set(handles);
-                                                                    } else {
-                                                                        account_primary_handle.set(String::new());
-                                                                        if personal_handles().is_empty() {
-                                                                            personal_handles_status.set("Not published".to_owned());
-                                                                        }
-                                                                    }
-                                                                    principal_id.set(canonical_actor.clone());
-                                                                    persist_config(
-                                                                        config_store,
-                                                                        active.server_url.to_string(),
-                                                                        active.full_id().to_string(),
-                                                                        active.device_id.to_string(),
-                                                                        api_token,
-                                                                    );
-                                                                    account_session_state.set(format!(
-                                                                        "Session refresh ok: {}",
-                                                                        canonical_actor
-                                                                    ));
+                                                        },
+                                                        UiIcon { name: "copy" }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "account-menu__row",
+                                                strong { "Handles" }
+                                                div { class: "account-menu__value",
+                                                    span {
+                                                        class: "mono",
+                                                        "data-testid": "account-menu-handles",
+                                                        title: "{account_handles_title}",
+                                                        "{account_handles_label}"
+                                                    }
+                                                    Button {
+                                                        variant: ButtonVariant::Ghost,
+                                                        size: ButtonSize::Sm,
+                                                        class: "btn icon account-menu__copy",
+                                                        "data-testid": "account-menu-copy-handles",
+                                                        title: "Copy handles",
+                                                        "aria-label": "Copy handles",
+                                                        onclick: {
+                                                            let value = account_handles_title.clone();
+                                                            move |_| {
+                                                                copy_text_to_clipboard(&value);
+                                                                crate::components::feedback::toast_success("feedback.copied_handles", vec![]);
+                                                            }
+                                                        },
+                                                        UiIcon { name: "copy" }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "account-menu__row",
+                                                strong { "Device" }
+                                                div { class: "account-menu__value",
+                                                    div { class: "account-menu__device-text",
+                                                        span {
+                                                            class: "account-menu__device-name",
+                                                            "data-testid": "account-menu-device-name",
+                                                            if device_display_name.trim().is_empty() { "This device" } else { "{device_display_name}" }
+                                                        }
+                                                        span {
+                                                            class: "mono account-menu__device-id",
+                                                            "data-testid": "account-menu-device",
+                                                            title: "{device_id_value}",
+                                                            "{device_id_label}"
+                                                        }
+                                                    }
+                                                    Button {
+                                                        variant: ButtonVariant::Ghost,
+                                                        size: ButtonSize::Sm,
+                                                        class: "btn icon account-menu__copy",
+                                                        "data-testid": "account-menu-copy-device",
+                                                        title: "Copy device ID",
+                                                        "aria-label": "Copy device ID",
+                                                        onclick: {
+                                                            let value = device_id_value.clone();
+                                                            move |_| {
+                                                                copy_text_to_clipboard(&value);
+                                                                crate::components::feedback::toast_success("feedback.copied_device_id", vec![]);
+                                                            }
+                                                        },
+                                                        UiIcon { name: "copy" }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "account-menu__row",
+                                                strong { "Server" }
+                                                span { "{active_server_label}" }
+                                            }
+                                        }
+                                        div { class: "account-menu__actions",
+                                            Button {
+                                                variant: ButtonVariant::Ghost,
+                                                size: ButtonSize::Sm,
+                                                class: "btn",
+                                                "data-testid": "account-menu-session-refresh",
+                                                "aria-label": "Refresh session",
+                                                disabled: !has_session,
+                                                onclick: {
+                                                    let base = base_url();
+                                                    let session = manual_refresh_session.clone();
+                                                    move |_| {
+                                                        let base = base.clone();
+                                                    let session = session.clone();
+                                                    let api_token = token();
+                                                    let actor = principal_id();
+                                                    let Some(active) = active_account.peek().clone() else {
+                                                        account_session_state.set(
+                                                            "Session identity is unavailable; sign in again."
+                                                                .to_owned(),
+                                                        );
+                                                        return;
+                                                    };
+                                                        personal_handles_lookup_key.set(String::new());
+                                                        account_identity_lookup_key.set(String::new());
+                                                        account_session_state.set("Refreshing session".to_owned());
+                                                        spawn(async move {
+                                                            match self_authed_api(&base, api_token.clone()) {
+                                                                Ok(api) => match async {
+                                                                    crate::transport::account::account_me(&api.sdk_http_client()?).await
                                                                 }
-                                                                Err(error) => {
-                                                                    if is_auth_expired_error(&error) {
-                                                                        // The credential expired between background
-                                                                        // refresh ticks. Try the session-grant
-                                                                        // refresh path before declaring the session
-                                                                        // dead — clicking "Refresh session" must
-                                                                        // keep the user signed in, not bounce them to
-                                                                        // login on a routine credential rotation.
-                                                                        match session.refresh().await {
-                                                                            crate::runtime::session::CurrentSessionRefresh::Credential(fresh) => {
-                                                                                let canonical_actor = match self_authed_api(&base, fresh) {
-                                                                                    Ok(api) => async {
-                                                                                        crate::transport::account::account_me(&api.sdk_http_client()?).await
-                                                                                    }
-                                                                                        .await
-                                                                                        .ok()
-                                                                                        .and_then(|account| {
-                                                                                            active_account.peek()
-                                                                                                .as_ref()
-                                                                                                .filter(|context| context.principal_id() == &account.principal_id)
-                                                                                                ?;
-                                                                                            if let Some(personal_handle) =
-                                                                                                personal_handle_from_account_handle(&account.handle)
-                                                                                            {
-                                                                                                account_primary_handle
-                                                                                                    .set(personal_handle.clone());
-                                                                                                let handles = merge_personal_handles(
-                                                                                                    &personal_handles(),
-                                                                                                    [personal_handle],
-                                                                                                );
-                                                                                                personal_handles_status
-                                                                                                    .set(personal_handles_status_for(&handles));
-                                                                                                personal_handles.set(handles);
-                                                                                            } else {
-                                                                                                account_primary_handle
-                                                                                                    .set(String::new());
-                                                                                                if personal_handles().is_empty() {
-                                                                                                    personal_handles_status
-                                                                                                        .set("Not published".to_owned());
-                                                                                                }
-                                                                                            }
-                                                                                            Some(active.principal_id().to_string())
-                                                                                        }),
-                                                                                    Err(_) => None,
-                                                                                }
-                                                                                .unwrap_or_else(|| actor.clone());
-                                                                                principal_id.set(canonical_actor.clone());
-                                                                                account_session_state.set(format!(
-                                                                                    "Session refresh ok: {canonical_actor}"
-                                                                                ));
-                                                                            }
-                                                                            crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                                                                                last_error.set(Some(reason));
+                                                                .await
+                                                                {
+                                                                    Ok(account) => {
+                                                                        let canonical_actor = match active_account.peek().as_ref() {
+                                                                            Some(context) if context.principal_id() == &account.principal_id => context.full_id().to_string(),
+                                                                            _ => {
+                                                                                last_error.set(Some("account viewer authority does not match the accepted active context".to_owned()));
                                                                                 account_session_state.set(
-                                                                                    "Sign in again to refresh this session.".to_owned()
+                                                                                    "Session identity could not be restored; sign in again."
+                                                                                        .to_owned(),
                                                                                 );
+                                                                                return;
                                                                             }
-                                                                            crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                                                                                last_error.set(Some(reason));
-                                                                                account_session_state.set(
-                                                                                    "Session expired. Sign in again.".to_owned()
-                                                                                );
-                                                                            }
-                                                                            crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
-                                                                                account_session_state.set(format!(
-                                                                                    "Session refresh pending: {reason}"
-                                                                                ));
+                                                                        };
+                                                                        if let Some(personal_handle) =
+                                                                            personal_handle_from_account_handle(&account.handle)
+                                                                        {
+                                                                            account_primary_handle
+                                                                                .set(personal_handle.clone());
+                                                                            let handles = merge_personal_handles(
+                                                                                &personal_handles(),
+                                                                                [personal_handle],
+                                                                            );
+                                                                            personal_handles_status
+                                                                                .set(personal_handles_status_for(&handles));
+                                                                            personal_handles.set(handles);
+                                                                        } else {
+                                                                            account_primary_handle.set(String::new());
+                                                                            if personal_handles().is_empty() {
+                                                                                personal_handles_status.set("Not published".to_owned());
                                                                             }
                                                                         }
-                                                                    } else {
+                                                                        principal_id.set(canonical_actor.clone());
+                                                                        persist_config(
+                                                                            config_store,
+                                                                            active.server_url.to_string(),
+                                                                            active.full_id().to_string(),
+                                                                            active.device_id.to_string(),
+                                                                            api_token,
+                                                                        );
                                                                         account_session_state.set(format!(
-                                                                            "Session refresh failed: {error}"
+                                                                            "Session refresh ok: {}",
+                                                                            canonical_actor
                                                                         ));
                                                                     }
-                                                                }
-                                                            },
-                                                            Err(error) => account_session_state
-                                                                .set(format!("Invalid server URL: {error}")),
-                                                        }
-                                                    });
-                                                }
-                                            },
-                                            "Refresh"
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Ghost,
-                                            size: ButtonSize::Sm,
-                                            class: "btn",
-                                            "data-testid": "account-menu-session-logout",
-                                            "aria-label": "Log out",
-                                            disabled: !has_session,
-                                            onclick: move |_| {
-                                                let base = base_url();
-                                                let actor = principal_id();
-                                                let device = device_id();
-                                                let api_token = token();
-                                                let Some(active) = active_account.peek().clone() else {
-                                                    last_error.set(Some(
-                                                        "active account context is unavailable"
-                                                            .to_owned(),
-                                                    ));
-                                                    return;
-                                                };
-                                                // Capture the grant + grant-binding key BEFORE the
-                                                // local wipe below: hard logout MUST also terminate
-                                                // the Auth Server session (revoke grant + finish
-                                                // browser session) so the rotation chain can't be
-                                                // resumed (account-lifecycle §4.1), and that needs
-                                                // the grant JWT + a grant-binding DPoP proof.
-                                                let logout_grant =
-                                                    state_store.read().session_grant();
-                                                let logout_device_handle = {
-                                                    let mut store = state_store.write();
-                                                    crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store).ok()
-                                                };
-                                                // F7 — journal the logout intent durably BEFORE the
-                                                // local wipe. If the tab closes mid-flight or coauth is
-                                                // briefly unreachable, the next boot
-                                                // (`pending_logout::execute_pending_logout`) retries the server-side
-                                                // termination so the rotation chain can't outlive the
-                                                // "logout". The record stashes the device seed (the live
-                                                // key is wiped below) purely to mint the revoke DPoP
-                                                // proof; it is cleared once coauth confirms the grant is
-                                                // gone (account-lifecycle §4.1).
-                                                let pending_logout =
-                                                    crate::pending_logout::PendingLogout {
-                                                        authority: active.authority.clone(),
-                                                        device_id: active.device_id.clone(),
-                                                        grant_jwt: logout_grant
-                                                            .as_ref()
-                                                            .map(|grant| grant.grant_jwt.clone()),
-                                                        device_seed_b64: logout_device_handle
-                                                            .as_ref()
-                                                            .map(|handle| handle.seed_b64().to_string()),
-                                                        device_jkt: logout_device_handle
-                                                            .as_ref()
-                                                            .map(|handle| handle.jkt().to_owned()),
-                                                        principal_server_url: logout_grant
-                                                            .as_ref()
-                                                            .map(|grant| grant.principal_server_url.clone()),
-                                                        // T1.Y4 — re-resolved at
-                                                        // logout time from the
-                                                        // principal server's
-                                                        // describe.auth_metadata.
-                                                        gate_account_base: None,
-                                                        base_url: active.server_url.clone(),
-                                                        session_credential: api_token.clone(),
-                                                        principal_id: actor.clone(),
-                                                        created_at: chrono::Utc::now(),
+                                                                    Err(error) => {
+                                                                        if is_auth_expired_error(&error) {
+                                                                            // The credential expired between background
+                                                                            // refresh ticks. Try the session-grant
+                                                                            // refresh path before declaring the session
+                                                                            // dead — clicking "Refresh session" must
+                                                                            // keep the user signed in, not bounce them to
+                                                                            // login on a routine credential rotation.
+                                                                            match session.refresh().await {
+                                                                                crate::runtime::session::CurrentSessionRefresh::Credential(fresh) => {
+                                                                                    let canonical_actor = match self_authed_api(&base, fresh) {
+                                                                                        Ok(api) => async {
+                                                                                            crate::transport::account::account_me(&api.sdk_http_client()?).await
+                                                                                        }
+                                                                                            .await
+                                                                                            .ok()
+                                                                                            .and_then(|account| {
+                                                                                                active_account.peek()
+                                                                                                    .as_ref()
+                                                                                                    .filter(|context| context.principal_id() == &account.principal_id)
+                                                                                                    ?;
+                                                                                                if let Some(personal_handle) =
+                                                                                                    personal_handle_from_account_handle(&account.handle)
+                                                                                                {
+                                                                                                    account_primary_handle
+                                                                                                        .set(personal_handle.clone());
+                                                                                                    let handles = merge_personal_handles(
+                                                                                                        &personal_handles(),
+                                                                                                        [personal_handle],
+                                                                                                    );
+                                                                                                    personal_handles_status
+                                                                                                        .set(personal_handles_status_for(&handles));
+                                                                                                    personal_handles.set(handles);
+                                                                                                } else {
+                                                                                                    account_primary_handle
+                                                                                                        .set(String::new());
+                                                                                                    if personal_handles().is_empty() {
+                                                                                                        personal_handles_status
+                                                                                                            .set("Not published".to_owned());
+                                                                                                    }
+                                                                                                }
+                                                                                                Some(active.principal_id().to_string())
+                                                                                            }),
+                                                                                        Err(_) => None,
+                                                                                    }
+                                                                                    .unwrap_or_else(|| actor.clone());
+                                                                                    principal_id.set(canonical_actor.clone());
+                                                                                    account_session_state.set(format!(
+                                                                                        "Session refresh ok: {canonical_actor}"
+                                                                                    ));
+                                                                                }
+                                                                                crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
+                                                                                    last_error.set(Some(reason));
+                                                                                    account_session_state.set(
+                                                                                        "Sign in again to refresh this session.".to_owned()
+                                                                                    );
+                                                                                }
+                                                                                crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                                                                                    last_error.set(Some(reason));
+                                                                                    account_session_state.set(
+                                                                                        "Session expired. Sign in again.".to_owned()
+                                                                                    );
+                                                                                }
+                                                                                crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
+                                                                                    account_session_state.set(format!(
+                                                                                        "Session refresh pending: {reason}"
+                                                                                    ));
+                                                                                }
+                                                                            }
+                                                                        } else {
+                                                                            account_session_state.set(format!(
+                                                                                "Session refresh failed: {error}"
+                                                                            ));
+                                                                        }
+                                                                    }
+                                                                },
+                                                                Err(error) => account_session_state
+                                                                    .set(format!("Invalid server URL: {error}")),
+                                                            }
+                                                        });
+                                                    }
+                                                },
+                                                "Refresh"
+                                            }
+                                            Button {
+                                                variant: ButtonVariant::Ghost,
+                                                size: ButtonSize::Sm,
+                                                class: "btn",
+                                                "data-testid": "account-menu-session-logout",
+                                                "aria-label": "Log out",
+                                                disabled: !has_session,
+                                                onclick: move |_| {
+                                                    let base = base_url();
+                                                    let actor = principal_id();
+                                                    let device = device_id();
+                                                    let api_token = token();
+                                                    let Some(active) = active_account.peek().clone() else {
+                                                        last_error.set(Some(
+                                                            "active account context is unavailable"
+                                                                .to_owned(),
+                                                        ));
+                                                        return;
                                                     };
-                                                let logout_secure_store =
-                                                    crate::secure_key_store::default_secure_key_store(
-                                                        "inkson",
-                                                    );
-                                                if let Err(error) =
-                                                    crate::pending_logout::persist_pending_logout(
-                                                        &pending_logout,
-                                                        logout_secure_store.as_ref(),
-                                                    )
-                                                {
-                                                    tracing::warn!(
-                                                        ?error,
-                                                        "failed to journal pending logout"
-                                                    );
-                                                }
-                                                let logout_generation = session_generation() + 1;
-                                                account_session_state.set("Logging out".to_owned());
-                                                session_generation.set(logout_generation);
-                                                runtime_services.effects.request_cancel_all();
-                                                // Clear browser-session credentials up front so a
-                                                // local retry cannot resurrect the session if the
-                                                // server-side logout call later fails or is
-                                                // cancelled. Keep the account entry itself:
-                                                // projections, encrypted MLS checkpoints, and the
-                                                // durable device identity are account state, not
-                                                // grant-binding state. In-memory plaintext sidecars
-                                                // are cleared here and can only be restored from the
-                                                // encrypted checkpoint after the next sign-in. The
-                                                // next interactive sign-in rotates the grant-binding
-                                                // seed before issuing the new session grant.
-                                                state_store
-                                                    .write()
-                                                    .clear_session_scoped_for_logout();
-                                                // Wiping the durable E2EE device identity (true
-                                                // "remove this device") is reserved for a separate
-                                                // explicit action; logout only terminates the
-                                                // browser session.
-                                                let _ = crate::identity::account_auth::clear_all_persisted_oidc_scaffolds();
-                                                // Wipe the in-memory UI signals too so the
-                                                // sidebar can't paint a frame of stale
-                                                // Realm tree updates between this click and the
-                                                // navigator.push(Login).
-                                                realm_tree_nodes.set(Vec::new());
-                                                projection_events.set(Vec::new());
-                                                sync_cursor.set(String::new());
-                                                selected_realm_id.set(String::new());
-                                                device_queue.set(0);
-                                                // Y2 - logout is a full trust-bundle reset:
-                                                // clear the entire session-scoped DID
-                                                // resolution cache so the next user in this
-                                                // browser cannot hit the previous session's
-                                                // resolution results (stale documents / old key
-                                                // sets).
-                                                did_cache.write().clear();
-                                                account_primary_handle.set(String::new());
-                                                personal_handles.set(Vec::new());
-                                                personal_handles_status.set("Not published".to_owned());
-                                                personal_handles_lookup_key.set(String::new());
-                                                last_error.set(None);
-                                                token.set(String::new());
-                                                if let Some(account) = SessionContext::get().active_account.peek().as_ref() {
-                                                    crate::config::clear_session_credential_secret(account);
-                                                }
-                                                persist_config(
-                                                    config_store,
-                                                    base.clone(),
-                                                    actor.clone(),
-                                                    device.clone(),
-                                                    String::new(),
-                                                );
-                                                session_boot_state.set(SessionBootState::Unauthenticated);
-                                                // Bump the SyncEngine generation so any
-                                                // in-flight long-poll exits on its next
-                                                // iteration check instead of applying a
-                                                // response after the wipe.
-                                                sync_generation.set(sync_generation() + 1);
-                                                account_menu_open.set(false);
-                                                redirect_to_login(navigator);
-                                                let logout_effects =
-                                                    runtime_services.effects.clone();
-                                                spawn(async move {
-                                                    logout_effects.cancel_all().await;
-                                                    // Drive the journalled logout: revoke the grant at
-                                                    // coauth (terminating the rotation chain) then run
-                                                    // the soland courtesy logout. On success the journal
-                                                    // entry is cleared; a transient coauth failure leaves
-                                                    // it for the next boot to retry. Local credentials are
-                                                    // already wiped, so a failure here never keeps THIS
-                                                    // client signed in.
-                                                    let outcome =
-                                                        crate::pending_logout::execute_pending_logout(
+                                                    // Capture the grant + grant-binding key BEFORE the
+                                                    // local wipe below: hard logout MUST also terminate
+                                                    // the Auth Server session (revoke grant + finish
+                                                    // browser session) so the rotation chain can't be
+                                                    // resumed (account-lifecycle §4.1), and that needs
+                                                    // the grant JWT + a grant-binding DPoP proof.
+                                                    let logout_grant =
+                                                        state_store.read().session_grant();
+                                                    let logout_device_handle = {
+                                                        let mut store = state_store.write();
+                                                        crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store).ok()
+                                                    };
+                                                    // F7 — journal the logout intent durably BEFORE the
+                                                    // local wipe. If the tab closes mid-flight or coauth is
+                                                    // briefly unreachable, the next boot
+                                                    // (`pending_logout::execute_pending_logout`) retries the server-side
+                                                    // termination so the rotation chain can't outlive the
+                                                    // "logout". The record stashes the device seed (the live
+                                                    // key is wiped below) purely to mint the revoke DPoP
+                                                    // proof; it is cleared once coauth confirms the grant is
+                                                    // gone (account-lifecycle §4.1).
+                                                    let pending_logout =
+                                                        crate::pending_logout::PendingLogout {
+                                                            authority: active.authority.clone(),
+                                                            device_id: active.device_id.clone(),
+                                                            grant_jwt: logout_grant
+                                                                .as_ref()
+                                                                .map(|grant| grant.grant_jwt.clone()),
+                                                            device_seed_b64: logout_device_handle
+                                                                .as_ref()
+                                                                .map(|handle| handle.seed_b64().to_string()),
+                                                            device_jkt: logout_device_handle
+                                                                .as_ref()
+                                                                .map(|handle| handle.jkt().to_owned()),
+                                                            principal_server_url: logout_grant
+                                                                .as_ref()
+                                                                .map(|grant| grant.principal_server_url.clone()),
+                                                            // T1.Y4 — re-resolved at
+                                                            // logout time from the
+                                                            // principal server's
+                                                            // describe.auth_metadata.
+                                                            gate_account_base: None,
+                                                            base_url: active.server_url.clone(),
+                                                            session_credential: api_token.clone(),
+                                                            principal_id: actor.clone(),
+                                                            created_at: chrono::Utc::now(),
+                                                        };
+                                                    let logout_secure_store =
+                                                        crate::secure_key_store::default_secure_key_store(
+                                                            "inkson",
+                                                        );
+                                                    if let Err(error) =
+                                                        crate::pending_logout::persist_pending_logout(
                                                             &pending_logout,
                                                             logout_secure_store.as_ref(),
                                                         )
-                                                        .await;
-                                                    let logout_message = match outcome {
-                                                        crate::pending_logout::LogoutRunOutcome::Completed => {
-                                                            "Logout ok: session revoked".to_owned()
-                                                        }
-                                                        crate::pending_logout::LogoutRunOutcome::Retain => {
-                                                            "Logged out locally; server revoke will retry"
-                                                                .to_owned()
-                                                        }
-                                                    };
-                                                    if session_generation() == logout_generation {
-                                                        account_session_state.set(logout_message);
+                                                    {
+                                                        tracing::warn!(
+                                                            ?error,
+                                                            "failed to journal pending logout"
+                                                        );
                                                     }
-                                                });
-                                            },
-                                            "Log out"
-                                        }
-                                        Link {
-                                            class: "btn sm",
-                                            "data-testid": "account-menu-settings",
-                                            to: Route::Settings,
-                                            onclick: move |_| account_menu_open.set(false),
-                                            UiIcon { name: "settings" }
-                                            "Settings"
+                                                    let logout_generation = session_generation() + 1;
+                                                    account_session_state.set("Logging out".to_owned());
+                                                    session_generation.set(logout_generation);
+                                                    runtime_services.effects.request_cancel_all();
+                                                    // Clear browser-session credentials up front so a
+                                                    // local retry cannot resurrect the session if the
+                                                    // server-side logout call later fails or is
+                                                    // cancelled. Keep the account entry itself:
+                                                    // projections, encrypted MLS checkpoints, and the
+                                                    // durable device identity are account state, not
+                                                    // grant-binding state. In-memory plaintext sidecars
+                                                    // are cleared here and can only be restored from the
+                                                    // encrypted checkpoint after the next sign-in. The
+                                                    // next interactive sign-in rotates the grant-binding
+                                                    // seed before issuing the new session grant.
+                                                    state_store
+                                                        .write()
+                                                        .clear_session_scoped_for_logout();
+                                                    // Wiping the durable E2EE device identity (true
+                                                    // "remove this device") is reserved for a separate
+                                                    // explicit action; logout only terminates the
+                                                    // browser session.
+                                                    let _ = crate::identity::account_auth::clear_all_persisted_oidc_scaffolds();
+                                                    // Wipe the in-memory UI signals too so the
+                                                    // sidebar can't paint a frame of stale
+                                                    // Realm tree updates between this click and the
+                                                    // navigator.push(Login).
+                                                    realm_tree_nodes.set(Vec::new());
+                                                    projection_events.set(Vec::new());
+                                                    sync_cursor.set(String::new());
+                                                    selected_realm_id.set(String::new());
+                                                    device_queue.set(0);
+                                                    // Y2 - logout is a full trust-bundle reset:
+                                                    // clear the entire session-scoped DID
+                                                    // resolution cache so the next user in this
+                                                    // browser cannot hit the previous session's
+                                                    // resolution results (stale documents / old key
+                                                    // sets).
+                                                    did_cache.write().clear();
+                                                    account_primary_handle.set(String::new());
+                                                    personal_handles.set(Vec::new());
+                                                    personal_handles_status.set("Not published".to_owned());
+                                                    personal_handles_lookup_key.set(String::new());
+                                                    last_error.set(None);
+                                                    token.set(String::new());
+                                                    if let Some(account) = SessionContext::get().active_account.peek().as_ref() {
+                                                        crate::config::clear_session_credential_secret(account);
+                                                    }
+                                                    persist_config(
+                                                        config_store,
+                                                        base.clone(),
+                                                        actor.clone(),
+                                                        device.clone(),
+                                                        String::new(),
+                                                    );
+                                                    session_boot_state.set(SessionBootState::Unauthenticated);
+                                                    // Bump the SyncEngine generation so any
+                                                    // in-flight long-poll exits on its next
+                                                    // iteration check instead of applying a
+                                                    // response after the wipe.
+                                                    sync_generation.set(sync_generation() + 1);
+                                                    account_menu_open.set(false);
+                                                    redirect_to_login(navigator);
+                                                    let logout_effects =
+                                                        runtime_services.effects.clone();
+                                                    spawn(async move {
+                                                        logout_effects.cancel_all().await;
+                                                        // Drive the journalled logout: revoke the grant at
+                                                        // coauth (terminating the rotation chain) then run
+                                                        // the soland courtesy logout. On success the journal
+                                                        // entry is cleared; a transient coauth failure leaves
+                                                        // it for the next boot to retry. Local credentials are
+                                                        // already wiped, so a failure here never keeps THIS
+                                                        // client signed in.
+                                                        let outcome =
+                                                            crate::pending_logout::execute_pending_logout(
+                                                                &pending_logout,
+                                                                logout_secure_store.as_ref(),
+                                                            )
+                                                            .await;
+                                                        let logout_message = match outcome {
+                                                            crate::pending_logout::LogoutRunOutcome::Completed => {
+                                                                "Logout ok: session revoked".to_owned()
+                                                            }
+                                                            crate::pending_logout::LogoutRunOutcome::Retain => {
+                                                                "Logged out locally; server revoke will retry"
+                                                                    .to_owned()
+                                                            }
+                                                        };
+                                                        if session_generation() == logout_generation {
+                                                            account_session_state.set(logout_message);
+                                                        }
+                                                    });
+                                                },
+                                                "Log out"
+                                            }
+                                            Link {
+                                                class: "btn sm",
+                                                "data-testid": "account-menu-settings",
+                                                to: Route::Settings,
+                                                onclick: move |_| account_menu_open.set(false),
+                                                UiIcon { name: "settings" }
+                                                "Settings"
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
-                RouteSurface {
-                    state: RouteSurfaceState {
-                        content_route: content_route.clone(),
-                        navigation: NavigationState::new(
-                            route.clone(),
-                            view,
-                            selected_realm_id,
-                            new_space_context_node,
-                        ),
-                        principal_id,
-                        device_id,
-                        token,
-                        config_store,
-                        account_primary_handle,
-                        personal_handles,
-                        personal_handles_status,
-                        realm_tree_nodes,
-                        device_queue,
-                        frontier_state,
-                        sync_cursor,
-                        resolved_realm_surface,
-                        minimal_ready,
-                        kanban_ready,
-                        full_ready,
-                        e2ee_ready,
-                        event_write_ready,
-                        active_service_id: active_service_id.clone(),
-                        active_realm_id: active_realm_id.clone(),
-                        active_projection_realm_id: active_projection_realm_id.clone(),
-                        realm_live_epoch,
-                        has_session,
-                        manage_realm_rows: manage_realm_rows.clone(),
-                        realm_manage_query,
-                        manage_realm_selection,
-                        manage_bulk_busy,
-                        direct_contact_rows,
-                        direct_contacts_loaded,
-                        contact_manage_query,
-                        manage_contact_selection,
-                        secure_store_bootstrap_ready,
-                        needs_device_authorization,
-                        device_authorization_check_complete,
-                        can_list_handles_for_subject,
-                        push_state,
-                        locale,
-                        theme,
-                        base_url,
+                    RouteSurface {
+                        state: RouteSurfaceState {
+                            content_route: content_route.clone(),
+                            navigation: NavigationState::new(
+                                route.clone(),
+                                view,
+                                selected_realm_id,
+                                new_space_context_node,
+                            ),
+                            principal_id,
+                            device_id,
+                            token,
+                            config_store,
+                            account_primary_handle,
+                            personal_handles,
+                            personal_handles_status,
+                            realm_tree_nodes,
+                            device_queue,
+                            frontier_state,
+                            sync_cursor,
+                            resolved_realm_surface,
+                            minimal_ready,
+                            kanban_ready,
+                            full_ready,
+                            e2ee_ready,
+                            event_write_ready,
+                            active_service_id: active_service_id.clone(),
+                            active_realm_id: active_realm_id.clone(),
+                            active_projection_realm_id: active_projection_realm_id.clone(),
+                            realm_live_epoch,
+                            has_session,
+                            manage_realm_rows: manage_realm_rows.clone(),
+                            realm_manage_query,
+                            manage_realm_selection,
+                            manage_bulk_busy,
+                            direct_contact_rows,
+                            direct_contacts_loaded,
+                            contact_manage_query,
+                            manage_contact_selection,
+                            secure_store_bootstrap_ready,
+                            needs_device_authorization,
+                            device_authorization_check_complete,
+                            can_list_handles_for_subject,
+                            push_state,
+                            locale,
+                            theme,
+                            base_url,
+                        }
                     }
                 }
+                NotificationsDrawer {
+                    open: notifications_drawer_open,
+                    principal_id: principal_id(),
+                    device_id: device_id(),
+                    token,
+                }
+                // A6.4 — shortcut help overlay; toggled by the `?` global
+                // key handler on the shell div above.
+                crate::components::shortcut_help::ShortcutHelpOverlay {
+                    visible: shortcut_help_open,
+                }
             }
-            NotificationsDrawer {
-                open: notifications_drawer_open,
-                principal_id: principal_id(),
-                device_id: device_id(),
-                token,
-            }
-            // A6.4 — shortcut help overlay; toggled by the `?` global
-            // key handler on the shell div above.
-            crate::components::shortcut_help::ShortcutHelpOverlay {
-                visible: shortcut_help_open,
-            }
-        }
-        }
-        if !matches!(auth_surface, AuthSurface::AppShell) {
-            {auth_shell_node}
+                }
         }
     }
 }

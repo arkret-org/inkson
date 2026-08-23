@@ -27,14 +27,15 @@ fn build_register_request(
     )?)
 }
 
-fn register_outcome() -> PushRegisterDeviceOutcome {
+fn register_outcome(registration_id: Option<&str>) -> PushRegisterDeviceOutcome {
     PushRegisterDeviceOutcome {
         ok: true,
-        push_target_id: arkret_identifiers::PushTargetId::new(
-            "ak:pseudonym:push:01HYZ8Z000000000000000".to_owned(),
+        push_target_id: arkret_wire::PushTargetId::new(
+            "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8".to_owned(),
         )
         .unwrap(),
-        registration_id: None,
+        registration_id: registration_id
+            .map(|value| arkret_sdk::OpaqueLocalId::new(value.to_owned()).unwrap()),
         expires_at: None,
     }
 }
@@ -51,8 +52,7 @@ fn builds_chime_register_request() {
 #[test]
 fn builds_persistable_registration_state() {
     let request = build_register_request("dev_inkson").unwrap();
-    let mut response = register_outcome();
-    response.registration_id = Some(arkret_sdk::OpaqueLocalId::new("push:test").unwrap());
+    let response = register_outcome(Some("push:test"));
     let state = registration_state_from_response(&request, &response);
 
     assert_eq!(state.registration_id.as_deref(), Some("push:test"));
@@ -64,8 +64,7 @@ fn builds_persistable_registration_state() {
 #[test]
 fn builds_unregister_request_from_existing_state() {
     let request = build_register_request("dev_inkson").unwrap();
-    let mut response = register_outcome();
-    response.registration_id = Some(arkret_sdk::OpaqueLocalId::new("push:test").unwrap());
+    let response = register_outcome(Some("push:test"));
     let state = registration_state_from_response(&request, &response);
     let unregister = build_unregister_request("dev_inkson", Some(&state)).unwrap();
 
@@ -161,7 +160,7 @@ fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
 #[test]
 fn push_status_label_treats_state_without_registration_id_as_registered() {
     let request = build_register_request("dev_inkson").unwrap();
-    let response = register_outcome();
+    let response = register_outcome(None);
     let state = registration_state_from_response(&request, &response);
 
     assert_eq!(push_status_label(Some(&state)), "registered");

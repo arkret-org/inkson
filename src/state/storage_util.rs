@@ -163,7 +163,7 @@ pub(crate) fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
-pub(super) fn active_user_local_store()
+pub(crate) fn active_user_local_store()
 -> Result<crate::secure_key_store::UserLocalStore, crate::secure_key_store::SecureKeyStoreError> {
     let scope = crate::secure_key_store::active_device_seed_scope().ok_or_else(|| {
         crate::secure_key_store::SecureKeyStoreError::Backend(
@@ -211,11 +211,8 @@ pub(crate) fn store_identity_record_in_secure_store(
             "serialize identity record: {error}"
         ))
     })?;
-    active_user_local_store()?.save_secret(
-        secure_store,
-        LocalStateStore::SECURE_IDENTITY_KEY,
-        &json,
-    )
+    let key = active_user_local_store()?.secret_key(LocalStateStore::SECURE_IDENTITY_KEY);
+    secure_store.store_secret(&key, &json)
 }
 
 pub(crate) fn load_dpop_device_key_from_secure_store(
@@ -243,11 +240,8 @@ pub(crate) fn store_dpop_device_key_in_secure_store(
             "serialize DPoP device key record: {error}"
         ))
     })?;
-    active_user_local_store()?.save_secret(
-        secure_store,
-        LocalStateStore::SECURE_DPOP_DEVICE_KEY,
-        &json,
-    )
+    let key = active_user_local_store()?.secret_key(LocalStateStore::SECURE_DPOP_DEVICE_KEY);
+    secure_store.store_secret(&key, &json)
 }
 
 pub(crate) fn load_session_grant_from_user_secure_store(
@@ -266,8 +260,27 @@ pub(crate) fn load_session_grant_from_user_secure_store(
     })
 }
 
+pub(crate) async fn store_session_grant_in_user_secure_store_durable(
+    user_store: &crate::secure_key_store::UserLocalStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    grant: &PersistedSessionGrant,
+) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
+    let json = serde_json::to_string(grant).map_err(|error| {
+        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
+            "serialize session grant: {error}"
+        ))
+    })?;
+    user_store
+        .save_secret_durable(
+            secure_store,
+            LocalStateStore::SECURE_SESSION_GRANT_KEY,
+            &json,
+        )
+        .await
+}
+
 #[cfg_attr(test, allow(dead_code))]
-// Counterpart of `store_session_grant_in_secure_store` below. The only caller
+// The only caller
 // is `app::secure_store_effects::apply_test_session_grant_expiry_override`,
 // which is gated on the same cfg, so this carries the caller's cfg rather than
 // an `allow(dead_code)`. Do not delete it as an "uncalled thin wrapper": a
@@ -279,44 +292,6 @@ pub(crate) fn load_session_grant_from_secure_store(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<Option<PersistedSessionGrant>, crate::secure_key_store::SecureKeyStoreError> {
     load_session_grant_from_user_secure_store(&active_user_local_store()?, secure_store)
-}
-
-// Callers: `identity_session::set_session_grant` inside its
-// `#[cfg(not(test))]` secure-store side-effect block (any target), and
-// `app::secure_store_effects::apply_test_session_grant_expiry_override` under
-// the wasm-localstorage-secrets-test cfg. Gate on the union of both so the
-// lib-test build — where every caller is compiled out — does not report this
-// as dead code.
-#[cfg(any(
-    not(test),
-    all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
-))]
-pub(crate) fn store_session_grant_in_secure_store(
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    grant: &PersistedSessionGrant,
-) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
-    store_session_grant_in_user_secure_store(&active_user_local_store()?, secure_store, grant)
-}
-
-// Callers: `store_session_grant_in_secure_store` above (non-test builds) and
-// the wasm-only `account_persist::wasm_bootstrap` hydration. On a native
-// lib-test build both are compiled out, hence this gate.
-#[cfg(any(not(test), target_arch = "wasm32"))]
-pub(crate) fn store_session_grant_in_user_secure_store(
-    user_store: &crate::secure_key_store::UserLocalStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    grant: &PersistedSessionGrant,
-) -> Result<(), crate::secure_key_store::SecureKeyStoreError> {
-    let json = serde_json::to_string(grant).map_err(|error| {
-        crate::secure_key_store::SecureKeyStoreError::Backend(format!(
-            "serialize session grant: {error}"
-        ))
-    })?;
-    user_store.save_secret(
-        secure_store,
-        LocalStateStore::SECURE_SESSION_GRANT_KEY,
-        &json,
-    )
 }
 
 /// Whether the device identity seed may live in the plaintext local-state

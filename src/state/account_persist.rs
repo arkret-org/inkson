@@ -446,9 +446,7 @@ pub(crate) use wasm_driver::{
 mod wasm_bootstrap {
     use std::sync::atomic::Ordering;
 
-    use super::super::{
-        LocalStateStore, store_session_grant_in_user_secure_store, user_local_store_for_principal,
-    };
+    use super::super::LocalStateStore;
     use super::{
         ClientLocalState, merge_persisted_into_live, merge_secure_session_grant_into_live,
     };
@@ -466,21 +464,15 @@ mod wasm_bootstrap {
         ) {
             self.ensure_cached_loaded();
             let effective_did = self.effective_account_key();
-            let user_store = self
-                .cached
-                .session_grant
-                .as_ref()
-                .and_then(|grant| user_local_store_for_principal(&grant.principal_id).ok());
             // The root key cannot prove a PrincipalAuthorityKey, so it is not
             // an acceptable source for restoring an account-local session
-            // secret. A freshly staged typed grant may still be
-            // persisted below; reload restoration remains fail-closed.
+            // secret. Session credentials are committed explicitly before
+            // publication and are never repaired by account-state hydration.
             let secure_grant = None;
             let Some(stored) = self.read_account_state(&effective_did) else {
                 // No durable entry yet; keep the live state and mark loaded so the
                 // first flush persists it under the active account key.
                 merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
-                persist_staged_session_grant(&self.cached, user_store.as_ref(), secure_store);
                 self.loaded.store(true, Ordering::Relaxed);
                 let _ = self.flush();
                 return;
@@ -488,27 +480,8 @@ mod wasm_bootstrap {
             let live = std::mem::replace(&mut self.cached, ClientLocalState::default());
             self.cached = merge_persisted_into_live(live, stored);
             merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
-            persist_staged_session_grant(&self.cached, user_store.as_ref(), secure_store);
             self.loaded.store(true, Ordering::Relaxed);
             let _ = self.flush();
-        }
-    }
-
-    fn persist_staged_session_grant(
-        state: &ClientLocalState,
-        user_store: Option<&crate::secure_key_store::UserLocalStore>,
-        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    ) {
-        let (Some(user_store), Some(grant)) = (user_store, state.session_grant.as_ref()) else {
-            return;
-        };
-        if let Err(error) =
-            store_session_grant_in_user_secure_store(user_store, secure_store, grant)
-        {
-            tracing::error!(
-                ?error,
-                "staged session grant persist failed after IndexedDB upgrade"
-            );
         }
     }
 }

@@ -285,6 +285,152 @@ pub fn record_login_transition(
     );
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OnboardingCompletionOrigin {
+    FreshBind,
+    ResumeRestore,
+    ResumeReissue,
+    RecoveryCompletion,
+    PanelRepair,
+}
+
+impl OnboardingCompletionOrigin {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FreshBind => "fresh_bind",
+            Self::ResumeRestore => "resume_restore",
+            Self::ResumeReissue => "resume_reissue",
+            Self::RecoveryCompletion => "recovery_completion",
+            Self::PanelRepair => "panel_repair",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OnboardingCompletionOutcome {
+    Classified,
+    Committed,
+    RetryableHydration,
+    ReauthRequired,
+    RecoveryRequired,
+    Stranded,
+    Contradiction,
+    Failed,
+}
+
+impl OnboardingCompletionOutcome {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Classified => "classified",
+            Self::Committed => "committed",
+            Self::RetryableHydration => "retryable_hydration",
+            Self::ReauthRequired => "reauth_required",
+            Self::RecoveryRequired => "recovery_required",
+            Self::Stranded => "stranded",
+            Self::Contradiction => "contradiction",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+fn material_state_name(state: garth::BoundCompletionMaterialState) -> &'static str {
+    match state {
+        garth::BoundCompletionMaterialState::Present => "present",
+        garth::BoundCompletionMaterialState::Absent => "absent",
+        garth::BoundCompletionMaterialState::ReadError => "read_error",
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct OnboardingCompletionInventory<'a> {
+    recovery_policy: &'a str,
+    device_id: &'a str,
+    signing_seed: &'a str,
+    grant_binding_key: &'a str,
+    session_grant: &'a str,
+    recovery_evidence: &'a str,
+    hpke_private_key: &'a str,
+    authority_matches: bool,
+    device_slot_matches: bool,
+    grant_matches_account: bool,
+    grant_is_live: bool,
+    grant_binding_matches_handoff: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct OnboardingCompletionRecord<'a> {
+    origin: &'a str,
+    outcome: &'a str,
+    reason: &'a str,
+    correlation: &'a LoginCorrelation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inventory: Option<OnboardingCompletionInventory<'a>>,
+}
+
+/// Record one secret-free onboarding completion classification or commit.
+pub fn record_onboarding_completion_transition(
+    origin: OnboardingCompletionOrigin,
+    outcome: OnboardingCompletionOutcome,
+    reason: &str,
+    correlation: &LoginCorrelation,
+    facts: Option<&garth::BoundCompletionResumeFacts>,
+) {
+    let inventory = facts.map(|facts| OnboardingCompletionInventory {
+        recovery_policy: material_state_name(facts.recovery_policy),
+        device_id: material_state_name(facts.device_id),
+        signing_seed: material_state_name(facts.signing_seed),
+        grant_binding_key: material_state_name(facts.grant_binding_key),
+        session_grant: material_state_name(facts.session_grant),
+        recovery_evidence: material_state_name(facts.recovery_evidence),
+        hpke_private_key: material_state_name(facts.hpke_private_key),
+        authority_matches: facts.authority_matches,
+        device_slot_matches: facts.device_slot_matches,
+        grant_matches_account: facts.grant_matches_account,
+        grant_is_live: facts.grant_is_live,
+        grant_binding_matches_handoff: facts.grant_binding_matches_handoff,
+    });
+    let record = OnboardingCompletionRecord {
+        origin: origin.as_str(),
+        outcome: outcome.as_str(),
+        reason,
+        correlation,
+        inventory,
+    };
+    let Ok(value) = serde_json::to_value(&record) else {
+        tracing::warn!(
+            origin = record.origin,
+            outcome = record.outcome,
+            "onboarding completion transition could not be serialized"
+        );
+        return;
+    };
+    if let Some(violation) =
+        crate::secret_surface::find_json_violation("onboarding_completion_transition", &value)
+    {
+        tracing::error!(
+            origin = record.origin,
+            outcome = record.outcome,
+            violation_path = violation.path(),
+            "onboarding completion transition was withheld: it would have leaked a credential"
+        );
+        debug_assert!(
+            false,
+            "onboarding completion transition must be secret-free"
+        );
+        return;
+    }
+    tracing::info!(
+        origin = record.origin,
+        outcome = record.outcome,
+        reason = record.reason,
+        handoff_request_id = correlation.handoff_request_id.as_deref(),
+        principal_id = correlation.principal_id.as_deref(),
+        device_id = correlation.device_id.as_deref(),
+        inventory = ?record.inventory,
+        "onboarding completion transition"
+    );
+}
+
 /// Remember that one bound account handoff reached a typed admission outcome
 /// — either an authority session-issuance result or a normalization result
 /// that proved this installation holds no accepted device key. Bounded to the
@@ -481,6 +627,68 @@ mod tests {
         assert_eq!(
             crate::secret_surface::find_json_violation("login_transition", &clean),
             None
+        );
+    }
+
+    #[test]
+    fn onboarding_inventory_is_secret_free_and_rejects_secret_reasons() {
+        let facts = garth::BoundCompletionResumeFacts {
+            handoff: garth::BoundCompletionHandoffState::ActiveBound,
+            checkpoint_stage: garth::BoundCompletionCheckpointStage::Accepted,
+            recovery_policy: garth::BoundCompletionMaterialState::Absent,
+            device_id: garth::BoundCompletionMaterialState::Present,
+            signing_seed: garth::BoundCompletionMaterialState::Present,
+            grant_binding_key: garth::BoundCompletionMaterialState::Absent,
+            session_grant: garth::BoundCompletionMaterialState::Absent,
+            recovery_evidence: garth::BoundCompletionMaterialState::Absent,
+            hpke_private_key: garth::BoundCompletionMaterialState::ReadError,
+            authority_matches: true,
+            device_slot_matches: true,
+            grant_matches_account: false,
+            grant_is_live: false,
+            grant_binding_matches_handoff: false,
+        };
+        let inventory = OnboardingCompletionInventory {
+            recovery_policy: material_state_name(facts.recovery_policy),
+            device_id: material_state_name(facts.device_id),
+            signing_seed: material_state_name(facts.signing_seed),
+            grant_binding_key: material_state_name(facts.grant_binding_key),
+            session_grant: material_state_name(facts.session_grant),
+            recovery_evidence: material_state_name(facts.recovery_evidence),
+            hpke_private_key: material_state_name(facts.hpke_private_key),
+            authority_matches: facts.authority_matches,
+            device_slot_matches: facts.device_slot_matches,
+            grant_matches_account: facts.grant_matches_account,
+            grant_is_live: facts.grant_is_live,
+            grant_binding_matches_handoff: facts.grant_binding_matches_handoff,
+        };
+        let clean = serde_json::to_value(OnboardingCompletionRecord {
+            origin: OnboardingCompletionOrigin::ResumeReissue.as_str(),
+            outcome: OnboardingCompletionOutcome::Classified.as_str(),
+            reason: "reissue_grant",
+            correlation: &LoginCorrelation::default(),
+            inventory: Some(inventory),
+        })
+        .unwrap();
+        assert_eq!(
+            crate::secret_surface::find_json_violation("onboarding_completion_transition", &clean),
+            None
+        );
+
+        let leaking = serde_json::to_value(OnboardingCompletionRecord {
+            origin: OnboardingCompletionOrigin::ResumeReissue.as_str(),
+            outcome: OnboardingCompletionOutcome::Failed.as_str(),
+            reason: "grant_jwt=eyJhbGciOi",
+            correlation: &LoginCorrelation::default(),
+            inventory: None,
+        })
+        .unwrap();
+        assert!(
+            crate::secret_surface::find_json_violation(
+                "onboarding_completion_transition",
+                &leaking
+            )
+            .is_some()
         );
     }
 

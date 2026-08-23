@@ -303,21 +303,17 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
-    let principal_id = if principal_id.trim().is_empty() {
-        parsed
-            .get("principal_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-    } else {
-        principal_id
+    let principal_full_id = match arkret_sdk::DidFullId::new(principal_id.to_owned()) {
+        Ok(principal_full_id) => principal_full_id,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                principal_id = %principal_id,
+                "test session injection skipped: active principal is not a valid DidFullId"
+            );
+            return None;
+        }
     };
-    if arkret_sdk::DidFullId::new(principal_id.to_owned()).is_err() {
-        tracing::warn!(
-            principal_id = %principal_id,
-            "test session injection skipped: principal_id is not a valid current DidFullId"
-        );
-        return None;
-    }
     // The browser fixture starts with the account DID already present in the
     // config signals, but a fresh LocalStateStore can still be scoped to the
     // anonymous namespace. Defensively select the fixture account before
@@ -479,17 +475,12 @@ pub(super) fn inject_test_session_grant(
         .map(str::trim)
         .filter(|seed| !seed.is_empty())
         .map_or_else(
-            || {
-                crate::event_signer::bootstrap_default_signer_for_device(
-                    "inkson",
-                    active_account.device_id.as_str(),
-                )
-            },
+            || crate::event_signer::bootstrap_default_signer_for_device("inkson", device_id),
             |seed| {
                 crate::event_signer::activate_device_signer_from_seed_b64url_for_device(
                     seed,
                     Some(secure_store),
-                    Some(active_account.device_id.as_str()),
+                    Some(device_id),
                 )
             },
         );
@@ -500,40 +491,8 @@ pub(super) fn inject_test_session_grant(
         );
         return None;
     }
-    let principal_full_id = match parsed
-        .get("principal_full_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| arkret_sdk::DidFullId::new(value.to_owned()))
-    {
-        Some(Ok(principal_id)) => principal_id,
-        Some(Err(error)) => {
-            tracing::warn!(
-                ?error,
-                "test session injection: principal_full_id is invalid"
-            );
-            return None;
-        }
-        None => match arkret_sdk::DidFullId::new(principal_id.to_owned()) {
-            Ok(principal_id) => principal_id,
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "test session injection: principal_full_id is missing"
-                );
-                return None;
-            }
-        },
-    };
-    let principal_core_id = match arkret_sdk::project_full_id_to_core_id(&principal_id) {
-        Ok(principal_core_id) if principal_core_id.as_str() == principal_id => principal_core_id,
-        Ok(_) => {
-            tracing::warn!(
-                "test session injection: principal_full_id does not project to principal_id"
-            );
-            return None;
-        }
+    let principal_core_id = match arkret_sdk::project_full_id_to_core_id(&principal_full_id) {
+        Ok(principal_core_id) => principal_core_id,
         Err(error) => {
             tracing::warn!(
                 ?error,
@@ -542,10 +501,9 @@ pub(super) fn inject_test_session_grant(
             return None;
         }
     };
-    if let Err(error) = crate::event_signer::bind_active_signer_principal_device_id(
-        &principal_full_id,
-        active_account.device_id.as_str(),
-    ) {
+    if let Err(error) =
+        crate::event_signer::bind_active_signer_principal_device_id(&principal_full_id, device_id)
+    {
         tracing::warn!(
             ?error,
             "test session injection: principal signer binding failed"
@@ -572,7 +530,7 @@ pub(super) fn inject_test_session_grant(
     };
     tracing::warn!(
         target: "mls_admission",
-        device = %active_account.device_id,
+        device = %device_id,
         "test session injection: session grant installed"
     );
     state_store.write().set_session_grant(Some(grant));

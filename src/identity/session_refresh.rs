@@ -373,19 +373,76 @@ pub(crate) struct AuthenticatedSession {
     pub grant: PersistedSessionGrant,
 }
 
+fn load_active_session_grant(
+    principal_server_url: &str,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<PersistedSessionGrant> {
+    let scope = crate::secure_key_store::active_device_seed_scope()
+        .context("session grant restore has no active authority/device scope")?;
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        scope.authority.clone(),
+        scope.device_id.clone(),
+    )?;
+    let grant = crate::state::load_session_grant_from_user_secure_store(&user_store, secure_store)?
+        .filter(|grant| grant_matches_principal_server(grant, principal_server_url))
+        .context("no session grant is available for the active principal server")?;
+    if grant.principal_id != scope.authority.principal_id || grant.device_id != scope.device_id {
+        anyhow::bail!("session grant does not match the active authority/device scope");
+    }
+    Ok(grant)
+}
+
+/// Restore the grant for one already-resolved account without relying on the
+/// process-wide active scope. This is the only safe read during onboarding:
+/// the root still advertises `pending_login`, while the accepted grant has
+/// already moved to its authority/device-scoped secure store.
+pub(crate) fn load_account_session_grant_with_secure_store(
+    account: &crate::config::ActiveAccountContext,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<PersistedSessionGrant> {
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    )?;
+    let grant = crate::state::load_session_grant_from_user_secure_store(&user_store, secure_store)?
+        .context("no session grant is available for the accepted account")?;
+    if !grant_matches_principal_server(&grant, account.server_url.as_str()) {
+        anyhow::bail!("session grant does not match the accepted account server");
+    }
+    if !grant_matches_full_principal(&grant, account.full_id()) {
+        anyhow::bail!("session grant does not match the accepted account principal");
+    }
+    if grant.device_id != account.device_id {
+        anyhow::bail!("session grant does not match the accepted account device");
+    }
+    Ok(grant)
+}
+
 pub(crate) async fn provide_authenticated_session(
     principal_server_url: &str,
 ) -> anyhow::Result<AuthenticatedSession> {
+    provide_authenticated_session_with_secure_store(
+        principal_server_url,
+        crate::secure_key_store::default_secure_key_store("inkson"),
+    )
+    .await
+}
+
+async fn provide_authenticated_session_with_secure_store(
+    principal_server_url: &str,
+    secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
+) -> anyhow::Result<AuthenticatedSession> {
     let mut store = LocalStateStore::default();
-    let grant = store
-        .session_grant()
-        .filter(|grant| grant_matches_principal_server(grant, principal_server_url))
-        .context("no session grant is available for the active principal server")?;
+    let grant = load_active_session_grant(principal_server_url, secure_store.as_ref())?;
     let device_handle =
-        crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
-            .context("session grant has no durable DPoP device key")?;
+        crate::identity::account_auth::grant_dpop::load_or_recover_device_key_with_secure_store(
+            &mut store,
+            secure_store.as_ref(),
+        )?
+        .context("session grant has no durable DPoP device key")?;
     let runtime = session_grant_runtime();
-    let provider = session_transport_provider(runtime.as_ref(), &grant, &device_handle).await?;
+    let provider =
+        session_transport_provider(runtime.as_ref(), &grant, &device_handle, secure_store).await?;
     let client = provider
         .provide()
         .await
@@ -407,16 +464,28 @@ pub(crate) async fn provide_authenticated_session(
 pub(crate) async fn refresh_authenticated_session_after_unauthorized(
     principal_server_url: &str,
 ) -> anyhow::Result<AuthenticatedSession> {
+    refresh_authenticated_session_after_unauthorized_with_secure_store(
+        principal_server_url,
+        crate::secure_key_store::default_secure_key_store("inkson"),
+    )
+    .await
+}
+
+async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
+    principal_server_url: &str,
+    secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
+) -> anyhow::Result<AuthenticatedSession> {
     let mut store = LocalStateStore::default();
-    let grant = store
-        .session_grant()
-        .filter(|grant| grant_matches_principal_server(grant, principal_server_url))
-        .context("no session grant is available for the active principal server")?;
+    let grant = load_active_session_grant(principal_server_url, secure_store.as_ref())?;
     let device_handle =
-        crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
-            .context("session grant has no durable DPoP device key")?;
+        crate::identity::account_auth::grant_dpop::load_or_recover_device_key_with_secure_store(
+            &mut store,
+            secure_store.as_ref(),
+        )?
+        .context("session grant has no durable DPoP device key")?;
     let runtime = session_grant_runtime();
-    let provider = session_transport_provider(runtime.as_ref(), &grant, &device_handle).await?;
+    let provider =
+        session_transport_provider(runtime.as_ref(), &grant, &device_handle, secure_store).await?;
     if let Err(error) = provider.refresh_after_unauthorized().await {
         let error = anyhow::Error::from(error).context("session grant refresh");
         if crate::api_error::is_terminal_session_grant_refresh_error(&error) {
@@ -457,6 +526,7 @@ async fn session_transport_provider(
     runtime: &SessionGrantRuntime,
     grant: &PersistedSessionGrant,
     device_handle: &DpopHandle,
+    secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
 ) -> anyhow::Result<InksonSessionProvider> {
     let server_key = normalized_server_key(&grant.principal_server_url);
     if let Some(provider) = runtime.get(&server_key, grant.device_id.as_str()) {
@@ -487,7 +557,6 @@ async fn session_transport_provider(
         device_handle: device_handle.clone(),
         refresh_transport: refresh_transport.clone(),
     };
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let principal_core_id = persisted_grant_principal_id(grant)?;
     let active_scope = crate::secure_key_store::active_device_seed_scope()
         .context("session grant restore has no active authority/device scope")?;
@@ -797,9 +866,94 @@ mod tests {
     fn session_grant_holding_a_full_id_is_rejected_rather_than_back_projected() {
         let full_id =
             arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
-        let grant = test_persisted_grant(full_id.as_str());
+        let mut persisted = serde_json::to_value(test_persisted_grant(
+            "ak:did_core:webvh:z6mkfixture:alice.example",
+        ))
+        .unwrap();
+        persisted["principal_id"] = serde_json::Value::String(full_id.to_string());
 
-        assert!(persisted_grant_principal_id(&grant).is_err());
-        assert!(!grant_matches_full_principal(&grant, &full_id));
+        assert!(serde_json::from_value::<PersistedSessionGrant>(persisted).is_err());
+    }
+
+    #[test]
+    fn production_grant_restore_reads_the_active_secure_scope() {
+        let grant = test_persisted_grant("ak:did_core:webvh:z6mkfixture:alice.example");
+        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            grant.principal_id.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
+                .unwrap(),
+        );
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((
+            &authority,
+            &grant.device_id,
+        )));
+        let user_store =
+            crate::secure_key_store::UserLocalStore::new(authority, grant.device_id.clone())
+                .unwrap();
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        user_store
+            .save_secret(
+                &secure_store,
+                LocalStateStore::SECURE_SESSION_GRANT_KEY,
+                &serde_json::to_string(&grant).unwrap(),
+            )
+            .unwrap();
+
+        let restored = load_active_session_grant("https://soland.example", &secure_store).unwrap();
+
+        assert_eq!(restored.grant_id, grant.grant_id);
+        assert_eq!(restored.principal_id, grant.principal_id);
+        assert_eq!(restored.device_id, grant.device_id);
+    }
+
+    #[test]
+    fn onboarding_grant_restore_uses_the_explicit_account_without_an_active_scope() {
+        let full_id =
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let principal_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+        let grant = test_persisted_grant(principal_id.as_str());
+        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            principal_id,
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
+                .unwrap(),
+        );
+        let account = crate::config::ActiveAccountContext::new(
+            "ak:profile:test".to_owned(),
+            authority.clone(),
+            arkret_sdk::PrincipalResolutionProjection {
+                full_id,
+                method_history_head: "head-test".to_owned(),
+                version_id: "version-test".to_owned(),
+                resolution_event_ref: "event-test".to_owned(),
+                updated_at: Utc::now(),
+            },
+            grant.device_id.clone(),
+            url::Url::parse("https://soland.example").unwrap(),
+        )
+        .unwrap();
+        let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+        let user_store =
+            crate::secure_key_store::UserLocalStore::new(authority, grant.device_id.clone())
+                .unwrap();
+        let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+        user_store
+            .save_secret(
+                &secure_store,
+                LocalStateStore::SECURE_SESSION_GRANT_KEY,
+                &serde_json::to_string(&grant).unwrap(),
+            )
+            .unwrap();
+
+        let restored =
+            load_account_session_grant_with_secure_store(&account, &secure_store).unwrap();
+
+        assert_eq!(restored.grant_id, grant.grant_id);
+        assert!(crate::secure_key_store::active_device_seed_scope().is_none());
+
+        let mut wrong_server = account;
+        wrong_server.server_url = url::Url::parse("https://other.example").unwrap();
+        let error =
+            load_account_session_grant_with_secure_store(&wrong_server, &secure_store).unwrap_err();
+        assert!(error.to_string().contains("account server"));
     }
 }

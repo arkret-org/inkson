@@ -32,14 +32,14 @@ use crate::ui::label::Label;
 use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
 
 #[derive(Clone, Debug)]
-struct CompletedLogin {
-    account: crate::config::ActiveAccountContext,
-    personal_handle: Option<String>,
-    pending_device_id: arkret_sdk::DeviceId,
-    dpop_device_key: crate::state::DpopDeviceKeyRecord,
-    session_credential: String,
-    session_grant: PersistedSessionGrant,
-    consumed_handoff: crate::state::PendingAccountHandoff,
+pub(crate) struct CompletedLogin {
+    pub(crate) account: crate::config::ActiveAccountContext,
+    pub(crate) personal_handle: Option<String>,
+    pub(crate) pending_device_id: arkret_sdk::DeviceId,
+    pub(crate) dpop_device_key: crate::state::DpopDeviceKeyRecord,
+    pub(crate) session_credential: String,
+    pub(crate) session_grant: PersistedSessionGrant,
+    pub(crate) consumed_handoff: crate::state::PendingAccountHandoff,
 }
 
 enum OidcCallbackOutcome {
@@ -69,14 +69,14 @@ enum OidcCallbackOutcome {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReturningDeviceBlockReason {
+pub(crate) enum ReturningDeviceBlockReason {
     RevocationPending,
     Revoked,
     GenerationFenced,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum ReturningSessionExchangeError {
+pub(crate) enum ReturningSessionExchangeError {
     DeviceSetupRequired(String),
     Blocked(ReturningDeviceBlockReason, String),
     Retryable(String),
@@ -387,6 +387,32 @@ pub fn LoginPanel(
                         return;
                     }
                 };
+                let account_store = match crate::secure_key_store::UserLocalStore::new(
+                    account.authority.clone(),
+                    account.device_id.clone(),
+                ) {
+                    Ok(store) => store,
+                    Err(error) => {
+                        auth_status.set(format!(
+                            "Could not open the accepted account secure scope: {error}"
+                        ));
+                        is_busy.set(false);
+                        return;
+                    }
+                };
+                if let Err(error) = crate::state::store_session_grant_in_user_secure_store_durable(
+                    &account_store,
+                    secure_store.as_ref(),
+                    &completed.session_grant,
+                )
+                .await
+                {
+                    auth_status.set(format!(
+                        "Could not durably store the accepted account session: {error}"
+                    ));
+                    is_busy.set(false);
+                    return;
+                }
                 {
                     let mut store = config_store.write();
                     store.save(crate::config::ClientConfig::authenticated(
@@ -1232,14 +1258,28 @@ pub(crate) async fn prepare_completed_login_dpop_key(
         .save_grant_binding_seed_b64url_durable(secure_store, &record.seed_b64)
         .await
         .map_err(|error| format!("store grant-binding seed: {error}"))?;
+    let encoded_record = serde_json::to_string(record)
+        .map_err(|error| format!("serialize account-scoped DPoP key: {error}"))?;
+    user_store
+        .save_secret_durable(
+            secure_store,
+            LocalStateStore::SECURE_DPOP_DEVICE_KEY,
+            &encoded_record,
+        )
+        .await
+        .map_err(|error| format!("store account-scoped DPoP key: {error}"))?;
     user_store
         .save_device_id_durable(secure_store, &device_id)
         .await
         .map_err(|error| format!("store account-scoped device id: {error}"))?;
+    // `copy_to_durable` above is the only promotion step. If neither the
+    // pending transaction nor the accepted account held a signer, minting one
+    // here would create a key the server never authorized and make possession
+    // proof failures look like an ordinary device block.
     let material = user_store
-        .ensure_signing_seed_durable(secure_store)
-        .await
-        .map_err(|error| format!("ensure account device signing seed: {error}"))?;
+        .load_signing_seed(secure_store)
+        .map_err(|error| format!("load account device signing seed: {error}"))?
+        .ok_or_else(|| "Accepted account device signing seed is unavailable.".to_owned())?;
     Ok(PreparedCompletedLoginKeys {
         user_store,
         pending_store,
@@ -1256,9 +1296,9 @@ pub(crate) fn commit_completed_login_dpop_key(
     prepared: PreparedCompletedLoginKeys,
 ) -> Result<(), String> {
     prepared.user_store.activate();
-    store
-        .set_dpop_device_key_with_secure_store(Some(record.clone()), secure_store)
-        .map_err(|error| format!("store account-scoped DPoP key: {error}"))?;
+    let mut public_record = record.clone();
+    public_record.seed_b64.clear();
+    store.set_dpop_device_key(Some(public_record));
     crate::event_signer::activate_device_signer_from_seed_for_device(
         prepared.signing_seed,
         Some(secure_store),
@@ -1766,7 +1806,7 @@ fn returning_device_block_code(reason: ReturningDeviceBlockReason) -> &'static s
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn issue_bound_handoff_session(
+pub(crate) async fn issue_bound_handoff_session(
     principal_server_url: &str,
     sdk_base_url: &url::Url,
     pending_handoff: &crate::state::PendingAccountHandoff,

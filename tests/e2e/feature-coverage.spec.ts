@@ -18,6 +18,7 @@
 
 import { expect, test } from "@playwright/test";
 import { mockArkretApi } from "./mockArkretApi";
+import { testLocalConfig } from "./strandsHarness";
 
 function latestTestId(page: import("@playwright/test").Page, testId: string) {
   return page.getByTestId(testId).last();
@@ -53,27 +54,18 @@ test.describe("feature coverage placeholders", () => {
         JSON.stringify({
           grant_jwt: "sx:e2e-token",
           grant_id: "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
-          audience: "did:web:server.local",
-          principal_id: "did:web:alice.example",
+          audience: "ak:did_core:web:server.local",
+          principal_id: "ak:did_core:web:alice.example",
           dpop_seed_b64url: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         }),
       );
     });
-    await page.addInitScript(() => {
+    await page.addInitScript((config) => {
       if (localStorage.getItem("inkson.config.v1")) {
         return;
       }
-      localStorage.setItem(
-        "inkson.config.v1",
-        JSON.stringify({
-          server_url: "https://local.host",
-          principal_servers: ["https://local.host"],
-          account_did: "did:web:alice.example",
-          device_id: "ak:device:01964137-0000-7000-8000-0000000000a1",
-          session_credential: "sx:e2e-token",
-        }),
-      );
-    });
+      localStorage.setItem("inkson.config.v1", JSON.stringify(config));
+    }, testLocalConfig());
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(latestTestId(page, "client-shell")).toBeVisible({
       timeout: 120_000,

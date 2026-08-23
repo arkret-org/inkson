@@ -260,12 +260,6 @@ fn missing_creation_handoff_surface(
     }
 }
 
-#[derive(Clone, Debug)]
-struct RepairedBoundCompletion {
-    account: crate::config::ActiveAccountContext,
-    session_credential: String,
-}
-
 fn profile_id_for_authority(
     state_store: &crate::state::LocalStateStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
@@ -297,6 +291,142 @@ async fn resolve_handoff_active_account(
     .await
 }
 
+fn persist_completed_account_config(
+    mut config_store: Signal<crate::config::LocalConfigStore>,
+    account: &crate::config::ActiveAccountContext,
+    session_credential: &str,
+) -> anyhow::Result<()> {
+    let mut profiles = config_store.read().load_profiles();
+    let profile_id = profiles.upsert_and_activate(crate::config::AccountProfile::new(
+        account.clone(),
+        session_credential.to_owned(),
+    ))?;
+    if profile_id != account.profile_id {
+        anyhow::bail!("completed account profile id does not match the active state namespace");
+    }
+    let mut store = config_store.write();
+    store.save(crate::config::ClientConfig::authenticated(
+        account.clone(),
+        session_credential.to_owned(),
+    ));
+    if let Some(error) = store.persist_error() {
+        anyhow::bail!("persist completed account config: {error}");
+    }
+    store.save_profiles(&profiles)?;
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct CompletedIdentityCreation {
+    account: crate::config::ActiveAccountContext,
+    persisted_grant: crate::state::PersistedSessionGrant,
+    dpop_device_key: crate::state::DpopDeviceKeyRecord,
+    origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin,
+}
+
+impl CompletedIdentityCreation {
+    fn session_credential(&self) -> &str {
+        &self.persisted_grant.grant_jwt
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn commit_completed_account(
+    completed: &CompletedIdentityCreation,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    config_store: Signal<crate::config::LocalConfigStore>,
+    mut active_account: Signal<Option<crate::config::ActiveAccountContext>>,
+    mut token: Signal<String>,
+    mut principal_id: Signal<String>,
+    mut device_id: Signal<String>,
+    mut needs_device_authorization: Signal<bool>,
+    mut device_authorization_check_complete: Signal<bool>,
+) -> anyhow::Result<()> {
+    let correlation = state_store
+        .peek()
+        .pending_account_handoff()
+        .as_ref()
+        .map(crate::identity::account_auth::transition::LoginCorrelation::for_handoff)
+        .unwrap_or_default()
+        .with_principal_id(completed.account.full_id().as_str())
+        .with_device_id(completed.account.device_id.as_str());
+    let result = async {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let user_store = crate::secure_key_store::UserLocalStore::new(
+            completed.account.authority.clone(),
+            completed.account.device_id.clone(),
+        )?;
+        let durable_device = user_store
+            .load_device_id(secure_store.as_ref())?
+            .context("completed account has no durable device id")?;
+        if durable_device != completed.account.device_id {
+            anyhow::bail!("completed account durable device id does not match its account scope");
+        }
+        user_store
+            .load_signing_seed(secure_store.as_ref())?
+            .context("completed account has no durable accepted-device signer")?;
+        let durable_dpop =
+            crate::identity::account_auth::grant_dpop::load_user_device_key_with_secure_store(
+                &user_store,
+                secure_store.as_ref(),
+            )?
+            .context("completed account has no durable grant-binding key")?;
+        if durable_dpop.jkt() != completed.dpop_device_key.jkt {
+            anyhow::bail!("completed account durable grant-binding key changed before commit");
+        }
+        let durable_grant =
+            crate::identity::session_refresh::load_account_session_grant_with_secure_store(
+                &completed.account,
+                secure_store.as_ref(),
+            )?;
+        if durable_grant != completed.persisted_grant {
+            anyhow::bail!("completed account durable session grant changed before commit");
+        }
+
+        // This order is the account-authority boundary: make the typed profile
+        // durable first, then switch the authority namespace, then publish the
+        // runtime signals. A retry repeats the same upsert and same-account
+        // namespace switch.
+        persist_completed_account_config(
+            config_store,
+            &completed.account,
+            completed.session_credential(),
+        )?;
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_session_grant(Some(completed.persisted_grant.clone()));
+            store.switch_active_account(&completed.account)?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+
+        active_account.set(Some(completed.account.clone()));
+        token.set(completed.session_credential().to_owned());
+        principal_id.set(completed.account.full_id().to_string());
+        device_id.set(completed.account.device_id.to_string());
+        needs_device_authorization.set(false);
+        device_authorization_check_complete.set(true);
+        Ok(())
+    }
+    .await;
+    crate::identity::account_auth::transition::record_onboarding_completion_transition(
+        completed.origin,
+        if result.is_ok() {
+            crate::identity::account_auth::transition::OnboardingCompletionOutcome::Committed
+        } else {
+            crate::identity::account_auth::transition::OnboardingCompletionOutcome::Failed
+        },
+        if result.is_ok() {
+            "completed_account_committed"
+        } else {
+            "completed_account_commit_failed"
+        },
+        &correlation,
+        None,
+    );
+    result
+}
+
 fn bound_completion_evidence_matches(
     handoff: &crate::state::PendingAccountHandoff,
     evidence: &crate::state::RecoveryMaterialEvidence,
@@ -312,8 +442,8 @@ fn bound_completion_evidence_matches(
 /// Bound alone.
 async fn repair_pruned_bound_completion(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
-) -> anyhow::Result<Option<RepairedBoundCompletion>> {
-    let (handoff, evidence, grant) = {
+) -> anyhow::Result<Option<CompletedIdentityCreation>> {
+    let (handoff, evidence) = {
         let store = state_store.peek();
         if store.pending_principal_registration().is_some() {
             return Ok(None);
@@ -321,22 +451,16 @@ async fn repair_pruned_bound_completion(
         let Some(handoff) = store.pending_account_handoff() else {
             return Ok(None);
         };
-        let Some(bound) = handoff.bound_principal_id.as_ref() else {
+        if handoff.bound_principal_id.is_none() {
             return Ok(None);
-        };
-        let Some(evidence) = store.recovery_material_evidence() else {
-            return Ok(None);
-        };
+        }
+        let evidence = store
+            .recovery_material_evidence()
+            .context("pruned bound completion has no durable recovery evidence")?;
         if !bound_completion_evidence_matches(&handoff, &evidence) {
             anyhow::bail!("bound onboarding evidence belongs to another principal or device");
         }
-        let Some(grant) = store.session_grant().filter(|grant| {
-            crate::identity::session_refresh::grant_matches_full_principal(grant, bound)
-                && grant.device_id.as_str() == handoff.device_id
-        }) else {
-            return Ok(None);
-        };
-        (handoff, evidence, grant)
+        (handoff, evidence)
     };
     let Some(recovery_key) =
         crate::identity::account_auth::load_pending_identity_creation_recovery_key(&handoff)?
@@ -349,6 +473,18 @@ async fn repair_pruned_bound_completion(
         &recovery_key,
     )
     .await?;
+    let account = resolve_handoff_active_account(
+        &handoff,
+        &evidence.principal_id,
+        evidence.device_id.clone(),
+        state_store,
+    )
+    .await?;
+    if evidence.controller_authority.as_ref() != Some(&account.authority) {
+        anyhow::bail!("bound onboarding recovery evidence belongs to another authority");
+    }
+    let restored = restore_accepted_account_runtime(&account, &handoff.holder_jkt)
+        .context("restore the pruned bound onboarding session")?;
 
     let evidence_for_verify = evidence.clone();
     let recovery_key_for_policy = recovery_key.clone();
@@ -360,7 +496,7 @@ async fn repair_pruned_bound_completion(
     let governance_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
     crate::transport::auth::with_authed_api(
         &handoff.principal_server_url,
-        grant.grant_jwt.clone(),
+        restored.persisted_grant.grant_jwt.clone(),
         |api| async move {
             crate::recovery_strand::submit_principal_bootstrap_seal(
                 &api,
@@ -398,22 +534,11 @@ async fn repair_pruned_bound_completion(
     crate::views::recovery::local_recovery_public_key_result(&state_store.read(), &actor)
         .map_err(|error| anyhow::anyhow!("verify repaired recovery metadata: {error}"))?;
     state_store.read().begin_durable_flush()?.wait().await?;
-    let account = resolve_handoff_active_account(
-        &handoff,
-        &evidence.principal_id,
-        evidence.device_id.clone(),
-        state_store,
-    )
-    .await?;
-    {
-        let mut store = state_store.write();
-        store.switch_active_account(&account)?;
-    }
-    clear_pending_principal_setup(state_store).await?;
-
-    Ok(Some(RepairedBoundCompletion {
+    Ok(Some(CompletedIdentityCreation {
         account,
-        session_credential: grant.grant_jwt,
+        persisted_grant: restored.persisted_grant,
+        dpop_device_key: restored.dpop_device_key,
+        origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin::PanelRepair,
     }))
 }
 
@@ -439,6 +564,7 @@ pub fn OnboardingPanel(
     device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let session_context = crate::app::SessionContext::get();
+    let active_account = session_context.active_account;
     let state_store = session_context.state_store;
     if !secure_store_ready {
         return rsx! {
@@ -467,13 +593,35 @@ pub fn OnboardingPanel(
             match crate::identity::account_auth::refresh_pending_onboarding(state_store).await {
                 Ok(()) => match repair_pruned_bound_completion(state_store).await {
                     Ok(Some(repaired)) => {
-                        let mut repaired_token = token;
-                        let mut repaired_principal_id = principal_id;
-                        let mut repaired_device_id = device_id;
-                        repaired_token.set(repaired.session_credential);
-                        repaired_principal_id.set(repaired.account.full_id().to_string());
-                        repaired_device_id.set(repaired.account.device_id.to_string());
-                        server_reconciliation.set(ServerReconciliationStatus::Ready);
+                        match commit_completed_account(
+                            &repaired,
+                            state_store,
+                            config_store,
+                            active_account,
+                            token,
+                            principal_id,
+                            device_id,
+                            needs_device_authorization,
+                            device_authorization_check_complete,
+                        )
+                        .await
+                        {
+                            Ok(()) => match clear_pending_principal_setup(state_store).await {
+                                Ok(()) => {
+                                    server_reconciliation.set(ServerReconciliationStatus::Ready)
+                                }
+                                Err(error) => server_reconciliation.set(
+                                    ServerReconciliationStatus::Failed(format!(
+                                        "Panel repair committed, but cleanup failed: {error:#}"
+                                    )),
+                                ),
+                            },
+                            Err(error) => {
+                                server_reconciliation.set(ServerReconciliationStatus::Failed(
+                                    format!("Commit repaired onboarding account: {error:#}"),
+                                ))
+                            }
+                        }
                     }
                     Ok(None) => server_reconciliation.set(ServerReconciliationStatus::Ready),
                     Err(error) => {
@@ -482,7 +630,7 @@ pub fn OnboardingPanel(
                             "failed to repair pruned bound onboarding continuation"
                         );
                         server_reconciliation
-                            .set(ServerReconciliationStatus::Failed(error.to_string()));
+                            .set(ServerReconciliationStatus::Failed(format!("{error:#}")));
                     }
                 },
                 Err(error) => {
@@ -491,7 +639,7 @@ pub fn OnboardingPanel(
                         "failed to reconcile onboarding from Account Authority snapshot"
                     );
                     server_reconciliation
-                        .set(ServerReconciliationStatus::Failed(error.to_string()));
+                        .set(ServerReconciliationStatus::Failed(format!("{error:#}")));
                 }
             }
         });
@@ -694,7 +842,7 @@ async fn stage_device_setup_pairing(
         let pending_store = crate::secure_key_store::PendingLocalStore::new(handoff_device.clone());
         pending_store.activate();
         let material = pending_store
-            .ensure_signing_seed_durable(secure_store.as_ref())
+            .create_fresh_signing_seed_durable(secure_store.as_ref())
             .await?;
         (handoff_device, material.seed, true)
     };
@@ -864,6 +1012,8 @@ fn DeviceSetupRequired(
                 state_store,
                 token,
                 principal_id,
+                device_id,
+                config_store,
                 replacement_device_id: recovery_device_id,
                 needs_device_authorization,
                 device_authorization_check_complete,
@@ -970,13 +1120,6 @@ fn DeviceSetupRequired(
                                         .unwrap_or_default();
                                     principal_id.set(principal.clone());
                                     device_id.set(request.device_id.to_string());
-                                    crate::views::helpers::persist_config(
-                                        config_store,
-                                        handoff.principal_server_url.clone(),
-                                        principal,
-                                        request.device_id.to_string(),
-                                        String::new(),
-                                    );
                                     pairing_status.set(
                                         "Device authorization is accepted and verified. No session was issued; sign in again to request one."
                                             .to_owned(),
@@ -1055,10 +1198,14 @@ fn PcrPolicyDeviceRecovery(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     mut token: Signal<String>,
     mut principal_id: Signal<String>,
+    mut device_id: Signal<String>,
+    config_store: Signal<crate::config::LocalConfigStore>,
     replacement_device_id: String,
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
+    let session_context = crate::app::SessionContext::get();
+    let active_account = session_context.active_account;
     let mut words = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -1104,19 +1251,35 @@ fn PcrPolicyDeviceRecovery(
                         words.set(String::new());
                         busy.set(false);
                         match result {
-                            Ok((completed, _)) => {
-                                if let Some(grant) = state_store.read().session_grant() {
-                                    principal_id.set(principal_full_id.to_string());
-                                    token.set(grant.grant_jwt);
+                            Ok((recovery, completed)) => {
+                                match commit_completed_account(
+                                    &completed,
+                                    state_store,
+                                    config_store,
+                                    active_account,
+                                    token,
+                                    principal_id,
+                                    device_id,
+                                    needs_device_authorization,
+                                    device_authorization_check_complete,
+                                )
+                                .await
+                                {
+                                    Ok(()) => match clear_pending_principal_setup(state_store).await {
+                                        Ok(()) => status.set(format!(
+                                            "Identity recovered. Device receipt {} and the Standard session grant are durable.",
+                                            recovery.readiness.terminal_receipt_id
+                                        )),
+                                        Err(error) => status.set(format!(
+                                            "Identity recovered, but local cleanup failed: {error:#}"
+                                        )),
+                                    },
+                                    Err(error) => status.set(format!(
+                                        "Recovered device could not be committed: {error:#}"
+                                    )),
                                 }
-                                needs_device_authorization.set(false);
-                                device_authorization_check_complete.set(true);
-                                status.set(format!(
-                                    "Identity recovered. Device receipt {} and the Standard session grant are durable.",
-                                    completed.readiness.terminal_receipt_id
-                                ));
                             }
-                            Err(error) => status.set(format!("Recovery could not finish: {error}")),
+                            Err(error) => status.set(format!("Recovery could not finish: {error:#}")),
                         }
                     });
                 },
@@ -1137,11 +1300,12 @@ async fn recover_bound_principal_device(
     state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<(
     crate::mls::account_recovery::CompletedFreshDeviceRecovery,
-    crate::config::ActiveAccountContext,
+    CompletedIdentityCreation,
 )> {
     if replacement_device_id != handoff.device_id {
         anyhow::bail!("replacement device does not match the authenticated account handoff");
     }
+    activate_recovery_replacement_signer(handoff).await?;
     crate::event_signer::bind_active_signer_principal_device_id(
         principal_id,
         replacement_device_id,
@@ -1203,11 +1367,46 @@ async fn recover_bound_principal_device(
     Ok((completed, account))
 }
 
+async fn activate_recovery_replacement_signer(
+    handoff: &crate::state::PendingAccountHandoff,
+) -> anyhow::Result<()> {
+    let full_id = handoff
+        .bound_principal_id
+        .as_ref()
+        .context("bound recovery handoff has no principal")?;
+    let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        arkret_sdk::project_full_id_to_core_id(full_id)?,
+        arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+    );
+    let device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let user_store = crate::secure_key_store::UserLocalStore::new(authority, device_id.clone())?;
+    let signing_seed = match user_store.load_signing_seed(secure_store.as_ref())? {
+        Some(material) => material,
+        None => {
+            // This is the explicit RecoverWithPolicy branch. The old accepted
+            // signer is proved absent and the recovery transaction will
+            // authorize this fresh replacement key before it becomes active.
+            let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id.clone());
+            pending_store.activate();
+            pending_store
+                .create_fresh_signing_seed_durable(secure_store.as_ref())
+                .await?
+        }
+    };
+    crate::event_signer::activate_device_signer_from_seed_for_device(
+        signing_seed.seed,
+        Some(secure_store.as_ref()),
+        Some(device_id.as_str()),
+    )?;
+    Ok(())
+}
+
 async fn issue_recovery_completion_grant(
     handoff: &crate::state::PendingAccountHandoff,
     transaction_id: &arkret_sdk::TransactionId,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
-) -> anyhow::Result<crate::config::ActiveAccountContext> {
+) -> anyhow::Result<CompletedIdentityCreation> {
     let holder = {
         let mut store = state_store.write();
         crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
@@ -1313,23 +1512,553 @@ async fn issue_recovery_completion_grant(
         )
         .await
         .map_err(anyhow::Error::msg)?;
-        let mut store = state_store.write();
+        let account_store = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )?;
+        crate::state::store_session_grant_in_user_secure_store_durable(
+            &account_store,
+            secure_store.as_ref(),
+            &persisted,
+        )
+        .await?;
         crate::views::login::commit_completed_login_dpop_key(
-            &mut store,
+            &mut state_store.write(),
             secure_store.as_ref(),
             &account,
             &dpop_record,
             prepared_keys,
         )
         .map_err(anyhow::Error::msg)?;
-        store.set_session_grant(Some(persisted));
-        store.set_pending_account_handoff(None)?;
-        let barrier = store.begin_durable_flush()?;
-        drop(store);
-        barrier.wait().await?;
     }
-    crate::identity::account_auth::clear_account_handoff_grant(handoff)?;
-    Ok(account)
+    Ok(CompletedIdentityCreation {
+        account,
+        persisted_grant: persisted,
+        dpop_device_key: dpop_record,
+        origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin::RecoveryCompletion,
+    })
+}
+
+struct RestoredAcceptedAccountRuntime {
+    persisted_grant: crate::state::PersistedSessionGrant,
+    dpop_device_key: crate::state::DpopDeviceKeyRecord,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ResumeTerminalKind {
+    HydrationFailed,
+    RetryableFailure,
+    ReauthRequired,
+    StrandedIdentity,
+    Contradiction,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResumeTerminal {
+    kind: ResumeTerminalKind,
+    reason: String,
+    inventory: Vec<String>,
+    legacy_layout_detected: bool,
+}
+
+enum IdentityCreationCommandOutcome {
+    Completed(CompletedIdentityCreation),
+    Terminal(ResumeTerminal),
+}
+
+struct BoundCompletionResumeInventory {
+    facts: garth::BoundCompletionResumeFacts,
+    read_errors: Vec<String>,
+    legacy_layout_detected: bool,
+}
+
+impl BoundCompletionResumeInventory {
+    fn checklist(&self) -> Vec<String> {
+        use garth::BoundCompletionMaterialState as State;
+
+        fn line(label: &str, state: State) -> String {
+            let value = match state {
+                State::Present => "present",
+                State::Absent => "absent",
+                State::ReadError => "read error",
+            };
+            format!("{label}: {value}")
+        }
+        vec![
+            line("Accepted device id", self.facts.device_id),
+            line("Accepted device signer", self.facts.signing_seed),
+            line("Grant-binding key", self.facts.grant_binding_key),
+            line("Session grant", self.facts.session_grant),
+            line("Recovery policy", self.facts.recovery_policy),
+            line("Recovery evidence", self.facts.recovery_evidence),
+            line("Device HPKE private key", self.facts.hpke_private_key),
+        ]
+    }
+}
+
+fn observe_resume_material<T, E: std::fmt::Display>(
+    label: &str,
+    result: Result<Option<T>, E>,
+    read_errors: &mut Vec<String>,
+) -> (garth::BoundCompletionMaterialState, Option<T>) {
+    match result {
+        Ok(Some(value)) => (garth::BoundCompletionMaterialState::Present, Some(value)),
+        Ok(None) => (garth::BoundCompletionMaterialState::Absent, None),
+        Err(error) => {
+            read_errors.push(format!("{label}: {error}"));
+            (garth::BoundCompletionMaterialState::ReadError, None)
+        }
+    }
+}
+
+async fn collect_bound_completion_resume_inventory(
+    handoff: &crate::state::PendingAccountHandoff,
+    checkpoint: &crate::state::PendingPrincipalRegistration,
+    account: &crate::config::ActiveAccountContext,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> BoundCompletionResumeInventory {
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let mut read_errors = Vec::new();
+    let user_store = match crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    ) {
+        Ok(store) => Some(store),
+        Err(error) => {
+            read_errors.push(format!("account secure scope: {error}"));
+            None
+        }
+    };
+
+    let (device_id_state, stored_device_id) = observe_resume_material(
+        "device id",
+        user_store.as_ref().map_or_else(
+            || {
+                Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                    "account secure scope is unavailable".to_owned(),
+                ))
+            },
+            |store| store.load_device_id(secure_store.as_ref()),
+        ),
+        &mut read_errors,
+    );
+    let (signing_seed_state, _) = observe_resume_material(
+        "accepted device signer",
+        user_store.as_ref().map_or_else(
+            || {
+                Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                    "account secure scope is unavailable".to_owned(),
+                ))
+            },
+            |store| store.load_signing_seed(secure_store.as_ref()),
+        ),
+        &mut read_errors,
+    );
+    let (grant_binding_state, grant_binding) = observe_resume_material(
+        "grant-binding key",
+        user_store.as_ref().map_or_else(
+            || {
+                Err(
+                    crate::identity::account_auth::grant_dpop::AuthDpopError::SecureStore(
+                        "account secure scope is unavailable".to_owned(),
+                    ),
+                )
+            },
+            |store| {
+                crate::identity::account_auth::grant_dpop::load_user_device_key_with_secure_store(
+                    store,
+                    secure_store.as_ref(),
+                )
+            },
+        ),
+        &mut read_errors,
+    );
+    let (session_grant_state, session_grant) = observe_resume_material(
+        "session grant",
+        user_store.as_ref().map_or_else(
+            || {
+                Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                    "account secure scope is unavailable".to_owned(),
+                ))
+            },
+            |store| {
+                crate::state::load_session_grant_from_user_secure_store(
+                    store,
+                    secure_store.as_ref(),
+                )
+            },
+        ),
+        &mut read_errors,
+    );
+    let (hpke_state, _) = observe_resume_material(
+        "device HPKE private key",
+        crate::mls::runtime::load_device_hpke_private_key(
+            secure_store.as_ref(),
+            &account.authority,
+            &account.device_id,
+        ),
+        &mut read_errors,
+    );
+    let recovery_evidence = state_store.peek().recovery_material_evidence();
+    let recovery_evidence_state = if recovery_evidence.is_some() {
+        garth::BoundCompletionMaterialState::Present
+    } else {
+        garth::BoundCompletionMaterialState::Absent
+    };
+    let api = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url);
+    let (recovery_policy_state, _) = match api {
+        Ok(api) => observe_resume_material(
+            "active recovery policy",
+            crate::recovery_strand::fetch_active_recovery_policy(&api).await,
+            &mut read_errors,
+        ),
+        Err(error) => {
+            read_errors.push(format!("active recovery policy client: {error}"));
+            (garth::BoundCompletionMaterialState::ReadError, None)
+        }
+    };
+    let authority_matches = arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)
+        .is_ok_and(|principal_id| principal_id == account.authority.principal_id)
+        && arkret_sdk::DidCoreId::new(handoff.audience.clone())
+            .is_ok_and(|server_id| server_id == account.authority.principal_server_id)
+        && handoff.bound_principal_id.as_ref() == Some(&checkpoint.full_id);
+    let device_slot_matches = stored_device_id
+        .as_ref()
+        .is_none_or(|device_id| device_id == &account.device_id);
+    let grant_matches_account = session_grant.as_ref().is_some_and(|grant| {
+        crate::identity::session_refresh::grant_matches_principal_server(
+            grant,
+            account.server_url.as_str(),
+        ) && crate::identity::session_refresh::grant_matches_full_principal(
+            grant,
+            account.full_id(),
+        ) && grant.device_id == account.device_id
+    });
+    let grant_is_live = session_grant
+        .as_ref()
+        .is_some_and(|grant| !crate::identity::session_refresh::grant_is_dead(grant));
+    let grant_binding_matches_handoff = grant_binding
+        .as_ref()
+        .is_some_and(|binding| binding.jkt() == handoff.holder_jkt);
+    let handoff_state = if handoff.expires_at <= chrono::Utc::now() {
+        garth::BoundCompletionHandoffState::MissingOrExpired
+    } else {
+        garth::BoundCompletionHandoffState::ActiveBound
+    };
+    let checkpoint_stage = match checkpoint.stage {
+        crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete => {
+            garth::BoundCompletionCheckpointStage::RecoveryMaterialComplete
+        }
+        _ => garth::BoundCompletionCheckpointStage::Accepted,
+    };
+    let legacy_layout_detected = secure_store
+        .list_secret_keys(Some("inkson."))
+        .map(|keys| {
+            keys.into_iter().any(|key| {
+                !key.starts_with("inkson.authority.")
+                    && !key.starts_with("inkson.pending.")
+                    && !key.starts_with("inkson.global.")
+                    && [
+                        crate::state::LocalStateStore::SECURE_SESSION_GRANT_KEY,
+                        crate::state::LocalStateStore::SECURE_DPOP_DEVICE_KEY,
+                        "device.ed25519.signing_seed.v1",
+                        "device.ed25519.grant_binding.v1",
+                    ]
+                    .iter()
+                    .any(|suffix| key.ends_with(suffix))
+            })
+        })
+        .unwrap_or(false);
+    BoundCompletionResumeInventory {
+        facts: garth::BoundCompletionResumeFacts {
+            handoff: handoff_state,
+            checkpoint_stage,
+            recovery_policy: recovery_policy_state,
+            device_id: device_id_state,
+            signing_seed: signing_seed_state,
+            grant_binding_key: grant_binding_state,
+            session_grant: session_grant_state,
+            recovery_evidence: recovery_evidence_state,
+            hpke_private_key: hpke_state,
+            authority_matches,
+            device_slot_matches,
+            grant_matches_account,
+            grant_is_live,
+            grant_binding_matches_handoff,
+        },
+        read_errors,
+        legacy_layout_detected,
+    }
+}
+
+#[derive(Debug)]
+enum AcceptedSessionReissueError {
+    Retryable(anyhow::Error),
+    ReauthRequired(anyhow::Error),
+    Contradiction(anyhow::Error),
+}
+
+fn load_bound_handoff_holder_key(
+    handoff: &crate::state::PendingAccountHandoff,
+    account: &crate::config::ActiveAccountContext,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<crate::identity::account_auth::grant_dpop::DpopHandle, AcceptedSessionReissueError> {
+    let pending_device = arkret_sdk::DeviceId::new(handoff.device_id.clone()).map_err(|error| {
+        AcceptedSessionReissueError::Contradiction(
+            anyhow::anyhow!(error)
+                .context("the accepted account handoff contains an invalid device id"),
+        )
+    })?;
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device);
+    let pending =
+        crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
+            &mut state_store.write(),
+            secure_store,
+            &pending_store,
+        )
+        .map_err(|error| {
+            AcceptedSessionReissueError::Retryable(
+                anyhow::anyhow!(error).context("read the retained account handoff holder key"),
+            )
+        })?;
+    let holder = match pending {
+        Some(holder) => holder,
+        None => {
+            let user_store = crate::secure_key_store::UserLocalStore::new(
+                account.authority.clone(),
+                account.device_id.clone(),
+            )
+            .map_err(|error| {
+                AcceptedSessionReissueError::Contradiction(
+                    anyhow::anyhow!(error).context("open the accepted account secure scope"),
+                )
+            })?;
+            let stored_device = user_store
+                .load_device_id(secure_store)
+                .map_err(|error| {
+                    AcceptedSessionReissueError::Retryable(
+                        anyhow::anyhow!(error).context("read the accepted account device id"),
+                    )
+                })?
+                .ok_or_else(|| {
+                    AcceptedSessionReissueError::ReauthRequired(anyhow::anyhow!(
+                        "accepted account device id is unavailable"
+                    ))
+                })?;
+            if stored_device != account.device_id {
+                return Err(AcceptedSessionReissueError::Contradiction(anyhow::anyhow!(
+                    "accepted account secure scope belongs to another device"
+                )));
+            }
+            crate::identity::account_auth::grant_dpop::load_user_device_key_with_secure_store(
+                &user_store,
+                secure_store,
+            )
+            .map_err(|error| {
+                AcceptedSessionReissueError::Retryable(
+                    anyhow::anyhow!(error).context("read the accepted account holder key"),
+                )
+            })?
+            .ok_or_else(|| {
+                AcceptedSessionReissueError::ReauthRequired(anyhow::anyhow!(
+                    "account handoff holder key is unavailable"
+                ))
+            })?
+        }
+    };
+    if holder.jkt() != handoff.holder_jkt {
+        return Err(AcceptedSessionReissueError::ReauthRequired(
+            anyhow::anyhow!("account handoff holder key does not match the active handoff")
+                .context("the retained holder cannot authorize this account handoff"),
+        ));
+    }
+    Ok(holder)
+}
+
+async fn reissue_accepted_onboarding_session(
+    handoff: &crate::state::PendingAccountHandoff,
+    account: &crate::config::ActiveAccountContext,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> Result<CompletedIdentityCreation, AcceptedSessionReissueError> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let holder =
+        load_bound_handoff_holder_key(handoff, account, state_store, secure_store.as_ref())?;
+    let handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)
+        .map_err(|error| {
+            AcceptedSessionReissueError::Retryable(
+                anyhow::anyhow!(error).context("read the account handoff credential"),
+            )
+        })?
+        .ok_or_else(|| {
+            AcceptedSessionReissueError::ReauthRequired(anyhow::anyhow!(
+                "account handoff credential is unavailable for session reissue"
+            ))
+        })?;
+    let authority =
+        crate::identity::account_auth::AuthorityResolver::discover(&handoff.principal_server_url)
+            .await
+            .map_err(|error| {
+                AcceptedSessionReissueError::Retryable(
+                    anyhow::anyhow!(error).context("discover the Account Authority route"),
+                )
+            })?;
+    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
+        &authority.gate_account_base,
+    )
+    .map_err(|error| AcceptedSessionReissueError::Contradiction(anyhow::anyhow!(error)))?;
+    let mut correlation =
+        crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff)
+            .with_principal_id(account.full_id().as_str())
+            .with_device_id(account.device_id.as_str());
+    let issued = crate::views::login::issue_bound_handoff_session(
+        &handoff.principal_server_url,
+        &account_base,
+        handoff,
+        &handoff_grant,
+        account.authority.principal_id.clone(),
+        account.full_id().clone(),
+        account.device_id.clone(),
+        &holder,
+        &mut correlation,
+    )
+    .await
+    .map_err(|error| match error {
+        crate::views::login::ReturningSessionExchangeError::Retryable(message) => {
+            AcceptedSessionReissueError::Retryable(anyhow::anyhow!(message))
+        }
+        crate::views::login::ReturningSessionExchangeError::DeviceSetupRequired(message)
+        | crate::views::login::ReturningSessionExchangeError::Blocked(_, message)
+        | crate::views::login::ReturningSessionExchangeError::Fatal(message) => {
+            AcceptedSessionReissueError::Contradiction(anyhow::anyhow!(message))
+        }
+    })?;
+    if issued.account.full_id() != account.full_id()
+        || issued.account.authority != account.authority
+        || issued.account.device_id != account.device_id
+    {
+        return Err(AcceptedSessionReissueError::Contradiction(anyhow::anyhow!(
+            "reissued onboarding session resolved a different account or device"
+        )));
+    }
+    let prepared_keys = crate::views::login::prepare_completed_login_dpop_key(
+        secure_store.as_ref(),
+        account,
+        &handoff.device_id,
+        &issued.dpop_device_key,
+    )
+    .await
+    .map_err(|error| {
+        AcceptedSessionReissueError::Contradiction(
+            anyhow::Error::msg(error).context("prepare the accepted account DPoP key"),
+        )
+    })?;
+    let account_store = crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    )
+    .map_err(|error| AcceptedSessionReissueError::Contradiction(anyhow::anyhow!(error)))?;
+    crate::state::store_session_grant_in_user_secure_store_durable(
+        &account_store,
+        secure_store.as_ref(),
+        &issued.session_grant,
+    )
+    .await
+    .map_err(|error| AcceptedSessionReissueError::Retryable(anyhow::anyhow!(error)))?;
+    {
+        let mut store = state_store.write();
+        crate::views::login::commit_completed_login_dpop_key(
+            &mut store,
+            secure_store.as_ref(),
+            account,
+            &issued.dpop_device_key,
+            prepared_keys,
+        )
+        .map_err(|error| {
+            AcceptedSessionReissueError::Retryable(
+                anyhow::Error::msg(error).context("commit the accepted account DPoP key"),
+            )
+        })?;
+    }
+    Ok(CompletedIdentityCreation {
+        account: account.clone(),
+        persisted_grant: issued.session_grant,
+        dpop_device_key: issued.dpop_device_key,
+        origin:
+            crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeReissue,
+    })
+}
+
+fn restore_accepted_account_runtime(
+    account: &crate::config::ActiveAccountContext,
+    expected_holder_jkt: &str,
+) -> anyhow::Result<RestoredAcceptedAccountRuntime> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    restore_accepted_account_runtime_with_secure_store(
+        account,
+        expected_holder_jkt,
+        secure_store.as_ref(),
+    )
+}
+
+fn restore_accepted_account_runtime_with_secure_store(
+    account: &crate::config::ActiveAccountContext,
+    expected_holder_jkt: &str,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<RestoredAcceptedAccountRuntime> {
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    )?;
+    let stored_device = user_store
+        .load_device_id(secure_store)?
+        .context("accepted onboarding account has no durable device id")?;
+    if stored_device != account.device_id {
+        anyhow::bail!("accepted onboarding account device does not match its secure scope");
+    }
+    let signing_seed = user_store
+        .load_signing_seed(secure_store)?
+        .context("accepted onboarding account has no durable device signer")?;
+    let dpop = crate::identity::account_auth::grant_dpop::load_user_device_key_with_secure_store(
+        &user_store,
+        secure_store,
+    )?
+    .context("accepted onboarding account has no durable grant-binding key")?;
+    if dpop.jkt() != expected_holder_jkt {
+        anyhow::bail!("accepted onboarding grant-binding key does not match the account handoff");
+    }
+    let dpop_device_key =
+        crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(
+            dpop.seed_b64().as_str(),
+        )?;
+    let grant = crate::identity::session_refresh::load_account_session_grant_with_secure_store(
+        account,
+        secure_store,
+    )?;
+
+    // Publish the exact accepted scope only after every durable component has
+    // been validated. A failed restore must not leave another account's signer
+    // or a half-valid onboarding scope active.
+    user_store.activate();
+    if let Err(error) = crate::event_signer::activate_device_signer_from_seed_for_device(
+        signing_seed.seed,
+        Some(secure_store),
+        Some(account.device_id.as_str()),
+    )
+    .and_then(|_| {
+        crate::event_signer::bind_active_signer_principal_device_id(
+            account.full_id(),
+            account.device_id.as_str(),
+        )
+        .map(|_| ())
+    }) {
+        crate::event_signer::clear_active_device_signer();
+        return Err(error);
+    }
+    Ok(RestoredAcceptedAccountRuntime {
+        persisted_grant: grant,
+        dpop_device_key,
+    })
 }
 
 #[component]
@@ -1364,6 +2093,7 @@ fn PendingAccountIdentityCreation(
     mut device_authorization_check_complete: Signal<bool>,
 ) -> Element {
     let session_context = crate::app::SessionContext::get();
+    let active_account = session_context.active_account;
     let mut state_store = session_context.state_store;
     let initial_handoff = state_store.peek().pending_account_handoff();
     let initial_checkpoint = state_store.peek().pending_principal_registration();
@@ -1390,6 +2120,7 @@ fn PendingAccountIdentityCreation(
     let mut busy = use_signal(|| false);
     let mut complete = use_signal(|| false);
     let mut status = use_signal(String::new);
+    let mut resume_terminal = use_signal(|| None::<ResumeTerminal>);
     // Never derive this from a later server phase in this mount. The server
     // remains authoritative for protocol progress; this signal only records
     // whether the in-memory key was generated here or must be supplied after
@@ -1412,6 +2143,93 @@ fn PendingAccountIdentityCreation(
                         div { class: "form-hint-warn", role: "status", "{status}" }
                     }
                     Link { class: "primary", to: Route::Dashboard, "Continue" }
+                }
+            }
+        };
+    }
+
+    if let Some(terminal) = resume_terminal() {
+        let heading = match terminal.kind {
+            ResumeTerminalKind::HydrationFailed => "Setup state could not be read",
+            ResumeTerminalKind::RetryableFailure => "Setup continuation did not finish",
+            ResumeTerminalKind::ReauthRequired => "Setup needs authentication",
+            ResumeTerminalKind::StrandedIdentity => "This accepted identity cannot continue here",
+            ResumeTerminalKind::Contradiction => "Setup state is inconsistent",
+        };
+        let can_retry = matches!(
+            terminal.kind,
+            ResumeTerminalKind::HydrationFailed | ResumeTerminalKind::RetryableFailure
+        );
+        let can_clear = matches!(
+            terminal.kind,
+            ResumeTerminalKind::StrandedIdentity | ResumeTerminalKind::Contradiction
+        );
+        return rsx! {
+            div {
+                class: "event onboarding-card onboarding-centered",
+                "data-testid": "onboarding-resume-diagnostics",
+                h2 { "{heading}" }
+                p { class: "muted", "{terminal.reason}" }
+                ul { class: "muted", "data-testid": "onboarding-resume-inventory",
+                    for item in terminal.inventory.iter() {
+                        li { "{item}" }
+                    }
+                }
+                if terminal.legacy_layout_detected {
+                    div { class: "form-hint-warn",
+                        "Keys from a non-current local layout were detected. Inkson listed their names for diagnostics but did not read or adopt them."
+                    }
+                }
+                div { class: "onboarding-footer-actions",
+                    if can_retry {
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "retry-onboarding-resume",
+                            onclick: move |_| {
+                                resume_terminal.set(None);
+                                status.set(String::new());
+                            },
+                            if terminal.kind == ResumeTerminalKind::HydrationFailed {
+                                "Retry storage check"
+                            } else {
+                                "Retry exact continuation"
+                            }
+                        }
+                    }
+                    if terminal.kind == ResumeTerminalKind::ReauthRequired {
+                        Link { class: "primary", to: Route::Login, "Sign in again" }
+                    }
+                    if can_clear {
+                        Link { class: "secondary", to: Route::Login, "Sign in another account" }
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            "data-testid": "clear-stranded-onboarding",
+                            disabled: busy(),
+                            onclick: move |_| {
+                                let navigator = navigator;
+                                busy.set(true);
+                                spawn(async move {
+                                    match clear_pending_principal_setup(state_store).await {
+                                        Ok(()) => {
+                                            navigator.push(Route::Login);
+                                        }
+                                        Err(error) => status.set(format!(
+                                            "Could not clear this setup: {error:#}"
+                                        )),
+                                    }
+                                    busy.set(false);
+                                });
+                            },
+                            if terminal.kind == ResumeTerminalKind::StrandedIdentity {
+                                "Abandon this setup and register a new identity"
+                            } else {
+                                "Clear this setup"
+                            }
+                        }
+                    }
+                }
+                if !status().is_empty() {
+                    div { class: "form-hint-warn", role: "status", "{status}" }
                 }
             }
         };
@@ -1815,7 +2633,6 @@ fn PendingAccountIdentityCreation(
                                         &handoff,
                                         &supplied_key,
                                         &device,
-                                        config_store,
                                         state_store,
                                         status,
                                     )
@@ -1824,12 +2641,26 @@ fn PendingAccountIdentityCreation(
                                 .await;
 
                                 match result {
-                                    Ok(completed) => {
-                                        principal_id.set(completed.account.full_id().to_string());
-                                        device_id.set(completed.account.device_id.to_string());
-                                        token.set(completed.session_credential);
-                                        needs_device_authorization.set(false);
-                                        device_authorization_check_complete.set(true);
+                                    Ok(IdentityCreationCommandOutcome::Completed(completed)) => {
+                                        if let Err(error) = commit_completed_account(
+                                            &completed,
+                                            state_store,
+                                            config_store,
+                                            active_account,
+                                            token,
+                                            principal_id,
+                                            device_id,
+                                            needs_device_authorization,
+                                            device_authorization_check_complete,
+                                        )
+                                        .await
+                                        {
+                                            status.set(format!(
+                                                "Account completion could not be committed: {error:#}"
+                                            ));
+                                            busy.set(false);
+                                            return;
+                                        }
                                         recovery_key.set(String::new());
                                         recovery_key_state.set(
                                             arkret_sdk::IdentityCreationRecoveryKeyState::Unavailable,
@@ -1839,63 +2670,46 @@ fn PendingAccountIdentityCreation(
                                         complete.set(true);
                                         if let Err(error) = clear_pending_principal_setup(state_store).await {
                                             status.set(format!(
-                                                "Setup finished, but local cleanup failed: {error}"
+                                                "Setup finished, but local cleanup failed: {error:#}"
                                             ));
                                         }
                                     }
+                                    Ok(IdentityCreationCommandOutcome::Terminal(terminal)) => {
+                                        status.set(String::new());
+                                        resume_terminal.set(Some(terminal));
+                                    }
                                     Err(error) => {
-                                        let command_error = error.to_string();
-                                        status.set(
-                                            "Setup result is uncertain. Refreshing the Account Authority state…"
-                                                .to_owned(),
+                                        let seal_replay_contradiction = error
+                                            .downcast_ref::<BootstrapSealReplayContradiction>()
+                                            .is_some();
+                                        let command_error = format!("{error:#}");
+                                        let correlation = crate::identity::account_auth::transition::LoginCorrelation::for_handoff(&handoff);
+                                        crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                                            crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                                            if seal_replay_contradiction {
+                                                crate::identity::account_auth::transition::OnboardingCompletionOutcome::Contradiction
+                                            } else {
+                                                crate::identity::account_auth::transition::OnboardingCompletionOutcome::Failed
+                                            },
+                                            if seal_replay_contradiction {
+                                                "bootstrap_seal_replay_changed"
+                                            } else {
+                                                "onboarding_continuation_failed"
+                                            },
+                                            &correlation,
+                                            None,
                                         );
-                                        match crate::identity::account_auth::refresh_pending_onboarding(
-                                            state_store,
-                                        )
-                                        .await
-                                        {
-                                            Ok(()) => {
-                                                let accepted = state_store
-                                                    .peek()
-                                                    .pending_account_handoff()
-                                                    .is_some_and(|handoff| {
-                                                        handoff.bound_principal_id.is_some()
-                                                            || handoff.identity_creation_state
-                                                                == Some(
-                                                                    arkret_sdk::IdentityCreationLeaseState::Completed,
-                                                                )
-                                                    });
-                                                if accepted {
-                                                    let can_continue = {
-                                                        let store = state_store.peek();
-                                                        store.pending_account_handoff().zip(
-                                                            store.pending_principal_registration(),
-                                                        ).is_some_and(|(handoff, checkpoint)| {
-                                                            crate::identity::account_auth::checkpoint_continues_bound_creation(
-                                                                &checkpoint,
-                                                                &handoff,
-                                                            )
-                                                        })
-                                                    };
-                                                    if can_continue {
-                                                        status.set(format!(
-                                                            "The account binding was accepted, but the recovery-material gate did not finish: {command_error}. Retry Save and continue; Inkson will resume the same transaction without creating another identity or device."
-                                                        ));
-                                                    } else {
-                                                        status.set(format!(
-                                                            "The account binding was accepted, but the local continuation could not be verified: {command_error}. No completion was assumed."
-                                                        ));
-                                                    }
-                                                } else {
-                                                    status.set(format!(
-                                                        "The previous request did not finish: {command_error}. The Account Authority state was refreshed; continue with the Recovery Key already held on this page."
-                                                    ));
-                                                }
-                                            }
-                                            Err(refresh_error) => status.set(format!(
-                                                "Setup could not finish: {command_error}. The current server state could not be refreshed: {refresh_error}"
-                                            )),
-                                        }
+                                        resume_terminal.set(Some(ResumeTerminal {
+                                            kind: if seal_replay_contradiction {
+                                                ResumeTerminalKind::Contradiction
+                                            } else {
+                                                ResumeTerminalKind::RetryableFailure
+                                            },
+                                            reason: command_error,
+                                            inventory: Vec::new(),
+                                            legacy_layout_detected: false,
+                                        }));
+                                        status.set(String::new());
                                     }
                                 }
                                 busy.set(false);
@@ -2080,7 +2894,7 @@ async fn activate_pending_registration_signer(
     let signing_material =
         if checkpoint.stage == crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed {
             pending_store
-                .ensure_signing_seed_durable(secure_store)
+                .create_fresh_signing_seed_durable(secure_store)
                 .await?
         } else {
             pending_store
@@ -2103,19 +2917,13 @@ async fn activate_pending_registration_signer(
     )
 }
 
-struct CompletedIdentityCreation {
-    account: crate::config::ActiveAccountContext,
-    session_credential: String,
-}
-
 async fn create_and_bind_identity(
     handoff: &crate::state::PendingAccountHandoff,
     recovery_key: &str,
     device: &str,
-    config_store: Signal<crate::config::LocalConfigStore>,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     mut status: Signal<String>,
-) -> anyhow::Result<CompletedIdentityCreation> {
+) -> anyhow::Result<IdentityCreationCommandOutcome> {
     let pending_device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -2234,7 +3042,7 @@ async fn create_and_bind_identity(
         checkpoint
     };
 
-    let (registration, account, grant_jwt) = if matches!(
+    let (registration, completed) = if matches!(
         checkpoint.stage,
         crate::state::PendingPrincipalRegistrationStage::GenesisDraftPrepared
             | crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared
@@ -2285,7 +3093,7 @@ async fn create_and_bind_identity(
                     crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
                         &checkpoint,
                     )?;
-                    let recovered = recover_bound_principal_device(
+                    let (_recovery, completed) = recover_bound_principal_device(
                         &recovery_handoff,
                         &checkpoint.full_id,
                         device,
@@ -2293,10 +3101,7 @@ async fn create_and_bind_identity(
                         state_store,
                     )
                     .await?;
-                    anyhow::bail!(
-                        "the earlier PCR genesis was already accepted; this device was recovered with receipt {}. Continue sign-in for the Standard session grant",
-                        recovered.0.readiness.terminal_receipt_id
-                    );
+                    return Ok(IdentityCreationCommandOutcome::Completed(completed));
                 }
                 Err(error) => return Err(error),
             };
@@ -2324,6 +3129,7 @@ async fn create_and_bind_identity(
             grant_expires_at: Some(completion.session_grant.expires_at),
             stored_at: chrono::Utc::now(),
         };
+        let dpop_device_key = completion.dpop_device_key.clone();
         let mut accepted = checkpoint;
         accepted.binding_receipt = Some(completion.binding_receipt.clone());
         accepted.pcr_genesis_receipt = Some(completion.pcr_genesis_receipt.clone());
@@ -2346,6 +3152,16 @@ async fn create_and_bind_identity(
             )
             .await
             .map_err(anyhow::Error::msg)?;
+            let account_store = crate::secure_key_store::UserLocalStore::new(
+                account.authority.clone(),
+                account.device_id.clone(),
+            )?;
+            crate::state::store_session_grant_in_user_secure_store_durable(
+                &account_store,
+                secure_store.as_ref(),
+                &persisted_grant,
+            )
+            .await?;
             let mut store = state_store.write();
             crate::views::login::commit_completed_login_dpop_key(
                 &mut store,
@@ -2359,24 +3175,24 @@ async fn create_and_bind_identity(
             // Do not clear pending_account_handoff yet. Keeping it until
             // finish_principal_setup succeeds keeps this component (and its
             // in-memory Recovery Key) alive through the background work.
-            store.set_session_grant(Some(persisted_grant));
+            let barrier = store.begin_durable_flush()?;
+            drop(store);
+            barrier.wait().await?;
         }
-        (accepted, account, grant_jwt)
+        (
+            accepted,
+            CompletedIdentityCreation {
+                account,
+                persisted_grant,
+                dpop_device_key,
+                origin:
+                    crate::identity::account_auth::transition::OnboardingCompletionOrigin::FreshBind,
+            },
+        )
     } else {
-        // Registration already returned a verified PCR receipt and Standard
-        // grant. Resume only the recovery-material gate.
-        let persisted_grant = state_store
-            .read()
-            .session_grant()
-            .filter(|grant| {
-                crate::identity::session_refresh::grant_matches_full_principal(
-                    grant,
-                    &checkpoint.full_id,
-                ) && grant.device_id.as_str() == checkpoint.device_id
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!("the unfinished setup session is unavailable; sign in again")
-            })?;
+        // Registration already returned a verified PCR receipt. Rebuild the
+        // continuation from server truth plus a three-state durable inventory;
+        // exact restoration is only the fast path.
         let account = resolve_handoff_active_account(
             handoff,
             &checkpoint.full_id,
@@ -2384,30 +3200,204 @@ async fn create_and_bind_identity(
             state_store,
         )
         .await?;
-        (checkpoint.clone(), account, persisted_grant.grant_jwt)
+        let inventory =
+            collect_bound_completion_resume_inventory(handoff, &checkpoint, &account, state_store)
+                .await;
+        let correlation =
+            crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff)
+                .with_principal_id(account.full_id().as_str())
+                .with_device_id(account.device_id.as_str());
+        let disposition = match garth::classify_bound_completion_resume(inventory.facts) {
+            Ok(disposition) => disposition,
+            Err(error) => {
+                crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                    crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                    crate::identity::account_auth::transition::OnboardingCompletionOutcome::RetryableHydration,
+                    "resume_material_read_error",
+                    &correlation,
+                    Some(&inventory.facts),
+                );
+                let detail = if inventory.read_errors.is_empty() {
+                    format!("could not read resume material {:?}", error.material)
+                } else {
+                    inventory.read_errors.join("; ")
+                };
+                return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                    kind: ResumeTerminalKind::HydrationFailed,
+                    reason: detail,
+                    inventory: inventory.checklist(),
+                    legacy_layout_detected: inventory.legacy_layout_detected,
+                }));
+            }
+        };
+        use garth::BoundCompletionResumeDisposition as Disposition;
+        match disposition {
+            Disposition::RestoreRuntime => {
+                crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                    crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                    crate::identity::account_auth::transition::OnboardingCompletionOutcome::Classified,
+                    "restore_runtime",
+                    &correlation,
+                    Some(&inventory.facts),
+                );
+                let restored = restore_accepted_account_runtime(&account, &handoff.holder_jkt)
+                    .context("restore the accepted onboarding session")?;
+                (
+                    checkpoint.clone(),
+                    CompletedIdentityCreation {
+                        account,
+                        persisted_grant: restored.persisted_grant,
+                        dpop_device_key: restored.dpop_device_key,
+                        origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                    },
+                )
+            }
+            Disposition::ReissueGrant => {
+                crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                    crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeReissue,
+                    crate::identity::account_auth::transition::OnboardingCompletionOutcome::Classified,
+                    "reissue_grant",
+                    &correlation,
+                    Some(&inventory.facts),
+                );
+                let completed = match reissue_accepted_onboarding_session(
+                    handoff,
+                    &account,
+                    state_store,
+                )
+                .await
+                {
+                    Ok(completed) => completed,
+                    Err(AcceptedSessionReissueError::Retryable(error)) => {
+                        crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                            crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeReissue,
+                            crate::identity::account_auth::transition::OnboardingCompletionOutcome::RetryableHydration,
+                            "session_reissue_retryable",
+                            &correlation,
+                            Some(&inventory.facts),
+                        );
+                        return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                            kind: ResumeTerminalKind::RetryableFailure,
+                            reason: format!("Reissue the accepted onboarding session: {error:#}"),
+                            inventory: inventory.checklist(),
+                            legacy_layout_detected: inventory.legacy_layout_detected,
+                        }));
+                    }
+                    Err(AcceptedSessionReissueError::ReauthRequired(error)) => {
+                        crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                            crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeReissue,
+                            crate::identity::account_auth::transition::OnboardingCompletionOutcome::ReauthRequired,
+                            "session_reissue_holder_unavailable",
+                            &correlation,
+                            Some(&inventory.facts),
+                        );
+                        return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                            kind: ResumeTerminalKind::ReauthRequired,
+                            reason: format!(
+                                "A fresh sign-in is required before this accepted setup can continue: {error:#}"
+                            ),
+                            inventory: inventory.checklist(),
+                            legacy_layout_detected: inventory.legacy_layout_detected,
+                        }));
+                    }
+                    Err(AcceptedSessionReissueError::Contradiction(error)) => {
+                        crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                            crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeReissue,
+                            crate::identity::account_auth::transition::OnboardingCompletionOutcome::Contradiction,
+                            "session_reissue_contradiction",
+                            &correlation,
+                            Some(&inventory.facts),
+                        );
+                        return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                            kind: ResumeTerminalKind::Contradiction,
+                            reason: format!(
+                                "The accepted setup cannot issue a session for the retained account and device: {error:#}"
+                            ),
+                            inventory: inventory.checklist(),
+                            legacy_layout_detected: inventory.legacy_layout_detected,
+                        }));
+                    }
+                };
+                (checkpoint.clone(), completed)
+            }
+            Disposition::RecoverWithPolicy => {
+                crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                    crate::identity::account_auth::transition::OnboardingCompletionOrigin::RecoveryCompletion,
+                    crate::identity::account_auth::transition::OnboardingCompletionOutcome::RecoveryRequired,
+                    "recover_with_policy",
+                    &correlation,
+                    Some(&inventory.facts),
+                );
+                let (_, completed) = recover_bound_principal_device(
+                    handoff,
+                    &checkpoint.full_id,
+                    device,
+                    recovery_key,
+                    state_store,
+                )
+                .await
+                .context("recover the accepted device with its active policy")?;
+                return Ok(IdentityCreationCommandOutcome::Completed(completed));
+            }
+            Disposition::StrandedIdentity => {
+                crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                    crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                    crate::identity::account_auth::transition::OnboardingCompletionOutcome::Stranded,
+                    "accepted_signer_and_recovery_policy_absent",
+                    &correlation,
+                    Some(&inventory.facts),
+                );
+                return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                    kind: ResumeTerminalKind::StrandedIdentity,
+                    reason: "The founding device key is not present on this device, and the server confirms that no Recovery Key policy was completed for this identity. The client API has no credential that can continue it.".to_owned(),
+                    inventory: inventory.checklist(),
+                    legacy_layout_detected: inventory.legacy_layout_detected,
+                }));
+            }
+            Disposition::ReauthRequired => {
+                crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                    crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeReissue,
+                    crate::identity::account_auth::transition::OnboardingCompletionOutcome::ReauthRequired,
+                    "handoff_missing_or_expired",
+                    &correlation,
+                    Some(&inventory.facts),
+                );
+                return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                    kind: ResumeTerminalKind::ReauthRequired,
+                    reason: "The accepted setup no longer has a live account handoff. Sign in again to obtain a fresh handoff; the accepted identity and device checkpoint will be retained.".to_owned(),
+                    inventory: inventory.checklist(),
+                    legacy_layout_detected: inventory.legacy_layout_detected,
+                }));
+            }
+            Disposition::Contradiction { reason } => {
+                crate::identity::account_auth::transition::record_onboarding_completion_transition(
+                    crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                    crate::identity::account_auth::transition::OnboardingCompletionOutcome::Contradiction,
+                    "resume_facts_contradict_checkpoint",
+                    &correlation,
+                    Some(&inventory.facts),
+                );
+                return Ok(IdentityCreationCommandOutcome::Terminal(ResumeTerminal {
+                    kind: ResumeTerminalKind::Contradiction,
+                    reason: format!(
+                        "The accepted setup contradicts the retained account state: {reason:?}."
+                    ),
+                    inventory: inventory.checklist(),
+                    legacy_layout_detected: inventory.legacy_layout_detected,
+                }));
+            }
+        }
     };
-
-    crate::views::helpers::persist_config(
-        config_store,
-        account.server_url.to_string(),
-        account.full_id().to_string(),
-        account.device_id.to_string(),
-        grant_jwt.clone(),
-    );
 
     finish_principal_setup(
         &registration,
         recovery_key,
-        &grant_jwt,
-        &account,
+        completed.session_credential(),
+        &completed.account,
         state_store,
     )
     .await?;
-
-    Ok(CompletedIdentityCreation {
-        account,
-        session_credential: grant_jwt,
-    })
+    Ok(IdentityCreationCommandOutcome::Completed(completed))
 }
 
 /// Drop the durable identity draft together with the handoff it is fenced to,
@@ -2513,6 +3503,109 @@ fn checkpoint_for_handoff(
     Ok(checkpoint)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecoveryMaterialContinuation {
+    SubmitAndPersist,
+    FinalizeDurableEvidence,
+}
+
+#[derive(Debug)]
+struct BootstrapSealReplayContradiction;
+
+impl std::fmt::Display for BootstrapSealReplayContradiction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the bootstrap Seal replay changed after its checkpoint was persisted")
+    }
+}
+
+impl std::error::Error for BootstrapSealReplayContradiction {}
+
+fn validate_exact_bootstrap_seal_replay<T: serde::Serialize>(
+    frozen: &T,
+    replay: &T,
+) -> anyhow::Result<()> {
+    let frozen_bytes = serde_json::to_vec(frozen).context("encode the frozen bootstrap Seal")?;
+    let replay_bytes = serde_json::to_vec(replay).context("encode the replayed bootstrap Seal")?;
+    if frozen_bytes != replay_bytes {
+        return Err(BootstrapSealReplayContradiction.into());
+    }
+    Ok(())
+}
+
+fn recovery_material_continuation(
+    stage: crate::state::PendingPrincipalRegistrationStage,
+) -> anyhow::Result<RecoveryMaterialContinuation> {
+    match stage {
+        crate::state::PendingPrincipalRegistrationStage::Accepted => {
+            Ok(RecoveryMaterialContinuation::SubmitAndPersist)
+        }
+        crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete => {
+            Ok(RecoveryMaterialContinuation::FinalizeDurableEvidence)
+        }
+        _ => anyhow::bail!(
+            "identity registration has not returned a verified PCR receipt and Standard grant"
+        ),
+    }
+}
+
+fn validate_completed_recovery_material(
+    registration: &crate::state::PendingPrincipalRegistration,
+    account: &crate::config::ActiveAccountContext,
+    evidence: &crate::state::RecoveryMaterialEvidence,
+) -> anyhow::Result<()> {
+    let unit = registration
+        .pcr_genesis_unit
+        .as_ref()
+        .context("completed recovery checkpoint omits its PCR genesis unit")?;
+    let seal = registration
+        .pcr_bootstrap_seal
+        .as_ref()
+        .context("completed recovery checkpoint omits its bootstrap Seal")?;
+    let receipt = registration
+        .pcr_genesis_receipt
+        .as_ref()
+        .context("completed recovery checkpoint omits its PCR genesis receipt")?;
+    let expected_authority = arkret_sdk::PrincipalAuthorityKey::new(
+        account.principal_id().clone(),
+        receipt.issuer.clone(),
+    );
+    if evidence.principal_id != *account.full_id()
+        || evidence.device_id != account.device_id
+        || evidence.pcr_genesis_unit != *unit
+        || evidence.bootstrap_seal != *seal
+        || evidence.principal_control_realm_id != seal.realm_id
+        || evidence.controller_authority.as_ref() != Some(&expected_authority)
+    {
+        anyhow::bail!("completed recovery-material evidence does not match the onboarding account");
+    }
+    Ok(())
+}
+
+async fn finish_local_recovery_metadata(
+    registration: &crate::state::PendingPrincipalRegistration,
+    recovery_key: &str,
+    account: &crate::config::ActiveAccountContext,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+) -> anyhow::Result<()> {
+    let actor = account.principal_id().as_str();
+    let device = account.device_id.as_str();
+    crate::event_submit::remember_verified_recovery_gate(actor, device);
+    crate::views::recovery::save_generated_recovery_key_metadata(
+        &mut state_store,
+        actor,
+        recovery_key,
+    )
+    .ok_or_else(|| anyhow::anyhow!("save public recovery metadata failed"))?;
+    crate::views::recovery::local_recovery_public_key_result(&state_store.read(), actor)
+        .map_err(|error| anyhow::anyhow!("verify public recovery metadata: {error}"))?;
+    let recovery_metadata_barrier = state_store.read().begin_durable_flush()?;
+    recovery_metadata_barrier.wait().await?;
+    crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
+        registration,
+    )?;
+    Ok(())
+}
+
 async fn finish_principal_setup(
     registration: &crate::state::PendingPrincipalRegistration,
     recovery_key: &str,
@@ -2529,12 +3622,17 @@ async fn finish_principal_setup(
     let actor = account.principal_id().as_str();
     let device = account.device_id.as_str();
 
-    if registration.stage != crate::state::PendingPrincipalRegistrationStage::Accepted {
-        anyhow::bail!(
-            "identity registration has not returned a verified PCR receipt and Standard grant"
-        );
+    if recovery_material_continuation(registration.stage)?
+        == RecoveryMaterialContinuation::FinalizeDurableEvidence
+    {
+        let evidence = state_store
+            .read()
+            .recovery_material_evidence()
+            .context("completed recovery checkpoint has no durable evidence")?;
+        validate_completed_recovery_material(&registration, account, &evidence)?;
+        return finish_local_recovery_metadata(&registration, recovery_key, account, state_store)
+            .await;
     }
-
     let bootstrap_seal: arkret_sdk::Seal = match registration.pcr_bootstrap_seal.clone() {
         Some(seal) => seal,
         None => {
@@ -2571,6 +3669,11 @@ async fn finish_principal_setup(
     let recovery_key_value = recovery_key.to_owned();
     let principal_control_realm_id = bootstrap_seal.realm_id.clone();
     let bootstrap_seal_for_submit = bootstrap_seal.clone();
+    let frozen_bootstrap_seal = registration
+        .pcr_bootstrap_seal
+        .as_ref()
+        .context("bootstrap Seal was not frozen in the durable checkpoint")?;
+    validate_exact_bootstrap_seal_replay(frozen_bootstrap_seal, &bootstrap_seal_for_submit)?;
     let governance_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
     crate::transport::auth::with_authed_api(
         account.server_url.as_str(),
@@ -2636,21 +3739,8 @@ async fn finish_principal_setup(
         };
         barrier.wait().await?;
     }
-    crate::event_submit::remember_verified_recovery_gate(actor, device);
-    crate::views::recovery::save_generated_recovery_key_metadata(
-        &mut state_store,
-        actor,
-        recovery_key,
-    )
-    .ok_or_else(|| anyhow::anyhow!("save public recovery metadata failed"))?;
-    crate::views::recovery::local_recovery_public_key_result(&state_store.read(), actor)
-        .map_err(|error| anyhow::anyhow!("verify public recovery metadata: {error}"))?;
-    let recovery_metadata_barrier = state_store.read().begin_durable_flush()?;
-    recovery_metadata_barrier.wait().await?;
-    crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
-        &completed_registration,
-    )?;
-    Ok(())
+    finish_local_recovery_metadata(&completed_registration, recovery_key, account, state_store)
+        .await
 }
 
 fn hosting_label(url: &str) -> String {
@@ -2673,8 +3763,10 @@ mod tests {
             "ak:profile:test".to_owned(),
             arkret_sdk::PrincipalAuthorityKey::new(
                 arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
-                arkret_sdk::DidCoreId::new("did:webvh:z6mkfixture:server.example".to_owned())
-                    .unwrap(),
+                arkret_sdk::DidCoreId::new(
+                    "ak:did_core:webvh:z6mkfixture:server.example".to_owned(),
+                )
+                .unwrap(),
             ),
             arkret_sdk::PrincipalResolutionProjection {
                 full_id,
@@ -2697,6 +3789,203 @@ mod tests {
             "identity.example"
         );
         assert_eq!(hosting_label("not a url"), "your selected service");
+    }
+
+    #[test]
+    fn accepted_and_durable_recovery_stages_are_both_resumable() {
+        assert_eq!(
+            recovery_material_continuation(
+                crate::state::PendingPrincipalRegistrationStage::Accepted,
+            )
+            .unwrap(),
+            RecoveryMaterialContinuation::SubmitAndPersist,
+        );
+        assert_eq!(
+            recovery_material_continuation(
+                crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
+            )
+            .unwrap(),
+            RecoveryMaterialContinuation::FinalizeDurableEvidence,
+        );
+        assert!(
+            recovery_material_continuation(
+                crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared,
+            )
+            .is_err()
+        );
+    }
+
+    fn restorable_resume_facts() -> garth::BoundCompletionResumeFacts {
+        garth::BoundCompletionResumeFacts {
+            handoff: garth::BoundCompletionHandoffState::ActiveBound,
+            checkpoint_stage: garth::BoundCompletionCheckpointStage::Accepted,
+            recovery_policy: garth::BoundCompletionMaterialState::Absent,
+            device_id: garth::BoundCompletionMaterialState::Present,
+            signing_seed: garth::BoundCompletionMaterialState::Present,
+            grant_binding_key: garth::BoundCompletionMaterialState::Present,
+            session_grant: garth::BoundCompletionMaterialState::Present,
+            recovery_evidence: garth::BoundCompletionMaterialState::Absent,
+            hpke_private_key: garth::BoundCompletionMaterialState::Present,
+            authority_matches: true,
+            device_slot_matches: true,
+            grant_matches_account: true,
+            grant_is_live: true,
+            grant_binding_matches_handoff: true,
+        }
+    }
+
+    #[test]
+    fn accepted_resume_material_matrix_has_honest_routes() {
+        use garth::{
+            BoundCompletionMaterialState as Material,
+            BoundCompletionResumeDisposition as Disposition,
+        };
+
+        let live = restorable_resume_facts();
+        for facts in [
+            garth::BoundCompletionResumeFacts {
+                session_grant: Material::Absent,
+                ..live
+            },
+            garth::BoundCompletionResumeFacts {
+                grant_is_live: false,
+                ..live
+            },
+            garth::BoundCompletionResumeFacts {
+                grant_binding_key: Material::Absent,
+                ..live
+            },
+            garth::BoundCompletionResumeFacts {
+                grant_binding_matches_handoff: false,
+                ..live
+            },
+        ] {
+            assert_eq!(
+                garth::classify_bound_completion_resume(facts).unwrap(),
+                Disposition::ReissueGrant
+            );
+        }
+        assert_eq!(
+            garth::classify_bound_completion_resume(garth::BoundCompletionResumeFacts {
+                signing_seed: Material::Absent,
+                recovery_policy: Material::Present,
+                ..live
+            })
+            .unwrap(),
+            Disposition::RecoverWithPolicy
+        );
+        assert_eq!(
+            garth::classify_bound_completion_resume(garth::BoundCompletionResumeFacts {
+                signing_seed: Material::Absent,
+                recovery_policy: Material::Absent,
+                ..live
+            })
+            .unwrap(),
+            Disposition::StrandedIdentity
+        );
+        assert_eq!(
+            garth::classify_bound_completion_resume(garth::BoundCompletionResumeFacts {
+                handoff: garth::BoundCompletionHandoffState::MissingOrExpired,
+                ..live
+            })
+            .unwrap(),
+            Disposition::ReauthRequired
+        );
+        assert_eq!(
+            garth::classify_bound_completion_resume(garth::BoundCompletionResumeFacts {
+                checkpoint_stage: garth::BoundCompletionCheckpointStage::RecoveryMaterialComplete,
+                recovery_evidence: Material::Absent,
+                ..live
+            })
+            .unwrap(),
+            Disposition::Contradiction {
+                reason: garth::BoundCompletionContradiction::CompletedStageMissingEvidence
+            }
+        );
+    }
+
+    #[test]
+    fn resume_material_read_error_is_not_absence() {
+        let mut errors = Vec::new();
+        let (state, value) = observe_resume_material::<String, _>(
+            "session grant",
+            Err(std::io::Error::other("keyring locked")),
+            &mut errors,
+        );
+        assert_eq!(state, garth::BoundCompletionMaterialState::ReadError);
+        assert!(value.is_none());
+        assert_eq!(errors, ["session grant: keyring locked"]);
+
+        let classified =
+            garth::classify_bound_completion_resume(garth::BoundCompletionResumeFacts {
+                session_grant: state,
+                ..restorable_resume_facts()
+            });
+        assert!(classified.is_err());
+    }
+
+    #[test]
+    fn resume_inventory_reads_the_same_typed_memory_store_path_as_production() {
+        let secure = crate::secure_key_store::MemorySecureKeyStore::default();
+        let account = test_active_account();
+        let user_store = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )
+        .unwrap();
+        let mut errors = Vec::new();
+        let (missing, _) = observe_resume_material(
+            "accepted device signer",
+            user_store.load_signing_seed(&secure),
+            &mut errors,
+        );
+        assert_eq!(missing, garth::BoundCompletionMaterialState::Absent);
+        assert!(errors.is_empty());
+
+        user_store.save_signing_seed(&secure, &[17_u8; 32]).unwrap();
+        let (present, material) = observe_resume_material(
+            "accepted device signer",
+            user_store.load_signing_seed(&secure),
+            &mut errors,
+        );
+        assert_eq!(present, garth::BoundCompletionMaterialState::Present);
+        assert_eq!(material.unwrap().seed, [17_u8; 32]);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn completed_account_namespace_switch_is_replay_safe() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let handoff = test_handoff(
+            "ak:request:019f0000-0000-7000-8000-000000000020",
+            Some("lease-1"),
+            Some(1),
+        );
+        let checkpoint = test_checkpoint(
+            &handoff,
+            &recovery_key,
+            crate::state::PendingPrincipalRegistrationStage::Accepted,
+        );
+        let account = test_active_account();
+        let mut store = crate::state::isolated_store_for_tests("completed-account-replay");
+        store.begin_pending_login(&account.device_id, Some(&handoff.holder_jkt));
+        store
+            .set_pending_account_handoff(Some(handoff.clone()))
+            .unwrap();
+        store
+            .set_pending_principal_registration(Some(checkpoint.clone()))
+            .unwrap();
+
+        assert!(store.switch_active_account(&account).unwrap());
+        assert_eq!(store.pending_account_handoff(), Some(handoff.clone()));
+        assert_eq!(
+            store.pending_principal_registration(),
+            Some(checkpoint.clone())
+        );
+
+        assert!(!store.switch_active_account(&account).unwrap());
+        assert_eq!(store.pending_account_handoff(), Some(handoff));
+        assert_eq!(store.pending_principal_registration(), Some(checkpoint));
     }
 
     #[test]
@@ -2767,6 +4056,29 @@ mod tests {
             signer
                 .verification_method()
                 .ends_with(&format!("#{}", handoff.device_id))
+        );
+    }
+
+    #[test]
+    fn bootstrap_seal_retry_reuses_the_byte_exact_checkpoint_value() {
+        let frozen = serde_json::json!({
+            "id": "ak:seal:frozen",
+            "notary_seq": 0,
+            "hlc": "01970e589d21-0004-a13f9c2e"
+        });
+
+        validate_exact_bootstrap_seal_replay(&frozen, &frozen.clone()).unwrap();
+
+        let changed = serde_json::json!({
+            "id": "ak:seal:frozen",
+            "notary_seq": 1,
+            "hlc": "01970e589d21-0004-a13f9c2e"
+        });
+        let error = validate_exact_bootstrap_seal_replay(&frozen, &changed).unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<BootstrapSealReplayContradiction>()
+                .is_some()
         );
     }
 

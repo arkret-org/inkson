@@ -231,6 +231,17 @@ impl UserLocalStore {
         store.store_secret(&self.key(logical_key), value)
     }
 
+    pub(crate) async fn save_secret_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+        logical_key: &str,
+        value: &str,
+    ) -> Result<(), SecureKeyStoreError> {
+        store
+            .store_secret_durable(&self.key(logical_key), value)
+            .await
+    }
+
     pub fn activate(&self) {
         super::set_pending_login_device_id(None);
         super::set_active_device_seed_scope(Some((&self.authority, &self.device_id)));
@@ -310,6 +321,13 @@ impl UserLocalStore {
     ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
         let seed = decode_seed_b64url(seed_b64url)?;
         store_signing_seed_at_durable(store, &self.key(GRANT_BINDING_SEED_ENTRY), &seed).await
+    }
+
+    pub fn load_grant_binding_seed(
+        &self,
+        store: &dyn SecureKeyStore,
+    ) -> Result<Option<SigningSeedMaterial>, SecureKeyStoreError> {
+        load_signing_seed_at(store, &self.key(GRANT_BINDING_SEED_ENTRY))
     }
 
     /// Logout-only; the sole caller sits under `cfg(not(test))`, so this carries
@@ -398,6 +416,16 @@ impl PendingLocalStore {
     }
 
     pub async fn ensure_signing_seed_durable(
+        &self,
+        store: &dyn SecureKeyStore,
+    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
+        ensure_signing_seed_at_durable(store, &self.key(SIGNING_SEED_ENTRY)).await
+    }
+
+    /// Create or reload the signer for a transaction that is still authoring a
+    /// brand-new device identity. Accepted-account continuation must use
+    /// `load_signing_seed` and fail closed instead of calling this method.
+    pub async fn create_fresh_signing_seed_durable(
         &self,
         store: &dyn SecureKeyStore,
     ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {

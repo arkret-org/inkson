@@ -115,42 +115,14 @@ impl LocalStateStore {
         self.load().session_grant
     }
 
-    /// Persist (or clear via `None`) the coauth `session_grant`.
+    /// Publish (or clear via `None`) the live coauth `session_grant`.
+    ///
+    /// Account-state snapshots intentionally strip credentials. Callers that
+    /// install a grant must durably write it to an explicit `UserLocalStore`
+    /// before calling this setter; this method never guesses a secure-store
+    /// target from process-global scope.
     pub fn set_session_grant(&mut self, grant: Option<PersistedSessionGrant>) {
-        // Keep a freshly minted grant live even when sign-in wins the race with
-        // the asynchronous IndexedDB/SubtleCrypto bootstrap. Account-state
-        // persistence strips this field, so staging it in `cached` never puts
-        // the credential in the plaintext/root store. The secure-store upgrade
-        // persists the staged value once the hardened backend is available.
-        //
-        // Clearing is deliberately different: if the secure delete fails, keep
-        // the live grant too so a logout/terminal revocation cannot appear to
-        // succeed and then resurrect the credential on reload.
         self.ensure_cached_loaded();
-        #[cfg(not(test))]
-        {
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let result = match grant.as_ref() {
-                Some(grant) => store_session_grant_in_secure_store(secure_store.as_ref(), grant),
-                None => active_user_local_store().and_then(|user_store| {
-                    user_store.delete_secret(secure_store.as_ref(), Self::SECURE_SESSION_GRANT_KEY)
-                }),
-            };
-            if let Err(error) = result {
-                if grant.is_none() {
-                    tracing::error!(?error, "secure session grant delete failed");
-                    return;
-                }
-                tracing::warn!(
-                    ?error,
-                    "secure session grant persist deferred until secure-store bootstrap"
-                );
-                #[cfg(target_arch = "wasm32")]
-                if let Some(grant) = grant.as_ref() {
-                    schedule_deferred_session_grant_persist(grant.clone());
-                }
-            }
-        }
         self.cached.session_grant = grant;
         let _ = self.flush();
     }
@@ -247,66 +219,4 @@ impl LocalStateStore {
     pub fn private_data_keys(&self) -> Vec<String> {
         self.load().private_data.keys().cloned().collect()
     }
-}
-
-/// Sign-in can win the race with the asynchronous IndexedDB/SubtleCrypto
-/// bootstrap: the secure persist in `set_session_grant` then fails with
-/// `Unsupported` and the fresh grant survives only in the in-memory cache of
-/// the clone that staged it, so the next reload (or any other store clone's
-/// `read_persisted_state`) loses the session ("no session grant is
-/// available"). Retry the durable persist once the hardened tier reports
-/// ready, scoped by the grant's own core principal id — no dependency on the
-/// active-scope global, which is also unset this early.
-#[cfg(target_arch = "wasm32")]
-fn schedule_deferred_session_grant_persist(grant: PersistedSessionGrant) {
-    let Some(scope) = crate::secure_key_store::active_device_seed_scope() else {
-        tracing::warn!(
-            "deferred secure session grant persist skipped without an active authority/device scope"
-        );
-        return;
-    };
-    if scope.authority.principal_id != grant.principal_id || scope.device_id != grant.device_id {
-        tracing::warn!(
-            "deferred secure session grant persist rejected for a different authority/device scope"
-        );
-        return;
-    }
-    let user_store =
-        match crate::secure_key_store::UserLocalStore::new(scope.authority, scope.device_id) {
-            Ok(user_store) => user_store,
-            Err(error) => {
-                tracing::warn!(?error, "deferred secure session grant scope is invalid");
-                return;
-            }
-        };
-    tracing::debug!(
-        target: "secure_store",
-        "deferred session grant persist scheduled (waiting for IndexedDB tier)"
-    );
-    wasm_bindgen_futures::spawn_local(async move {
-        for _ in 0..200 {
-            if crate::secure_key_store::wasm_secure_store_ready() {
-                break;
-            }
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(100)).await;
-        }
-        if !crate::secure_key_store::wasm_secure_store_ready() {
-            tracing::warn!(
-                "deferred secure session grant persist abandoned: secure store never became ready"
-            );
-            return;
-        }
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let result =
-            store_session_grant_in_user_secure_store(&user_store, secure_store.as_ref(), &grant);
-        match result {
-            Ok(()) => tracing::debug!(
-                target: "secure_store",
-                "deferred session grant persist committed to IndexedDB"
-            ),
-            Err(error) => {
-                tracing::warn!(?error, "deferred secure session grant persist retry failed")
-            }
-        }
-    });
 }

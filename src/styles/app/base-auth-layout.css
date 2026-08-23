@@ -71,6 +71,7 @@ a.primary, a.secondary { line-height: 1.5; }
 .metric strong { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
 .metric span { overflow-wrap: anywhere; }
 .mobile-shellbar, .mobile-drawer { display: none; }
+.mobile-primary-nav { display: contents; }
 .mobile-status { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-2); }
 .mobile-status .muted { color: var(--text-3); }
 .sr-only {

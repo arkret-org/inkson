@@ -131,12 +131,6 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 &principal_id_for_secure_upgrade(),
                                 &device_id_for_secure_upgrade(),
                             )
-                            .or_else(|| {
-                                inject_test_session_credential(
-                                    config_store_for_secure_upgrade,
-                                    &account,
-                                )
-                            })
                         });
                         if let Some(credential) = injected {
                             token_for_secure_upgrade.set(credential);
@@ -567,7 +561,20 @@ fn apply_test_session_grant_expiry_override(
         let now = chrono::Utc::now();
         grant.grant_expires_at = Some(now + chrono::Duration::seconds(seconds_from_now));
         grant.stored_at = now;
-        if crate::state::store_session_grant_in_secure_store(secure_store, &grant).is_err() {
+        let Ok(user_store) = crate::state::active_user_local_store() else {
+            return false;
+        };
+        let Ok(encoded) = serde_json::to_string(&grant) else {
+            return false;
+        };
+        if user_store
+            .save_secret(
+                secure_store,
+                crate::state::LocalStateStore::SECURE_SESSION_GRANT_KEY,
+                &encoded,
+            )
+            .is_err()
+        {
             return false;
         }
         state_store.write().set_session_grant(Some(grant));

@@ -34,14 +34,45 @@ pub async fn refresh_pending_onboarding(
         .pending_account_handoff()
         .ok_or_else(|| anyhow::anyhow!("no account handoff is pending"))?;
     let pending_device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
-    let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id.clone());
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let dpop = super::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
+    let pending_dpop = super::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
         &mut state_store.write(),
         secure_store.as_ref(),
         &pending_store,
-    )?
-    .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?;
+    )?;
+    let dpop = match pending_dpop {
+        Some(dpop) => dpop,
+        None => {
+            // Once registration is accepted the pending holder is promoted to
+            // the bound account scope and the pending store is deliberately
+            // consumed. A reload must reconcile with that exact promoted key,
+            // not require the now-obsolete pre-principal copy.
+            let full_id = handoff
+                .bound_principal_id
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?;
+            let authority = arkret_sdk::PrincipalAuthorityKey::new(
+                arkret_sdk::project_full_id_to_core_id(full_id)?,
+                arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+            );
+            let user_store =
+                crate::secure_key_store::UserLocalStore::new(authority, pending_device_id.clone())?;
+            let stored_device = user_store
+                .load_device_id(secure_store.as_ref())?
+                .ok_or_else(|| anyhow::anyhow!("accepted account device id is unavailable"))?;
+            if stored_device != pending_device_id {
+                anyhow::bail!("accepted account secure scope belongs to another device");
+            }
+            let dpop = super::grant_dpop::load_user_device_key_with_secure_store(
+                &user_store,
+                secure_store.as_ref(),
+            )?
+            .ok_or_else(|| anyhow::anyhow!("accepted account holder key is unavailable"))?;
+            user_store.activate();
+            dpop
+        }
+    };
     let grant = super::load_account_handoff_grant(&handoff)?
         .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
     let snapshot = account_client(&handoff, &dpop, grant)?

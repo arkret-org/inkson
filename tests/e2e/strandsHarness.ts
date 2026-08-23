@@ -1,11 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { mockArkretApi } from "./mockArkretApi";
 
-export const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
-export const DEMO_BOARD_SPACE = "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
+export const DEMO_REALM =
+  "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+export const DEMO_BOARD_SPACE =
+  "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
 const DEFAULT_SERVER_URL = "https://local.host";
 const DEFAULT_SERVER_AUDIENCE = "ak:did_core:web:server.local";
 const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
+const DEFAULT_ACCOUNT_CORE_ID = "ak:did_core:web:alice.example";
 const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
 const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
@@ -28,13 +31,48 @@ async function settleWithin<T>(
   ]);
 }
 
-const defaultLocalConfig = {
-  server_url: DEFAULT_SERVER_URL,
-  principal_servers: [DEFAULT_SERVER_URL],
-  account_did: DEFAULT_ACCOUNT_DID,
-  device_id: DEFAULT_DEVICE_ID,
-  session_credential: DEFAULT_SESSION_CREDENTIAL,
-};
+function coreIdForFullId(fullId: string) {
+  if (fullId.startsWith("did:web:")) {
+    return `ak:did_core:web:${fullId.slice("did:web:".length)}`;
+  }
+  throw new Error(`unsupported E2E account DID method: ${fullId}`);
+}
+
+export function testLocalConfig(
+  overrides: Partial<{
+    serverUrl: string;
+    fullId: string;
+    deviceId: string;
+  }> = {},
+) {
+  const serverUrl = overrides.serverUrl ?? DEFAULT_SERVER_URL;
+  const fullId = overrides.fullId ?? DEFAULT_ACCOUNT_DID;
+  const deviceId = overrides.deviceId ?? DEFAULT_DEVICE_ID;
+  return {
+    principal_servers: [serverUrl],
+    active_account: {
+      profile_id: "ak:profile:e2e-alice",
+      authority: {
+        principal_id:
+          fullId === DEFAULT_ACCOUNT_DID
+            ? DEFAULT_ACCOUNT_CORE_ID
+            : coreIdForFullId(fullId),
+        principal_server_id: DEFAULT_SERVER_AUDIENCE,
+      },
+      resolution: {
+        full_id: fullId,
+        method_history_head: "e2e-method-history-head",
+        version_id: "1",
+        resolution_event_ref: `ak:event:${"A".repeat(44)}`,
+        updated_at: "2026-08-23T00:00:00.000Z",
+      },
+      device_id: deviceId,
+      server_url: serverUrl,
+    },
+  };
+}
+
+const defaultLocalConfig = testLocalConfig();
 
 export function latestTestId(
   page: import("@playwright/test").Page,
@@ -221,26 +259,18 @@ export async function writeLocalConfig(
   page: import("@playwright/test").Page,
   overrides: Partial<{
     server_url: string;
-    account_did: string;
+    full_id: string;
     device_id: string;
-    session_credential: string;
   }>,
 ) {
-  await page.evaluate(
-    ({ defaults, nextConfig }) => {
-      const current = localStorage.getItem("inkson.config.v1");
-      const parsed = current ? JSON.parse(current) : {};
-      localStorage.setItem(
-        "inkson.config.v1",
-        JSON.stringify({
-          ...defaults,
-          ...parsed,
-          ...nextConfig,
-        }),
-      );
-    },
-    { defaults: defaultLocalConfig, nextConfig: overrides },
-  );
+  const nextConfig = testLocalConfig({
+    serverUrl: overrides.server_url,
+    fullId: overrides.full_id,
+    deviceId: overrides.device_id,
+  });
+  await page.evaluate((config) => {
+    localStorage.setItem("inkson.config.v1", JSON.stringify(config));
+  }, nextConfig);
 }
 
 function sessionInjectionRecord(
@@ -258,7 +288,7 @@ function sessionInjectionRecord(
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
     grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7",
     audience: DEFAULT_SERVER_AUDIENCE,
-    principal_id: DEFAULT_ACCOUNT_DID,
+    principal_id: DEFAULT_ACCOUNT_CORE_ID,
     dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,
     event_signing_seed_b64url: DEFAULT_EVENT_SIGNING_SEED_B64URL,
     ...overrides,
@@ -303,16 +333,7 @@ export async function writeSessionGrantInjection(
   await addSessionGrantInjection(page, overrides);
   await page.evaluate(
     ({ record, injectionKey, defaults }) => {
-      const current = localStorage.getItem("inkson.config.v1");
-      const parsed = current ? JSON.parse(current) : {};
-      localStorage.setItem(
-        "inkson.config.v1",
-        JSON.stringify({
-          ...defaults,
-          ...parsed,
-          account_did: defaults.account_did,
-        }),
-      );
+      localStorage.setItem("inkson.config.v1", JSON.stringify(defaults));
       localStorage.setItem(injectionKey, JSON.stringify(record));
     },
     {
@@ -327,27 +348,12 @@ export async function writeLocalConfigAndReload(
   page: import("@playwright/test").Page,
   overrides: Partial<{
     server_url: string;
-    account_did: string;
+    full_id: string;
     device_id: string;
-    session_credential: string;
   }>,
 ) {
-  await page.evaluate(
-    ({ defaults, nextConfig }) => {
-      const current = localStorage.getItem("inkson.config.v1");
-      const parsed = current ? JSON.parse(current) : {};
-      localStorage.setItem(
-        "inkson.config.v1",
-        JSON.stringify({
-          ...defaults,
-          ...parsed,
-          ...nextConfig,
-        }),
-      );
-      window.location.reload();
-    },
-    { defaults: defaultLocalConfig, nextConfig: overrides },
-  );
+  await writeLocalConfig(page, overrides);
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForLoadState("domcontentloaded");
 }
 
@@ -431,7 +437,8 @@ export function registerStrandsBeforeEach() {
     )
       ? "ak:device:01964137-0000-7000-8000-0000000000b2"
       : DEFAULT_DEVICE_ID;
-    const exercisesRecoveryKeySetup = testInfo.title.startsWith("new Recovery Key");
+    const exercisesRecoveryKeySetup =
+      testInfo.title.startsWith("new Recovery Key");
     await mockArkretApi(page, {
       currentDeviceId: initialDeviceId,
       advertiseListHandlesForSubject: !testInfo.title.startsWith(
@@ -539,7 +546,10 @@ export function registerStrandsBeforeEach() {
       },
       {
         ...defaultLocalConfig,
-        device_id: initialDeviceId,
+        active_account: {
+          ...defaultLocalConfig.active_account,
+          device_id: initialDeviceId,
+        },
       },
     );
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
