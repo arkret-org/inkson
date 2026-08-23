@@ -35,10 +35,10 @@
 //! }, &local_state_store).await?;
 //! ```
 
+use arkret_models_integration::{PushRegisterDeviceOutcome, PushUnregisterDeviceOutcome};
 use chime::{
-    ArkretPushClient, ChimePushRegisterDeviceOutcome, ChimePushRegisterDeviceRequest,
-    ChimePushUnregisterDeviceOutcome, GatewayBinding, PushDeviceConfig, PushGatewayType,
-    PushPreferences, PushRegistrationState, build_register_device_request,
+    ArkretPushClient, ChimePushRegisterDeviceRequest, GatewayBinding, PushDeviceConfig,
+    PushGatewayType, PushPreferences, PushRegistrationState, build_register_device_request,
 };
 
 use crate::identity::account_auth::{
@@ -140,7 +140,7 @@ pub struct UnregisterContext {
 #[derive(Clone, Debug)]
 pub struct RegisterOutcome {
     pub state: PushRegistrationState,
-    pub response: ChimePushRegisterDeviceOutcome,
+    pub response: PushRegisterDeviceOutcome,
 }
 
 #[derive(Clone, Debug)]
@@ -191,7 +191,7 @@ pub async fn unregister_via_chime(
     ctx: UnregisterContext,
     persisted_grant: Option<PersistedSessionGrant>,
     registration: Option<chime::PushRegistrationState>,
-) -> Result<ChimePushUnregisterDeviceOutcome, PushRegistrationError> {
+) -> Result<PushUnregisterDeviceOutcome, PushRegistrationError> {
     let mut grant_ctx = RegisterContext {
         principal_server_url: ctx.principal_server_url.clone(),
         floria_gateway_url: String::new(),
@@ -520,9 +520,10 @@ mod tests {
 
     #[test]
     fn resolves_persisted_grant_into_chime_headers() {
+        let device_id = "ak:device:01904100-0000-7000-8000-000000000005";
         let mut store = isolated_store("grant-headers");
-        store.set_session_grant(Some(persisted_grant("dev_inkson")));
-        let mut context = ctx("dev_inkson");
+        store.set_session_grant(Some(persisted_grant(device_id)));
+        let mut context = ctx(device_id);
         context.principal_id = None;
 
         let headers = resolve_chime_session_grant(&mut context, store.session_grant().as_ref())
@@ -533,7 +534,7 @@ mod tests {
         assert!(headers.proof_jwt.as_deref().is_some_and(|v| !v.is_empty()));
         assert_eq!(
             context.principal_id.as_deref(),
-            Some("did:web:alice.example")
+            Some("ak:did_core:web:alice.example")
         );
     }
 

@@ -11,9 +11,8 @@
 //!   userVisibleOnly: true, applicationServerKey })` on wasm32 targets. The VAPID
 //!   `applicationServerKey` is fetched from soland's push-bridge describe endpoint
 //!   (ak.push.bridge.v1), so deploys can rotate without rebuilding the client.
-//! * `FcmPushTokenProvider` / `ApnsPushTokenProvider` — feature-gated stubs for native targets. The
-//!   trait surface stays stable so a future `chime-fcm` / `chime-apns` adapter can drop in without
-//!   churn.
+//! * `FcmPushTokenProvider` / `ApnsPushTokenProvider` — read tokens bridged by the native host or
+//!   supplied through the documented local environment variables.
 //!
 //! `set_push_token_provider` installs one process-wide. Any production
 //! push token MUST clear `ensure_production_register_request` — the

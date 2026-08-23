@@ -39,7 +39,7 @@ fn builds_chime_register_request() {
 #[test]
 fn builds_persistable_registration_state() {
     let request = build_register_request("dev_inkson").unwrap();
-    let mut response = ChimePushRegisterDeviceOutcome::default();
+    let mut response = PushRegisterDeviceOutcome::default();
     response.ok = true;
     response.registration_id = Some(arkret_sdk::OpaqueLocalId::new("push:test").unwrap());
     let state = registration_state_from_response(&request, &response);
@@ -53,7 +53,7 @@ fn builds_persistable_registration_state() {
 #[test]
 fn builds_unregister_request_from_existing_state() {
     let request = build_register_request("dev_inkson").unwrap();
-    let mut response = ChimePushRegisterDeviceOutcome::default();
+    let mut response = PushRegisterDeviceOutcome::default();
     response.ok = true;
     response.registration_id = Some(arkret_sdk::OpaqueLocalId::new("push:test").unwrap());
     let state = registration_state_from_response(&request, &response);
@@ -151,7 +151,7 @@ fn blind_wakeup_payload_lint_rejects_stable_identifiers() {
 #[test]
 fn push_status_label_treats_state_without_registration_id_as_registered() {
     let request = build_register_request("dev_inkson").unwrap();
-    let mut response = ChimePushRegisterDeviceOutcome::default();
+    let mut response = PushRegisterDeviceOutcome::default();
     response.ok = true;
     let state = registration_state_from_response(&request, &response);
 
@@ -242,15 +242,6 @@ fn web_push_provider_subscribe_native_returns_unsupported() {
         .subscribe(None)
         .expect_err("web provider must error on native");
     assert!(err.to_string().contains("wasm32"));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn fcm_apns_native_subscribe_returns_none_until_wired() {
-    let fcm = FcmPushTokenProvider.subscribe(None).unwrap();
-    let apns = ApnsPushTokenProvider.subscribe(None).unwrap();
-    assert!(fcm.is_none());
-    assert!(apns.is_none());
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -13,9 +13,11 @@ mod token_source;
 #[cfg(test)]
 use std::sync::Arc;
 
+#[cfg(test)]
+use arkret_models_integration::PushRegisterDeviceOutcome;
 pub use binding::*;
 #[cfg(test)]
-use chime::{ChimePushRegisterDeviceOutcome, PushBridgeDescribeOutcome};
+use chime::PushBridgeDescribeOutcome;
 pub use gateway::*;
 pub use request::*;
 pub use token_provider::*;
