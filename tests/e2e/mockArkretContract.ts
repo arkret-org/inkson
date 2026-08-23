@@ -126,7 +126,8 @@ export function mockArkretContract(req) {
 
   if (method === "POST" && path === "/_arkret/find/directory/search-realms") {
     return json({
-      realms: [realmPreview()],
+      // No signed discovery Event has been ingested by this mock Directory.
+      realms: [],
       has_more: false,
     });
   }
@@ -243,24 +244,4 @@ function firstEventId(events) {
 
 function json(body, status = 200) {
   return { status, body };
-}
-
-// Mirrors the shape soland's `/_arkret/find/directory/search-realms` actually emits
-// (see `soland/src/routing/spaces/directory.rs::search_realms`). The fields
-// here MUST stay aligned with that endpoint — the cotest parity test runs
-// this response against a live soland process.
-function realmPreview() {
-  return {
-    realm_id: DEMO_REALM,
-    title: "Arkret Demo Realm",
-    summary: "Shared demo Realm served by mocked server",
-    discoverability: "public",
-    join_rule: "public",
-    member_count_bucket: "1-10",
-    as_of: "2026-06-13T00:00:00.000Z",
-    // No `source_refs`: a mocked entry has no Event provenance, and
-    // directory-operations.schema.json forbids synthesizing an id for an Event
-    // the implementation never authored.
-    policy_revision: "mock-policy-rev",
-  };
 }

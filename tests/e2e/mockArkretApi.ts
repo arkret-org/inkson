@@ -1525,7 +1525,7 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname === "/_arkret/self/events/seals" &&
+      url.pathname === "/_arkret/self/seals" &&
       route.request().method() === "POST"
     ) {
       const seal = (await route.request().postDataJSON()) as Record<
@@ -2602,7 +2602,10 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        realms: [realmPreview()],
+        // Realm creation does not opt the resource into a Directory. This mock
+        // has no signed discovery Event plus announce/pull ingest setup, so the
+        // spec-correct directory result is empty.
+        realms: [],
         next_cursor: null,
         has_more: false,
       });
