@@ -87,10 +87,8 @@ pub fn sign_terminal_receipt_continue(
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<SecurityTransactionContinueRequest> {
     resource.validate_structural()?;
-    if resource.state != SecurityTransactionState::AwaitingDeviceAttestation
-        || resource.next_required_step()? != Some(SecurityTransactionStep::IssueTerminalReceipt)
-    {
-        anyhow::bail!("terminal receipt requires authoritative awaiting-device-attestation state");
+    if !resource.requires_device_attestation()? {
+        anyhow::bail!("terminal receipt requires canonical device-attestation readiness");
     }
     let SecurityTransactionPreparedPlan::Recovery(RecoveryPreparedPlan::PcrPolicy(plan)) =
         &resource.prepared_plan
