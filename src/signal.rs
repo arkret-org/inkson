@@ -1071,7 +1071,7 @@ mod tests {
 
     /// Restates the deleted `presence_proof_round_trips_through_ephemeral_sdk_verifier`
     /// test. The plaintext ephemeral binding context is gone; the v1 transcript
-    /// is `ak.signal-proof-v1` over `envelope_digest` plus the sender binding,
+    /// is `ak.signal_proof.v1` over `envelope_digest` plus the sender binding,
     /// with `proof.created_at` byte-equal to the header `sent_at`.
     ///
     /// The ciphertext here is opaque filler: this asserts the proof transcript

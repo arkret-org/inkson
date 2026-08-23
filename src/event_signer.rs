@@ -1411,7 +1411,7 @@ mod tests {
                 .as_str()
         );
         // The binding transcript is the SDK's authoritative `canonical_binding_bytes`
-        // (folds in the `context = "ak.event-proof-v1"` domain tag), matching the
+        // (folds in the `context = "ak.event_proof.v1"` domain tag), matching the
         // production signer.
         let proof_binding_bytes = proof.canonical_binding_bytes(&event.actor_id).unwrap();
 

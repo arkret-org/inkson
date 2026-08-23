@@ -51,7 +51,7 @@ mod device_identity_proof_tests {
             arkret_sdk::DidUrl::new(signer.verification_method().to_owned()).unwrap();
         // Build the proof binding via the SDK's authoritative
         // `ProducerEventProof::canonical_binding_bytes` (which folds in the
-        // `context = "ak.event-proof-v1"` domain tag) — the SAME transcript both
+        // `context = "ak.event_proof.v1"` domain tag) — the SAME transcript both
         // the production signer and the verifier use, so this test can never drift
         // from the on-wire binding again.
         let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00.000Z")

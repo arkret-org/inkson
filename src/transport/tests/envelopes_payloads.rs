@@ -20,7 +20,7 @@ fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
 // `last_active_at` bucketing, presence state + status_message rejection, and
 // the ephemeral proof round-trip) tested a wire object v1 deleted. Their
 // substance moved to `crate::signal`: those bodies are now AEAD plaintext, and
-// the proof round-trip is asserted against the `ak.signal-proof-v1` transcript
+// the proof round-trip is asserted against the `ak.signal_proof.v1` transcript
 // and the AAD binding instead of the deleted ephemeral binding context.
 
 #[test]
