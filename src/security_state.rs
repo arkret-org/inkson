@@ -245,26 +245,18 @@ pub fn realm_authority_root_value_from_events(
         };
         match kind {
             arkret_wire::event_kind_str::REALM_OWNER_TRANSFER => {
-                if let (Some(controller), Some(epoch)) = (
-                    event
-                        .pointer("/payload/patch/controller_id")
-                        .and_then(Value::as_str)
-                        .and_then(|next| arkret_sdk::DidCoreId::new(next.to_owned()).ok()),
-                    event
-                        .pointer("/payload/patch/controller_epoch")
-                        .and_then(Value::as_u64),
-                ) {
+                if let Some(controller) = event
+                    .pointer("/payload/patch/controller_id")
+                    .and_then(Value::as_str)
+                    .and_then(|next| arkret_sdk::DidCoreId::new(next.to_owned()).ok())
+                {
+                    let epoch = current.controller_epoch.checked_add(1)?;
                     current.controller_id = controller;
                     current.controller_epoch = epoch;
                 }
             }
             arkret_wire::event_kind_str::REALM_AUTHORITY_RESET => {
-                if let Some(generation) = event
-                    .pointer("/payload/patch/authority_generation")
-                    .and_then(Value::as_u64)
-                {
-                    current.authority_generation = generation;
-                }
+                current.authority_generation = current.authority_generation.checked_add(1)?;
             }
             arkret_wire::event_kind_str::REALM_AUTHORITY_BASIS_UPDATE => {
                 if let Some(digest) = event
@@ -436,15 +428,16 @@ mod tests {
                 "actor_id": "ak:did_core:webvh:z6mkcreator",
                 "payload": {
                     "patch": {
-                        "controller_id": "ak:did_core:web:successor.example",
-                        "controller_epoch": 1
+                        "controller_id": "ak:did_core:web:successor.example"
                     }
                 }
             },
             {
                 "kind": "ak.realm.authority.reset",
                 "actor_id": "ak:did_core:web:successor.example",
-                "payload": { "patch": { "authority_generation": 1 } }
+                "payload": {
+                    "destructive_confirmation": "ak.realm.authority.reset"
+                }
             },
             {
                 "kind": "ak.realm.authority.basis_update",
@@ -485,8 +478,7 @@ mod tests {
                 "kind": "ak.realm.owner.transfer",
                 "payload": {
                     "patch": {
-                        "controller_id": "ak:did_core:web:successor.example",
-                        "controller_epoch": 1
+                        "controller_id": "ak:did_core:web:successor.example"
                     }
                 }
             }

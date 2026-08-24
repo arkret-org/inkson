@@ -306,7 +306,6 @@ fn ContactRow(
                                     && let Err(error) = arkret_sdk::validate_single_line_display_text(
                                         &petname,
                                         128,
-                                        512,
                                     )
                                 {
                                     row_status.set(format!("{}: {error}", tr("contacts.petname.invalid")));

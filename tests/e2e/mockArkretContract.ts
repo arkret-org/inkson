@@ -47,14 +47,11 @@ export function mockArkretContract(req) {
     // soland's EventsSubmitOutcome skips empty/null fields (duplicate, rejected,
     // actor_frontier, realm_frontier) via serde skip_serializing_if, so a clean
     // accept serializes to exactly {status, accepted, cursor}. Match that shape.
-    // `delivery_state` and `pending_delivery_count` are required members of
-    // EventsSubmitOutcome (service-operation-dtos.schema.json). A single-server
-    // mock has no remote fanout target, so the aggregate is always complete
-    // with zero pending targets.
+    // EventsSubmitOutcome retains only the non-derivable pending count. A
+    // single-server mock has no remote fanout target, so it is always zero.
     return json({
       status: "accepted",
       accepted: [acceptedId],
-      delivery_state: "complete",
       pending_delivery_count: 0,
       ingress_receipts: [],
       control_proposal_acks: [],

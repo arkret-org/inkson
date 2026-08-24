@@ -477,18 +477,6 @@ export async function mockArkretApi(
               verification_method: `${accountPrincipalId}#${currentDeviceId}`,
               signature_algorithm: "Ed25519",
               signature: "fixture",
-              signed_fields: [
-                "schema",
-                "policy_id",
-                "principal_id",
-                "version",
-                "supersedes",
-                "trust_domain",
-                "allowed_proof_kinds",
-                "publication_authorization_rules",
-                "recovery_key_agreements",
-                "issued_at",
-              ],
             },
           },
         }

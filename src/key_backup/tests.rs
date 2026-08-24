@@ -195,9 +195,9 @@ fn key_backup_auth_data_sign_verify_service_attested_round_trip() {
 }
 
 #[test]
-fn recovery_policy_ref_is_covered_by_signed_fields_when_present() {
-    // 6.2 — when recovery_policy_ref is on the envelope, the signer MUST
-    // cover it (so the policy binding can't be stripped/tampered).
+fn recovery_policy_ref_is_covered_by_the_closed_transcript_when_present() {
+    // 6.2 — when recovery_policy_ref is on the envelope, the closed signing
+    // transcript covers it without a producer-authored field manifest.
     let root = test_root();
     let mut body =
         build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"payload").unwrap();
@@ -210,13 +210,15 @@ fn recovery_policy_ref_is_covered_by_signed_fields_when_present() {
     });
     let signing_key = SigningKey::from_bytes(&[43u8; 32]);
     let body = sign_test_backup(body, &signing_key, "did:web:a#device");
-    let signed = &body.auth_data.as_ref().unwrap().signed_fields;
-    assert!(
-        signed.iter().any(|field| field == "recovery_policy_ref"),
-        "recovery_policy_ref must be signed: {signed:?}"
-    );
     verify_key_backup_auth_data(&body, &signing_key.verifying_key())
         .expect("signed backup with recovery_policy_ref must verify");
+    let mut tampered = body;
+    tampered
+        .recovery_policy_ref
+        .as_mut()
+        .unwrap()
+        .policy_version += 1;
+    assert!(verify_key_backup_auth_data(&tampered, &signing_key.verifying_key()).is_err());
 }
 
 #[test]
@@ -242,8 +244,8 @@ fn key_backup_auth_data_rejects_tamper_and_wrong_key() {
     let signing_key = SigningKey::from_bytes(&[9u8; 32]);
     let body = sign_test_backup(body, &signing_key, "did:web:a#device");
 
-    // Tamper a signed field (ciphertext is covered via ciphertext_digest, but
-    // mutate backup_kind which is in signed_fields) → verify fails.
+    // Tamper a transcript-covered field (ciphertext is covered via
+    // ciphertext_digest) → verification fails.
     let mut tampered = body.clone();
     tampered.backup_kind = BackupKind::MlsHistory;
     assert!(verify_key_backup_auth_data(&tampered, &signing_key.verifying_key()).is_err());

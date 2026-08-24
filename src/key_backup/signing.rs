@@ -48,8 +48,8 @@ impl std::error::Error for KeyBackupUnlockBackoff {}
 
 /// Phase 2 verify: check a key-backup envelope's `auth_data.signature` against
 /// `verifying_key`, recomputing `canonical_json(envelope without
-/// auth_data.signature)`. SDK validation first enforces the exact canonical
-/// `signed_fields` set and all envelope cross-field invariants.
+/// auth_data.signature)`. SDK validation first enforces the closed transcript
+/// shape and all envelope cross-field invariants.
 /// Returns `Err` (caller maps to `untrusted_backup_signature`) on any mismatch.
 pub fn verify_key_backup_auth_data(
     backup: &arkret_sdk::KeyBackup,

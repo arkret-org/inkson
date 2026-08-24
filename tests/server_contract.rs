@@ -322,7 +322,6 @@ fn inkson_accepts_server_contract_payloads() {
 
     let submit: inkson::models::SubmitEventResult = serde_json::from_value(json!({
         "status": "accepted",
-        "delivery_state": "complete",
         "pending_delivery_count": 0,
         "accepted": ["ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"],
         "duplicate": [],

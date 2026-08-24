@@ -1877,8 +1877,7 @@ mod notary_derivation_tests {
             "realm_id": realm,
             "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
             "patch": {
-                "controller_id": "ak:did_core:web:bob.example",
-                "controller_epoch": 1
+                "controller_id": "ak:did_core:web:bob.example"
             },
             "successor_acceptance": "successor-detached-proof"
         }))

@@ -478,7 +478,6 @@ where
                                     source_record_digest: source_record_digest.clone(),
                                 },
                                 first_observed_at: now,
-                                expires_at: now + chrono::Duration::days(30),
                             };
                         candidates.push((material_key, secret, attribution, suite.cipher_suite));
                         offset = next;

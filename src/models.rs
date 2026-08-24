@@ -497,7 +497,6 @@ mod tests {
         // decode and broke every event submit ("error decoding response body").
         let value = serde_json::json!({
             "status": "accepted",
-            "delivery_state": "complete",
             "pending_delivery_count": 0,
             "accepted": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
             "duplicate": [],
@@ -562,7 +561,6 @@ mod tests {
     fn submit_event_outcome_uses_duplicate_id_when_nothing_accepted() {
         let value = serde_json::json!({
             "status": "duplicate",
-            "delivery_state": "complete",
             "pending_delivery_count": 0,
             "accepted": [],
             "duplicate": ["ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"],
@@ -966,8 +964,8 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
 
 // YOU-05-004: the hand-rolled `IceConfigOutcome` / `IceServer` /
 // `IceConfigRequestBody` mirrors drifted from the SDK wire types (missing
-// `expires_at` / `turn_required`, `ttl_seconds: u64` vs the authoritative
-// `u32`) and bypassed the TURN credential privacy guard. Re-export the
+// `turn_required`, `ttl_seconds: u64` vs the authoritative `u32`) and bypassed
+// the TURN credential privacy guard. Re-export the
 // SDK's authoritative types instead. When the WebRTC surface is wired up,
 // each `ice_servers` entry MUST be parsed through `arkret_sdk::IceServer`
 // and pass `IceServer::validate_credential_privacy()` (rejects TURN

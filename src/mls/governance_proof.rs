@@ -355,17 +355,13 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
 pub(crate) fn verify_native_agent_history_key<S: GovernanceProofStateStore>(
     state_store: &S,
     event: &arkret_sdk::Event,
-    digest_suite: arkret_sdk::DigestSuite,
+    _digest_suite: arkret_sdk::DigestSuite,
     evidence: &arkret_sdk::AuthenticatedSignerResolutionEvidence,
     dependencies: &[arkret_sdk::GovernanceDependency],
 ) -> Result<arkret_sdk::signatures::PublicKeyMaterial, arkret_sdk::WireError> {
-    arkret_sdk::verify_native_agent_historical_event_key(
-        event,
-        digest_suite,
-        evidence,
-        dependencies,
-        |request| verify_native_agent_external_trust(state_store, request),
-    )
+    arkret_sdk::verify_native_agent_historical_event_key(event, evidence, dependencies, |request| {
+        verify_native_agent_external_trust(state_store, request)
+    })
 }
 
 pub(crate) fn verify_native_agent_external_trust<S: GovernanceProofStateStore>(

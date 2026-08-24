@@ -39,7 +39,6 @@ fn candidate(
             .unwrap(),
         },
         first_observed_at: observed_at,
-        expires_at: observed_at + chrono::Duration::days(30),
     };
     (key, secret, attribution)
 }
@@ -85,7 +84,6 @@ async fn event_candidate_binding_outcome_is_immutable() {
         effective_scope: material_key.effective_scope,
         mls_group_id: material_key.mls_group_id,
         epoch: material_key.epoch,
-        event_digest: event_id.identity_key().event_digest(),
         event_id,
         verified_sender_domain: "ak:device:verified-sender".to_owned(),
     };
@@ -94,7 +92,6 @@ async fn event_candidate_binding_outcome_is_immutable() {
         candidate_digest: material_key.candidate_digest,
         outcome: arkret_sdk::EventCandidateBindingOutcome::Failure,
         first_observed_at: observed_at,
-        expires_at: observed_at + chrono::Duration::days(30),
     };
     store
         .record_history_candidate_binding(binding.clone(), observed_at)

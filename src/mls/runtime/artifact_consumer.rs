@@ -400,7 +400,6 @@ pub(crate) fn converge_external_history_candidate_decryptions(
                         },
                         mls_group_id: payload.group_id.clone(),
                         epoch: payload.epoch,
-                        event_digest: event_id.identity_key().event_digest(),
                         event_id,
                         verified_sender_domain: String::from_utf8(sender_domain)
                             .map_err(|_| "verified sender domain is not UTF-8".to_owned())?,

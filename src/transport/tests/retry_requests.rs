@@ -6,7 +6,6 @@ use crate::ephemeral::ensure_events_submit_accepted;
 fn events_batch_response_rejects_partial_acceptance() {
     let accepted: arkret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "accepted",
-        "delivery_state": "complete",
         "pending_delivery_count": 0,
         "rejected": []
     }))
@@ -18,7 +17,6 @@ fn events_batch_response_rejects_partial_acceptance() {
     // would pass through that fallback instead of the registry.
     let partial: arkret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "partial",
-        "delivery_state": "complete",
         "pending_delivery_count": 0,
         "rejected": [
             {

@@ -2444,7 +2444,6 @@ fn build_owner_transfer_payload(
         expected_state_digest: expected_authority_root_digest(root)?,
         patch: arkret_sdk::RealmOwnerTransferPatch {
             controller_id: crate::mls_api_helpers::principal_core_id(successor)?,
-            controller_epoch: root.controller_epoch.saturating_add(1),
         },
         successor_acceptance: arkret_sdk::SignatureMaterial::NonEmptyString(
             arkret_sdk::NonEmptyString::new(successor_acceptance.trim().to_owned())
@@ -2465,9 +2464,6 @@ fn build_authority_reset_payload(
     Ok(arkret_sdk::RealmAuthorityResetPayload {
         realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
         expected_state_digest: expected_authority_root_digest(root)?,
-        patch: arkret_sdk::RealmAuthorityResetPatch {
-            authority_generation: root.authority_generation.saturating_add(1),
-        },
         destructive_confirmation: destructive_confirmation.trim().to_owned(),
     })
 }
@@ -2537,11 +2533,10 @@ mod governance_tests {
     const REALM: &str = "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM";
 
     #[test]
-    fn owner_transfer_payload_pins_digest_and_increments_epoch() {
+    fn owner_transfer_payload_pins_digest_and_new_controller() {
         let payload =
             build_owner_transfer_payload(REALM, &root(), "did:web:bob.example", "detached-proof")
                 .unwrap();
-        assert_eq!(payload.patch.controller_epoch, 4);
         assert_eq!(
             payload.patch.controller_id.as_str(),
             "ak:did_core:web:bob.example"
@@ -2576,7 +2571,6 @@ mod governance_tests {
             arkret_wire::event_kind_str::REALM_AUTHORITY_RESET,
         )
         .unwrap();
-        assert_eq!(payload.patch.authority_generation, 2);
         assert_eq!(payload.destructive_confirmation, "ak.realm.authority.reset");
         // A wrong token still builds a payload here, but the SDK intent
         // builder fails closed — the UI's disabled-until-match confirm is a

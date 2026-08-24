@@ -820,7 +820,7 @@ pub(crate) fn decrypt_external_history_candidates_for_event(
         || event_binding_key.mls_group_id != payload.group_id
         || event_binding_key.epoch != payload.epoch
         || event_binding_key.event_id.identity_key().event_digest()
-            != event_binding_key.event_digest
+            != event_binding_key.event_digest()
         || event_binding_key.verified_sender_domain.is_empty()
     {
         return Err(MlsRuntimeError::Decrypt(
