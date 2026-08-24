@@ -829,13 +829,37 @@ fn raw_operation_invite_ref(payload: &Value) -> Option<String> {
         .or_else(|| trimmed_string(payload.get("id")))
 }
 
-fn accepted_invite_destination_service_id(
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AcceptedInviteClaimRoute {
+    destination_service_id: String,
+    target_device_id: Option<String>,
+}
+
+fn accepted_invite_claim_route(
     store: &LocalStateStore,
     realm_id: &str,
     invitee_did: &str,
-) -> Option<String> {
-    store
-        .load()
+) -> Option<AcceptedInviteClaimRoute> {
+    let state = store.load();
+    let accepted = state
+        .raw_operations
+        .iter()
+        .rev()
+        .filter(|record| raw_operation_realm_matches_exact(record, realm_id))
+        .find_map(|record| {
+            let payload = &record.payload;
+            if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_ACCEPT)
+                || !raw_operation_is_accepted_fact(payload)
+                || raw_operation_path_string(payload, &["actor_id"]).as_deref() != Some(invitee_did)
+            {
+                return None;
+            }
+            Some((
+                raw_operation_invite_ref(payload)?,
+                raw_operation_path_string(payload, &["signing_device_id"]),
+            ))
+        })?;
+    let destination_service_id = state
         .raw_operations
         .iter()
         .rev()
@@ -845,6 +869,7 @@ fn accepted_invite_destination_service_id(
             if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_CREATE)
                 || !raw_operation_is_accepted_fact(payload)
                 || raw_invite_create_invitee(payload).as_deref() != Some(invitee_did)
+                || raw_operation_invite_ref(payload).as_deref() != Some(accepted.0.as_str())
             {
                 return None;
             }
@@ -852,7 +877,31 @@ fn accepted_invite_destination_service_id(
             arkret_sdk::DidCoreId::new(service_id.clone())
                 .ok()
                 .map(|_| service_id)
-        })
+        })?;
+    let target_device_id = accepted
+        .1
+        .map(arkret_sdk::DeviceId::new)
+        .transpose()
+        .ok()?
+        .map(|device| device.to_string());
+    Some(AcceptedInviteClaimRoute {
+        destination_service_id,
+        target_device_id,
+    })
+}
+
+fn claim_target_device_id(
+    route: &AcceptedInviteClaimRoute,
+    minimal_metadata_pairwise: bool,
+) -> anyhow::Result<Option<&str>> {
+    if minimal_metadata_pairwise {
+        return Ok(None);
+    }
+    route.target_device_id.as_deref().map(Some).ok_or_else(|| {
+        anyhow::anyhow!(
+            "accepted human invite has no exact target device from its accepted Event proof"
+        )
+    })
 }
 
 fn raw_member_actor_id(payload: &Value) -> Option<String> {
@@ -1573,7 +1622,6 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     actor_id: String,
     device_id: String,
     invitee_did: String,
-    destination_service_id: Option<String>,
 ) -> anyhow::Result<Option<u64>> {
     let account = crate::app::SessionContext::get()
         .active_account()
@@ -1590,6 +1638,36 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     if !needs_mls_admission {
         return Ok(None);
     }
+    let pairwise_requester = {
+        let store = state_store.read();
+        store
+            .realm_projection_is_minimal_metadata(&realm_id)
+            .then(|| {
+                let realm = arkret_sdk::RealmId::new(realm_id.clone())
+                    .map_err(|error| format!("invalid minimal-metadata Realm id: {error}"))?;
+                crate::mls::pairwise_identity::derive_pairwise_signing_material(
+                    &account.authority,
+                    &account.device_id,
+                    &realm,
+                )
+            })
+            .transpose()
+            .map_err(anyhow::Error::msg)?
+    };
+    let mls_actor_id = pairwise_requester
+        .as_ref()
+        .map(|requester| requester.actor_id.to_string())
+        .unwrap_or_else(|| actor_id.clone());
+    let claim_route = {
+        let store = state_store.read();
+        accepted_invite_claim_route(&store, &realm_id, &invitee_did)
+    }
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "accepted invite has no exact destination service and accepting-device route"
+        )
+    })?;
+    let target_device_id = claim_target_device_id(&claim_route, pairwise_requester.is_some())?;
     let group_id = {
         let store = state_store.read();
         store
@@ -1607,7 +1685,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         state_store,
         secure_store.as_ref(),
         &realm_id,
-        &actor_id,
+        &mls_actor_id,
         &device_id,
     )
     .await?;
@@ -1618,26 +1696,41 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         api,
         state_store,
         &realm_id,
-        &actor_id,
+        &mls_actor_id,
         &device_id,
         &[],
     )
     .await?;
     let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
-    let claim_outcome = mls_clients
-        .mls()
-        .claim_key_package(
-            &invitee_did,
-            &realm_id,
-            &actor_id,
-            &device_id,
-            destination_service_id.as_deref(),
-            &claim_request_id,
-            None,
-            &group_id,
-        )
-        .await?;
+    let claim_outcome = if let Some(requester) = pairwise_requester.as_ref() {
+        mls_clients
+            .mls()
+            .claim_pairwise_key_package(
+                &invitee_did,
+                &realm_id,
+                requester,
+                Some(&claim_route.destination_service_id),
+                &claim_request_id,
+                None,
+                &group_id,
+            )
+            .await?
+    } else {
+        mls_clients
+            .mls()
+            .claim_key_package(
+                &invitee_did,
+                &realm_id,
+                &actor_id,
+                &device_id,
+                Some(&claim_route.destination_service_id),
+                &claim_request_id,
+                target_device_id,
+                &group_id,
+            )
+            .await?
+    };
     claim_outcome
         .validate_shape()
         .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
@@ -1653,7 +1746,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         api,
         state_store,
         &realm_id,
-        &actor_id,
+        &mls_actor_id,
         &device_id,
         &[&claim],
     )
@@ -1670,17 +1763,22 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         state_store,
         secure_store.as_ref(),
         &realm_id,
-        &actor_id,
+        &mls_actor_id,
         &device_id,
     )
     .await?;
-    let requester_device_authorize_event_id =
-        crate::mls::admission::current_requester_device_authorize_event_id(
-            &api.sdk_http_client()?,
-            &device_id,
+    let requester_device_authorize_event_id = if pairwise_requester.is_none() {
+        Some(
+            crate::mls::admission::current_requester_device_authorize_event_id(
+                &api.sdk_http_client()?,
+                &device_id,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?,
         )
-        .await
-        .map_err(anyhow::Error::msg)?;
+    } else {
+        None
+    };
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claim(
@@ -1688,9 +1786,9 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             secure_store.as_ref(),
             &realm_id,
             &account.authority,
-            &actor_id,
+            &mls_actor_id,
             &account.device_id,
-            &requester_device_authorize_event_id,
+            requester_device_authorize_event_id.as_ref(),
             &claim,
             &claim_request_id,
             &claim_receipt,
@@ -1710,7 +1808,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             &admission.commit,
             vec![admission.welcome],
             realm_id.clone(),
-            actor_id.clone(),
+            mls_actor_id,
             device_id.clone(),
             admission.snapshot,
             post_accept_store,
@@ -2016,10 +2114,6 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     );
     let mut outcome = MlsAdmissionReconcileOutcome::default();
     for invitee_did in pending {
-        let destination_service_id = {
-            let store = state_store.read();
-            accepted_invite_destination_service_id(&store, &realm_id, &invitee_did)
-        };
         match submit_mls_admission_for_invitee(
             api,
             state_store,
@@ -2027,7 +2121,6 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             actor_id.clone(),
             device_id.clone(),
             invitee_did.clone(),
-            destination_service_id,
         )
         .await
         {
@@ -2119,6 +2212,26 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     if !needs_mls_admission {
         return Ok(0);
     }
+    let pairwise_requester = {
+        let store = state_store.read();
+        store
+            .realm_projection_is_minimal_metadata(&realm_id)
+            .then(|| {
+                let realm = arkret_sdk::RealmId::new(realm_id.clone())
+                    .map_err(|error| format!("invalid minimal-metadata Realm id: {error}"))?;
+                crate::mls::pairwise_identity::derive_pairwise_signing_material(
+                    &account.authority,
+                    &account.device_id,
+                    &realm,
+                )
+            })
+            .transpose()
+            .map_err(anyhow::Error::msg)?
+    };
+    let mls_actor_id = pairwise_requester
+        .as_ref()
+        .map(|requester| requester.actor_id.to_string())
+        .unwrap_or_else(|| actor_id.clone());
     let group_id = {
         let store = state_store.read();
         store
@@ -2136,7 +2249,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         state_store,
         secure_store.as_ref(),
         &realm_id,
-        &actor_id,
+        &mls_actor_id,
         &device_id,
     )
     .await?;
@@ -2148,7 +2261,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         api,
         state_store,
         &realm_id,
-        &actor_id,
+        &mls_actor_id,
         &device_id,
         &[],
     )
@@ -2162,19 +2275,44 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     for invitee_did in invitees {
         let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
-        let claim_outcome = mls_clients
-            .mls()
-            .claim_key_package(
-                &invitee_did,
-                &realm_id,
-                &actor_id,
-                &device_id,
-                None,
-                &claim_request_id,
-                None,
-                &group_id,
+        let claim_route = {
+            let store = state_store.read();
+            accepted_invite_claim_route(&store, &realm_id, &invitee_did)
+        }
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "accepted invite has no exact destination service and accepting-device route"
             )
-            .await?;
+        })?;
+        let target_device_id = claim_target_device_id(&claim_route, pairwise_requester.is_some())?;
+        let claim_outcome = if let Some(requester) = pairwise_requester.as_ref() {
+            mls_clients
+                .mls()
+                .claim_pairwise_key_package(
+                    &invitee_did,
+                    &realm_id,
+                    requester,
+                    Some(&claim_route.destination_service_id),
+                    &claim_request_id,
+                    None,
+                    &group_id,
+                )
+                .await?
+        } else {
+            mls_clients
+                .mls()
+                .claim_key_package(
+                    &invitee_did,
+                    &realm_id,
+                    &actor_id,
+                    &device_id,
+                    Some(&claim_route.destination_service_id),
+                    &claim_request_id,
+                    target_device_id,
+                    &group_id,
+                )
+                .await?
+        };
         claim_outcome
             .validate_shape()
             .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
@@ -2191,18 +2329,23 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         api,
         state_store,
         &realm_id,
-        &actor_id,
+        &mls_actor_id,
         &device_id,
         &added_claims,
     )
     .await?;
-    let requester_device_authorize_event_id =
-        crate::mls::admission::current_requester_device_authorize_event_id(
-            &api.sdk_http_client()?,
-            &device_id,
+    let requester_device_authorize_event_id = if pairwise_requester.is_none() {
+        Some(
+            crate::mls::admission::current_requester_device_authorize_event_id(
+                &api.sdk_http_client()?,
+                &device_id,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?,
         )
-        .await
-        .map_err(anyhow::Error::msg)?;
+    } else {
+        None
+    };
     let admission = {
         let store = state_store.read();
         crate::mls::admission::build_realm_mls_admission_events_from_claims(
@@ -2210,9 +2353,9 @@ pub(crate) async fn submit_mls_admission_for_invitees(
             secure_store.as_ref(),
             &realm_id,
             &account.authority,
-            &actor_id,
+            &mls_actor_id,
             &account.device_id,
-            &requester_device_authorize_event_id,
+            requester_device_authorize_event_id.as_ref(),
             &claims,
         )
         .map_err(|err| anyhow::anyhow!(err))?
@@ -2223,7 +2366,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
             &admission.commit,
             admission.welcomes,
             realm_id,
-            actor_id,
+            mls_actor_id,
             device_id,
             admission.snapshot,
             post_accept_store,
@@ -3024,17 +3167,15 @@ pub fn RealmMembersPanel(
                                                 variant: ButtonVariant::Primary,
                                                 "data-testid": "realm-invite-send",
                                                 disabled: selected_contacts.read().is_empty(),
-                                                onclick: {
-                                                    let base = base_url.clone();
-                                                    let actor = principal_id.clone();
-                                                    let device = device_id.clone();
-                                                    let realm = selected_realm_id.clone();
-                                                    let state_store = state_store;
-                                                    move |_| {
-                                                        let base = base.clone();
-                                                        let actor = actor.clone();
-                                                        let device = device.clone();
-                                                        let realm = realm.clone();
+                                                    onclick: {
+                                                        let base = base_url.clone();
+                                                        let actor = principal_id.clone();
+                                                        let realm = selected_realm_id.clone();
+                                                        let state_store = state_store;
+                                                        move |_| {
+                                                            let base = base.clone();
+                                                            let actor = actor.clone();
+                                                            let realm = realm.clone();
                                                         let mut state_store = state_store;
                                                         let api_token = token();
                                                         // Resolve the destination pairs up front so the
@@ -3073,8 +3214,6 @@ pub fn RealmMembersPanel(
                                                             };
                                                             let mut ok = 0_usize;
                                                             let mut last_err = String::new();
-                                                            let mut last_mls_err = String::new();
-                                                            let mut mls_ok = 0_usize;
                                                             let mut ok_invites =
                                                                 Vec::<(String, String, String, Option<String>)>::new();
                                                             for (did, recipient_service_id) in targets {
@@ -3089,21 +3228,6 @@ pub fn RealmMembersPanel(
                                                                 {
                                                                     Ok((event_id, invite_id)) => {
                                                                         ok += 1;
-                                                                        match submit_mls_admission_for_invitee(
-                                                                            &api,
-                                                                            state_store,
-                                                                            realm.clone(),
-                                                                            actor.clone(),
-                                                                            device.clone(),
-                                                                            did.clone(),
-                                                                            recipient_service_id.clone(),
-                                                                        )
-                                                                        .await
-                                                                        {
-                                                                            Ok(Some(_)) => mls_ok += 1,
-                                                                            Ok(None) => {}
-                                                                            Err(err) => last_mls_err = err.to_string(),
-                                                                        }
                                                                         ok_invites.push((
                                                                             did,
                                                                             event_id.clone(),
@@ -3140,28 +3264,14 @@ pub fn RealmMembersPanel(
                                                             selected_contacts.set(std::collections::BTreeSet::new());
                                                             if ok == total {
                                                                 invite_modal_open.set(false);
-                                                                let mut message = crate::i18n::tr("realm_admin.invite_sent")
+                                                                let message = crate::i18n::tr("realm_admin.invite_sent")
                                                                     .replace("{ok}", &ok.to_string());
-                                                                if !last_mls_err.is_empty() {
-                                                                    message.push_str(&format!(
-                                                                        "; MLS admission failed for at least one invite: {last_mls_err}"
-                                                                    ));
-                                                                } else if mls_ok > 0 {
-                                                                    message.push_str(&format!(
-                                                                        "; MLS Welcome queued for {mls_ok}"
-                                                                    ));
-                                                                }
                                                                 status_msg.set(message);
                                                             } else {
-                                                                let mut message = crate::i18n::tr("realm_admin.invite_partial")
+                                                                let message = crate::i18n::tr("realm_admin.invite_partial")
                                                                     .replace("{ok}", &ok.to_string())
                                                                     .replace("{total}", &total.to_string())
                                                                     .replace("{error}", &last_err);
-                                                                if !last_mls_err.is_empty() {
-                                                                    message.push_str(&format!(
-                                                                        "; MLS admission failed for at least one invite: {last_mls_err}"
-                                                                    ));
-                                                                }
                                                                 status_msg.set(message);
                                                             }
                                                         });
@@ -3206,13 +3316,11 @@ pub fn RealmMembersPanel(
                                     onclick: {
                                         let base = base_url.clone();
                                         let actor = principal_id.clone();
-                                        let device = device_id.clone();
                                         let realm = selected_realm_id.clone();
                                         let state_store = state_store;
                                         move |_| {
                                             let base = base.clone();
                                             let actor = actor.clone();
-                                            let device = device.clone();
                                             let realm = realm.clone();
                                             let mut state_store = state_store;
                                             let api_token = token();
@@ -3334,34 +3442,11 @@ pub fn RealmMembersPanel(
                                                                 members.set(next_members);
                                                                 invite_target.set(String::new());
                                                                 invite_modal_open.set(false);
-                                                                match submit_mls_admission_for_invitee(
-                                                                    &api,
-                                                                    state_store,
-                                                                    realm.clone(),
-                                                                    actor.clone(),
-                                                                    device.clone(),
-                                                                    invitee_did.clone(),
-                                                                    Some(invitee.invite_delivery_target.recipient_service_id.to_string()),
-                                                                )
-                                                                .await
-                                                                {
-                                                                    Ok(Some(epoch)) => status_msg.set(format!(
-                                                                        "invited {} (pending) fact {}; MLS Welcome queued at epoch {}",
-                                                                        invitee_label,
-                                                                        short_protocol_id(&op_id),
-                                                                        epoch
-                                                                    )),
-                                                                    Ok(None) => status_msg.set(format!(
-                                                                        "invited {} (pending) fact {}",
-                                                                        invitee_label,
-                                                                        short_protocol_id(&op_id)
-                                                                    )),
-                                                                    Err(error) => status_msg.set(format!(
-                                                                        "invited {} (pending) fact {}; MLS admission failed: {error}",
-                                                                        invitee_label,
-                                                                        short_protocol_id(&op_id)
-                                                                    )),
-                                                                }
+                                                                status_msg.set(format!(
+                                                                    "invited {} (pending) fact {}; MLS admission will reconcile after acceptance",
+                                                                    invitee_label,
+                                                                    short_protocol_id(&op_id)
+                                                                ));
                                                             }
                                                             Err(error) => status_msg.set(format!(
                                                                 "invite failed: {}",
@@ -4392,15 +4477,18 @@ mod tests {
     }
 
     #[test]
-    fn accepted_invite_route_survives_for_deferred_mls_reconciliation() {
+    fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
         let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
         let invitee = "ak:did_core:web:bob.example";
+        let invite_id = "ak:invite:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA";
+        let device_id = "ak:device:0196419b-0000-7000-8000-000000000002";
         let mut store = temp_store("accepted-invite-route");
         store.append_raw_operation(
             "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.create",
+                "invite_id": invite_id,
                 "invitee": invitee,
                 "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA",
                 "recipient_service_id": "ak:did_core:web:principal.example"
@@ -4411,22 +4499,91 @@ mod tests {
             Some(realm_id.to_owned()),
             serde_json::json!({
                 "kind": "ak.invite.create",
+                "invite_id": invite_id,
                 "invitee": invitee,
                 "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA"
             }),
         );
+        store.append_raw_operation(
+            "ak:event:ACfHq_7preT7wHLHc3wh1uUqb9gWVTeJlk4olFvqggpM".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ak.invite.accept",
+                "actor_id": invitee,
+                "signing_device_id": device_id,
+                "event_id": "ak:event:ACfHq_7preT7wHLHc3wh1uUqb9gWVTeJlk4olFvqggpM",
+                "body": { "invite_id": invite_id }
+            }),
+        );
 
         assert_eq!(
-            accepted_invite_destination_service_id(&store, realm_id, invitee).as_deref(),
-            Some("ak:did_core:web:principal.example")
+            accepted_invite_claim_route(&store, realm_id, invitee),
+            Some(AcceptedInviteClaimRoute {
+                destination_service_id: "ak:did_core:web:principal.example".to_owned(),
+                target_device_id: Some(device_id.to_owned()),
+            })
         );
         assert!(
-            accepted_invite_destination_service_id(
+            accepted_invite_claim_route(
                 &store,
                 "ak:realm:Ac4tyK_nwe4AYgJmR9A6pbiRrGZiDOx-i-EVWYUQabXC",
                 invitee,
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
+        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
+        let invitee = "ak:did_core:web:bob.example";
+        let invite_id = "ak:invite:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA";
+        let mut store = temp_store("accepted-invite-missing-device");
+        store.append_raw_operation(
+            "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ak.invite.create",
+                "invite_id": invite_id,
+                "invitee": invitee,
+                "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA",
+                "recipient_service_id": "ak:did_core:web:principal.example"
+            }),
+        );
+        store.append_raw_operation(
+            "ak:event:ACfHq_7preT7wHLHc3wh1uUqb9gWVTeJlk4olFvqggpM".to_owned(),
+            Some(realm_id.to_owned()),
+            serde_json::json!({
+                "kind": "ak.invite.accept",
+                "actor_id": invitee,
+                "event_id": "ak:event:ACfHq_7preT7wHLHc3wh1uUqb9gWVTeJlk4olFvqggpM",
+                "body": { "invite_id": invite_id }
+            }),
+        );
+
+        assert_eq!(
+            accepted_invite_claim_route(&store, realm_id, invitee),
+            Some(AcceptedInviteClaimRoute {
+                destination_service_id: "ak:did_core:web:principal.example".to_owned(),
+                target_device_id: None,
+            })
+        );
+        let route = accepted_invite_claim_route(&store, realm_id, invitee).unwrap();
+        assert!(claim_target_device_id(&route, false).is_err());
+        assert_eq!(claim_target_device_id(&route, true).unwrap(), None);
+    }
+
+    #[test]
+    fn pairwise_claim_selector_never_reuses_a_human_device_coordinate() {
+        let route = AcceptedInviteClaimRoute {
+            destination_service_id: "ak:did_core:web:principal.example".to_owned(),
+            target_device_id: Some("ak:device:0196419b-0000-7000-8000-000000000002".to_owned()),
+        };
+
+        assert_eq!(claim_target_device_id(&route, true).unwrap(), None);
+        assert_eq!(
+            claim_target_device_id(&route, false).unwrap(),
+            Some("ak:device:0196419b-0000-7000-8000-000000000002")
         );
     }
 

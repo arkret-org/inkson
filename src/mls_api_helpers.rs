@@ -45,6 +45,26 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
     })
 }
 
+pub(crate) fn sign_keypackage_upload_entry_with_signer(
+    signer: &crate::event_signer::InksonEventSigner,
+    unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
+    entry: &arkret_sdk::KeyPackageUploadEntry,
+) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
+    let input = arkret_sdk::keypackage_upload_endpoint_entry_signing_input(unsigned, entry)?;
+    let sig = signer
+        .sign_raw(&input)
+        .map_err(|err| anyhow::anyhow!("keypackages/upload entry signature failed: {err}"))?;
+    Ok(arkret_sdk::KeyOperationSignature {
+        kid: arkret_sdk::NonEmptyString::new(signer.verification_method())
+            .map_err(anyhow::Error::msg)?,
+        signature_algorithm: Some(
+            arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
+        ),
+        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(sig))
+            .map_err(anyhow::Error::msg)?,
+    })
+}
+
 pub(crate) fn sign_keypackage_upload_batch(
     unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
@@ -154,6 +174,101 @@ pub(crate) fn build_mls_keypackage_claim_request(
     target_device_id: Option<&str>,
     mls_group_id: &str,
 ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
+    let requester_full_id = arkret_sdk::DidFullId::new(requester.trim().to_owned())?;
+    let requester_core_id = arkret_sdk::project_full_id_to_core_id(&requester_full_id)?;
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("KeyPackage claim requires an active device signer"))?;
+    let verification_method = signer.verification_method_for_principal(&requester_full_id)?;
+    build_mls_keypackage_claim_request_with_requester(
+        target_principal_id,
+        intended_realm_id,
+        requester_core_id,
+        ClaimRequester::Device {
+            requester_device_id: arkret_sdk::DeviceId::new(requester_device_id.trim().to_owned())?,
+            device_authorize_event_id: requester_device_authorize_event_id.clone(),
+            verification_method,
+            signer: signer.as_ref(),
+        },
+        source_service_id,
+        destination_service_id,
+        claim_request_id,
+        target_device_id,
+        None,
+        mls_group_id,
+    )
+}
+
+pub(crate) fn build_pairwise_mls_keypackage_claim_request(
+    target_principal_id: &str,
+    intended_realm_id: &str,
+    requester: &crate::mls::pairwise_identity::PairwiseSigningMaterial,
+    source_service_id: &str,
+    destination_service_id: &str,
+    claim_request_id: &str,
+    target_device_id: Option<&str>,
+    mls_group_id: &str,
+) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
+    let verification_method =
+        arkret_sdk::DidUrl::new(requester.signer.verification_method().to_owned())
+            .map_err(anyhow::Error::msg)?;
+    let target_actor = principal_core_id(target_principal_id)?;
+    let multibase = target_actor
+        .as_str()
+        .strip_prefix("ak:did_core:key:")
+        .ok_or_else(|| {
+            anyhow::anyhow!("minimal-metadata KeyPackage target must be a pairwise did:key actor")
+        })?;
+    let target_pairwise_verification_method =
+        arkret_sdk::DidUrl::new(format!("did:key:{multibase}#{multibase}"))
+            .map_err(anyhow::Error::msg)?;
+    arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+        target_actor,
+        target_pairwise_verification_method.clone(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    build_mls_keypackage_claim_request_with_requester(
+        target_principal_id,
+        intended_realm_id,
+        requester.actor_id.clone(),
+        ClaimRequester::MinimalMetadataPairwise {
+            verification_method,
+            signer: requester.signer.as_ref(),
+        },
+        source_service_id,
+        destination_service_id,
+        claim_request_id,
+        target_device_id,
+        Some(target_pairwise_verification_method),
+        mls_group_id,
+    )
+}
+
+enum ClaimRequester<'a> {
+    Device {
+        requester_device_id: arkret_sdk::DeviceId,
+        device_authorize_event_id: arkret_sdk::EventId,
+        verification_method: arkret_sdk::DidUrl,
+        signer: &'a crate::event_signer::InksonEventSigner,
+    },
+    MinimalMetadataPairwise {
+        verification_method: arkret_sdk::DidUrl,
+        signer: &'a crate::event_signer::InksonEventSigner,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_mls_keypackage_claim_request_with_requester(
+    target_principal_id: &str,
+    intended_realm_id: &str,
+    requester: arkret_sdk::DidCoreId,
+    requester_authority: ClaimRequester<'_>,
+    source_service_id: &str,
+    destination_service_id: &str,
+    claim_request_id: &str,
+    target_device_id: Option<&str>,
+    target_pairwise_verification_method: Option<arkret_sdk::DidUrl>,
+    mls_group_id: &str,
+) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
     let target_device_ids = target_device_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -161,15 +276,9 @@ pub(crate) fn build_mls_keypackage_claim_request(
         .transpose()?
         .into_iter()
         .collect::<Vec<_>>();
-    let requester_full_id = arkret_sdk::DidFullId::new(requester.trim().to_owned())?;
-    let requester = arkret_sdk::project_full_id_to_core_id(&requester_full_id)?;
-    let requester_device_id = arkret_sdk::DeviceId::new(requester_device_id.trim().to_owned())?;
     let source_service_id = arkret_sdk::DidCoreId::new(source_service_id.trim().to_owned())?;
     let destination_service_id =
         arkret_sdk::DidCoreId::new(destination_service_id.trim().to_owned())?;
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("KeyPackage claim requires an active device signer"))?;
-    let verification_method = signer.verification_method_for_principal(&requester_full_id)?;
     let signed_at = crate::clock::now_utc();
     let unsigned = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
         claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.trim().to_owned())
@@ -189,7 +298,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
         target_agent_id: None,
         target_agent_verification_method: None,
         target_agent_key_authorize_event_id: None,
-        target_pairwise_verification_method: None,
+        target_pairwise_verification_method,
         timeout_ms: Some(30_000),
         strand_id: None,
         pair_key: None,
@@ -199,19 +308,33 @@ pub(crate) fn build_mls_keypackage_claim_request(
         source_service_id,
         destination_service_id,
     };
-    let mut requester_authorization = arkret_sdk::PeerKeyPackageRequesterAuthorization::Device {
-        verification_method: verification_method.clone(),
-        requester_device_id,
-        device_authorize_event_id: requester_device_authorize_event_id.clone(),
-        signed_at,
-        signature: arkret_sdk::KeyOperationSignature {
-            kid: arkret_sdk::NonEmptyString::new(verification_method.as_str())
-                .map_err(anyhow::Error::msg)?,
-            signature_algorithm: Some(
-                arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
-            ),
-            sig: arkret_sdk::Base64UrlString::new("YQ").map_err(anyhow::Error::msg)?,
-        },
+    let (mut requester_authorization, signer) = match requester_authority {
+        ClaimRequester::Device {
+            requester_device_id,
+            device_authorize_event_id,
+            verification_method,
+            signer,
+        } => (
+            arkret_sdk::PeerKeyPackageRequesterAuthorization::Device {
+                signature: placeholder_key_operation_signature(&verification_method, signer)?,
+                verification_method,
+                requester_device_id,
+                device_authorize_event_id,
+                signed_at,
+            },
+            signer,
+        ),
+        ClaimRequester::MinimalMetadataPairwise {
+            verification_method,
+            signer,
+        } => (
+            arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise {
+                signature: placeholder_key_operation_signature(&verification_method, signer)?,
+                verification_method,
+                signed_at,
+            },
+            signer,
+        ),
     };
     let signing_bytes = arkret_sdk::keypackage_claim_authorization_signing_bytes(
         &unsigned,
@@ -263,9 +386,28 @@ pub(crate) fn build_mls_keypackage_claim_request(
     Ok(body)
 }
 
+fn placeholder_key_operation_signature(
+    verification_method: &arkret_sdk::DidUrl,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
+    Ok(arkret_sdk::KeyOperationSignature {
+        kid: arkret_sdk::NonEmptyString::new(verification_method.as_str())
+            .map_err(anyhow::Error::msg)?,
+        signature_algorithm: Some(
+            arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
+        ),
+        sig: arkret_sdk::Base64UrlString::new("YQ").map_err(anyhow::Error::msg)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pairwise_realm() -> arkret_sdk::RealmId {
+        arkret_sdk::RealmId::new("ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx".to_owned())
+            .unwrap()
+    }
 
     fn claim_for(
         record: &arkret_sdk::MlsKeyPackageRecord,
@@ -300,6 +442,82 @@ mod tests {
             revocation_status: None,
             last_resort: None,
         }
+    }
+
+    #[test]
+    fn pairwise_claim_request_uses_only_the_realm_local_requester_authority() {
+        let realm_id = pairwise_realm();
+        let requester =
+            crate::mls::pairwise_identity::pairwise_signing_material_for_test(&realm_id);
+        let body = build_pairwise_mls_keypackage_claim_request(
+            requester.actor_id.as_str(),
+            realm_id.as_str(),
+            &requester,
+            "ak:did_core:web:source.example",
+            "ak:did_core:web:destination.example",
+            "Y2xhaW0tcmVxdWVzdC1wYWlyd2lzZQ",
+            None,
+            "pairwise-realm-group",
+        )
+        .unwrap();
+
+        assert_eq!(body.requester, requester.actor_id);
+        assert_eq!(body.intended_realm_id, realm_id);
+        match body.requester_authorization {
+            arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise {
+                verification_method,
+                signature,
+                ..
+            } => {
+                assert_eq!(
+                    verification_method.as_str(),
+                    requester.signer.verification_method()
+                );
+                assert_eq!(signature.kid.as_str(), verification_method.as_str());
+                assert_ne!(signature.sig.as_str(), "YQ");
+            }
+            _ => panic!("pairwise requester must not carry device or Agent authority"),
+        }
+    }
+
+    #[test]
+    fn pairwise_upload_signs_batch_and_entry_with_the_same_exact_method() {
+        let realm_id = pairwise_realm();
+        let material = crate::mls::pairwise_identity::pairwise_signing_material_for_test(&realm_id);
+        let verification_method =
+            arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned()).unwrap();
+        let identity = arkret_sdk::ArkretMlsIdentity::from_minimal_metadata_ed25519_signing_seed(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:account.example".to_owned()).unwrap(),
+            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
+                .unwrap(),
+            material.actor_id.clone(),
+            verification_method.clone(),
+            material.signing_seed(),
+        )
+        .unwrap();
+        let record = identity.key_package_record().unwrap();
+        let entry = mls_key_package_record_upload_entry(&record).unwrap();
+        let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+            principal_id: material.actor_id.clone(),
+            device_id: None,
+            pairwise_verification_method: Some(verification_method.clone()),
+            intended_realm_id: Some(realm_id),
+            agent_verification_method: None,
+            agent_key_authorize_event_id: None,
+            keypackages: vec![entry.clone()],
+            expires_at: None,
+            strand_id: None,
+            mls_group_id: None,
+        };
+
+        let batch =
+            sign_keypackage_upload_batch_with_signer(material.signer.as_ref(), &unsigned).unwrap();
+        let entry =
+            sign_keypackage_upload_entry_with_signer(material.signer.as_ref(), &unsigned, &entry)
+                .unwrap();
+        assert_eq!(batch.kid.as_str(), verification_method.as_str());
+        assert_eq!(entry.kid.as_str(), verification_method.as_str());
+        assert_ne!(batch.sig, entry.sig);
     }
 
     #[test]

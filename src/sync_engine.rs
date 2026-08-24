@@ -2590,6 +2590,7 @@ impl LocalMembershipEvent {
                     operation_id: &metadata.operation_id,
                     event_id: &metadata.event_id,
                     actor_id: &metadata.actor_id,
+                    signing_device_id: metadata.signing_device_id.as_ref(),
                     created_at: &metadata.created_at,
                     write_state: "synced",
                     body: $payload,
@@ -2610,6 +2611,8 @@ struct LocalMembershipRecord<'a, T> {
     operation_id: &'a str,
     event_id: &'a str,
     actor_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signing_device_id: Option<&'a arkret_sdk::DeviceId>,
     created_at: &'a str,
     write_state: &'static str,
     body: &'a T,
@@ -2619,7 +2622,19 @@ struct LocalMembershipMetadata {
     operation_id: String,
     event_id: String,
     actor_id: String,
+    signing_device_id: Option<arkret_sdk::DeviceId>,
     created_at: String,
+}
+
+fn accepted_human_event_signing_device(event: &arkret_sdk::Event) -> Option<arkret_sdk::DeviceId> {
+    let proof = event.proofs.iter().find_map(|proof| proof.as_producer())?;
+    let (controller, fragment) = proof.verification_method.as_str().split_once('#')?;
+    let controller = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
+    let controller = arkret_sdk::project_full_id_to_core_id(&controller).ok()?;
+    if controller != event.actor_id {
+        return None;
+    }
+    arkret_sdk::DeviceId::new(fragment.to_owned()).ok()
 }
 
 fn membership_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOperationRecord> {
@@ -2629,6 +2644,7 @@ fn membership_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOpera
         operation_id: operation_id.clone(),
         event_id: operation_id.clone(),
         actor_id: event.actor_id.as_str().to_owned(),
+        signing_device_id: accepted_human_event_signing_device(event),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
     };
     let payload = local_event.record_value(&metadata)?;
@@ -2674,6 +2690,7 @@ fn membership_operation_from_client_event(
         operation_id: operation_id.clone(),
         event_id: event.event_id.as_str().to_owned(),
         actor_id: event.actor_id.as_str().to_owned(),
+        signing_device_id: accepted_human_event_signing_device(event),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
     };
     let payload = local_event.record_value(&metadata)?;
@@ -3728,6 +3745,54 @@ mod tests {
             state.raw_operations[1].payload["body"]["invite_id"],
             "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
         );
+    }
+
+    #[test]
+    fn accepted_membership_event_retains_exact_human_signing_device() {
+        let device_id = "ak:device:0196419b-0000-7000-8000-000000000002";
+        let mut event = sdk_event(
+            arkret_sdk::EventKind::InviteAccept.as_str(),
+            json!({
+                "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610",
+                "delivery_status": "unroutable"
+            }),
+        );
+        event.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+        let event_digest = arkret_sdk::Hash::new(
+            event
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap(),
+        )
+        .unwrap();
+        event.proofs.push(
+            arkret_sdk::ProducerEventProof {
+                kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+                verification_method: arkret_sdk::DidUrl::new(format!(
+                    "did:web:alice.example#{device_id}"
+                ))
+                .unwrap(),
+                event_digest,
+                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_digest: None,
+                created_at: event.created_at,
+                domain: None,
+                audience: None,
+                proof_purpose: None,
+                jws: "header..producer".to_owned(),
+            }
+            .into(),
+        );
+
+        let record = membership_operation_from_event(&event).unwrap();
+        assert_eq!(record.payload["signing_device_id"], device_id);
+
+        event.proofs[0]
+            .as_producer_mut()
+            .unwrap()
+            .verification_method =
+            arkret_sdk::DidUrl::new(format!("did:web:mallory.example#{device_id}")).unwrap();
+        let record = membership_operation_from_event(&event).unwrap();
+        assert!(record.payload.get("signing_device_id").is_none());
     }
 
     #[test]

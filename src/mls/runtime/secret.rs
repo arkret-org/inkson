@@ -26,6 +26,8 @@ const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publ
 // Canonical server-visible KeyPackage reference paired with the local publish
 // marker. It is local durable routing state, not a governance authorization.
 const MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX: &str = "inkson.mls_key_package.publish_ref.v1";
+const MLS_PAIRWISE_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str =
+    "inkson.mls_key_package.pairwise_publish_marker.v1";
 /// Per-(account authority, device) X25519 keypair used to open HPKE-sealed history-key
 /// recovery records addressed to this device.
 ///
@@ -464,6 +466,58 @@ pub fn delete_mls_key_package_publish_ref(
     device_id: &DeviceId,
 ) -> Result<(), SecureKeyStoreError> {
     let key = mls_key_package_publish_ref_key(authority, device_id)?;
+    store.delete_secret(&key)
+}
+
+pub fn mls_pairwise_key_package_publish_marker_key(
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    realm_id: &arkret_sdk::RealmId,
+) -> Result<String, SecureKeyStoreError> {
+    let scope = account_device_storage_suffix(authority, device_id)?;
+    let realm = secure_key_component(realm_id.as_str(), "realm_id")?;
+    Ok(format!(
+        "{MLS_PAIRWISE_KEY_PACKAGE_PUBLISH_MARKER_PREFIX}.{scope}.{realm}"
+    ))
+}
+
+pub fn store_mls_pairwise_key_package_publish_marker(
+    store: &dyn SecureKeyStore,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    realm_id: &arkret_sdk::RealmId,
+    key_package_id: &str,
+) -> Result<(), SecureKeyStoreError> {
+    let key_package_id = key_package_id.trim();
+    if key_package_id.is_empty() {
+        return Err(SecureKeyStoreError::Backend(
+            "key_package_id is required for pairwise MLS KeyPackage publish marker".to_owned(),
+        ));
+    }
+    let key = mls_pairwise_key_package_publish_marker_key(authority, device_id, realm_id)?;
+    store.store_secret(&key, key_package_id)
+}
+
+pub fn load_mls_pairwise_key_package_publish_marker(
+    store: &dyn SecureKeyStore,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    realm_id: &arkret_sdk::RealmId,
+) -> Result<Option<String>, SecureKeyStoreError> {
+    let key = mls_pairwise_key_package_publish_marker_key(authority, device_id, realm_id)?;
+    Ok(store
+        .get_secret(&key)?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
+}
+
+pub fn delete_mls_pairwise_key_package_publish_marker(
+    store: &dyn SecureKeyStore,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    realm_id: &arkret_sdk::RealmId,
+) -> Result<(), SecureKeyStoreError> {
+    let key = mls_pairwise_key_package_publish_marker_key(authority, device_id, realm_id)?;
     store.delete_secret(&key)
 }
 

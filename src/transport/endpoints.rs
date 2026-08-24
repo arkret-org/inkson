@@ -188,6 +188,7 @@ impl MlsEndpoints<'_> {
     pub async fn publish_pairwise_key_package(
         &self,
         intended_realm_id: &str,
+        signer: &crate::event_signer::InksonEventSigner,
         record: &arkret_sdk::MlsKeyPackageRecord,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
         let (principal_id, pairwise_verification_method) = match &record.endpoint {
@@ -197,7 +198,7 @@ impl MlsEndpoints<'_> {
             } => (pairwise_actor_id.clone(), verification_method.clone()),
             _ => anyhow::bail!("pairwise KeyPackage publish requires a pairwise endpoint"),
         };
-        let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+        let mut unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
             principal_id,
             device_id: None,
             pairwise_verification_method: Some(pairwise_verification_method),
@@ -213,7 +214,20 @@ impl MlsEndpoints<'_> {
             strand_id: None,
             mls_group_id: None,
         };
-        let signature = crate::mls_api_helpers::sign_keypackage_upload_batch(&unsigned)?;
+        let signature =
+            crate::mls_api_helpers::sign_keypackage_upload_batch_with_signer(signer, &unsigned)?;
+        let entry_signatures = unsigned
+            .keypackages
+            .iter()
+            .map(|entry| {
+                crate::mls_api_helpers::sign_keypackage_upload_entry_with_signer(
+                    signer, &unsigned, entry,
+                )
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        for (entry, entry_signature) in unsigned.keypackages.iter_mut().zip(entry_signatures) {
+            entry.endpoint_signature = Some(entry_signature);
+        }
         let body = unsigned.into_signed(signature);
         body.validate_shape().map_err(anyhow::Error::msg)?;
         self.transport
@@ -268,6 +282,62 @@ impl MlsEndpoints<'_> {
             requester,
             requester_device_id,
             &requester_device_authorize_event_id,
+            source_service_id.as_str(),
+            destination_service_id,
+            claim_request_id,
+            target_device_id,
+            mls_group_id,
+        )?;
+        let expected_request = body.unsigned_request();
+        let expected_service_binding = body.service_binding.clone();
+        let expected_request_digest =
+            arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&body)?)?;
+        let outcome = self
+            .transport
+            .http()
+            .keypackages_claim(&body)
+            .await
+            .map_err(anyhow::Error::from)?;
+        outcome
+            .validate_shape()
+            .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
+        let receipt = &outcome.claim_receipt;
+        if receipt.request != expected_request
+            || receipt.source_service_id != expected_service_binding.source_service_id
+            || receipt.destination_service_id != expected_service_binding.destination_service_id
+            || receipt.request_digest != expected_request_digest
+        {
+            anyhow::bail!(
+                "KeyPackage claim receipt does not bind the exact authorized request and service route"
+            );
+        }
+        Ok(outcome)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn claim_pairwise_key_package(
+        &self,
+        target_principal_id: &str,
+        intended_realm_id: &str,
+        requester: &crate::mls::pairwise_identity::PairwiseSigningMaterial,
+        destination_service_id: Option<&str>,
+        claim_request_id: &str,
+        target_device_id: Option<&str>,
+        mls_group_id: &str,
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
+        let destination_service_id = destination_service_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "KeyPackage claim requires the destination service DID from the accepted invite delivery binding"
+                )
+            })?;
+        let source_service_id = self.transport.describe_cached().await?.service_id.clone();
+        let body = crate::mls_api_helpers::build_pairwise_mls_keypackage_claim_request(
+            target_principal_id,
+            intended_realm_id,
+            requester,
             source_service_id.as_str(),
             destination_service_id,
             claim_request_id,

@@ -6,7 +6,7 @@ const PAIRWISE_SIGNING_INFO: &[u8] = b"org.arkret.mls.minimal-metadata-pairwise-
 
 pub(crate) struct PairwiseSigningMaterial {
     pub(crate) actor_id: arkret_sdk::DidCoreId,
-    pub(crate) signer: crate::event_signer::InksonEventSigner,
+    pub(crate) signer: std::sync::Arc<crate::event_signer::InksonEventSigner>,
     signing_seed: [u8; 32],
 }
 
@@ -93,16 +93,31 @@ fn derive_pairwise_signing_material_from_secret(
     let verification_method = format!("{signer_did}#{multikey}");
     let actor_id = arkret_sdk::DidCoreId::new(format!("ak:did_core:key:{multikey}"))
         .map_err(|error| format!("derive pairwise actor id: {error}"))?;
-    let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
-        signing_seed,
-        signer_did,
-        verification_method,
+    let signer = std::sync::Arc::new(
+        crate::event_signer::build_ed25519_signer_with_verification_method(
+            signing_seed,
+            signer_did,
+            verification_method,
+        ),
     );
     Ok(PairwiseSigningMaterial {
         actor_id,
         signer,
         signing_seed,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn pairwise_signing_material_for_test(
+    realm_id: &arkret_sdk::RealmId,
+) -> PairwiseSigningMaterial {
+    derive_pairwise_signing_material_from_secret(
+        b"inkson-pairwise-signing-material-test-secret",
+        &arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001").unwrap(),
+        "ak:event:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        realm_id,
+    )
+    .unwrap()
 }
 
 impl Drop for PairwiseSigningMaterial {

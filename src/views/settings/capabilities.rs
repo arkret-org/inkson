@@ -496,8 +496,12 @@ mod tests {
             "resources": [
                 {"kind": "realm", "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"}
             ],
+            "constraints": [{
+                "constraint_kind": "temporal",
+                "effect": "allow",
+                "expires_at": "2026-12-31T00:00:00.000Z"
+            }],
             "issued_at": "2026-01-01T00:00:00.000Z",
-            "expires_at": "2026-12-31T00:00:00.000Z",
             "issuer_authority_refs": [{
                 "kind": "realm_root",
                 "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
