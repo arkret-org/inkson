@@ -242,7 +242,7 @@ impl MlsEndpoints<'_> {
         requester: &str,
         requester_device_id: &str,
         destination_service_id: Option<&str>,
-        claim_nonce: &str,
+        claim_request_id: &str,
         target_device_id: Option<&str>,
         mls_group_id: &str,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
@@ -270,7 +270,7 @@ impl MlsEndpoints<'_> {
             &requester_device_authorize_event_id,
             source_service_id.as_str(),
             destination_service_id,
-            claim_nonce,
+            claim_request_id,
             target_device_id,
             mls_group_id,
         )?;

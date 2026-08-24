@@ -139,10 +139,9 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
     assert_eq!(body["contents"][0]["item_kind"], "private_account_state");
     assert!(B64.decode(body["ciphertext"].as_str().unwrap()).is_ok());
     assert_eq!(body["device_id"], DEVICE);
-    assert_eq!(
-        body["domain_separation"]["hkdf_info"],
-        "arkret-key-backup/secret_storage/recovery_vault/v1"
-    );
+    assert_eq!(body["domain_separation"]["subdomain"], "recovery_vault");
+    assert!(body["domain_separation"].get("hkdf_info").is_none());
+    assert!(body["domain_separation"].get("aead_aad").is_none());
     let envelope = validate_wire_envelope(&body, BackupKind::SecretStorage)
         .expect("secret_storage recovery vault envelope should validate");
     assert_eq!(envelope.backup_id.as_str(), BACKUP_ID);
@@ -336,30 +335,16 @@ fn key_backup_validator_rejects_active_mls_state_item_kinds() {
 }
 
 #[test]
-fn key_backup_validator_rejects_recipient_method_aad_mismatch() {
-    // SEC-04: the AAD's recipient_method binding must agree with the envelope's
-    // encryption.recipient_method. Swapping the method after sealing (without
-    // recomputing the AAD) MUST be rejected.
+fn key_backup_validator_rejects_legacy_aad_mirror() {
     let root = test_root();
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
     let mut body = wire(&body);
-    // Sanity: as-built (passphrase_kdf) it validates and its AAD pins the method.
     validate_wire_envelope(&body, BackupKind::SecretStorage)
         .expect("freshly built recovery vault backup validates");
-    assert_eq!(
-        body["domain_separation"]["aead_aad"]["recipient_method"],
-        json!("passphrase_kdf"),
-        "AAD must bind the recipient_method"
-    );
-    // Tamper the AAD's recipient_method so it disagrees with
-    // encryption.recipient_method → the SEC-04 cross-check must reject it.
-    body["domain_separation"]["aead_aad"]["recipient_method"] = json!("recovery_public_key");
+    body["domain_separation"]["aead_aad"] = json!({"recipient_method":"passphrase_kdf"});
     let err = validate_wire_envelope(&body, BackupKind::SecretStorage)
-        .expect_err("recipient_method/AAD mismatch must be rejected");
-    assert!(
-        err.contains("authenticated domain metadata mismatch"),
-        "{err}"
-    );
+        .expect_err("legacy AAD mirrors must be rejected");
+    assert!(err.contains("unknown field"), "{err}");
 }
 
 #[test]

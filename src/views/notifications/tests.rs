@@ -633,7 +633,7 @@ fn notification_sources_merge_account_data_with_typed_subscribe_deltas() {
             arkret_sdk::NotificationId::new("ak:notification:01964137-0000-7000-8000-000000000004")
                 .unwrap(),
             arkret_sdk::NotificationKind::Agent,
-            arkret_sdk::NotificationDeltaAction::Add,
+            arkret_sdk::NotificationDeltaAction::Upsert,
             Some(arkret_sdk::NotificationData::AgentRuntimeApproval(
                 arkret_sdk::AgentRuntimeApprovalNotificationData {
                     kind: arkret_sdk::AccountNotificationDataKind::AgentRuntimeApproval,

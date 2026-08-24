@@ -1623,7 +1623,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &[],
     )
     .await?;
-    let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
+    let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     let claim_outcome = mls_clients
         .mls()
@@ -1633,7 +1633,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             &actor_id,
             &device_id,
             destination_service_id.as_deref(),
-            &claim_nonce,
+            &claim_request_id,
             None,
             &group_id,
         )
@@ -1692,7 +1692,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             &account.device_id,
             &requester_device_authorize_event_id,
             &claim,
-            &claim_nonce,
+            &claim_request_id,
             &claim_receipt,
         )
         .map_err(|err| anyhow::anyhow!(err))?
@@ -2161,7 +2161,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     )>::new();
     let mls_clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     for invitee_did in invitees {
-        let claim_nonce = crate::mls_api_helpers::generate_mls_claim_nonce()?;
+        let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
         let claim_outcome = mls_clients
             .mls()
             .claim_key_package(
@@ -2170,7 +2170,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
                 &actor_id,
                 &device_id,
                 None,
-                &claim_nonce,
+                &claim_request_id,
                 None,
                 &group_id,
             )
@@ -2182,7 +2182,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
             claim_outcome.claims.into_iter().next().ok_or_else(|| {
                 anyhow::anyhow!("KeyPackage claim succeeded without a claim record")
             })?;
-        claims.push((claim, claim_nonce, claim_outcome.claim_receipt));
+        claims.push((claim, claim_request_id, claim_outcome.claim_receipt));
     }
     // Refresh after the batch of claims to bind the Commit to the latest
     // accepted frontier observed after those network round trips.

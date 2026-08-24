@@ -42,7 +42,6 @@ pub fn build_account_data_set(
         expected_revision,
         body,
         encrypted_payload,
-        body_digest: None,
         tombstone: false,
         updated_at: Some(crate::clock::now_utc_millis()),
     };
@@ -63,7 +62,6 @@ pub fn build_account_data_tombstone(
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: None,
-        body_digest: None,
         tombstone: true,
         updated_at: Some(crate::clock::now_utc_millis()),
     };
@@ -193,7 +191,6 @@ pub fn build_private_account_data_set(
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: Some(encrypted_payload.into_iter().collect()),
-        body_digest: None,
         tombstone: false,
         updated_at: Some(crate::clock::now_utc_millis()),
     };
@@ -215,7 +212,6 @@ pub fn build_private_account_data_tombstone(
         expected_revision,
         body: arkret_sdk::AccountDataBody::Absent,
         encrypted_payload: None,
-        body_digest: None,
         tombstone: true,
         updated_at: Some(crate::clock::now_utc_millis()),
     };

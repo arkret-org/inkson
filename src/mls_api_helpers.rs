@@ -68,10 +68,10 @@ pub(crate) fn mls_key_package_record_upload_entry(
     arkret_sdk::mls_key_package_record_upload_entry(record).map_err(anyhow::Error::msg)
 }
 
-pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {
+pub(crate) fn generate_mls_claim_request_id() -> anyhow::Result<String> {
     let mut bytes = [0u8; 24];
     getrandom::fill(&mut bytes)
-        .map_err(|err| anyhow::anyhow!("generate MLS KeyPackage claim nonce: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("generate MLS KeyPackage claim request id: {err}"))?;
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
@@ -150,7 +150,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
     requester_device_authorize_event_id: &arkret_sdk::EventId,
     source_service_id: &str,
     destination_service_id: &str,
-    claim_nonce: &str,
+    claim_request_id: &str,
     target_device_id: Option<&str>,
     mls_group_id: &str,
 ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
@@ -172,7 +172,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
     let verification_method = signer.verification_method_for_principal(&requester_full_id)?;
     let signed_at = crate::clock::now_utc();
     let unsigned = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
-        claim_request_id: arkret_sdk::Base64UrlString::new(generate_mls_claim_nonce()?)
+        claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.trim().to_owned())
             .map_err(anyhow::Error::msg)?,
         target_principal_id: principal_core_id(target_principal_id)?,
         requester,
@@ -183,8 +183,6 @@ pub(crate) fn build_mls_keypackage_claim_request(
             .map_err(anyhow::Error::msg)?,
         claim_purpose: arkret_sdk::PeerKeyPackageClaimPurpose::RealmMembership,
         required_capabilities: mls_keypackage_claim_required_capabilities()?,
-        claim_nonce: arkret_wire::Base64UrlString::new(claim_nonce.trim().to_owned())
-            .map_err(|error| anyhow::anyhow!(error))?,
         expires_at: signed_at + chrono::Duration::minutes(5),
         target_device_ids,
         target_keypackage_ref: None,
@@ -246,7 +244,6 @@ pub(crate) fn build_mls_keypackage_claim_request(
         mls_group_id: unsigned.mls_group_id,
         claim_purpose: unsigned.claim_purpose,
         required_capabilities: unsigned.required_capabilities,
-        claim_nonce: unsigned.claim_nonce,
         expires_at: unsigned.expires_at,
         target_device_ids: unsigned.target_device_ids,
         target_keypackage_ref: unsigned.target_keypackage_ref,

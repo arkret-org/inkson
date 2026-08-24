@@ -87,10 +87,9 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     account_secret: &str,
     account_secret_version: u32,
 ) -> Result<KeyBackup> {
-    // Spec §7.5: the item identifiers are set BEFORE sealing so the AEAD AAD
-    // (`domain_separation.aead_aad.item_kinds`) binds the real
-    // `mls_account_secret` item — no post-seal relabel (which would desync the
-    // AAD from the ciphertext).
+    // Spec §7.5: item identifiers are set before sealing so the SDK-derived
+    // AAD binds the real `mls_account_secret` item. Post-seal relabeling would
+    // desynchronize the derived AAD from the ciphertext.
     build_passphrase_kdf_backup_body(
         backup_id,
         actor_id,

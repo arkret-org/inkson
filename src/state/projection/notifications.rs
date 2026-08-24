@@ -176,7 +176,7 @@ pub(crate) fn apply_notification_projection(
         let id = delta.id.as_str();
         match (delta.action, delta.data.as_ref()) {
             (
-                NotificationDeltaAction::Add | NotificationDeltaAction::Update,
+                NotificationDeltaAction::Upsert,
                 Some(NotificationData::AgentRuntimeApproval(data)),
             ) => {
                 let replacement = StoredNotification::AgentRuntimeApproval {

@@ -95,6 +95,9 @@ fn keypackage_claim_request_carries_required_capabilities() {
         arkret_sdk::PeerKeyPackageRequesterAuthorization::NativeAgent { .. } => {
             panic!("human caller must author device authorization")
         }
+        arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise { .. } => {
+            panic!("human caller must not author pairwise authorization")
+        }
     }
 
     let wire = serde_json::to_value(&body).expect("claim request serializes");
@@ -102,4 +105,6 @@ fn keypackage_claim_request_carries_required_capabilities() {
         wire["required_capabilities"],
         json!(arkret_sdk::ARKRET_MLS_KEY_PACKAGE_CAPABILITIES)
     );
+    assert_eq!(wire["claim_request_id"], json!("AAAAAAAAAAAAAAAAAAAAAA"));
+    assert!(wire.get("claim_nonce").is_none());
 }

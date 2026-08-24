@@ -46,8 +46,8 @@ fn public_content_item(item: &SecretStorageItem) -> anyhow::Result<KeyBackupCont
 /// `key_commitment` / AAD-bound construction.
 ///
 /// The metadata (backup_id, created_at, contents, domain separation) is built
-/// FIRST so the AEAD AAD (`domain_separation.aead_aad`) and the nonce transcript
-/// can be bound BEFORE encryption — the inverse of the old "encrypt then wrap"
+/// FIRST so the SDK-derived AEAD AAD and nonce transcript can be bound before
+/// encryption — the inverse of the old "encrypt then wrap"
 /// strand. `root` is the Argon2id root key (its salt/params travel on the wire).
 pub fn build_passphrase_kdf_backup_body(
     backup_id: &str,
@@ -364,24 +364,8 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
             extra: Default::default(),
         },
         domain_separation: arkret_sdk::KeyBackupDomainSeparation {
-            hkdf_info: class.hkdf_info(subdomain),
             subdomain: subdomain.to_owned(),
-            aead_aad: arkret_sdk::KeyBackupDomainSeparationAad {
-                schema: arkret_sdk::SchemaId::KEY_BACKUP_V1.to_owned(),
-                actor_id,
-                device_id: device_id.as_ref().map(ToString::to_string),
-                backup_kind: class,
-                backup_version: "kb_1".to_owned(),
-                created_at,
-                item_kinds: items
-                    .iter()
-                    .map(|item| item.item_kind().to_owned())
-                    .collect(),
-                recipient_method: Some(arkret_sdk::KeyBackupRecipientMethod::RecoveryPublicKey),
-                recipient_key_ref: Some(recovery_key_ref.to_owned()),
-                extra: Default::default(),
-            },
-            extra: Default::default(),
+            aead_aad_extensions: Default::default(),
         },
         contents: items,
         ciphertext: String::new(),
@@ -435,7 +419,8 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
         extra: Default::default(),
     };
     let plaintext_bytes = crate::canonical::canonical_json_bytes(&plaintext)?;
-    let aad = crate::canonical::canonical_json_bytes(&body.domain_separation.aead_aad)?;
+    let aad = arkret_crypto::backup::key_backup_aead_aad(&body)
+        .map_err(|error| anyhow::anyhow!("derive key backup AAD: {error}"))?;
     let info = recovery_public_key_info(&body)?;
     let sealed = crate::hpke_backup::hpke_seal(recovery_public_key, &info, &aad, &plaintext_bytes)?;
 
@@ -467,7 +452,8 @@ pub fn open_recovery_public_key_backup_body(
     let enc_b64 = body.encryption.aead.enc.as_ref().ok_or_else(|| {
         anyhow::anyhow!("recovery_public_key envelope missing encryption.aead.enc")
     })?;
-    let aad = crate::canonical::canonical_json_bytes(&body.domain_separation.aead_aad)?;
+    let aad = arkret_crypto::backup::key_backup_aead_aad(&body)
+        .map_err(|error| anyhow::anyhow!("derive key backup AAD: {error}"))?;
     let info = recovery_public_key_info(&body)?;
     let enc = B64
         .decode(enc_b64.as_str())

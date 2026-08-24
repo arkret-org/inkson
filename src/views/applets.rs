@@ -212,9 +212,8 @@ fn build_formal_applet_install_events(
     let actor = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|error| anyhow::anyhow!("invalid install actor DID: {error}"))?;
     package.validate_with_epoch_evidence(registration_epoch_evidence)?;
-    let registration_payload = serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(
-        serde_json::to_value(package.to_registration(registration_epoch_evidence)?)?,
-    )?;
+    let registration_payload: arkret_sdk::AppletRegistrationPayload =
+        package.to_registration(registration_epoch_evidence)?;
     let registration = operation_builder_for_scope::<arkret_sdk::event_spec::AppletRegistration>(
         effective_scope,
         actor_id,
@@ -235,10 +234,8 @@ fn build_formal_applet_install_events(
     if actions.is_empty() || !actions.iter().all(|action| requested.contains(action)) {
         anyhow::bail!("approved Applet actions must be a non-empty subset of requested_scopes");
     }
-    let applet_id = arkret_sdk::AppletId::new(package.applet_id.clone())
-        .map_err(|error| anyhow::anyhow!("Applet grant requires a typed applet_id: {error}"))?;
     let constraint = arkret_sdk::GrantConstraint::applet_authority(
-        applet_id,
+        package.applet_id.clone(),
         package.service_id.clone(),
         package.registration_epoch.clone(),
     );
@@ -713,11 +710,7 @@ pub fn AppletsPanel(
                                                             schema: AppletInstallAuthoringRequestBasis::SCHEMA.to_owned(),
                                                             target_principal_server_id,
                                                             install_actor_id,
-                                                            applet_id: arkret_sdk::AppletInstallAppletId::AppletId(
-                                                                arkret_sdk::AppletId::new(
-                                                                    authored_package.applet_id.clone(),
-                                                                )?,
-                                                            ),
+                                                            applet_id: authored_package.applet_id.clone(),
                                                             service_id: authored_package.service_id.clone(),
                                                             package_digest,
                                                             effective_scope: authored_scope.clone(),
