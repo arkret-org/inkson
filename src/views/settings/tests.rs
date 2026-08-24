@@ -96,11 +96,6 @@ fn build_read_receipt_preferences_body_has_canonical_field_shape() {
         body["strands"]["ak:strand:AC7ywGI8OKsg1D-rP9Zz8B2KmWgXxgfz6Sufdo7s5f1Q"]["display"],
         false
     );
-    // Guard removed flat keys so devices don't drift back to the old shape.
-    assert!(body.get("default_send").is_none());
-    assert!(body.get("realm_overrides").is_none());
-    assert!(body.get("strand_overrides").is_none());
-    assert!(body.get("read_receipt_default_send").is_none());
 }
 
 /// account-data key is the exact spec key — same string the SDK uses

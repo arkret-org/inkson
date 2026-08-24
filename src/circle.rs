@@ -158,9 +158,6 @@ pub enum CircleErrorKind {
     /// `circle_encryption_below_realm_floor` — attempted to create a
     /// plaintext Circle where the parent Realm requires E2EE.
     EncryptionBelowRealmFloor,
-    /// `circle_encryption_profile_create_locked` — attempted to mutate
-    /// a Circle's create-locked encryption profile.
-    EncryptionProfileCreateLocked,
     /// `delivery_binding_handed_over` — the Circle's delivery binding
     /// moved to another epoch / device set; the caller must re-fetch.
     DeliveryBindingHandedOver,
@@ -170,15 +167,18 @@ impl CircleErrorKind {
     /// Match a wire `reason_code` string against the typed enum.
     /// Returns `None` if the reason isn't one of the Circle codes.
     pub fn from_reason_code(reason: &str) -> Option<Self> {
-        match reason {
-            "circle_realm_mismatch" => Some(Self::RealmMismatch),
-            "circle_not_active" => Some(Self::NotActive),
-            "circle_not_archived" => Some(Self::NotArchived),
-            "circle_member_must_be_realm_member" => Some(Self::MemberNotInRealm),
-            "scope_rebind_forbidden" => Some(Self::ScopeRebindForbidden),
-            "metadata_encryption_floor_violation" => Some(Self::MetadataFloorViolated),
-            "circle_encryption_below_realm_floor" => Some(Self::EncryptionBelowRealmFloor),
-            "circle_encryption_profile_create_locked" => Some(Self::EncryptionProfileCreateLocked),
+        match arkret_sdk::ReasonCode::from_wire(reason) {
+            arkret_sdk::ReasonCode::CircleRealmMismatch => Some(Self::RealmMismatch),
+            arkret_sdk::ReasonCode::CircleNotActive => Some(Self::NotActive),
+            arkret_sdk::ReasonCode::CircleNotArchived => Some(Self::NotArchived),
+            arkret_sdk::ReasonCode::CircleMemberMustBeRealmMember => Some(Self::MemberNotInRealm),
+            arkret_sdk::ReasonCode::ScopeRebindForbidden => Some(Self::ScopeRebindForbidden),
+            arkret_sdk::ReasonCode::MetadataEncryptionFloorViolation => {
+                Some(Self::MetadataFloorViolated)
+            }
+            arkret_sdk::ReasonCode::CircleEncryptionBelowRealmFloor => {
+                Some(Self::EncryptionBelowRealmFloor)
+            }
             _ => None,
         }
     }
@@ -186,12 +186,10 @@ impl CircleErrorKind {
     /// Match an `ErrorEnvelope.code` against Circle-adjacent wire codes
     /// that may be emitted directly as the envelope code.
     pub fn from_error_code(code: &str) -> Option<Self> {
-        match code {
-            arkret_sdk::ErrorCode::DELIVERY_BINDING_HANDED_OVER => {
+        match arkret_sdk::ErrorCode::from_wire(code) {
+            arkret_sdk::ErrorCode::DeliveryBindingHandedOver => {
                 Some(Self::DeliveryBindingHandedOver)
             }
-            "circle_encryption_below_realm_floor" => Some(Self::EncryptionBelowRealmFloor),
-            "circle_encryption_profile_create_locked" => Some(Self::EncryptionProfileCreateLocked),
             _ => None,
         }
     }
@@ -208,7 +206,6 @@ impl CircleErrorKind {
             Self::ScopeRebindForbidden => "error.circle.scope_rebind_forbidden",
             Self::MetadataFloorViolated => "error.circle.metadata_floor",
             Self::EncryptionBelowRealmFloor => "error.circle.encryption_below_realm_floor",
-            Self::EncryptionProfileCreateLocked => "error.circle.encryption_profile_locked",
             Self::DeliveryBindingHandedOver => "error.circle.delivery_binding_handed_over",
         }
     }
@@ -236,9 +233,6 @@ impl CircleErrorKind {
             }
             Self::EncryptionBelowRealmFloor => {
                 "This Realm requires E2EE, so the Circle must stay MLS-backed."
-            }
-            Self::EncryptionProfileCreateLocked => {
-                "Circle encryption_profile is locked at creation. Create a new Circle to change its E2EE mode."
             }
             Self::DeliveryBindingHandedOver => {
                 "The Circle's delivery binding moved to a newer set of devices — please retry."
@@ -313,10 +307,6 @@ mod tests {
             CircleErrorKind::from_reason_code("circle_encryption_below_realm_floor"),
             Some(CircleErrorKind::EncryptionBelowRealmFloor)
         );
-        assert_eq!(
-            CircleErrorKind::from_reason_code("circle_encryption_profile_create_locked"),
-            Some(CircleErrorKind::EncryptionProfileCreateLocked)
-        );
         assert_eq!(CircleErrorKind::from_reason_code("unrelated"), None);
     }
 
@@ -325,14 +315,6 @@ mod tests {
         assert_eq!(
             CircleErrorKind::from_error_code(arkret_sdk::ErrorCode::DELIVERY_BINDING_HANDED_OVER),
             Some(CircleErrorKind::DeliveryBindingHandedOver)
-        );
-        assert_eq!(
-            CircleErrorKind::from_error_code("circle_encryption_below_realm_floor"),
-            Some(CircleErrorKind::EncryptionBelowRealmFloor)
-        );
-        assert_eq!(
-            CircleErrorKind::from_error_code("circle_encryption_profile_create_locked"),
-            Some(CircleErrorKind::EncryptionProfileCreateLocked)
         );
         assert_eq!(CircleErrorKind::from_error_code("param_invalid"), None);
     }
@@ -365,7 +347,6 @@ mod tests {
             CircleErrorKind::ScopeRebindForbidden.i18n_key(),
             CircleErrorKind::MetadataFloorViolated.i18n_key(),
             CircleErrorKind::EncryptionBelowRealmFloor.i18n_key(),
-            CircleErrorKind::EncryptionProfileCreateLocked.i18n_key(),
             CircleErrorKind::DeliveryBindingHandedOver.i18n_key(),
         ];
         let unique: std::collections::HashSet<_> = keys.iter().copied().collect();

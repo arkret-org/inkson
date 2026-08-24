@@ -1,9 +1,9 @@
 use arkret_sdk::contact_operations::{
     ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome,
     ContactOperationRequestBody, ContactPeer, ContactPreparePhase, ContactPrepareRequestBody,
-    ContactPreparedEventDraft, ContactPreparedOutcome, ContactScope,
+    ContactPreparedOutcome, ContactScope,
 };
-use arkret_sdk::{IdempotencyKey, ProtocolOperationId, ReservationHandle};
+use arkret_sdk::{IdempotencyKey, PreparedEventDraft, ProtocolOperationId, ReservationHandle};
 
 pub(crate) struct PrincipalSuccessorSealContext {
     actor_id: arkret_sdk::DidCoreId,
@@ -115,11 +115,7 @@ fn contact_scope(scope: &str) -> anyhow::Result<ContactScope> {
 
 fn prepared_contact_request(
     outcome: ContactOperationOutcome,
-) -> anyhow::Result<(
-    ProtocolOperationId,
-    ReservationHandle,
-    ContactPreparedEventDraft,
-)> {
+) -> anyhow::Result<(ProtocolOperationId, ReservationHandle, PreparedEventDraft)> {
     match outcome {
         ContactOperationOutcome::Prepared {
             outcome:
@@ -138,7 +134,7 @@ fn prepared_contact_request(
 }
 
 pub(crate) fn sign_prepared_contact_event(
-    draft: &ContactPreparedEventDraft,
+    draft: &PreparedEventDraft,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
     let mut event = draft.unsigned_event()?;
     let signer = crate::event_signer::active_signer()

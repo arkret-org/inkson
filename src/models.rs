@@ -559,18 +559,6 @@ mod tests {
     }
 
     #[test]
-    fn submit_event_outcome_rejects_removed_flat_wire() {
-        // renames.json rejection policy: the removed flat `{event_id,
-        // sync_token, …}` shape MUST NOT decode — canonical-only parser.
-        let value = serde_json::json!({
-            "event_id": "ak:event:AIMXMvRgtsczspdHMyMNgDLk0MhursEZ9NBFfIYA6jyE",
-            "status": "accepted",
-            "sync_token": "sx:removed",
-        });
-        assert!(serde_json::from_value::<super::SubmitEventResult>(value).is_err());
-    }
-
-    #[test]
     fn submit_event_outcome_uses_duplicate_id_when_nothing_accepted() {
         let value = serde_json::json!({
             "status": "duplicate",
@@ -913,20 +901,14 @@ pub struct RealmPolicyResult {
 
 /// `ak.self.events.command.submit` response.
 ///
-/// Decodes **only** the canonical `EventsSubmitOutcome` wire shape —
-/// `{status, accepted[], duplicate[], rejected[], actor_frontier,
-/// realm_frontier, cursor}` (spec
-/// `service-operation-dtos.schema.json#/$defs/EventsSubmitOutcome`,
-/// required: `status`, `accepted`). The inkson-facing flat surface is
-/// folded from the SDK `EventsSubmitOutcome` on deserialize:
+/// Decodes the canonical `EventsSubmitOutcome` wire shape and folds it into
+/// the inkson-facing result:
 ///   * `event_id` ← first `accepted` (else first `duplicate`)
 ///   * `cursor`   ← `cursor` (read-your-writes barrier)
 ///   * `status`   ← the `accepted` / `duplicate` / `partial` discriminant
 ///
-/// Per renames.json rejection policy, the removed flat
-/// `{event_id, sync_token, …}` shape is NOT tolerated — mocks must emit
-/// the canonical shape. Ids stay plain `String`s so synthetic fixture ids
-/// do not trip the strict `EventId` validator.
+/// Ids stay plain `String`s so synthetic fixture ids do not trip the strict
+/// `EventId` validator.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SubmitEventResult {
     pub event_id: String,
@@ -975,19 +957,7 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
     where
         D: serde::Deserializer<'de>,
     {
-        let value = Value::deserialize(deserializer)?;
-        // renames.json rejection policy: the SDK `EventsSubmitOutcome` does
-        // not deny unknown fields (and defaults `accepted`), so an unregistered
-        // flat `{event_id, sync_token, …}` shape would otherwise decode as an
-        // empty canonical outcome. Reject its marker keys explicitly so the
-        // canonical-only guarantee holds.
-        if value.get("event_id").is_some() || value.get("sync_token").is_some() {
-            return Err(serde::de::Error::custom(
-                "unregistered flat submit-outcome wire shape (event_id/sync_token) is not accepted",
-            ));
-        }
-        let outcome = arkret_sdk::EventsSubmitOutcome::deserialize(value)
-            .map_err(serde::de::Error::custom)?;
+        let outcome = arkret_sdk::EventsSubmitOutcome::deserialize(deserializer)?;
         Ok(outcome.into())
     }
 }

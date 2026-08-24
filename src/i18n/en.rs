@@ -2321,10 +2321,6 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "This workspace requires E2EE, so the Circle must stay MLS-backed.",
     );
     dict.set(
-        "error.circle.encryption_profile_locked",
-        "Circle encryption_profile is locked at creation. Create a new Circle to change its E2EE mode.",
-    );
-    dict.set(
         "error.circle.delivery_binding_handed_over",
         "The Circle's delivery binding moved to a newer set of devices — please retry the request.",
     );

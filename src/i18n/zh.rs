@@ -633,10 +633,6 @@ pub fn chinese_translations() -> TranslationDict {
         "该工作区要求 E2EE，Circle 必须保持 MLS 加密。",
     );
     dict.set(
-        "error.circle.encryption_profile_locked",
-        "Circle 的 encryption_profile 在创建时已锁定，请创建新 Circle。",
-    );
-    dict.set(
         "error.circle.delivery_binding_handed_over",
         "Circle 的投递绑定已切换到新设备集，请重试。",
     );

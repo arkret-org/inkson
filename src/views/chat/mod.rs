@@ -587,7 +587,7 @@ fn accepted_native_sidecar_id(
 }
 
 fn sign_prepared_sidecar_event(
-    draft: &arkret_sdk::sidecar_operations::SidecarPreparedEventDraft,
+    draft: &arkret_sdk::PreparedEventDraft,
     digest_suite: arkret_sdk::DigestSuite,
     expected_kind: &str,
     controller_id: &arkret_sdk::DidFullId,
