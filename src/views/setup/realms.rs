@@ -960,6 +960,35 @@ pub(super) fn RealmsSection(
                                                             realm_id.clone(),
                                                             projection_body,
                                                         );
+                                                        // Every post-bootstrap Control Move (including a
+                                                        // plaintext Realm invite) derives authority and the
+                                                        // live digest suite from a locally verified accepted
+                                                        // Seal checkpoint. MLS setup also needs it, but the
+                                                        // requirement is Realm-wide rather than encryption-
+                                                        // specific, so establish it before exposing Done.
+                                                        if let Err(err) = crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
+                                                            &api,
+                                                            state_store,
+                                                            &realm_id,
+                                                        )
+                                                        .await
+                                                        {
+                                                            let message = BootstrapProgressStrings::fill(
+                                                                &strings.created_then_failed,
+                                                                &[
+                                                                    ("id", realm_id.clone()),
+                                                                    ("error", err),
+                                                                ],
+                                                            );
+                                                            realm_create_busy.set(false);
+                                                            realm_state.set(message.clone());
+                                                            crate::components::feedback::toast_error(
+                                                                "feedback.realm_create_failed",
+                                                                vec![],
+                                                                Some(message),
+                                                            );
+                                                            return;
+                                                        }
                                                         // The canonical Realm transaction is
                                                         // complete at this point. Transition the
                                                         // wizard immediately; MLS initialization

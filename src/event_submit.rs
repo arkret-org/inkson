@@ -5063,7 +5063,7 @@ mod tests {
             None,
             "invite_only",
             "invite",
-            "shared",
+            "since_join",
             // `encryption_profile` is the closed realm-genesis schema enum
             // {none, mls_rfc9420, external}; "plaintext" was never a member and
             // only survived here because the object used to be hand-built JSON.
@@ -5189,7 +5189,7 @@ mod tests {
             Some("Realm genesis must not query its own nonexistent frontier"),
             "listed",
             "invite",
-            "shared",
+            "since_join",
             "mls_rfc9420",
             "standard",
             "restricted",

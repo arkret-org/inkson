@@ -271,7 +271,7 @@ pub(super) fn inject_test_session_credential(
 /// `principal_server_url` is the active server so the bootstrap does not treat
 /// it as stale.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
-pub(super) fn inject_test_session_grant(
+pub(super) async fn inject_test_session_grant(
     state_store: &mut SyncSignal<LocalStateStore>,
     config_store: Signal<LocalConfigStore>,
     server_url: &str,
@@ -519,7 +519,7 @@ pub(super) fn inject_test_session_grant(
         // refreshes the injected grant.
         session_private_key_pem: String::new(),
         grant_id,
-        audience,
+        audience: audience.clone(),
         principal_id: principal_core_id,
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?,
         // MUST match the active server so the bootstrap does not discard the
@@ -528,6 +528,33 @@ pub(super) fn inject_test_session_grant(
         grant_expires_at: Some(now + chrono::Duration::hours(8)),
         stored_at: now,
     };
+    let principal_server_id = arkret_sdk::DidCoreId::new(audience.clone()).ok()?;
+    let user_store = match crate::secure_key_store::UserLocalStore::new(
+        arkret_sdk::PrincipalAuthorityKey::new(grant.principal_id.clone(), principal_server_id),
+        grant.device_id.clone(),
+    ) {
+        Ok(user_store) => user_store,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                "test session injection: account secure scope construction failed"
+            );
+            return None;
+        }
+    };
+    if let Err(error) = crate::state::store_session_grant_in_user_secure_store_durable(
+        &user_store,
+        secure_store,
+        &grant,
+    )
+    .await
+    {
+        tracing::warn!(
+            ?error,
+            "test session injection: session grant durable persist failed"
+        );
+        return None;
+    }
     tracing::warn!(
         target: "mls_admission",
         device = %device_id,
@@ -543,5 +570,14 @@ pub(super) fn inject_test_session_grant(
         device_id.to_owned(),
         grant_jwt.clone(),
     );
+    // The handoff is single-use. The live session coordinator may rotate this
+    // grant immediately after boot; retaining the original fixture in
+    // localStorage would overwrite that newer durable grant on a hard reload
+    // and make an otherwise valid authenticated deep link fall back to login.
+    if let Some(storage) =
+        web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+    {
+        let _ = storage.remove_item(TEST_SESSION_INJECTION_KEY);
+    }
     Some(grant_jwt)
 }

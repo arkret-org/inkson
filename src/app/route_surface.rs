@@ -117,7 +117,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         push_state,
         locale,
         theme,
-        base_url: _,
+        base_url,
     } = state;
     let NavigationState {
         route,
@@ -143,6 +143,81 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
             .get(&active_realm_id)
             .and_then(crate::views::chat::default_discussion_strand_id)
     };
+    // The Realm event stream normally folds set-default into the local
+    // projection. If Chat wins that race, recover only from the standard,
+    // caller-visible Strand projection's derived marker; never infer a
+    // default from ordering, identity reuse, or hidden history.
+    let mut default_strand_probe_for = use_signal(String::new);
+    if matches!(content_route, Route::Chat { .. })
+        && minimal_ready
+        && active_default_strand_id.is_none()
+        && !active_realm_id.is_empty()
+        && !token().trim().is_empty()
+        && default_strand_probe_for() != active_realm_id
+    {
+        default_strand_probe_for.set(active_realm_id.clone());
+        let realm_id = active_realm_id.clone();
+        let base = base_url();
+        let api_token = token();
+        let mut state_store = SessionContext::get().state_store;
+        let mut projection_epoch = realm_live_epoch;
+        spawn(async move {
+            let result = crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
+                let realm_id = realm_id.clone();
+                async move {
+                    http.realm_strands(&realm_id)
+                        .await
+                        .map_err(anyhow::Error::from)
+                }
+            })
+            .await;
+            match result {
+                Ok(strands) => {
+                    let Some(default_strand_id) = strands
+                        .strands
+                        .iter()
+                        .find(|strand| strand.is_default)
+                        .map(|strand| strand.strand_id.to_string())
+                    else {
+                        return;
+                    };
+                    let changed = {
+                        let mut store = state_store.write();
+                        let Some(mut projection) =
+                            store.load().realm_tree_projections.get(&realm_id).cloned()
+                        else {
+                            return;
+                        };
+                        let Some(object) = projection.as_object_mut() else {
+                            return;
+                        };
+                        if object.get("default_strand_id").and_then(Value::as_str)
+                            == Some(default_strand_id.as_str())
+                        {
+                            false
+                        } else {
+                            object.insert(
+                                "default_strand_id".to_owned(),
+                                Value::String(default_strand_id),
+                            );
+                            store.save_realm_tree_projection(realm_id.clone(), projection);
+                            true
+                        }
+                    };
+                    if changed {
+                        projection_epoch.set(projection_epoch().wrapping_add(1));
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        realm_id,
+                        error = %error.display_diagnostic(),
+                        "default Strand projection hydration failed"
+                    );
+                }
+            }
+        });
+    }
 
     rsx! {
                 div { class: "workspace-body",

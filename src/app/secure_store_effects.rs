@@ -124,6 +124,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             &device_id_for_secure_upgrade(),
                             secure_store.as_ref(),
                         )
+                        .await
                         .or_else(|| {
                             inject_test_session_credential(
                                 config_store_for_secure_upgrade,
@@ -145,6 +146,27 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         .read()
                         .load_with_secure_store(secure_store.as_ref());
                     let held_token = token_for_secure_upgrade.peek().trim().to_owned();
+                    // The session grant is an account-scoped secure-store
+                    // secret, not part of the synchronously hydrated local
+                    // snapshot. Restore it before classifying the remaining
+                    // credential as an impossible token-only session.
+                    let restored_grant = active_account.peek().as_ref().and_then(|account| {
+                        crate::identity::session_refresh::load_account_session_grant_with_secure_store(
+                            account,
+                            secure_store.as_ref(),
+                        )
+                        .ok()
+                    });
+                    if state_store_for_secure_upgrade
+                        .read()
+                        .session_grant()
+                        .is_none()
+                        && let Some(grant) = restored_grant
+                    {
+                        state_store_for_secure_upgrade
+                            .write()
+                            .set_session_grant(Some(grant));
+                    }
                     let active_grant = state_store_for_secure_upgrade.read().session_grant();
                     let grant_present = active_grant
                         .as_ref()
@@ -160,7 +182,9 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
                             &loaded_config,
                             active_account.peek().as_ref(),
-                        ) {
+                        )
+                        .or_else(|| active_grant.as_ref().map(|grant| grant.grant_jwt.clone()))
+                        {
                             tracing::debug!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
                             token_for_secure_upgrade.set(rehydrated);
                         }

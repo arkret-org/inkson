@@ -1124,8 +1124,13 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
         let arkret_sdk::ProjectedOp::Direct(op) = &write.op else {
             anyhow::bail!("Realm state event kind {kind} does not have a direct state write");
         };
-        if op.op_type != arkret_sdk::LatticeOpType::Set {
-            anyhow::bail!("Realm state event kind {kind} does not have a set contract");
+        if !matches!(
+            op.op_type,
+            arkret_sdk::LatticeOpType::Set | arkret_sdk::LatticeOpType::Transition
+        ) {
+            anyhow::bail!(
+                "Realm state event kind {kind} does not have a set or transition contract"
+            );
         }
         (kind, write.cell.as_str().to_owned())
     };

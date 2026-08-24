@@ -23,6 +23,48 @@ use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 
 use crate::state::LocalStateStore;
 
+/// Acquire, verify, and durably pin the accepted Seal checkpoint for a Realm
+/// that the current principal has created or joined. This is required for
+/// every Realm, not only encrypted ones: subsequent writes derive authority
+/// and the digest suite from verified governance state covered by that
+/// checkpoint.
+pub(crate) async fn ensure_realm_governance_checkpoint(
+    api: &crate::transport::TransportClient,
+    mut state_store: SyncSignal<LocalStateStore>,
+    realm_id: &str,
+) -> Result<(), String> {
+    if state_store
+        .read()
+        .trusted_mls_governance_checkpoint(realm_id)
+        .is_some()
+    {
+        return Ok(());
+    }
+    let submitter = api
+        .event_submitter()
+        .map_err(|error| format!("Realm governance proof frontier client: {error}"))?;
+    let seal_view = wait_for_realm_seal_view(&submitter, realm_id)
+        .await
+        .map_err(|error| {
+            format!("refreshing the accepted Seal view after Realm creation failed: {error}")
+        })?;
+    {
+        let mut store = state_store.write();
+        let mut view = store.seal_view_for_realm(realm_id);
+        view.frontier = seal_view
+            .seal_basis
+            .leaves
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        view.state_root = None;
+        store.set_realm_seal_view(realm_id.to_owned(), view);
+    }
+    crate::mls::governance_proof::ensure_governance_checkpoint(api, state_store, realm_id)
+        .await
+        .map_err(|error| format!("establishing the Realm governance checkpoint failed: {error}"))
+}
+
 /// Whether this client is the creator of an encrypted `realm_id` whose MLS
 /// bootstrap is still incomplete.
 ///
@@ -95,39 +137,12 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         ));
     }
 
+    // encryption-and-audit.md 2.5.4 T1. The creator's trust in the checkpoint
+    // comes from the create Event it authored, recognised through realm_id.
+    ensure_realm_governance_checkpoint(api, state_store, realm_id).await?;
     let submitter = api
         .event_submitter()
-        .map_err(|error| format!("MLS governance proof frontier client: {error}"))?;
-    // A freshly accepted Realm may not be sealed yet, so wait for the Seal view
-    // before asking for anything Seal-bound. The view is a liveness signal only
-    // — the checkpoint below is established by verification, not by this read.
-    let seal_view = wait_for_realm_seal_view(&submitter, realm_id)
-        .await
-        .map_err(|error| {
-            format!("refreshing the accepted Seal view before MLS setup failed: {error}")
-        })?;
-    {
-        let mut store = state_store.write();
-        let mut view = store.seal_view_for_realm(realm_id);
-        view.frontier = seal_view
-            .seal_basis
-            .leaves
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        // The frontier view carries no service-derived root hint; the local
-        // post-state root is filled by verified Seal replay.
-        view.state_root = None;
-        store.set_realm_seal_view(realm_id.to_owned(), view);
-    }
-
-    // encryption-and-audit.md 2.5.4 T1. This is what makes the module comment
-    // above true: the creator's trust in the checkpoint comes from the create Event
-    // it authored itself, recognised through realm_id, not from whichever head
-    // the service happens to serve.
-    crate::mls::governance_proof::ensure_governance_checkpoint(api, state_store, realm_id)
-        .await
-        .map_err(|error| format!("establishing the MLS governance checkpoint failed: {error}"))?;
+        .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
 
     let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
         actor_id,

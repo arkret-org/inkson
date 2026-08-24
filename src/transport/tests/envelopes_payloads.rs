@@ -193,10 +193,11 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(events[2].payload["policy_revision"], 1);
-    assert_eq!(events[2].payload["content_scheme"], "mls_exporter_aead_v1");
+    assert!(events[2].payload.get("content_scheme").is_none());
     assert_eq!(events[3].payload["value"], "invite");
+    assert_eq!(events[4].payload["from"], serde_json::Value::Null);
     assert_eq!(events[4].payload["to"], "all_history_for_current_members");
-    assert_eq!(events[5].payload["value"], "listed");
+    assert_eq!(events[5].payload["value"]["discoverability"], "listed");
     assert_eq!(
         events[6].payload["services"][0]["service_id"],
         "ak:did_core:web:server.example"
@@ -326,10 +327,10 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     )
     .expect("the Realm bootstrap unit authors");
 
-    // Index 2 is the Realm policy bundle, the only bootstrap Event that carries
-    // `content_scheme`. Index 3 is the join rule, whose payload value is a bare
-    // string — reading `content_scheme` off it silently yields Null.
-    assert_eq!(events[2].payload["content_scheme"], "mls_rfc9420");
+    // The choice is validated during Realm bootstrap preparation but is frozen
+    // only by the accepted MLS group Genesis. It must not leak into the mutable
+    // Realm policy bundle.
+    assert!(events[2].payload.get("content_scheme").is_none());
 }
 
 /// Regression: every genesis bootstrap envelope must produce the SAME

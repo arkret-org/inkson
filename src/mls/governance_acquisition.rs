@@ -4,6 +4,7 @@ use arkret_sdk::http_client;
 
 const MAX_EVENT_BATCH: usize = 128;
 const MAX_DEPENDENCY_BATCH: usize = 8;
+type DependencySortKey = (String, Vec<u8>);
 
 pub(crate) struct ResolvedMlsGovernanceProof {
     pub(crate) bundle: arkret_sdk::MlsGovernanceProofBundle,
@@ -452,11 +453,36 @@ async fn fetch_event_set_with_access(
             history_traversal_access: history_traversal_access.clone(),
             max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
         };
-        match http.events_resolve(&resolve).await {
+        // A just-accepted membership Event and its Realm policy can reach the
+        // durable Event log before the membership-gated read projection. In
+        // that bounded convergence window, resolve correctly reports the
+        // checkpoint delta as missing/unauthorized. Retry the same closed
+        // selector set; never accept a partial response and never widen the
+        // caller's history traversal authority.
+        const PROJECTION_ATTEMPTS: usize = 20;
+        let mut projection_attempt = 0;
+        let outcome = loop {
+            let outcome = http.events_resolve(&resolve).await;
+            let retry = matches!(
+                &outcome,
+                Ok(outcome)
+                    if (!outcome.missing.is_empty() || !outcome.unauthorized.is_empty())
+                        && projection_attempt + 1 < PROJECTION_ATTEMPTS
+            );
+            if !retry {
+                break outcome;
+            }
+            projection_attempt += 1;
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
+        };
+        match outcome {
             Ok(outcome) => {
                 if !outcome.missing.is_empty() || !outcome.unauthorized.is_empty() {
                     return Err(format!(
-                        "MLS governance {label} Event resolution is incomplete"
+                        "MLS governance {label} Event resolution is incomplete: missing={}, unauthorized={}, requested={}",
+                        outcome.missing.len(),
+                        outcome.unauthorized.len(),
+                        batch.len(),
                     ));
                 }
                 let requested = batch.iter().collect::<BTreeSet<_>>();
@@ -477,7 +503,9 @@ async fn fetch_event_set_with_access(
                 }
                 if returned.len() != batch.len() {
                     return Err(format!(
-                        "MLS governance {label} Event resolution is incomplete"
+                        "MLS governance {label} Event resolution is incomplete: returned={}, requested={}",
+                        returned.len(),
+                        batch.len(),
                     ));
                 }
             }
@@ -516,7 +544,7 @@ async fn fetch_dependency_closure(
     http: &arkret_sdk::Client,
     request: &arkret_sdk::MlsGovernanceProofRequestBody,
     selectors: Vec<arkret_sdk::GovernanceDependencySelector>,
-) -> Result<BTreeMap<Vec<u8>, arkret_sdk::GovernanceDependency>, String> {
+) -> Result<BTreeMap<DependencySortKey, arkret_sdk::GovernanceDependency>, String> {
     let realm_id = request
         .effective_scope
         .realm_id_opt()
@@ -528,7 +556,7 @@ async fn fetch_dependency_closure_for_realm(
     http: &arkret_sdk::Client,
     realm_id: &arkret_sdk::RealmId,
     selectors: Vec<arkret_sdk::GovernanceDependencySelector>,
-) -> Result<BTreeMap<Vec<u8>, arkret_sdk::GovernanceDependency>, String> {
+) -> Result<BTreeMap<DependencySortKey, arkret_sdk::GovernanceDependency>, String> {
     fetch_dependency_closure_for_realm_with_access(http, realm_id, selectors, None).await
 }
 
@@ -537,7 +565,7 @@ async fn fetch_dependency_closure_for_realm_with_access(
     realm_id: &arkret_sdk::RealmId,
     selectors: Vec<arkret_sdk::GovernanceDependencySelector>,
     history_traversal_access: Option<arkret_sdk::SelfHistoryTraversalAccess>,
-) -> Result<BTreeMap<Vec<u8>, arkret_sdk::GovernanceDependency>, String> {
+) -> Result<BTreeMap<DependencySortKey, arkret_sdk::GovernanceDependency>, String> {
     let mut dependencies = fetch_dependency_batches_for_realm(
         http,
         realm_id,
@@ -576,7 +604,7 @@ async fn fetch_dependency_batches_for_realm(
     realm_id: &arkret_sdk::RealmId,
     selectors: Vec<arkret_sdk::GovernanceDependencySelector>,
     history_traversal_access: Option<arkret_sdk::SelfHistoryTraversalAccess>,
-) -> Result<BTreeMap<Vec<u8>, arkret_sdk::GovernanceDependency>, String> {
+) -> Result<BTreeMap<DependencySortKey, arkret_sdk::GovernanceDependency>, String> {
     let mut pending = VecDeque::new();
     for chunk in selectors.chunks(MAX_DEPENDENCY_BATCH) {
         pending.push_back(chunk.to_vec());
@@ -617,7 +645,11 @@ async fn fetch_dependency_batches_for_realm(
     Ok(items)
 }
 
-fn selector_key(selector: &arkret_sdk::GovernanceDependencySelector) -> Result<Vec<u8>, String> {
-    arkret_sdk::canonical::canonical_json_bytes(selector)
+fn selector_key(
+    selector: &arkret_sdk::GovernanceDependencySelector,
+) -> Result<DependencySortKey, String> {
+    selector
+        .canonical_sort_key()
+        .map(|(kind, bytes)| (kind.to_owned(), bytes))
         .map_err(|error| format!("canonicalize governance dependency selector: {error}"))
 }
