@@ -170,7 +170,6 @@ pub(super) fn snapshot_manifest_for_items(
             algorithm: arkret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
             root: snapshot_hash(9),
             covered_event_count: 2,
-            covered_event_ids: vec![snapshot_event_id("0000000000a2")],
             actor_seq_ranges: Vec::new(),
         },
         chunks,
@@ -179,7 +178,6 @@ pub(super) fn snapshot_manifest_for_items(
         created_by: service_id.clone(),
         created_at,
         authority_binding: arkret_sdk::AuthorityBinding {
-            issuer: service_id,
             authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
             auth_state_digest: snapshot_hash(1),
             auth_frontier: vec![snapshot_event_id("0000000000a2")],

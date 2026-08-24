@@ -78,7 +78,6 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
             algorithm: arkret_sdk::EventSetCommitmentAlgorithm::MerkleEventSetV1,
             root: snapshot_contract_hash(9),
             covered_event_count: 1,
-            covered_event_ids: vec![snapshot_contract_event_id("0000000000c1")],
             actor_seq_ranges: Vec::new(),
         },
         chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),
@@ -87,7 +86,6 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
         created_by: service_id.clone(),
         created_at,
         authority_binding: arkret_sdk::AuthorityBinding {
-            issuer: service_id,
             authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
             auth_state_digest: snapshot_contract_hash(1),
             auth_frontier: vec![snapshot_contract_event_id("0000000000c1")],

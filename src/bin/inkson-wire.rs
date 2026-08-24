@@ -134,7 +134,6 @@ fn range_completeness(input: Value) -> Result<Value> {
         count: covered_event_ids.len() as u64,
         observed_at,
         witness_attestation: arkret_sdk::RangeCompletenessAttestationWitnessAttestation {
-            kind: "single_source".to_owned(),
             witnesses: vec![
                 arkret_sdk::RangeCompletenessAttestationWitnessAttestationWitnessesItem {
                     issuer: issuer.clone(),
