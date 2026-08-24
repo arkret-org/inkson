@@ -507,10 +507,11 @@ async fn verify_contact_request_receipt(
     receipt: &arkret_sdk::contact_operations::RequestAcceptanceReceipt,
 ) -> anyhow::Result<()> {
     receipt.validate_shape()?;
+    let expected_request_digest = receipt.core.request_digest();
     let resolved = http
         .events_resolve(&arkret_sdk::EventsResolveRequestBody {
             event_ids: vec![receipt.core.request_event_ref.clone()],
-            event_digests: vec![receipt.core.request_digest.clone()],
+            event_digests: vec![expected_request_digest.clone()],
             include_payload: Some(true),
             history_traversal_access: None,
             max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
@@ -522,9 +523,9 @@ async fn verify_contact_request_receipt(
         .find(|event| event.event_id == receipt.core.request_event_ref)
         .ok_or_else(|| anyhow::anyhow!("Contact request receipt Event is not accepted"))?;
     let request_digest = arkret_sdk::Hash::new(
-        request.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+        request.event_digest_with_digest_suite(expected_request_digest.digest_suite()?)?,
     )?;
-    if request_digest != receipt.core.request_digest {
+    if request_digest != expected_request_digest {
         anyhow::bail!("Contact request receipt does not bind the exact resolved Event");
     }
     let issuer_full_id = arkret_sdk::DidFullId::new(
@@ -572,7 +573,6 @@ async fn verify_contact_request_receipt(
     arkret_sdk::verify_contact_request_acceptance_receipt(
         receipt,
         &request.event_id,
-        &request_digest,
         &verifying_key,
     )?;
     Ok(())
