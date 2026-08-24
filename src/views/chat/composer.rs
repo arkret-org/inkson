@@ -1527,18 +1527,23 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                 store.append_raw_operation(
                                                     op.local_operation_id().to_string(),
                                                     Some(realm_for_record),
-                                                    json!({
-                                                        "event_id": resp.event_id.clone(),
-                                                        "kind": event_kind_str::MESSAGE_CREATE,
-                                                        "actor_id": actor_for_store,
-                                                        "body": body_for_store,
-                                                        "content": op.payload()["content"].clone(),
-                                                        "strand_id": strand_id_for_store,
-                                                        "message_id": message_id_for_store,
-                                                        "mentions": mention_values_for_store,
-                                                        "reply_to": reply_to_for_store,
-                                                        "status": resp.status.clone(),
-                                                    }),
+                                                    serde_json::to_value(
+                                                        AcceptedChatMessageOperation {
+                                                            event_id: &resp.event_id,
+                                                            kind: event_kind_str::MESSAGE_CREATE,
+                                                            actor_id: &actor_for_store,
+                                                            body: &body_for_store,
+                                                            content: &op.payload()["content"],
+                                                            strand_id: &strand_id_for_store,
+                                                            message_id: &message_id_for_store,
+                                                            mentions: &mention_values_for_store,
+                                                            reply_to: reply_to_for_store.as_deref(),
+                                                            status: &resp.status,
+                                                        },
+                                                    )
+                                                    .expect(
+                                                        "accepted chat message operation is serializable",
+                                                    ),
                                                 );
                                             }
                                             if let Some(found) = messages

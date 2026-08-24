@@ -41,6 +41,20 @@ mod timeline_surface;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
 
+#[derive(serde::Serialize)]
+struct AcceptedChatMessageOperation<'a> {
+    event_id: &'a str,
+    kind: &'static str,
+    actor_id: &'a str,
+    body: &'a str,
+    content: &'a Value,
+    strand_id: &'a str,
+    message_id: &'a str,
+    mentions: &'a [Value],
+    reply_to: Option<&'a str>,
+    status: &'a arkret_sdk::EventsSubmitStatus,
+}
+
 fn principal_core_key(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {

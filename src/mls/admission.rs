@@ -622,7 +622,7 @@ fn build_mls_welcome_payload_with_requester(
         WelcomeRequester::MinimalMetadataPairwise(identity) => {
             let arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise {
                 pairwise_actor_id,
-                verification_method: pairwise_verification_method,
+                verification_method,
             } = identity.endpoint_identity()
             else {
                 return Err(
@@ -633,7 +633,7 @@ fn build_mls_welcome_payload_with_requester(
                 pairwise_actor_id,
                 None,
                 arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise {
-                    requester_pairwise_verification_method: pairwise_verification_method,
+                    requester_pairwise_verification_method: verification_method,
                 },
                 Some(identity),
             )
