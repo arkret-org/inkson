@@ -2519,6 +2519,10 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.blocker.secure_store",
         "Device signing storage is still starting. Try again in a moment.",
     );
+    dict.set(
+        "setup.blocker.account_context_unavailable",
+        "Active account context is unavailable.",
+    );
     dict.set("setup.blocker.creating", "Creating workspace...");
     dict.set(
         "setup.error.session_expired",

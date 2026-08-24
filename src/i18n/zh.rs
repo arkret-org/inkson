@@ -2062,6 +2062,10 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.blocker.secure_store",
         "设备签名存储仍在启动，请稍后重试。",
     );
+    dict.set(
+        "setup.blocker.account_context_unavailable",
+        "当前账户上下文不可用。",
+    );
     dict.set("setup.blocker.creating", "正在创建工作区…");
     dict.set(
         "setup.error.session_expired",

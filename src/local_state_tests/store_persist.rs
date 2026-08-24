@@ -1105,8 +1105,11 @@ fn accepted_context_promotion_preserves_returning_account_entry() {
         "anonymous pre-DID state must not expose Alice's projections"
     );
     let alice = arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap();
-    let is_new = store.promote_accepted_context_for_test(&alice);
-    assert!(!is_new, "a returning DID is not a new account");
+    let switched = store.promote_accepted_context_for_test(&alice);
+    assert!(
+        switched,
+        "accepted returning context must leave the anonymous pending namespace"
+    );
     assert!(store.pending_login().is_none());
     // Alice's own entry (with her cursor) is restored, not wiped. The
     // secure-store seed/device_id tuple was already re-homed before this root
@@ -1346,7 +1349,7 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
         .unwrap();
 
     let principal_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
-    assert!(!store.promote_accepted_context_for_test(&principal_id));
+    assert!(store.promote_accepted_context_for_test(&principal_id));
     assert!(
         store.pending_account_handoff().is_some(),
         "handoff remains recoverable on the target account until completion commits"

@@ -2,12 +2,10 @@
 //! state store: to-device dedup + expiry keys, read-cursor scope/key
 //! derivation, browser/native storage + app-data-dir resolution, the XOR
 //! at-rest cipher + hex codec, secure-store identity / DPoP key load+store,
-//! the plaintext-seed dev gate, and snapshot encrypted-payload extraction.
+//! and the plaintext-seed dev gate.
 //! Moved out of `local_state.rs` (YOU-07-001, move only) — all callers are the
 //! parent `impl LocalStateStore` block and `local_state_tests.rs`; the glob
 //! re-export keeps `super::*` resolution unchanged.
-
-use arkret_wire::SchemaId;
 
 use super::*;
 
@@ -305,16 +303,4 @@ pub(crate) fn load_session_grant_from_secure_store(
 /// this; a developer without a working keyring is meant to fix the keyring.
 pub(crate) fn plaintext_identity_seed_fallback_allowed() -> bool {
     cfg!(test)
-}
-
-pub(crate) fn snapshot_item_encrypted_payload(
-    item: &arkret_sdk::SnapshotMaterializedItem,
-) -> Option<EncryptedPayload> {
-    let schema = item.object.get("schema").and_then(Value::as_str);
-    let is_envelope = item.kind == SchemaId::ENCRYPTED_ENVELOPE_V1
-        || schema == Some(SchemaId::ENCRYPTED_ENVELOPE_V1);
-    if !is_envelope {
-        return None;
-    }
-    serde_json::from_value(item.object.clone()).ok()
 }

@@ -2235,7 +2235,6 @@ mod tests {
 
     const EXCHANGE_ACCOUNT: &str = "did:web:alice.example";
     const EXCHANGE_AGENT: &str = "did:web:agents.example:assistant";
-    const EXCHANGE_REQUEST_EVENT: &str = "ak:event:AZWFWsK0mBAgeYWLiO1LU1RYz_ZXWHWYNdJDwfzCxKCG";
     const EXCHANGE_RESPONSE_EVENT: &str = "ak:event:AWgrDMnttudmVRcIZ3C76X4HW8sfi2eTKwkSUZDxwbbK";
 
     fn exchange_test_store(label: &str) -> crate::state::LocalStateStore {
@@ -2243,7 +2242,17 @@ mod tests {
             "inkson-sidecar-{label}-{}.json",
             crate::operation::uuid_v7()
         ));
-        crate::state::LocalStateStore::with_path(path)
+        let mut store = crate::state::LocalStateStore::with_path(path);
+        let realm_id = "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2";
+        crate::mls::governance_proof::seed_test_governance_proof(
+            &mut store,
+            realm_id,
+            None,
+            arkret_sdk::base64url_encode(realm_id.as_bytes()),
+            0,
+            0,
+        );
+        store
     }
 
     fn exchange_request_context(
@@ -2279,11 +2288,10 @@ mod tests {
         }
     }
 
-    fn append_accepted_request_envelope(
-        store: &mut crate::state::LocalStateStore,
+    fn accepted_request_envelope(
         session: &HostedSidecarState,
         pending: &PendingSidecarSubmission,
-    ) {
+    ) -> arkret_sdk::Event {
         let binding = arkret_sdk::AgentSidecarEventExchangeBinding::request(
             pending.exchange_id.clone(),
             pending.request_context.clone(),
@@ -2291,10 +2299,11 @@ mod tests {
         .unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
-        let mut event = arkret_wire::test_support::raw_event(
+        arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
-            arkret_sdk::ScopeRef::Realm {
+            arkret_sdk::ScopeRef::Sidecar {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                sidecar_id: session.sidecar_id.clone(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
@@ -2306,16 +2315,17 @@ mod tests {
                 "encrypted_metadata": serde_json::to_value(&metadata).unwrap(),
             }),
         )
-        .unwrap();
-        event.event_id = arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap();
-        event.scope_ref = arkret_wire::ScopeRef::Sidecar {
-            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-            sidecar_id: session.sidecar_id.clone(),
-        };
+        .unwrap()
+    }
+
+    fn append_accepted_request_envelope(
+        store: &mut crate::state::LocalStateStore,
+        event: &arkret_sdk::Event,
+    ) {
         store.append_raw_operation(
-            EXCHANGE_REQUEST_EVENT.to_owned(),
-            Some(session.source_realm_id.clone()),
-            serde_json::to_value(&event).unwrap(),
+            event.event_id.to_string(),
+            Some(event.realm_id.to_string()),
+            serde_json::to_value(event).unwrap(),
         );
     }
 
@@ -2398,8 +2408,10 @@ mod tests {
         let mut store = exchange_test_store("accepted");
         let session = session(Vec::new());
         let pending = exchange_pending_submission(&session);
+        let request = accepted_request_envelope(&session, &pending);
+        let request_event_id = request.event_id.clone();
 
-        record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
+        record_accepted_sidecar_exchange_request(&mut store, &pending, request_event_id.as_str())
             .unwrap();
         assert!(
             cached_sidecar_exchange_projections(
@@ -2410,7 +2422,7 @@ mod tests {
             .is_empty(),
             "an Event id alone is never used as a digest stand-in"
         );
-        append_accepted_request_envelope(&mut store, &session, &pending);
+        append_accepted_request_envelope(&mut store, &request);
         assert_eq!(
             refold_sidecar_exchanges_with_decrypt(
                 &mut store,
@@ -2435,7 +2447,7 @@ mod tests {
         );
         assert_eq!(
             projection.private_request_event_id.as_str(),
-            EXCHANGE_REQUEST_EVENT
+            request_event_id.as_str()
         );
         assert_eq!(
             projection.coordinator_agent_id.as_str(),
@@ -2469,25 +2481,28 @@ mod tests {
         let mut store = exchange_test_store("respond");
         let session = session(Vec::new());
         let pending = exchange_pending_submission(&session);
-        record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
+        let request = accepted_request_envelope(&session, &pending);
+        let request_event_id = request.event_id.clone();
+        record_accepted_sidecar_exchange_request(&mut store, &pending, request_event_id.as_str())
             .unwrap();
-        append_accepted_request_envelope(&mut store, &session, &pending);
+        append_accepted_request_envelope(&mut store, &request);
 
         // Craft the Agent-authored user_facing_response Event; the fake
         // decrypt below returns the mounted metadata value as plaintext.
         let binding = arkret_sdk::AgentSidecarEventExchangeBinding::user_facing_response(
             pending.exchange_id.clone(),
-            arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap(),
+            request_event_id.clone(),
         )
         .unwrap()
-        .with_completion(arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap())
+        .with_completion(request_event_id.clone())
         .unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
         let mut event = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
-            arkret_sdk::ScopeRef::Realm {
+            arkret_sdk::ScopeRef::Sidecar {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                sidecar_id: session.sidecar_id.clone(),
             },
             crate::mls_api_helpers::principal_core_id(EXCHANGE_AGENT).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
@@ -2500,12 +2515,14 @@ mod tests {
             }),
         )
         .unwrap();
-        event.event_id = arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap();
-        event.scope_ref = arkret_wire::ScopeRef::Sidecar {
-            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-            sidecar_id: session.sidecar_id.clone(),
-        };
-        event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
+        event.refs = vec![arkret_sdk::EventRef::new(
+            request_event_id.as_str(),
+            "after",
+        )];
+        event
+            .refresh_content_bound_identity_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+            .unwrap();
+        let response_event_id = event.event_id.clone();
         let event_digest = arkret_sdk::Hash::new(
             event
                 .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
@@ -2531,7 +2548,7 @@ mod tests {
             .into(),
         );
         store.append_raw_operation(
-            EXCHANGE_RESPONSE_EVENT.to_owned(),
+            response_event_id.to_string(),
             Some(session.source_realm_id.clone()),
             serde_json::to_value(&event).unwrap(),
         );
@@ -2564,11 +2581,11 @@ mod tests {
         );
         assert_eq!(
             close_intents[0].control.response_event_ids.as_deref(),
-            Some(&[arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap()][..])
+            Some(&[response_event_id.clone()][..])
         );
         assert_eq!(
             close_intents[0].control.basis_event_ids,
-            vec![arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap()]
+            vec![response_event_id.clone()]
         );
         assert!(
             close_intents[0].accepted_control_event_id.is_none(),
@@ -2580,7 +2597,7 @@ mod tests {
                 .iter()
                 .map(|event_id| event_id.as_str().to_owned())
                 .collect::<Vec<_>>(),
-            vec![EXCHANGE_RESPONSE_EVENT.to_owned()]
+            vec![response_event_id.to_string()]
         );
         assert_eq!(
             cached[0]
@@ -2615,9 +2632,11 @@ mod tests {
         let mut store = exchange_test_store("foreign-circle");
         let session = session(Vec::new());
         let pending = exchange_pending_submission(&session);
-        record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
+        let request = accepted_request_envelope(&session, &pending);
+        let request_event_id = request.event_id.clone();
+        record_accepted_sidecar_exchange_request(&mut store, &pending, request_event_id.as_str())
             .unwrap();
-        append_accepted_request_envelope(&mut store, &session, &pending);
+        append_accepted_request_envelope(&mut store, &request);
         assert_eq!(
             refold_sidecar_exchanges_with_decrypt(
                 &mut store,
@@ -2631,15 +2650,19 @@ mod tests {
 
         let binding = arkret_sdk::AgentSidecarEventExchangeBinding::user_facing_response(
             pending.exchange_id.clone(),
-            arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap(),
+            request_event_id.clone(),
         )
         .unwrap();
         let mut metadata = arkret_sdk::MessageMetadata::default();
         metadata.set_sidecar_exchange_binding(&binding).unwrap();
         let mut event = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
-            arkret_sdk::ScopeRef::Realm {
+            arkret_sdk::ScopeRef::Circle {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                circle_id: arkret_sdk::CircleId::new(
+                    "ak:circle:AW3knCMRmVvldfa_CEbYb97U_w_GbmmZ2UXnDdp3rr4r",
+                )
+                .unwrap(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
@@ -2653,18 +2676,15 @@ mod tests {
             }),
         )
         .unwrap();
-        event.event_id = arkret_sdk::EventId::new(EXCHANGE_RESPONSE_EVENT).unwrap();
-        // … but scoped to an unrelated Circle the controller can also read.
-        event.scope_ref = arkret_wire::ScopeRef::Circle {
-            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-            circle_id: arkret_sdk::CircleId::new(
-                "ak:circle:AW3knCMRmVvldfa_CEbYb97U_w_GbmmZ2UXnDdp3rr4r",
-            )
-            .unwrap(),
-        };
-        event.refs = vec![arkret_sdk::EventRef::new(EXCHANGE_REQUEST_EVENT, "after")];
+        event.refs = vec![arkret_sdk::EventRef::new(
+            request_event_id.as_str(),
+            "after",
+        )];
+        event
+            .refresh_content_bound_identity_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+            .unwrap();
         store.append_raw_operation(
-            EXCHANGE_RESPONSE_EVENT.to_owned(),
+            event.event_id.to_string(),
             Some(session.source_realm_id.clone()),
             serde_json::to_value(&event).unwrap(),
         );
@@ -2700,13 +2720,12 @@ mod tests {
         let mut store = exchange_test_store("fact-upgrade");
         let session = session(Vec::new());
         let pending = exchange_pending_submission(&session);
-        record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
-            .unwrap();
 
-        let mut event = arkret_wire::test_support::raw_event(
+        let event = arkret_wire::test_support::raw_event(
             arkret_sdk::EventKind::MessageCreate.as_str(),
-            arkret_sdk::ScopeRef::Realm {
+            arkret_sdk::ScopeRef::Sidecar {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                sidecar_id: session.sidecar_id.clone(),
             },
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
@@ -2719,13 +2738,10 @@ mod tests {
             }),
         )
         .unwrap();
-        event.event_id = arkret_sdk::EventId::new(EXCHANGE_REQUEST_EVENT).unwrap();
-        event.scope_ref = arkret_wire::ScopeRef::Sidecar {
-            realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-            sidecar_id: session.sidecar_id.clone(),
-        };
+        record_accepted_sidecar_exchange_request(&mut store, &pending, event.event_id.as_str())
+            .unwrap();
         store.append_raw_operation(
-            EXCHANGE_REQUEST_EVENT.to_owned(),
+            event.event_id.to_string(),
             Some(session.source_realm_id.clone()),
             serde_json::to_value(&event).unwrap(),
         );
@@ -2771,9 +2787,10 @@ mod tests {
         let mut store = exchange_test_store("incomparable-frontier");
         let session = session(Vec::new());
         let pending = exchange_pending_submission(&session);
-        record_accepted_sidecar_exchange_request(&mut store, &pending, EXCHANGE_REQUEST_EVENT)
+        let request = accepted_request_envelope(&session, &pending);
+        record_accepted_sidecar_exchange_request(&mut store, &pending, request.event_id.as_str())
             .unwrap();
-        append_accepted_request_envelope(&mut store, &session, &pending);
+        append_accepted_request_envelope(&mut store, &request);
         assert_eq!(
             refold_sidecar_exchanges_with_decrypt(
                 &mut store,
@@ -2942,8 +2959,8 @@ mod tests {
         .unwrap();
         assert_eq!(published.kind().as_str(), "ak.message.create");
         let published = crate::operation::author_for_test(&published);
-        assert!(gate.allows_serialized(SidecarDisclosureSurface::SharedPublish, &published));
-        let serialized = serde_json::to_value(published).unwrap();
+        assert!(gate.allows_serialized(SidecarDisclosureSurface::SharedPublish, published.event()));
+        let serialized = serde_json::to_value(published.event()).unwrap();
         assert_eq!(serialized["payload"]["strand_id"], session.source_strand_id);
         assert_eq!(
             serialized["payload"]["content"]["body"],

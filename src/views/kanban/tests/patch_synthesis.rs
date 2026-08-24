@@ -395,9 +395,9 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
 }
 
 #[test]
-fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
+fn engine_ingest_dedupes_resent_strand_update_by_canonical_event_id() {
     // The engine re-folds overlapping history on every resubscribe. The store's
-    // `upsert_raw_operation` dedupes by `operation_id`, and `synthesis_entries`
+    // `upsert_raw_operation` keys accepted events by canonical Event id, and `synthesis_entries`
     // group/replay by entry id, so a re-delivered update must not double the
     // track. This is the event-sourced replacement for the old
     // history-merge dedup guarantee.
@@ -412,13 +412,13 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     card.updated_at = "2026-05-22T10:00:00.000Z".to_owned();
 
     let event = json!({
-        "event_kind": "ak.strand.update",
-        "event_id": "op-1",
+        "kind": "ak.strand.update",
+        "event_id": "ak:event:AZUYAeUiTiKHqTOGKrrTfa2xZPZj09T6IRYuDuCNc9ZQ",
         "actor_id": "ak:did_core:web:acme.example:users:alice",
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "payload": {
-            "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+            "target_ref": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
             "patch": { "tracks.synthesis.content": content_patch_value("alice synthesis") }
         }
     });
@@ -439,12 +439,16 @@ fn engine_ingest_dedupes_resent_strand_update_by_operation_id() {
     );
 
     let raw_ops = store.load().raw_operations;
-    assert_eq!(raw_ops.len(), 1, "resent update deduped by operation_id");
+    assert_eq!(
+        raw_ops.len(),
+        1,
+        "resent update deduped by canonical Event id"
+    );
 
     let entries = card_synthesis_track_entries(&card, &raw_ops, &store);
     assert_eq!(entries.len(), 1, "no duplicate synthesis entry");
     assert_eq!(entries[0].body, "alice synthesis");
-    assert_eq!(entries[0].author_label, "did:web:acme.example:users:alice");
+    assert_eq!(entries[0].author_label, "ak:did_core:web:...rs:alice");
 }
 
 #[test]
@@ -588,6 +592,7 @@ fn late_join_synthesis_author_resolves_handle_from_roster_actor_did() {
 #[test]
 fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
     let actor = "ak:did_core:web:current-account.example";
+    let full_id = "did:web:current-account.example";
     let mut card = test_card(
         "ak:strand:AF3DijehNxWqPlABWhHV2X7qV7ZeRCJQ7el0rZYaSQXs",
         "U",
@@ -604,7 +609,7 @@ fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
     });
     let rows = realm_member_roster(Some(&projection));
     let mut store = isolated_store_for_tests("synthesis-current-account-handle");
-    store.switch_test_account(actor);
+    store.switch_test_account(full_id);
     store.set_primary_handle_for_did(actor, "alice:local.host");
     let context = CardAuthorDisplayContext {
         realm_id: TEST_REALM_ID,

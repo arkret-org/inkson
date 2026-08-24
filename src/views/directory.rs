@@ -1351,7 +1351,6 @@ mod tests {
             "peer": {"kind": "human", "principal_id": "ak:did_core:web:bob.example"},
             "slot_version": 1,
             "request_event_ref": "ak:event:AffHQLS6LHEezp3Czebm6JrWc0UdDt4xsoYf_l2OnrHI",
-            "request_digest": "sha256:f7c740b4ba2c711ece9dc2cde6e6e89ad673451d0ede31b2861ffe5d8e9eb1c8",
             "source_checkpoint": "sha256:04597468570b5436fdcfe18337daf5bbf2515b148e37dc629cdeea1e63057e85",
             "accepted_at": "2026-08-14T00:00:00.000Z",
             "issuer": "ak:did_core:web:service.example"

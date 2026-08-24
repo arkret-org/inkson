@@ -451,6 +451,7 @@ fn sync_body_with_seal_view_still_replaces_the_stored_view() {
 #[test]
 fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let mls_group_id = arkret_sdk::base64url_encode(realm.as_bytes());
     let anchor = "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     let body = conflict_bottoms_body("ak:cell:ak.component.member.state.v1:did:webvh:zfixture:a");
 
@@ -460,7 +461,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
         &mut merged,
         realm,
         None,
-        "dGVzdC1tbHM",
+        &mls_group_id,
         0,
         1,
     );
@@ -468,7 +469,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
         &merged,
         realm,
         None,
-        "dGVzdC1tbHM",
+        &mls_group_id,
         0,
         1,
         crate::mls::governance_proof::seed_test_security_frontier_leaves(),
@@ -499,7 +500,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
         &mut evicted,
         realm,
         None,
-        "dGVzdC1tbHM",
+        &mls_group_id,
         0,
         1,
     );

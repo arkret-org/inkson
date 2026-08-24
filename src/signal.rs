@@ -710,6 +710,14 @@ pub fn seal_signal_envelope(
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured — cannot send a Signal without a device proof")
     })?;
+    seal_signal_envelope_with_signer(header, encrypted_payload, signer.as_ref())
+}
+
+fn seal_signal_envelope_with_signer(
+    header: SignalHeader,
+    encrypted_payload: arkret_wire::SignalEncryptedPayload,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<arkret_wire::SignalEnvelope> {
     let verification_method = arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
         .map_err(anyhow::Error::msg)?;
     let signer_full_id = arkret_sdk::DidFullId::new(
@@ -768,7 +776,6 @@ pub fn seal_signal_envelope(
 /// Envelope fixtures for the receive-side tests of other modules.
 ///
 /// Sealing a real Signal needs mutable persisted MLS state and its account
-/// snapshot secret ([`encrypt_signal_payload_with_store`]), which a unit test
 /// of a receive path does not have. These helpers therefore supply opaque
 /// ciphertext and let [`seal_signal_envelope`] recompute the AAD binding, the
 /// envelope digest and the device proof exactly as production does. Only the
@@ -781,6 +788,7 @@ pub(crate) mod test_support {
     /// [`seal_signal_envelope`].
     pub(crate) fn opaque_encrypted_payload(
         header: &SignalHeader,
+        verification_method: &arkret_sdk::DidUrl,
     ) -> arkret_wire::SignalEncryptedPayload {
         let mut encrypted = arkret_wire::SignalEncryptedPayload {
             scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME.to_owned(),
@@ -807,13 +815,7 @@ pub(crate) mod test_support {
             encrypted_payload: encrypted.clone(),
             proof: arkret_wire::SignalProof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: arkret_sdk::DidUrl::new(
-                    crate::event_signer::active_signer()
-                        .expect("sealed Signal test fixture requires an active signer")
-                        .verification_method()
-                        .to_owned(),
-                )
-                .expect("test signer verification method must be a DID URL"),
+                verification_method: verification_method.clone(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
                 created_at: header.sent_at,
@@ -827,8 +829,10 @@ pub(crate) mod test_support {
     }
 
     /// A fully signed envelope plus the plaintext body a receiver would get
-    /// out of it. Requires an installed active signer for `actor#device`.
+    /// out of it, using an explicit fixture signer so parallel tests cannot
+    /// replace process-global account state between assembly and signing.
     pub(crate) fn sealed_signal(
+        signer: &crate::event_signer::InksonEventSigner,
         payload: &SignalPayload,
         realm_id: &arkret_sdk::RealmId,
         actor_id: &arkret_sdk::DidCoreId,
@@ -847,8 +851,10 @@ pub(crate) mod test_support {
             sent_at,
         );
         let plaintext = payload.to_plaintext(actor_id, sequence)?;
-        let encrypted = opaque_encrypted_payload(&header);
-        let envelope = seal_signal_envelope(header, encrypted)?;
+        let verification_method = arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
+            .map_err(anyhow::Error::msg)?;
+        let encrypted = opaque_encrypted_payload(&header, &verification_method);
+        let envelope = seal_signal_envelope_with_signer(header, encrypted, signer)?;
         Ok((envelope, serde_json::from_slice(&plaintext)?))
     }
 }

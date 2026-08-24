@@ -584,8 +584,8 @@ mod tests {
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             [seed; 32], actor, device,
         ));
-        let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         crate::signal::test_support::sealed_signal(
+            signer.as_ref(),
             &crate::signal::SignalPayload::CallSignal {
                 call_id: arkret_sdk::CallId::new(TEST_CALL).unwrap(),
                 seq,

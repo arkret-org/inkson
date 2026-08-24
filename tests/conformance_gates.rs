@@ -247,8 +247,6 @@ const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_INVITEE_CORE_ID: &str = "ak:did_core:web:bob.example";
 const TEST_ANCHOR_REF: &str =
     "ak:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-const TEST_ROOT_HASH: &str =
-    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
     select_authoring_principal_server();
@@ -299,7 +297,7 @@ fn authored_realm_bootstrap(
             None,
             "listed",
             "invite",
-            "shared",
+            "since_join",
             "mls_rfc9420",
             "standard",
             "restricted",
@@ -399,13 +397,18 @@ fn test_seal_basis() -> arkret_sdk::SealBasis {
     let view: arkret_sdk::RealmSealFrontierView = serde_json::from_value(serde_json::json!({
         "kind": "realm_seal",
         "realm_id": TEST_REALM_ID,
-        "seal_id": TEST_ANCHOR_REF,
-        "control_event_set_root": TEST_ROOT_HASH,
-        "state_root": TEST_ROOT_HASH,
+        "seal_basis": {
+            "leaves": [TEST_ANCHOR_REF]
+        },
         "governance_health": {
             "status": "healthy",
             "pending_proposals": [],
             "retained_faults": []
+        },
+        "observation_coordinate": {
+            "service_id": "ak:did_core:web:server.example",
+            "sequence": 1,
+            "observed_at": "2026-05-21T13:00:00.000Z"
         }
     }))
     .expect("test RealmSealFrontierView is valid");
@@ -512,7 +515,7 @@ fn build_realm_create_event_matches_event_schema() {
         Some("Roadmap work"),
         "listed",
         "invite",
-        "shared",
+        "since_join",
         "mls_rfc9420",
         "standard",
         "restricted",

@@ -11,6 +11,48 @@ fn test_device_id(value: &str) -> arkret_sdk::DeviceId {
     arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
 }
 
+fn active_account_scope(
+    actor: &str,
+    device: &str,
+) -> crate::secure_key_store::DeviceSeedScopeTestGuard {
+    let authority = test_authority(actor);
+    let device = test_device_id(device);
+    crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&authority, &device)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn seed_ready_creator_snapshot(
+    state: &mut crate::state::LocalStateStore,
+    secure: &crate::secure_key_store::MemorySecureKeyStore,
+    realm: &str,
+    actor: &str,
+    device: &str,
+) -> arkret_sdk::EventId {
+    crate::mls::runtime::ensure_creator_mls_snapshot(
+        state,
+        secure,
+        realm,
+        &test_authority(actor),
+        &test_device_id(device),
+    )
+    .unwrap()
+    .expect("fixture creates the current creator MLS snapshot");
+    let snapshot = state.mls_snapshot_for(realm).unwrap();
+    let accepted_ref =
+        arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
+    state
+        .record_mls_group_state_ref_for_effective_scope(
+            realm,
+            None,
+            &snapshot.group_id,
+            snapshot.epoch,
+            accepted_ref.clone(),
+        )
+        .unwrap();
+    state.mark_mls_genesis_emitted(realm).unwrap();
+    accepted_ref
+}
+
 /// Seal an encrypted write against the epoch its own MLS Events establish.
 ///
 /// Production seals inside the submit lane, once the genesis or commit this write
@@ -125,8 +167,9 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     // The ciphertext is produced by the production encryption path
     // (`kanban::mls_encrypt` → `mls::runtime`), not by a local MLS harness, so
     // the guard is exercised against the exact value shape the product writes.
-    let actor = "did:web:alice.example";
+    let actor = "ak:did_core:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let _account_scope = active_account_scope(actor, device);
     let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     let mut state = isolated_store_for_tests("encrypted-scope-allows-encrypted-value");
     state.save_realm_tree_projection(
@@ -142,6 +185,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
         0,
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    seed_ready_creator_snapshot(&mut state, &secure, TEST_REALM_ID, actor, device);
     let (patched, _mls_events) = encrypt_private_card_detail_patch_values_with_store(
         json!({
             "content": {"$op": "set", "value": {
@@ -258,7 +302,11 @@ fn private_patch_replacement_keeps_description_and_synthesis_separate() {
 }
 
 #[test]
-fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
+fn encrypted_private_patch_without_checkpoint_proven_snapshot_is_blocked_before_queueing() {
+    let _account_scope = active_account_scope(
+        "ak:did_core:web:alice.example",
+        "ak:device:01904100-0000-7000-8000-000000000001",
+    );
     let mut state = isolated_store_for_tests("missing-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let patch = json!({
@@ -271,14 +319,14 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
         patch,
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         &mut state,
         &secure,
     )
     .unwrap_err();
 
-    assert!(error.contains("MLS Welcome"));
+    assert_eq!(error, "checkpoint-proven MLS group state is pending");
     assert!(
         state
             .mls_snapshot_for("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
@@ -289,13 +337,14 @@ fn encrypted_private_patch_without_mls_snapshot_is_blocked_before_queueing() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn encrypted_private_patch_rejects_pending_welcome_without_claim_envelope() {
+fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let bob_actor = "did:web:bob.example";
+    let bob_actor = "ak:did_core:web:bob.example";
     let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
+    let _account_scope = active_account_scope(bob_actor, bob_device);
     let alice = ArkretMlsIdentity::new_basic(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
@@ -331,8 +380,8 @@ fn encrypted_private_patch_rejects_pending_welcome_without_claim_envelope() {
         },
     }))
     .unwrap()]);
-    // A durable Welcome without its accepted claim envelope is not authorized,
-    // irrespective of whether local KeyPackage private state is also absent.
+    // Welcome validation and application belong to the MLS runtime sync path.
+    // The Kanban writer consumes only checkpoint-proven active group state.
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(
         &secure,
@@ -353,11 +402,7 @@ fn encrypted_private_patch_rejects_pending_welcome_without_claim_envelope() {
     )
     .unwrap_err();
 
-    assert!(
-        error.contains("MLS Welcome could not be applied from local device inbox"),
-        "{error}"
-    );
-    assert!(error.contains("claim_envelope missing"), "{error}");
+    assert_eq!(error, "checkpoint-proven MLS group state is pending");
     assert!(state.mls_snapshot_for(realm).is_none());
     assert!(
         state
@@ -368,13 +413,14 @@ fn encrypted_private_patch_rejects_pending_welcome_without_claim_envelope() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
+fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let bob_actor = "did:web:bob.example";
+    let bob_actor = "ak:did_core:web:bob.example";
     let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
+    let _account_scope = active_account_scope(bob_actor, bob_device);
     let alice = ArkretMlsIdentity::new_basic(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
@@ -434,38 +480,19 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
     });
     let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
 
-    let blocked = encrypt_private_card_detail_patch_values_with_store(
+    let error = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
+    )
+    .unwrap_err();
+    assert_eq!(error, "checkpoint-proven MLS group state is pending");
+    assert!(state.mls_snapshot_for(realm).is_none());
+    assert!(
+        state
+            .private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH)
+            .is_none()
     );
-    let (patched, mls_events) = match blocked {
-        Ok(value) => value,
-        Err(error) => {
-            assert!(
-                error.contains("decryption_pending") || error.contains("state_mismatch"),
-                "{error}"
-            );
-            assert!(state.mls_snapshot_for(realm).is_none());
-            return;
-        }
-    };
-
-    assert!(state.mls_snapshot_for(realm).is_some());
-    let patched = seal_against_accepted_epoch(patched, &mls_events);
-    assert_eq!(
-        patched["encrypted_content"]["value"]["content_type"],
-        KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
-    );
-    assert!(value_is_mls_envelope(
-        &patched["encrypted_content"]["value"]
-    ));
-    assert_eq!(
-        state.private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH),
-        Some(content_block_json(
-            "private description from invited member"
-        ))
-    );
-    // The KeyPackage init private state is retained after a successful apply so
-    // a redelivered durable Welcome remains an idempotent replay until ACK.
+    // The writer does not consume or delete KeyPackage state; the runtime owns
+    // that transition and its claim-envelope validation.
     assert!(
         crate::mls::runtime::load_mls_key_package_identity_state(
             &secure,
@@ -476,16 +503,14 @@ fn encrypted_private_patch_applies_pending_welcome_with_key_package_state() {
         .unwrap()
         .is_some()
     );
-    assert!(mls_events.genesis.is_none());
-    assert!(mls_events.commit.is_none());
-    assert!(mls_events.snapshot.is_none());
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
-    let actor = "did:web:alice.example";
+fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
+    let actor = "ak:did_core:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let _account_scope = active_account_scope(actor, device);
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     let mut state = isolated_store_for_tests("creator-bootstrap-mls");
@@ -502,6 +527,7 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
         0,
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let accepted_ref = seed_ready_creator_snapshot(&mut state, &secure, realm, actor, device);
     let patch = json!({
         "content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown", "body": "private description"
@@ -512,34 +538,17 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
-    .expect("complete creator projection must reach the encrypted success path");
+    .expect("checkpoint-proven creator state must reach the encrypted success path");
 
     assert!(state.mls_snapshot_for(realm).is_some());
-    // X5.1 — the author's own plaintext is persisted to the local
-    // sidecar so a re-projection can render it (the author can never
-    // decrypt their own ciphertext).
     assert_eq!(
         state.private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH),
         Some(content_block_json("private description"))
     );
     assert!(mls_events.commit.is_none());
     assert!(mls_events.snapshot.is_none());
-    // A freshly-created creator group must still produce a one-time
-    // ak.mls.genesis event; ordinary application writes ride epoch 0
-    // without a per-write commit.
-    let genesis = mls_events
-        .genesis
-        .expect("freshly-created creator group should emit genesis");
-    // Sealing is what binds the envelope to the accepted epoch, and the id it
-    // binds to is the genesis Event's — which only exists once that Event is
-    // authored. A different accepted genesis produces a different binding, with
-    // no rewrite of already-sealed bytes anywhere in between.
-    let accepted_genesis = crate::operation::author_for_test(&genesis)
-        .event_id()
-        .clone();
-    let patched = patched
-        .seal(None, Some(&accepted_genesis))
-        .expect("epoch-0 write seals against its accepted genesis");
+    assert!(mls_events.genesis.is_none());
+    let patched = patched.seal(None, None).unwrap();
     assert_eq!(
         patched["encrypted_content"]["value"]["content_type"],
         KANBAN_STRAND_PATCH_VALUE_CONTENT_TYPE
@@ -547,19 +556,16 @@ fn encrypted_private_patch_creator_bootstraps_initial_mls_snapshot() {
     assert_eq!(patched["encrypted_content"]["value"]["version"], "1.0");
     assert_eq!(
         patched["encrypted_content"]["value"]["encryption_context"]["group_state_ref"],
-        accepted_genesis.as_str()
+        accepted_ref.as_str()
     );
-    assert_eq!(genesis.kind().as_str(), "ak.mls.genesis");
-    assert_eq!(genesis.payload()["epoch"].as_u64(), Some(0));
-    assert!(genesis.payload().contains_key("governance_binding"));
-    assert_registered_payload_valid(&genesis);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_reference() {
-    let actor = "did:web:alice.example";
+fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_reference() {
+    let actor = "ak:did_core:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let _account_scope = active_account_scope(actor, device);
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
     let mut state = isolated_store_for_tests("creator-persisted-epoch-zero");
@@ -585,9 +591,9 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
     )
     .unwrap()
     .expect("fixture creates and persists epoch-0 MLS state");
-    // Reproduce the broken state seen after first-Realm creation: the local
-    // group exists and an incomplete path set the emitted bit, but no
-    // accepted Event id was attached to the snapshot.
+    // A local snapshot and emitted marker are not accepted group-state
+    // authority. The independent bootstrap/recovery flow must restore the
+    // accepted genesis reference before ordinary content authoring resumes.
     state.mark_mls_genesis_emitted(realm).expect("valid Realm");
     assert!(
         state
@@ -606,25 +612,12 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
         }},
     });
     let strand_id = "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ";
-    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
+    let error = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
-    .expect("persisted epoch-0 state must rebuild genesis for the first encrypted write");
-
-    let genesis = mls_events
-        .genesis
-        .expect("missing accepted genesis reference must be repaired by resubmission");
-    assert_eq!(genesis.kind().as_str(), "ak.mls.genesis");
-    let accepted_genesis = crate::operation::author_for_test(&genesis)
-        .event_id()
-        .clone();
-    let patched = patched
-        .seal(None, Some(&accepted_genesis))
-        .expect("the repaired epoch-0 write seals against its accepted genesis");
-    assert_eq!(
-        patched["encrypted_content"]["value"]["encryption_context"]["group_state_ref"],
-        accepted_genesis.as_str()
-    );
+    .unwrap_err();
+    assert!(error.contains("accepted MLS group-state Event is unavailable"));
+    assert!(state.load().raw_operations.is_empty());
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -632,8 +625,9 @@ fn encrypted_private_patch_repairs_persisted_epoch_zero_without_genesis_referenc
 fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
-    let actor = "did:web:alice.example";
+    let actor = "ak:did_core:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let _account_scope = active_account_scope(actor, device);
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut state = isolated_store_for_tests("ready-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
@@ -701,7 +695,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
             ..crate::state::LocalSealView::default()
         },
     );
-    envelope.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
+    envelope.epoch_started_at = chrono::Utc::now();
     state.save_mls_snapshot(realm, envelope).unwrap();
     state
         .record_mls_group_state_ref_for_effective_scope(
@@ -712,14 +706,6 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
             arkret_sdk::EventId::new(base_group_state_ref.to_owned()).unwrap(),
         )
         .unwrap();
-    crate::mls::governance_proof::seed_test_governance_proof(
-        &mut state,
-        realm,
-        None,
-        record.group_id.clone(),
-        record.epoch,
-        record.epoch + 1,
-    );
     let patch = json!({
         "content": {"$op": "set", "value": {
             "kind": "ak.content.text", "format": "markdown", "body": "private description"
@@ -759,58 +745,21 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     // The snapshot already existed (not freshly created here), so there is
     // no fresh epoch-0 material and genesis is not emitted on this path.
     assert!(mls_events.genesis.is_none());
-    assert!(mls_events.snapshot.is_some());
-    let commit = mls_events
-        .commit
-        .as_ref()
-        .expect("overdue minimal metadata MLS snapshot should emit commit event");
-    // The envelope is bound to the commit that established this epoch, by that
-    // commit's own final id.
+    assert!(mls_events.snapshot.is_none());
+    assert!(mls_events.commit.is_none());
     assert_eq!(
         patched["encrypted_content"]["value"]["encryption_context"]["group_state_ref"],
-        crate::operation::author_for_test(commit)
-            .event_id()
-            .as_str()
-    );
-    assert_eq!(commit.kind().as_str(), "ak.mls.commit");
-    assert_registered_payload_valid(commit);
-    assert!(!commit.payload().contains_key("group_id"));
-    assert!(!commit.payload().contains_key("expected_prev_epoch"));
-    assert!(
-        commit.payload()["commit_bytes_b64"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty()),
-        "durable MLS commits must inline the complete RFC 9420 Commit bytes"
-    );
-    assert!(!commit.payload().contains_key("preconditions"));
-    assert!(!commit.payload().contains_key("effects"));
-    assert_eq!(
-        commit.payload()["governance_binding"]["realm_id"],
-        json!("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
-    );
-    assert_eq!(
-        commit.payload()["governance_binding"]["effective_scope"],
-        json!({
-            "kind": "realm",
-            "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        })
-    );
-    assert_eq!(
-        commit.payload()["base_epoch_ref"],
-        json!(base_group_state_ref)
-    );
-    assert!(commit.payload()["governance_binding"]["security_frontier_digest"].is_string());
-    assert!(
-        !commit.payload()["governance_binding"]
-            .as_object()
-            .unwrap()
-            .contains_key("membership_frontier")
+        base_group_state_ref
     );
     assert!(state.load().raw_operations.is_empty());
 }
 
 #[test]
 fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
+    let _account_scope = active_account_scope(
+        "ak:did_core:web:alice.example",
+        "ak:device:01904100-0000-7000-8000-000000000001",
+    );
     let mut state = isolated_store_for_tests("metadata-only");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let patch = json!({
@@ -821,7 +770,7 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
         patch.clone(),
         "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
         &mut state,
         &secure,
@@ -979,17 +928,31 @@ fn encrypted_scope_allows_strand_summary_metadata_update() {
 fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     let mut state = isolated_store_for_tests("sidecar-track-circle-encrypt");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
-    let actor = "did:web:alice.example";
+    let actor = "ak:did_core:web:alice.example";
     let device = "ak:device:0196419b-0000-7000-8000-000000000021";
+    let _account_scope = active_account_scope(actor, device);
     let realm = "ak:realm:AYkxMogpjqRFcRiejZN897KN1bjKnAjkbNCCRbsgxeHR";
-    let circle = "ak:circle:ATglM2Ok0jsPzyPkbQub_EuKAtcyKvX2itC1Y7229amh";
     let strand = "ak:strand:AWSjtu5m07wmq4GIr0siQOr8dsPMpOK3Wel8pRMGO3ZU";
+    let sidecar_id = arkret_sdk::SidecarId::new(
+        "ak:sidecar:ATob4lPqhrmzS4tLm6aZjJ77NIrYnI5OGb4qpgykXoRa".to_owned(),
+    )
+    .unwrap();
+    let effective_scope = arkret_sdk::ScopeRef::Sidecar {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        sidecar_id: sidecar_id.clone(),
+    };
     let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
-    let group = identity.create_group(circle.as_bytes()).unwrap();
+    let group = identity
+        .create_group(
+            effective_scope
+                .canonical_effective_scope_key_bytes()
+                .unwrap(),
+        )
+        .unwrap();
     let post_state = group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let secret =
@@ -1027,10 +990,7 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         .save_mls_snapshot(realm.to_owned(), realm_snapshot.clone())
         .unwrap();
     let binding = arkret_sdk::SidecarMlsBinding {
-        sidecar_id: arkret_sdk::SidecarId::new(
-            "ak:sidecar:ATob4lPqhrmzS4tLm6aZjJ77NIrYnI5OGb4qpgykXoRa".to_owned(),
-        )
-        .unwrap(),
+        sidecar_id,
         participant_authority_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
             .unwrap(),
         control_frontier: vec![
@@ -1039,10 +999,6 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
             )
             .unwrap(),
         ],
-    };
-    let effective_scope = arkret_sdk::ScopeRef::Sidecar {
-        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-        sidecar_id: binding.sidecar_id.clone(),
     };
     state
         .save_mls_snapshot_for_scope(&effective_scope, snapshot)

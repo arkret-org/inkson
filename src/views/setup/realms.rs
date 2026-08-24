@@ -786,7 +786,7 @@ pub(super) fn RealmsSection(
                                         realm_state.set(tr("setup.blocker.creating"));
                                         let Some(account) = active_account() else {
                                             realm_create_busy.set(false);
-                                            realm_state.set("Active account context is unavailable".to_owned());
+                                            realm_state.set(tr("setup.blocker.account_context_unavailable"));
                                             return;
                                         };
                                         let authority = account.authority.clone();

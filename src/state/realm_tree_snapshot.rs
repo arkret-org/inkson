@@ -101,16 +101,12 @@ impl LocalStateStore {
         .map_err(|error| anyhow::anyhow!("{}: {}", error.code.as_str(), error.message))?;
 
         let mut projections = Vec::new();
-        let mut encrypted_messages = Vec::new();
         for chunk in chunks {
             for item in &chunk.items {
                 if item.id.trim().is_empty() {
                     anyhow::bail!("snapshot item id must not be empty");
                 }
                 projections.push((item.id.clone(), item.object.clone()));
-                if let Some(payload) = snapshot_item_encrypted_payload(item) {
-                    encrypted_messages.push((item.id.clone(), payload));
-                }
             }
         }
 
@@ -130,9 +126,6 @@ impl LocalStateStore {
         self.batch(|store| {
             for (projection_id, projection) in projections {
                 store.save_realm_tree_projection(projection_id, projection);
-            }
-            for (message_id, payload) in encrypted_messages {
-                store.preserve_encrypted_message(message_id, payload);
             }
             store.ensure_cached_loaded();
             store.cached.snapshot_sync.insert(realm_id, status);

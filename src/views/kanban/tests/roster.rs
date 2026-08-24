@@ -272,6 +272,7 @@ fn member_display_label_uses_cached_directory_primary_handle() {
 #[test]
 fn resolved_member_display_uses_persisted_current_account_handle() {
     let actor = "ak:did_core:web:current-account.example";
+    let full_id = "did:web:current-account.example";
     let row = RealmMemberRow {
         actor_id: actor.to_owned(),
         membership: Some("join".to_owned()),
@@ -282,7 +283,7 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
         handle_claims_limited: false,
     };
     let mut store = isolated_store_for_tests("member-display-current-account");
-    store.switch_test_account(actor);
+    store.switch_test_account(full_id);
     store.set_primary_handle_for_did(actor, "alice:local.host");
 
     let display = crate::views::member_display::resolve_member_display(&store, TEST_REALM_ID, &row);

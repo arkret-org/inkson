@@ -59,9 +59,17 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
             && submit.contains("&attempt.canonical_body_bytes")
             && submit.contains(
                 "self.post_persisted_signed_sdk_event(event, idempotency_key, canonical_body_bytes)"
-            )
-            && submit.contains("mls-durable-post-accept"),
+            ),
         "the exact-byte direct HTTP tail must remain private to the Garth queue submitter"
+    );
+    let outbound_store_path = manifest.join("src/outbound_store.rs");
+    let outbound_store = fs::read_to_string(&outbound_store_path).unwrap_or_else(|error| {
+        panic!("failed to read {}: {error}", outbound_store_path.display())
+    });
+    assert!(
+        outbound_store.contains("MlsDurablePostAccept")
+            && outbound_store.contains("\"mls-durable-post-accept\""),
+        "the durable MLS admission lane must remain distinct from ordinary outbound delivery"
     );
 
     let composer_path = manifest.join("src/views/chat/composer.rs");
@@ -74,24 +82,37 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
 }
 
 #[test]
-fn mls_snapshot_remains_post_accept() {
+fn mls_readiness_remains_checkpoint_proven() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let submit_path = manifest.join("src/event_submit.rs");
     let submit = fs::read_to_string(&submit_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", submit_path.display()));
     assert!(
-        submit.contains("PostAcceptAction::MlsSnapshot")
+        submit.contains("PostAcceptAction::MlsAdmission")
             && submit.contains("submit_next_with_fence_and_hook")
-            && submit.contains("drain_mls_outbound"),
-        "MLS snapshot must be a generation-fenced durable post-accept action resumed by account sync"
+            && submit.contains("drain_mls_outbound")
+            && submit.contains("checkpoint-proven accepted-artifact")
+            && submit.contains("this queue never installs its staged snapshot"),
+        "MLS admission must remain durable without treating ingress acceptance as group readiness"
     );
 
-    let path = manifest.join("src/views/kanban/mls_encrypt.rs");
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    let consumer_path = manifest.join("src/mls/runtime/artifact_consumer.rs");
+    let consumer = fs::read_to_string(&consumer_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", consumer_path.display()));
     assert!(
-        source.contains("submit_mls_event_with_snapshot")
-            && !source.contains("save_mls_snapshot(realm_id.clone(), snapshot)"),
-        "Kanban MLS commits must not persist the next snapshot outside the acceptance hook"
+        consumer.contains("garth::AcceptedMlsArtifactConsumer::new")
+            && consumer.contains("frontier.target_checkpoint.accepted_events")
+            && consumer.contains("compare_and_swap_accepted_mls_artifacts")
+            && consumer.contains("converge_accepted_mls_artifacts"),
+        "only the checkpoint-proven accepted-artifact consumer may publish ready MLS state"
+    );
+
+    let kanban_path = manifest.join("src/views/kanban/mls_encrypt.rs");
+    let kanban = fs::read_to_string(&kanban_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", kanban_path.display()));
+    assert!(
+        kanban.contains("checkpoint-proven MLS group state is pending")
+            && !kanban.contains("save_mls_snapshot("),
+        "Kanban must wait for checkpoint-proven group state instead of installing a staged snapshot"
     );
 }

@@ -2345,9 +2345,9 @@ fn response_revokes_local_device(
     principal_id: &str,
     device_id: &str,
 ) -> bool {
-    if crate::mls_api_helpers::principal_core_id(principal_id.trim()).is_err() {
+    let Ok(principal_id) = crate::mls_api_helpers::principal_core_id(principal_id.trim()) else {
         return false;
-    }
+    };
     let device_id = device_id.trim();
     if device_id.is_empty() {
         return false;
@@ -2362,7 +2362,8 @@ fn response_revokes_local_device(
                 return false;
             };
             kind == event_kind_str::DEVICE_REVOKE
-                && payload.get("principal_id").and_then(Value::as_str) == Some(principal_id)
+                && payload.get("principal_id").and_then(Value::as_str)
+                    == Some(principal_id.as_str())
                 && payload.get("device_id").and_then(Value::as_str) == Some(device_id)
         })
     })
@@ -4068,8 +4069,7 @@ mod tests {
     #[test]
     fn notification_projection_filters_invites_by_typed_membership() {
         let mut store = temp_store("invite-membership-projection");
-        let actor_id = "did:web:bob.example";
-        let actor_core_id = "ak:did_core:web:bob.example";
+        let actor_id = "ak:did_core:web:bob.example";
         let realm_id = "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
         let invite = || crate::state::projection::notifications::test_invite(0x10, realm_id);
         let response = |membership: &str| {
@@ -4077,7 +4077,7 @@ mod tests {
             let realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
             let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
                 "members": [{
-                    "actor_id": actor_core_id,
+                    "actor_id": actor_id,
                     "membership": membership
                 }]
             }))

@@ -297,13 +297,14 @@ fn inkson_accepts_server_contract_payloads() {
                 "current_record_url": "https://server.local/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.local/resolution"
             },
             "service_kind": "principal_server",
-            "role": "primary",
+            "role": "joined_member_principal_server",
             "endpoint": "http://server",
-            "operations": ["ak.self.events.command.submit"],
+            "operations": ["ak.peer.events.command.submit"],
             "join_methods": ["invite_accept", "member_join"],
             "encryption_profile": "mls_rfc9420",
+            "digest_algorithm": "sha256",
             "priority": 0,
-            "source": "directory_ingest",
+            "source": "member_delivery_binding",
             "seal_basis": {
                 "leaves": ["ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"]
             },
@@ -461,6 +462,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     let push: inkson::models::PushRegisterDeviceOutcome = serde_json::from_value(json!({
         "ok": true,
+        "push_target_id": "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8",
         "registration_id": "push:dev_alice",
         "expires_at": null
     }))

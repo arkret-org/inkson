@@ -194,23 +194,19 @@ fn member_handle_cache_records_fresh_negative_lookup() {
 }
 
 #[test]
-fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
+fn apply_snapshot_chunks_imports_projection_status_and_preserves_encrypted_envelope() {
     let path = temp_state_path("snapshot-apply");
     let mut store = LocalStateStore::with_path(path.clone());
     let message_id = "ak:message:AYqEzQ3jW02EHkMjxFQTlyeowxPQXJE4fI6JGOnzi23t";
     let realm_id = "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml";
     let encrypted_message = json!({
-        "schema": "ak.schema.encrypted_envelope.v1",
-        "scheme": "mls_rfc9420",
-        "group_id": realm_id,
-        "epoch": 1,
+        "version": "1.0",
         "content_type": "application/vnd.arkret.message+json",
-        "ciphertext": "AA",
-        "payload_digest": format!("sha256:{}", "ab".repeat(32)),
-        "key_ref": {
-            "algorithm": "mls_rfc9420",
-            "group_state_ref": format!("{realm_id}:1")
-        }
+        "encryption_context": {
+            "epoch": 1,
+            "group_state_ref": "ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml"
+        },
+        "ciphertext": "AA"
     });
     let items = vec![
         arkret_sdk::SnapshotMaterializedItem {
@@ -251,10 +247,14 @@ fn apply_snapshot_chunks_imports_projection_status_and_encrypted_payload() {
         crate::snapshot::SnapshotTrustState::LowerTrust
     );
     assert_eq!(status.source_event_ids.len(), 2);
-    assert_eq!(store.pending_encrypted_count(), 1);
+    assert_eq!(
+        store.pending_encrypted_count(),
+        0,
+        "a minimal wire envelope has no signed outer Event context and cannot become a local decryption payload"
+    );
 
     let reader = LocalStateStore::with_path(path);
-    assert_eq!(reader.pending_encrypted_count(), 1);
+    assert_eq!(reader.pending_encrypted_count(), 0);
     assert_eq!(
         reader.snapshot_sync_status(realm_id).unwrap().trust_state,
         crate::snapshot::SnapshotTrustState::LowerTrust
