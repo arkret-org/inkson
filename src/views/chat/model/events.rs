@@ -1565,7 +1565,26 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         state_store.and_then(|store| {
             let message_id = message_protocol_message_id_from_candidates(&candidates)?;
             let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])?;
-            store.private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
+            store
+                .private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
+                .or_else(|| {
+                    // Records written before the sidecar key was aligned with
+                    // the event-derived protocol id stored the plaintext under
+                    // the pre-submit local id kept in the record's
+                    // `message_id` field. Try that legacy key so older
+                    // messages keep their body.
+                    let legacy = candidates
+                        .iter()
+                        .rev()
+                        .find_map(|candidate| value_string_at(candidate, &["message_id"]))
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty() && *value != message_id)?;
+                    store.private_plaintext_for(
+                        message_realm,
+                        strand_id,
+                        &format!("message:{legacy}"),
+                    )
+                })
         })
     };
     let sidecar_content = sidecar_body.map(content_from_private_sidecar);
