@@ -187,15 +187,11 @@ pub fn MlsUnlockPrompt(
                                 history_count,
                                 "MLS unlock: starting local restore"
                             );
-                            let restore_result = crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
+                            let restore_result = match crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
                                 .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
-                                .and_then(|(recovery_private_key, _)| {
-                                    let policy = active_policy.as_ref().ok_or_else(|| {
-                                        anyhow::anyhow!("active recovery policy is required")
-                                    })?;
-                                    let expected_policy =
-                                        (policy.policy_id.as_str(), policy.version);
-                                    crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
+                            {
+                                Ok((recovery_private_key, _)) => match active_policy.as_ref() {
+                                    Some(policy) => crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
                                         &payload,
                                         &mut store,
                                         secure_store.as_ref(),
@@ -203,10 +199,16 @@ pub fn MlsUnlockPrompt(
                                         &actor,
                                         &device,
                                         &recovery_private_key,
-                                            expected_policy,
-                                        )
-                                })
-                                .map_err(ApiCallError::Failed);
+                                        (policy.policy_id.as_str(), policy.version),
+                                    )
+                                    .await
+                                    .map_err(ApiCallError::Failed),
+                                    None => Err(ApiCallError::Failed(anyhow::anyhow!(
+                                        "active recovery policy is required"
+                                    ))),
+                                },
+                                Err(error) => Err(ApiCallError::Failed(error)),
+                            };
                             if restore_result.is_ok() {
                                 crate::sync_engine::apply_account_data_entries(
                                     &mut store,

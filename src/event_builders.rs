@@ -1110,7 +1110,7 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
     // The projection runs on the intent, because the precondition it produces is
     // producer-signed content and so has to be in place before the identity is
     // derived from that content.
-    let (kind, cell) = {
+    let (kind, cell, expected_head) = {
         let intent = builder.intent()?;
         let kind = intent.kind().as_str().to_owned();
         let writes = crate::operation::pre_authoring_cell_writes(intent, digest_suite)
@@ -1124,19 +1124,22 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
         let arkret_sdk::ProjectedOp::Direct(op) = &write.op else {
             anyhow::bail!("Realm state event kind {kind} does not have a direct state write");
         };
-        if !matches!(
-            op.op_type,
-            arkret_sdk::LatticeOpType::Set | arkret_sdk::LatticeOpType::Transition
-        ) {
-            anyhow::bail!(
-                "Realm state event kind {kind} does not have a set or transition contract"
-            );
-        }
-        (kind, write.cell.as_str().to_owned())
+        let expected_head = match op.op_type {
+            arkret_sdk::LatticeOpType::Set => Value::Null,
+            arkret_sdk::LatticeOpType::Transition => op.from.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Realm state event kind {kind} transition does not project an exact from state"
+                )
+            })?,
+            _ => anyhow::bail!(
+                "Realm state event kind {kind} has no supported singleton state contract"
+            ),
+        };
+        (kind, write.cell.as_str().to_owned(), expected_head)
     };
     let _ = kind;
     builder
-        .preconditions(vec![head_eq_precondition(&cell, Value::Null)?])
+        .preconditions(vec![head_eq_precondition(&cell, expected_head)?])
         .build_sdk_event("inkson")
 }
 

@@ -108,9 +108,32 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
 
     let secret = load_or_create_account_mls_secret(secure_store, authority)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let identity =
+    let identity = if sidecar_binding.is_none()
+        && state_store.realm_projection_is_minimal_metadata(realm)
+    {
+        let material =
+            crate::mls::pairwise_identity::derive_pairwise_signing_material_from_account_secret(
+                secret.as_bytes(),
+                authority,
+                device_id,
+                &realm_typed,
+            )
+            .map_err(MlsRuntimeError::Identity)?;
+        let verification_method =
+            arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned())
+                .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
+        arkret_sdk::ArkretMlsIdentity::from_minimal_metadata_ed25519_signing_seed(
+            authority.principal_id.clone(),
+            device_id.clone(),
+            material.actor_id.clone(),
+            verification_method,
+            material.signing_seed(),
+        )
+        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
+    } else {
         arkret_sdk::ArkretMlsIdentity::new_basic(authority.principal_id.clone(), device_id.clone())
-            .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?;
+            .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
+    };
     let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
         &effective_scope,

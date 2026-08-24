@@ -133,7 +133,7 @@ fn operation_builder_delegates_event_time_normalization_to_the_sdk() {
     .unwrap();
 
     assert_eq!(
-        serde_json::to_value(authored(&op)).unwrap()["created_at"],
+        serde_json::to_value(authored(&op).event()).unwrap()["created_at"],
         json!("2026-07-18T10:20:30.987Z")
     );
 }
@@ -178,7 +178,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
 
     let event = authored(&op);
     assert!(!event.unsigned.contains_key("local_authz_ref"));
-    let mut canonical = serde_json::to_value(&event).unwrap();
+    let mut canonical = serde_json::to_value(event.event()).unwrap();
     if let serde_json::Value::Object(object) = &mut canonical {
         object.remove("proofs");
         object.remove("unsigned");
@@ -198,7 +198,8 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         "hello world",
     )
     .build("node");
-    let mut value = serde_json::to_value(authored(&op)).unwrap();
+    let authored = authored(&op);
+    let mut value = serde_json::to_value(authored.event()).unwrap();
     // The top-level `effective_scope` field is deleted in v1; a wire object
     // that still carries it MUST be rejected rather than silently ignored.
     let mut with_stale_field = value.clone();
@@ -253,7 +254,8 @@ fn event_envelope_rejects_unknown_top_level_fields() {
         "hello world",
     )
     .build("node");
-    let mut value = serde_json::to_value(authored(&op)).unwrap();
+    let authored = authored(&op);
+    let mut value = serde_json::to_value(authored.event()).unwrap();
     value
         .as_object_mut()
         .unwrap()
@@ -696,7 +698,8 @@ fn space_create_emits_canonical_space_object() {
     );
     let created_at = op.payload()["object"]["created_at"].as_str().unwrap();
     arkret_sdk::canonical::validate_timestamp_canonical(created_at).unwrap();
-    let event_wire = serde_json::to_value(authored(&op)).unwrap();
+    let authored = authored(&op);
+    let event_wire = serde_json::to_value(authored.event()).unwrap();
     arkret_sdk::canonical::validate_timestamp_canonical(event_wire["created_at"].as_str().unwrap())
         .unwrap();
 }

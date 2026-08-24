@@ -583,10 +583,9 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         &key_package_id,
     )
     .map_err(|error| format!("store MLS KeyPackage publish marker: {error}"))?;
-    // Keep the server-visible canonical ref durably next to the id marker.
-    // Direct Conversation repair dispatch freezes this exact ref as
-    // `requester_keypackage_ref`; without it the requester must fail closed
-    // instead of guessing which package the peer would claim.
+    // Keep the server-visible canonical ref durably next to the id marker so
+    // ordinary KeyPackage claim and Welcome admission use the same exact ref.
+    // Direct Conversations do not have a separate repair dispatcher.
     crate::mls::runtime::store_mls_key_package_publish_ref(
         secure_store.as_ref(),
         &authority,
@@ -820,19 +819,32 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await
         .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
     }
-    let welcome_outcome = {
-        let mut store = state_store.write();
-        crate::mls::runtime::apply_welcome_messages_with_device_snapshot(
-            &mut store,
-            secure_store.as_ref(),
-            &realm_id,
-            &authority,
-            &actor_id,
-            &device_id,
-            &messages_value,
-        )
-    }
-    .map_err(|error| error.user_message())?;
+    let snapshot_before = state_store.read().mls_snapshot_for(&realm_id).is_some();
+    let converged =
+        crate::mls::runtime::converge_accepted_mls_artifacts(state_store, &authority, &device_id)
+            .await?;
+    let snapshot_after = state_store.read().mls_snapshot_for(&realm_id).is_some();
+    let accepted_welcome_event_ids = state_store
+        .read()
+        .accepted_mls_artifact_snapshot()
+        .snapshot
+        .artifacts
+        .values()
+        .filter(|artifact| artifact.event.kind == arkret_sdk::EventKind::MlsWelcome)
+        .map(|artifact| artifact.event.event_id.to_string())
+        .collect();
+    let consumable_claims = crate::mls::runtime::accepted_welcome_consume_candidates(
+        &messages_value,
+        &realm_id,
+        &accepted_welcome_event_ids,
+    );
+    let welcome_outcome = crate::mls::runtime::WelcomeApplyOutcome {
+        applied: usize::from(!snapshot_before && snapshot_after && converged > 0),
+        failed: 0,
+        skipped_stale: usize::from(snapshot_before && snapshot_after),
+        first_error: None,
+        consumable_claims,
+    };
 
     // Persist Welcome envelopes in the local to-device inbox as well. This
     // bootstrap path fetches and acknowledges them without passing through the

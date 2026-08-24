@@ -7,8 +7,10 @@ use crate::state::isolated_store_for_tests as temp_state_store;
 fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
     arkret_sdk::PrincipalAuthorityKey {
         principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-        principal_server_id: arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned())
-            .unwrap(),
+        principal_server_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:principal.example".to_owned(),
+        )
+        .unwrap(),
     }
 }
 
@@ -37,6 +39,13 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
         json!({ "active_profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
     );
     assert!(state.realm_projection_is_minimal_metadata(realm));
+    crate::identity::authoring_generation::cache_verified_principal_generation_for_test(
+        crate::mls_api_helpers::principal_core_id(actor)
+            .unwrap()
+            .as_str(),
+        device,
+        "ak:event:AdU2TJKBkRBC1Jk1dY8ExFkUgDvhnVG8jmKT5BdWMeYp",
+    );
 
     super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(
@@ -47,6 +56,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
         &typed_device(device),
     )
     .unwrap();
+    super::seed_current_group_state_ref(&mut state, realm);
     let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
 
     // Backdate the persisted snapshot's epoch clock past the 1h cap.
@@ -88,6 +98,17 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
 
+    state.save_realm_tree_projection(
+        realm,
+        serde_json::json!({
+            "content_scheme": "mls_rfc9420",
+            "members_limited": false,
+            "members": [{
+                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "membership": "join"
+            }]
+        }),
+    );
     super::seed_genesis_governance_proof(&mut state, realm);
     ensure_creator_mls_snapshot(
         &mut state,
@@ -97,6 +118,7 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
         &typed_device(device),
     )
     .unwrap();
+    super::seed_current_group_state_ref(&mut state, realm);
     let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);

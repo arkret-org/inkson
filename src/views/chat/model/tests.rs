@@ -211,7 +211,7 @@ mod device_identity_proof_tests {
     #[test]
     fn cache_miss_verifies_self_authored_message_with_active_device_key() {
         let actor = "did:web:chat-local.example";
-        let device = "ak:device:chat-local-1";
+        let device = "ak:device:01964137-0000-7000-8000-0000000000c1";
         let seed = 57u8;
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             [seed; 32], actor, device,
@@ -236,7 +236,7 @@ mod device_identity_proof_tests {
     #[test]
     fn local_device_key_does_not_override_directory_revocation() {
         let actor = "did:web:chat-local-revoked.example";
-        let device = "ak:device:chat-local-revoked-1";
+        let device = "ak:device:01964137-0000-7000-8000-0000000000c2";
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             [58u8; 32], actor, device,
         ));

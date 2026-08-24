@@ -186,14 +186,14 @@ mod account_projection_tests {
         assert!(!account_projections_visible(
             &Route::Onboarding,
             false,
-            principal("did:webvh:znew:principal.example").as_str(),
-            principal("did:webvh:zold:principal.example").as_str(),
+            principal("ak:did_core:webvh:znew:principal.example").as_str(),
+            principal("ak:did_core:webvh:zold:principal.example").as_str(),
         ));
         assert!(!account_projections_visible(
             &Route::Onboarding,
             false,
-            principal("did:webvh:zold:principal.example").as_str(),
-            principal("did:webvh:zold:principal.example").as_str(),
+            principal("ak:did_core:webvh:zold:principal.example").as_str(),
+            principal("ak:did_core:webvh:zold:principal.example").as_str(),
         ));
     }
 
@@ -202,14 +202,14 @@ mod account_projection_tests {
         assert!(!account_projections_visible(
             &Route::Dashboard,
             true,
-            principal("did:webvh:znew:principal.example").as_str(),
-            principal("did:webvh:zold:principal.example").as_str(),
+            principal("ak:did_core:webvh:znew:principal.example").as_str(),
+            principal("ak:did_core:webvh:zold:principal.example").as_str(),
         ));
         assert!(account_projections_visible(
             &Route::Dashboard,
             true,
-            principal("did:webvh:znew:principal.example").as_str(),
-            principal("did:webvh:znew:principal.example").as_str(),
+            principal("ak:did_core:webvh:znew:principal.example").as_str(),
+            principal("ak:did_core:webvh:znew:principal.example").as_str(),
         ));
     }
 }

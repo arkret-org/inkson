@@ -181,6 +181,98 @@ impl PendingHistorySecrets {
 impl LocalStateStore {
     // ── MLS group state persistence ─────────────────────────────────
 
+    pub(crate) fn accepted_mls_artifact_snapshot(
+        &self,
+    ) -> garth::VersionedAcceptedMlsArtifactSnapshot {
+        self.load().accepted_mls_artifacts
+    }
+
+    /// Atomically publish the checkpoint-proven Garth artifact snapshot and
+    /// mirror its ready states into the existing MLS lookup indexes. The
+    /// returned barrier is the only success boundary used by the Garth CAS
+    /// adapter; callers must await it before treating the group as ready.
+    pub(crate) fn compare_and_swap_accepted_mls_artifacts(
+        &mut self,
+        expected_revision: u64,
+        snapshot: &garth::AcceptedMlsArtifactSnapshot,
+    ) -> Result<Option<LocalStatePersistBarrier>, String> {
+        self.ensure_cached_loaded();
+        if self.cached.accepted_mls_artifacts.revision != expected_revision {
+            return Ok(None);
+        }
+        let next_revision = expected_revision
+            .checked_add(1)
+            .ok_or_else(|| "accepted MLS artifact revision overflow".to_owned())?;
+
+        for event_id in snapshot.ready_groups.values() {
+            let artifact = snapshot.artifacts.get(event_id).ok_or_else(|| {
+                "accepted MLS ready index references a missing artifact".to_owned()
+            })?;
+            if artifact.snapshot.aead_version != 1
+                || artifact.snapshot.group_state_event_id.as_ref()
+                    != Some(&artifact.winning_transition_ref)
+            {
+                return Err("accepted MLS ready artifact is not winner-bound".to_owned());
+            }
+            let payload = serde_json::to_value(&artifact.event.payload)
+                .map_err(|error| format!("encode accepted MLS Event payload: {error}"))?;
+            let effective_scope = match artifact.event.kind {
+                arkret_sdk::EventKind::MlsGenesis => {
+                    serde_json::from_value::<arkret_sdk::MlsGenesisPayload>(payload)
+                        .map_err(|error| format!("decode accepted MLS Genesis: {error}"))?
+                        .effective_scope
+                }
+                arkret_sdk::EventKind::MlsCommit => {
+                    serde_json::from_value::<arkret_sdk::MlsCommitPayload>(payload)
+                        .map_err(|error| format!("decode accepted MLS Commit: {error}"))?
+                        .governance_binding()
+                        .effective_scope()
+                        .clone()
+                }
+                arkret_sdk::EventKind::MlsWelcome => {
+                    serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(payload)
+                        .map_err(|error| format!("decode accepted MLS Welcome: {error}"))?
+                        .governance_binding
+                        .effective_scope()
+                        .clone()
+                }
+                _ => return Err("accepted MLS artifact has a non-MLS Event kind".to_owned()),
+            };
+            let scope_key =
+                mls_scope_snapshot_key_for_group(&effective_scope, &artifact.snapshot.group_id)?;
+            let envelope =
+                crate::mls::persistence::MlsSnapshotEnvelope::from(artifact.snapshot.clone());
+            if let Some(current) = self.cached.mls_snapshots.get(&scope_key)
+                && current.group_id == envelope.group_id
+                && current.epoch < envelope.epoch
+            {
+                self.cached.mls_historical_snapshots.insert(
+                    historical_mls_state_key(&scope_key, &current.group_id, current.epoch),
+                    current.clone(),
+                );
+            }
+            self.cached
+                .mls_snapshots
+                .insert(scope_key.clone(), envelope);
+            self.cached.mls_group_state_refs.insert(
+                scope_key,
+                MlsGroupStateRefRecord {
+                    group_id: artifact.snapshot.group_id.clone(),
+                    epoch: artifact.snapshot.epoch,
+                    event_id: artifact.winning_transition_ref.clone(),
+                },
+            );
+        }
+        prune_historical_mls_author_states(&mut self.cached);
+        self.cached.accepted_mls_artifacts = garth::VersionedAcceptedMlsArtifactSnapshot {
+            revision: next_revision,
+            snapshot: snapshot.clone(),
+        };
+        self.begin_durable_flush()
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
     /// Persist (or replace) the MLS snapshot envelope for a Realm.
     /// Idempotent: a re-snapshot at the same epoch overwrites the
     /// previous record. The on-disk envelope is opaque to soland —
@@ -285,6 +377,15 @@ impl LocalStateStore {
     }
 
     pub fn mls_snapshot_for_scope_and_group(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
+        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
+        self.load().mls_snapshots.get(&key).cloned()
+    }
+
+    pub(crate) fn staged_mls_snapshot_for_scope_and_group(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
         group_id: &str,
@@ -518,7 +619,8 @@ impl LocalStateStore {
         {
             return arkret_sdk::base64url_decode(secret.secret_b64u.as_bytes()).ok();
         }
-        None
+        self.accepted_local_authoritative_history_secret(effective_scope, group_id, epoch)
+            .and_then(|secret| arkret_sdk::base64url_decode(secret.secret_b64u.as_bytes()).ok())
     }
 
     /// Return the replay-verified MLS ciphersuite bound to one retained epoch.
@@ -534,6 +636,128 @@ impl LocalStateStore {
             .get(&scope_group_key)
             .and_then(|by_epoch| by_epoch.get(&epoch))
             .cloned()
+            .or_else(|| {
+                self.accepted_local_authoritative_history_secret(effective_scope, group_id, epoch)
+                    .map(|secret| secret.mls_ciphersuite)
+            })
+    }
+
+    fn accepted_local_authoritative_history_secret(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+    ) -> Option<arkret_sdk::LocalAuthoritativeHistorySecret> {
+        let local = self.load();
+        let queued = local
+            .accepted_mls_artifacts
+            .snapshot
+            .history_secrets
+            .values()
+            .find(|secret| secret.group_id == group_id && secret.epoch == epoch)?;
+        let envelope = serde_json::from_slice::<crate::mls::persistence::MlsSnapshotEnvelope>(
+            &queued.ciphertext,
+        )
+        .ok()?;
+        let active = crate::secure_key_store::active_device_seed_scope()?;
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let secret =
+            crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), &active.authority)
+                .ok()??;
+        let plaintext =
+            crate::mls::persistence::decrypt_envelope(&envelope, &secret.secret).ok()?;
+        let record =
+            serde_json::from_slice::<arkret_sdk::LocalAuthoritativeHistorySecret>(&plaintext)
+                .ok()?;
+        let expected_scope =
+            arkret_sdk::HistoryEffectiveScope::try_from(effective_scope.clone()).ok()?;
+        (record.effective_scope == expected_scope
+            && record.mls_group_id == group_id
+            && record.epoch == epoch
+            && queued.transition_ref == record.transition_ref)
+            .then_some(record)
+    }
+
+    /// Enumerate only secrets committed atomically by the accepted-artifact
+    /// consumer. External candidates and Event-local plaintext bindings live
+    /// in separate ledgers and cannot enter this return type.
+    pub(crate) fn local_authoritative_history_secrets_for_backup(
+        &self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+    ) -> Result<
+        Vec<(
+            arkret_sdk::HistoryEffectiveScope,
+            Vec<arkret_sdk::LocalAuthoritativeHistorySecret>,
+        )>,
+        String,
+    > {
+        let account_secret = crate::mls::runtime::load_account_mls_secret(secure_store, authority)
+            .map_err(|error| format!("load account MLS secret for history backup: {error}"))?
+            .ok_or_else(|| "account MLS secret is required for history backup".to_owned())?;
+        let accepted = &self.load().accepted_mls_artifacts.snapshot;
+        let mut grouped = BTreeMap::<
+            String,
+            (
+                arkret_sdk::HistoryEffectiveScope,
+                BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>,
+            ),
+        >::new();
+
+        for queued in accepted.history_secrets.values() {
+            if !accepted.artifacts.values().any(|artifact| {
+                artifact.history_secret == *queued
+                    && artifact.winning_transition_ref == queued.transition_ref
+            }) {
+                return Err("history backup secret is not bound to an accepted artifact".to_owned());
+            }
+            let envelope = serde_json::from_slice::<crate::mls::persistence::MlsSnapshotEnvelope>(
+                &queued.ciphertext,
+            )
+            .map_err(|error| format!("decode accepted history-secret envelope: {error}"))?;
+            let plaintext =
+                crate::mls::persistence::decrypt_envelope(&envelope, &account_secret.secret)
+                    .map_err(|error| format!("open accepted history-secret envelope: {error}"))?;
+            let record = serde_json::from_slice::<arkret_sdk::LocalAuthoritativeHistorySecret>(
+                &plaintext,
+            )
+            .map_err(|error| format!("decode local-authoritative history secret: {error}"))?;
+            record
+                .validate()
+                .map_err(|error| format!("validate local-authoritative history secret: {error}"))?;
+            let canonical_group = record
+                .effective_scope
+                .canonical_mls_group_id()
+                .map_err(|error| error.to_string())?;
+            if canonical_group != record.mls_group_id
+                || queued.group_id != record.mls_group_id
+                || queued.epoch != record.epoch
+                || queued.transition_ref != record.transition_ref
+            {
+                return Err(
+                    "accepted history-secret envelope crosses its canonical scope/group/epoch transition partition"
+                        .to_owned(),
+                );
+            }
+            let scope_key = serde_json::to_string(&record.effective_scope)
+                .map_err(|error| format!("encode history backup scope: {error}"))?;
+            let (_, epochs) = grouped
+                .entry(scope_key)
+                .or_insert_with(|| (record.effective_scope.clone(), BTreeMap::new()));
+            if let Some(existing) = epochs.insert(record.epoch, record.clone())
+                && existing != record
+            {
+                return Err(format!(
+                    "conflicting local-authoritative history secrets for epoch {}",
+                    record.epoch
+                ));
+            }
+        }
+
+        Ok(grouped
+            .into_values()
+            .map(|(scope, epochs)| (scope, epochs.into_values().collect()))
+            .collect())
     }
 
     /// Persist an exact replay-derived ciphersuite for externally received

@@ -178,6 +178,38 @@ pub fn select_mls_history_backups(list_payload: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// Select the newest immutable object for every effective scope in the active
+/// `(actor_id, backup_kind=mls_history)` series. Earlier links remain required
+/// for chain verification, but must not reintroduce history intentionally
+/// removed by a later object for the same scope.
+pub(super) fn latest_mls_history_backups_by_scope(list_payload: &Value) -> Vec<Value> {
+    let mut latest = std::collections::BTreeMap::<String, Value>::new();
+    for body in select_mls_history_backups(list_payload) {
+        let Some(scope) = body
+            .get("contents")
+            .and_then(Value::as_array)
+            .and_then(|contents| contents.first())
+            .and_then(|item| item.get("effective_scope"))
+            .and_then(|scope| {
+                serde_json::from_value::<arkret_sdk::HistoryEffectiveScope>(scope.clone()).ok()
+            })
+        else {
+            continue;
+        };
+        let Ok(scope_key) = serde_json::to_string(&scope) else {
+            continue;
+        };
+        let replace = latest.get(&scope_key).is_none_or(|current| {
+            (backup_series_seq(&body), backup_created_at(&body))
+                > (backup_series_seq(current), backup_created_at(current))
+        });
+        if replace {
+            latest.insert(scope_key, body);
+        }
+    }
+    latest.into_values().collect()
+}
+
 /// Collect every envelope in the active `secret_storage` series.
 ///
 /// A series may interleave account-secret and private-sidecar
@@ -198,16 +230,6 @@ pub(super) fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value>
         .collect()
 }
 
-/// Realm a `mls_history` backup body belongs to. `contents[].realm_id` survives
-/// soland's list-metadata redaction, so tail selection works on the redacted list.
-fn mls_history_backup_realm_ref(body: &Value) -> Option<&str> {
-    body.get("contents")
-        .and_then(Value::as_array)
-        .and_then(|c| c.first())
-        .and_then(|item| item.get("realm_id"))
-        .and_then(Value::as_str)
-}
-
 pub(super) fn backup_series_id(body: &Value) -> &str {
     body.get("series_id")
         .and_then(Value::as_str)
@@ -219,68 +241,48 @@ pub(super) fn is_mls_history_backup(body: &Value) -> bool {
         == Some(crate::key_backup::BackupKind::MlsHistory.as_str())
 }
 
-/// Series-tail `backup_id`s among the `mls_history` backups in `list_payload`.
-///
-/// Grouped per `series_id` (a missing `series_id` degrades to per-backup
-/// grouping); the tail is the highest
-/// `(series_seq, created_at)` link. The continuous-backup writer folds each
-/// Realm's epoch material into the tail of one series, so restore only needs
-/// the tail per series — soland's per-principal 24h full-ciphertext download
-/// quota (default 64) would otherwise be burned on superseded chain links.
-pub fn mls_history_series_tail_ids(list_payload: &Value) -> std::collections::BTreeSet<String> {
-    let active_series = active_series_id_for_backup_class(
-        list_payload,
-        crate::key_backup::BackupKind::MlsHistory.as_str(),
-    );
-    let mut tails: std::collections::BTreeMap<String, &Value> = std::collections::BTreeMap::new();
-    for body in iter_backup_bodies(list_payload)
-        .filter(|body| is_mls_history_backup(body))
-        .filter(|body| matches_active_series(body, active_series))
-    {
-        let backup_id = body
-            .get("backup_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let series = backup_series_id(body);
-        let group_key = if series.is_empty() {
-            format!("backup:{backup_id}")
-        } else {
-            format!("series:{series}")
-        };
-        let replace = match tails.get(group_key.as_str()) {
-            Some(current) => {
-                (backup_series_seq(body), backup_created_at(body))
-                    > (backup_series_seq(current), backup_created_at(current))
-            }
-            None => true,
-        };
-        if replace {
-            tails.insert(group_key, body);
-        }
-    }
-    tails
-        .values()
-        .filter_map(|body| body.get("backup_id").and_then(Value::as_str))
-        .map(ToOwned::to_owned)
-        .collect()
-}
+#[cfg(test)]
+mod history_scope_selection_tests {
+    use serde_json::json;
 
-/// Pick the series tail to chain the next continuous `mls_history` upload of
-/// `realm_id` onto: the highest `(series_seq, created_at)` body among that
-/// Realm's `mls_history` backups. `None` means no prior series — the upload is
-/// a genesis.
-pub fn select_mls_history_tail_for_realm(list_payload: &Value, realm_id: &str) -> Option<Value> {
-    let active_series = active_series_id_for_backup_class(
-        list_payload,
-        crate::key_backup::BackupKind::MlsHistory.as_str(),
-    );
-    iter_backup_bodies(list_payload)
-        .filter(|body| is_mls_history_backup(body))
-        .filter(|body| matches_active_series(body, active_series))
-        .filter(|body| mls_history_backup_realm_ref(body) == Some(realm_id))
-        .max_by(|a, b| {
-            (backup_series_seq(a), backup_created_at(a))
-                .cmp(&(backup_series_seq(b), backup_created_at(b)))
-        })
-        .cloned()
+    use super::*;
+
+    #[test]
+    fn newest_history_object_is_selected_independently_per_scope() {
+        let realm_a = "ak:realm:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5";
+        let realm_b = "ak:realm:Ac1aCK8aQdnkYImvdH3DFjq4jDCP198pXYWCGzGuVyj5";
+        let history = |backup_id: &str, realm_id: &str, series_seq: u64| {
+            json!({
+                "backup_id": backup_id,
+                "backup_kind": "mls_history",
+                "series_id": "ak:backup_series:01964137-0000-7000-8000-000000000001",
+                "series_seq": series_seq,
+                "created_at": format!("2026-08-24T00:00:0{series_seq}.000Z"),
+                "contents": [{
+                    "item_kind": "history_secret_ranges",
+                    "effective_scope": {"kind": "realm", "realm_id": realm_id},
+                    "ranges": [{"from_epoch": 0, "to_epoch": series_seq}],
+                }],
+            })
+        };
+        let payload = json!({
+            "active_series": [{
+                "schema": arkret_sdk::SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
+                "backup_kind": "mls_history",
+                "active_series_id": "ak:backup_series:01964137-0000-7000-8000-000000000001",
+            }],
+            "backups": [
+                history("old-a", realm_a, 0),
+                history("scope-b", realm_b, 1),
+                history("new-a", realm_a, 2),
+            ],
+        });
+
+        let selected = latest_mls_history_backups_by_scope(&payload);
+        let ids = selected
+            .iter()
+            .filter_map(|body| body.get("backup_id").and_then(Value::as_str))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(ids, std::collections::BTreeSet::from(["new-a", "scope-b"]));
+    }
 }

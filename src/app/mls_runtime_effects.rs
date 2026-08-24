@@ -67,8 +67,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let sidecar_background_in_flight = use_signal(|| false);
     let sidecar_background_retry_attempt = use_signal(|| 0_u32);
     let mls_coverage_repair_in_flight = use_signal(std::collections::BTreeSet::<String>::new);
-    let accepted_commit_basis_seen = use_signal(|| Option::<String>::None);
-    let accepted_commit_convergence_in_flight = use_signal(|| false);
+    let accepted_artifact_basis_seen = use_signal(|| Option::<String>::None);
+    let accepted_artifact_convergence_in_flight = use_signal(|| false);
     let history_response_poll_tick = use_signal(|| 0_u64);
     let history_response_poll_in_flight = use_signal(|| false);
 
@@ -76,8 +76,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let ready = secure_store_bootstrap_ready;
         let sync_ready = sync_bootstrap_complete;
         let sync_freshness = sync_cursor;
-        let mut basis_seen = accepted_commit_basis_seen;
-        let mut in_flight = accepted_commit_convergence_in_flight;
+        let mut basis_seen = accepted_artifact_basis_seen;
+        let mut in_flight = accepted_artifact_convergence_in_flight;
         let mut convergence_error = last_error;
         let convergence_store = state_store;
         use_effect(move || {
@@ -103,7 +103,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             basis_seen.set(Some(basis.clone()));
             in_flight.set(true);
             spawn(async move {
-                match crate::mls::runtime::converge_accepted_mls_commits(
+                match crate::mls::runtime::converge_accepted_mls_artifacts(
                     convergence_store,
                     &authority,
                     &device,
@@ -112,7 +112,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 {
                     Ok(applied) => {
                         if applied > 0 {
-                            tracing::info!(applied, "accepted MLS Commits converged durably");
+                            tracing::info!(applied, "accepted MLS artifacts converged durably");
                         }
                         match crate::mls::runtime::converge_external_history_candidate_decryptions(
                             convergence_store,
@@ -130,16 +130,19 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                             Ok(_) => {}
                             Err(error) => {
                                 tracing::warn!(%error, "external history candidate convergence is pending");
-                                convergence_error.set(Some(format!(
-                                    "External history candidate convergence pending: {error}"
+                                convergence_error.set(Some(crate::history_ui::status_message(
+                                    crate::history_ui::HistoryUiReason::TemporaryPending,
+                                    &format!("external candidate convergence: {error}"),
                                 )));
                             }
                         }
                     }
                     Err(error) => {
-                        tracing::warn!(%error, "accepted MLS Commit convergence is pending");
-                        convergence_error
-                            .set(Some(format!("MLS Commit convergence pending: {error}")));
+                        tracing::warn!(%error, "accepted MLS artifact convergence is pending");
+                        convergence_error.set(Some(crate::history_ui::status_message(
+                            crate::history_ui::HistoryUiReason::TemporaryPending,
+                            &format!("accepted artifact convergence: {error}"),
+                        )));
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;
                         if basis_seen.peek().as_deref() == Some(basis.as_str()) {
                             basis_seen.set(None);
@@ -182,7 +185,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 let request_ids =
                     crate::history_recovery::accepted_history_request_ids(response_stream_store);
                 let result = match request_ids {
-                    Ok(request_ids) if request_ids.is_empty() => Ok(()),
                     Ok(request_ids) => {
                         crate::transport::auth::with_authed_api(
                             &base,
@@ -192,6 +194,20 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                                     "inkson",
                                 );
                                 let mut first_error = None;
+                                if let Err(error) = crate::history_recovery::drain_source_outbox(
+                                    response_stream_store,
+                                    &api,
+                                    secure_store.as_ref(),
+                                    chrono::Utc::now(),
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        %error,
+                                        "history source outbox drain remains pending"
+                                    );
+                                    first_error = Some(error);
+                                }
                                 for request_id in request_ids {
                                     if let Err(error) = crate::history_recovery::verify_and_install_response_page_from_local_state(
                                         response_stream_store,
@@ -224,8 +240,10 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     Err(error) => Err(error),
                 };
                 if let Err(error) = result {
-                    response_stream_error.set(Some(format!(
-                        "History response stream sync pending: {error}"
+                    let detail = error.to_string();
+                    response_stream_error.set(Some(crate::history_ui::status_message(
+                        crate::history_ui::classify_runtime_error(&detail),
+                        &detail,
                     )));
                 }
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(10)).await;
@@ -771,7 +789,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 {
                     Ok(outcome) if outcome.applied > 0 => {
                         crypto_state_task.set(format!(
-                            "MLS Welcome applied for {realm_label}: {} group(s); local MLS state is durable; portable history recovery is unavailable",
+                            "MLS Welcome applied for {realm_label}: {} group(s); local MLS state is durable; portable history candidates remain separate from active state",
                             outcome.applied
                         ));
                     }

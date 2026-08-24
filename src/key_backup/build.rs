@@ -1,5 +1,6 @@
 use arkret_models_crypto::{
-    KeyBackup, KeyBackupContentItem, KeyBackupKeybag, SecretStorageContentIndex, SecretStorageItem,
+    HistorySecretRangeIndex, HistorySecretRangesItemKind, KeyBackup, KeyBackupContentItem,
+    KeyBackupKeybag, SecretStorageContentIndex, SecretStorageItem,
 };
 use arkret_wire::HPKE_SUITE_X25519_CHACHA20POLY1305_V1;
 use base64::Engine as _;
@@ -135,10 +136,8 @@ pub const HPKE_AEAD_PROFILE: &str = arkret_wire::AeadProfileId::CHACHA20_POLY130
 /// canonical_json of the envelope identity tuple. Both sealer and opener
 /// reconstruct this byte-identically from the envelope fields.
 fn recovery_public_key_info(body: &KeyBackup) -> anyhow::Result<Vec<u8>> {
-    // SEC-04: anchor the HPKE `info` to the envelope's `recipient_method` and the
-    // recipient key it is sealed to (`recipient_key_ref`), so the HPKE context is
-    // bound to the recipient interpretation as well as the AEAD AAD. Both sealer
-    // and opener reconstruct this byte-identically from the stored envelope.
+    // key-management.md §7.5.2 closes this exact seven-field HPKE info object.
+    // Recipient interpretation remains bound by the complete envelope AEAD AAD.
     let info = json!({
         "backup_id": body.backup_id,
         "series_id": body.series_id,
@@ -147,8 +146,6 @@ fn recovery_public_key_info(body: &KeyBackup) -> anyhow::Result<Vec<u8>> {
         "backup_kind": body.backup_kind,
         "backup_version": body.backup_version,
         "created_at": body.created_at,
-        "recipient_method": body.encryption.recipient_method,
-        "recipient_key_ref": body.encryption.recipient_key_ref,
     });
     crate::canonical::canonical_json_bytes(&info)
 }
@@ -249,6 +246,94 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         .iter()
         .map(public_content_item)
         .collect::<anyhow::Result<Vec<_>>>()?;
+    build_recovery_public_key_backup_body_for_keybag_in_series(
+        backup_id,
+        actor_id,
+        device_id,
+        recovery_public_key,
+        recovery_key_ref,
+        class,
+        subdomain,
+        KeyBackupKeybag::SecretStorage {
+            items: plaintext_items,
+        },
+        items,
+        recovery_policy_ref,
+        series_id,
+        previous_series_tail,
+        frontier_ref,
+    )
+}
+
+/// Build one portable `mls_history` envelope from a keybag already restricted
+/// to local-authoritative exporter secrets by `arkret-state`.
+#[allow(clippy::too_many_arguments)]
+pub fn build_recovery_public_key_history_backup_body_in_series(
+    backup_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    recovery_public_key: &[u8],
+    recovery_key_ref: &str,
+    keybag: KeyBackupKeybag,
+    recovery_policy_ref: (&str, u64),
+    series_id: Option<&str>,
+    previous_series_tail: Option<&Value>,
+    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
+) -> anyhow::Result<KeyBackup> {
+    let KeyBackupKeybag::MlsHistory {
+        effective_scope,
+        items,
+    } = &keybag
+    else {
+        anyhow::bail!("portable history backup requires an mls_history keybag");
+    };
+    if items.is_empty() {
+        anyhow::bail!("portable history backup requires at least one history range");
+    }
+    let public_items = vec![KeyBackupContentItem::HistorySecretRanges(
+        HistorySecretRangeIndex {
+            item_kind: HistorySecretRangesItemKind::Value,
+            effective_scope: effective_scope.clone(),
+            ranges: items.iter().map(|item| item.epoch_range()).collect(),
+            extra: Default::default(),
+        },
+    )];
+    build_recovery_public_key_backup_body_for_keybag_in_series(
+        backup_id,
+        actor_id,
+        device_id,
+        recovery_public_key,
+        recovery_key_ref,
+        BackupKind::MlsHistory,
+        "history_secret_ranges",
+        keybag,
+        public_items,
+        Some(recovery_policy_ref),
+        series_id,
+        previous_series_tail,
+        frontier_ref,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_recovery_public_key_backup_body_for_keybag_in_series(
+    backup_id: &str,
+    actor_id: &str,
+    device_id: &str,
+    recovery_public_key: &[u8],
+    recovery_key_ref: &str,
+    class: BackupKind,
+    subdomain: &str,
+    keybag: KeyBackupKeybag,
+    items: Vec<KeyBackupContentItem>,
+    recovery_policy_ref: Option<(&str, u64)>,
+    series_id: Option<&str>,
+    previous_series_tail: Option<&Value>,
+    frontier_ref: Option<arkret_sdk::KeyBackupFrontierRef>,
+) -> anyhow::Result<KeyBackup> {
+    if keybag.backup_kind() != class || keybag.item_count() == 0 {
+        anyhow::bail!("key backup keybag does not match its envelope class");
+    }
     let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
     let created_at = crate::clock::now_utc_canonical();
@@ -346,9 +431,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
         backup_id: body.backup_id.clone(),
         series_id: body.series_id.clone(),
         series_seq: body.series_seq,
-        keybag: KeyBackupKeybag::SecretStorage {
-            items: plaintext_items,
-        },
+        keybag,
         extra: Default::default(),
     };
     let plaintext_bytes = crate::canonical::canonical_json_bytes(&plaintext)?;

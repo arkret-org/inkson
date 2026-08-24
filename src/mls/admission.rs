@@ -17,15 +17,63 @@ pub(crate) type WelcomeIntentStep =
     Box<dyn FnOnce(&arkret_sdk::EventId) -> Result<crate::operation::EventIntent, String> + Send>;
 
 pub(crate) struct RealmMlsAdmissionEvents {
-    pub(crate) commit: crate::operation::LocalOperation,
+    pub(crate) commit: MlsAdmissionAuthoringPlan,
     pub(crate) welcome: WelcomeIntentStep,
     pub(crate) snapshot: MlsSnapshotEnvelope,
 }
 
 pub(crate) struct RealmMlsBatchAdmissionEvents {
-    pub(crate) commit: crate::operation::LocalOperation,
+    pub(crate) commit: MlsAdmissionAuthoringPlan,
     pub(crate) welcomes: Vec<WelcomeIntentStep>,
     pub(crate) snapshot: MlsSnapshotEnvelope,
+}
+
+#[derive(Clone)]
+pub(crate) struct MlsAdmissionAuthoringPlan {
+    proposals: Vec<crate::operation::LocalOperation>,
+    commit_basis: crate::mls::group_events::MlsCommitBasis,
+}
+
+impl MlsAdmissionAuthoringPlan {
+    pub(crate) fn authoring_steps(&self) -> Vec<crate::event_submit::EventUnitStep> {
+        let proposals = self
+            .proposals
+            .clone()
+            .into_iter()
+            .map(crate::operation::LocalOperation::into_intent)
+            .collect::<Vec<_>>();
+        let expected_proposals = proposals.len();
+        let commit_basis = self.commit_basis.clone();
+        vec![
+            Box::new(move |_| Ok(proposals)),
+            Box::new(move |authored| {
+                if authored.len() != expected_proposals
+                    || authored
+                        .iter()
+                        .any(|event| event.kind != arkret_sdk::EventKind::MlsProposal)
+                {
+                    anyhow::bail!("MLS admission Commit did not receive its exact proposal unit");
+                }
+                let proposal_refs = authored
+                    .iter()
+                    .map(|event| event.event_id().clone())
+                    .collect();
+                Ok(vec![
+                    commit_basis
+                        .build(proposal_refs)
+                        .map_err(anyhow::Error::msg)?
+                        .into_intent(),
+                ])
+            }),
+        ]
+    }
+
+    pub(crate) fn transaction_id(&self) -> Result<&str, String> {
+        self.proposals
+            .first()
+            .map(|proposal| proposal.local_operation_id().as_str())
+            .ok_or_else(|| "MLS admission plan has no proposal".to_owned())
+    }
 }
 
 pub(crate) struct WelcomePayloadInputs {
@@ -60,6 +108,83 @@ pub(crate) async fn current_requester_device_authorize_event_id(
             "current requester device has no accepted device.authorize Event; Welcome authoring is fail-closed"
                 .to_owned()
         })
+}
+
+fn current_authorization_incarnation(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    target: &arkret_sdk::DidCoreId,
+) -> Result<arkret_sdk::AuthorizationIncarnation, String> {
+    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
+        .map_err(|error| format!("invalid MLS admission Realm id: {error}"))?;
+    let checkpoint = state_store
+        .trusted_mls_governance_checkpoint(realm_id.as_str())
+        .ok_or_else(|| "MLS admission has no durable verified governance checkpoint".to_owned())?;
+    if checkpoint.realm_id != realm_id {
+        return Err("MLS admission checkpoint belongs to another Realm".to_owned());
+    }
+    let circle_id = circle_id
+        .map(|circle_id| {
+            arkret_sdk::CircleId::new(circle_id.to_owned())
+                .map_err(|error| format!("invalid MLS admission Circle id: {error}"))
+        })
+        .transpose()?;
+    arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
+        &checkpoint,
+        target,
+        circle_id.as_ref(),
+    )
+    .map_err(|error| format!("derive current MLS Add authorization incarnation: {error}"))
+}
+
+fn build_add_proposal_event(
+    realm_id: &str,
+    effective_scope: Option<&arkret_sdk::ScopeRef>,
+    actor_id: &str,
+    claim: &arkret_sdk::KeyPackageClaimRecord,
+    proposal: &arkret_sdk::MlsProposalEnvelope,
+    target_authorization_incarnation: arkret_sdk::AuthorizationIncarnation,
+    governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+) -> Result<crate::operation::LocalOperation, String> {
+    if proposal.proposal_type != "add" {
+        return Err("MLS admission received a non-Add proposal envelope".to_owned());
+    }
+    let target_device_id = match (
+        &claim.device_id,
+        &claim.agent_id,
+        &claim.agent_verification_method,
+        &claim.agent_key_authorize_event_id,
+    ) {
+        (Some(device_id), None, None, None) => Some(device_id.clone()),
+        (None, Some(agent_id), Some(_), Some(_)) if agent_id == &claim.principal_id => None,
+        _ => return Err("MLS admission claim has an invalid Human/Native Agent branch".to_owned()),
+    };
+    let payload = arkret_sdk::MlsProposalPayload {
+        mls_group_id: arkret_sdk::MlsGroupId::new(proposal.group_id.clone())
+            .map_err(|error| format!("invalid MLS proposal group id: {error}"))?,
+        base_epoch: proposal.epoch,
+        proposal_type: arkret_sdk::MlsProposalType::Add,
+        proposal_message_ref: None,
+        proposal_digest: Some(proposal.proposal_digest.clone()),
+        target_principal_id: Some(claim.principal_id.clone()),
+        target_device_id,
+        target_authorization_incarnation: Some(target_authorization_incarnation),
+        governance_binding,
+    };
+    let mut builder = crate::operation::ak_ops::mls_proposal_with_governance(
+        realm_id,
+        actor_id,
+        &proposal.group_id,
+        &payload,
+    )
+    .map_err(|error| format!("MLS Add proposal payload failed: {error}"))?;
+    if let Some(effective_scope) = effective_scope {
+        builder = builder.effective_scope(effective_scope.clone());
+    }
+    builder
+        .build_sdk_event("inkson")
+        .map_err(|error| format!("MLS Add proposal SDK Event conversion failed: {error}"))
 }
 
 pub(crate) fn build_realm_mls_admission_events_from_claim(
@@ -122,22 +247,27 @@ fn build_realm_mls_admission_events_from_verified_claim(
             &member_key_package,
         )
         .map_err(|err| err.user_message())?;
-    let commit = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+    let commit_basis = crate::mls::group_events::mls_commit_basis_from_store(
         state_store,
         realm_id,
         None,
         actor_id,
         &add.commit,
         &previous_governance_binding,
+        None,
     )?;
-    let governance_binding = commit
-        .payload()
-        .get("governance_binding")
-        .cloned()
-        .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
-    let governance_binding =
-        serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(governance_binding)
-            .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
+    let target_authorization_incarnation =
+        current_authorization_incarnation(state_store, realm_id, None, &claim.principal_id)?;
+    let proposal = build_add_proposal_event(
+        realm_id,
+        None,
+        actor_id,
+        claim,
+        &add.proposal,
+        target_authorization_incarnation,
+        commit_basis.governance_binding().clone(),
+    )?;
+    let governance_binding = commit_basis.governance_binding().clone();
     let welcome_inputs = WelcomePayloadInputs {
         realm_id: realm_id.to_owned(),
         actor_id: actor_id.to_owned(),
@@ -152,7 +282,10 @@ fn build_realm_mls_admission_events_from_verified_claim(
         effective_scope: None,
     };
     Ok(RealmMlsAdmissionEvents {
-        commit,
+        commit: MlsAdmissionAuthoringPlan {
+            proposals: vec![proposal],
+            commit_basis,
+        },
         welcome: welcome_intent_step(welcome_inputs),
         snapshot,
     })
@@ -235,34 +368,21 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
             sidecar_binding.clone(),
         )
         .map_err(|err| err.user_message())?;
-    let commit = match sidecar_binding.as_ref() {
-        Some(binding) => crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
-            state_store,
-            realm_id,
-            actor_id,
-            &add.commit,
-            &previous_governance_binding,
-            binding.clone(),
-        )?,
-        _ => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
-            state_store,
-            realm_id,
-            circle_id,
-            actor_id,
-            &add.commit,
-            &previous_governance_binding,
-        )?,
-    };
-    let governance_binding = commit
-        .payload()
-        .get("governance_binding")
-        .cloned()
-        .ok_or_else(|| "MLS commit event missing governance_binding".to_owned())?;
-    let governance_binding =
-        serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(governance_binding)
-            .map_err(|err| format!("MLS commit governance_binding is invalid: {err}"))?;
-    if add.welcomes.len() != claims.len() {
-        return Err("MLS batch add returned a mismatched Welcome count".to_owned());
+    if sidecar_binding.is_some() {
+        return Err("v1 Sidecar Add has no target authorization incarnation branch".to_owned());
+    }
+    let commit_basis = crate::mls::group_events::mls_commit_basis_from_store(
+        state_store,
+        realm_id,
+        circle_id,
+        actor_id,
+        &add.commit,
+        &previous_governance_binding,
+        None,
+    )?;
+    let governance_binding = commit_basis.governance_binding().clone();
+    if add.welcomes.len() != claims.len() || add.proposals.len() != claims.len() {
+        return Err("MLS batch add returned a mismatched Proposal/Welcome count".to_owned());
     }
     let effective_scope = if let Some(binding) = sidecar_binding.as_ref() {
         Some(arkret_sdk::ScopeRef::Sidecar {
@@ -277,11 +397,31 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
     } else {
         None
     };
+    let mut proposals = Vec::with_capacity(claims.len());
     let mut welcomes = Vec::with_capacity(claims.len());
-    for ((claim, claim_nonce, claim_receipt), (member_key_package, welcome_envelope)) in claims
+    for (
+        ((claim, claim_nonce, claim_receipt), proposal_envelope),
+        (member_key_package, welcome_envelope),
+    ) in claims
         .iter()
+        .zip(add.proposals.iter())
         .zip(member_key_packages.iter().zip(add.welcomes.iter()))
     {
+        let target_authorization_incarnation = current_authorization_incarnation(
+            state_store,
+            realm_id,
+            circle_id,
+            &claim.principal_id,
+        )?;
+        proposals.push(build_add_proposal_event(
+            realm_id,
+            effective_scope.as_ref(),
+            actor_id,
+            claim,
+            proposal_envelope,
+            target_authorization_incarnation,
+            governance_binding.clone(),
+        )?);
         welcomes.push(welcome_intent_step(WelcomePayloadInputs {
             realm_id: realm_id.to_owned(),
             actor_id: actor_id.to_owned(),
@@ -297,7 +437,10 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
         }));
     }
     Ok(RealmMlsBatchAdmissionEvents {
-        commit,
+        commit: MlsAdmissionAuthoringPlan {
+            proposals,
+            commit_basis,
+        },
         welcomes,
         snapshot,
     })
@@ -576,7 +719,8 @@ mod tests {
                 principal_id,
                 device_id,
             } => (principal_id.clone(), device_id.clone()),
-            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
+            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. }
+            | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
                 panic!("test fixture requires a human-device record")
             }
         };
@@ -665,6 +809,108 @@ mod tests {
                 sig: arkret_sdk::Base64UrlString::new("YQ").unwrap(),
             },
         }
+    }
+
+    fn add_proposal_fixture(
+        realm_id: &str,
+    ) -> (
+        arkret_sdk::MlsProposalEnvelope,
+        arkret_sdk::MlsGovernanceBindingPayload,
+    ) {
+        let group_id = crate::mls::runtime::mls_group_id_for_realm(realm_id).unwrap();
+        let proposal_bytes = b"durable-add-proposal";
+        (
+            arkret_sdk::MlsProposalEnvelope {
+                group_id: group_id.clone(),
+                epoch: 7,
+                proposal_type: "add".to_owned(),
+                proposal: arkret_sdk::base64url_encode(proposal_bytes),
+                proposal_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+                    proposal_bytes,
+                ))
+                .unwrap(),
+                ratchet_tree: None,
+            },
+            arkret_sdk::MlsGovernanceBindingPayload::realm(
+                arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+                &group_id,
+                7,
+                8,
+                arkret_sdk::Hash::new(format!("sha256:{}", "a1".repeat(32))).unwrap(),
+                arkret_sdk::ContentScheme::MlsExporterAeadV1,
+                Some(arkret_sdk::DurabilityPolicy::None),
+                "ak.profile.mls_governance.v1",
+                "ak.profile.reducer.v1",
+            )
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn human_and_native_agent_adds_bind_the_exact_authorization_incarnation() {
+        let realm = "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx";
+        let bob = arkret_sdk::ArkretMlsIdentity::new_basic(
+            crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1".to_owned())
+                .unwrap(),
+        )
+        .unwrap();
+        let mut claim = claim_from_key_package(
+            &bob.key_package_record().unwrap(),
+            "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+        );
+        let (proposal, binding) = add_proposal_fixture(realm);
+        let incarnation = arkret_sdk::AuthorizationIncarnation::Realm {
+            realm_membership_incarnation_ref: arkret_sdk::EventId::new(
+                "ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc".to_owned(),
+            )
+            .unwrap(),
+        };
+
+        let human = build_add_proposal_event(
+            realm,
+            None,
+            "did:web:alice.example",
+            &claim,
+            &proposal,
+            incarnation.clone(),
+            binding.clone(),
+        )
+        .unwrap()
+        .typed_payload::<arkret_wire::event_spec::MlsProposal>()
+        .unwrap();
+        assert_eq!(
+            human.target_authorization_incarnation,
+            Some(incarnation.clone())
+        );
+        assert_eq!(human.target_device_id, claim.device_id);
+
+        claim.device_id = None;
+        claim.device_authorize_event_id = None;
+        claim.agent_id = Some(claim.principal_id.clone());
+        claim.agent_verification_method =
+            Some(arkret_sdk::DidUrl::new("did:web:bob.example#runtime-1".to_owned()).unwrap());
+        claim.agent_key_authorize_event_id = Some(
+            arkret_sdk::EventId::new(
+                "ak:event:AZk4PXzJ6MpkxXnYTUmgXzeIYNd0Wfnz3N0hwLHNV6Xq".to_owned(),
+            )
+            .unwrap(),
+        );
+        let native = build_add_proposal_event(
+            realm,
+            None,
+            "did:web:alice.example",
+            &claim,
+            &proposal,
+            incarnation.clone(),
+            binding,
+        )
+        .unwrap()
+        .typed_payload::<arkret_wire::event_spec::MlsProposal>()
+        .unwrap();
+        assert_eq!(native.target_authorization_incarnation, Some(incarnation));
+        assert_eq!(native.target_principal_id, Some(claim.principal_id));
+        assert_eq!(native.target_device_id, None);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

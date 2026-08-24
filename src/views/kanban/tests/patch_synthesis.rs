@@ -587,7 +587,7 @@ fn late_join_synthesis_author_resolves_handle_from_roster_actor_did() {
 
 #[test]
 fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
-    let actor = "did:webvh:zQmCurrentAccount";
+    let actor = "ak:did_core:web:current-account.example";
     let mut card = test_card(
         "ak:strand:AF3DijehNxWqPlABWhHV2X7qV7ZeRCJQ7el0rZYaSQXs",
         "U",

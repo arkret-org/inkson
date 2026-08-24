@@ -457,8 +457,10 @@ mod tests {
     fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
         arkret_sdk::PrincipalAuthorityKey {
             principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-            principal_server_id: arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned())
-                .unwrap(),
+            principal_server_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:web:principal.example".to_owned(),
+            )
+            .unwrap(),
         }
     }
 

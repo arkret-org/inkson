@@ -4253,7 +4253,7 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
-        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let mut store = temp_store("projected-profiles");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4288,7 +4288,7 @@ mod tests {
 
     #[test]
     fn projected_member_profiles_classify_authority_root_controller_as_owner() {
-        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let mut store = temp_store("authority-root-owner");
         store.save_realm_tree_projection(
             realm_id.to_owned(),
@@ -4546,7 +4546,7 @@ mod tests {
 
     #[test]
     fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
-        let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let invite_id = "ak:invite:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH";
         let mut store = temp_store("queued-invite-accept-no-admission");
         store.save_realm_tree_projection(
@@ -4669,7 +4669,7 @@ mod tests {
 
     #[test]
     fn admission_candidates_exclude_direct_conversation_realms() {
-        let realm_id = "ak:realm:AxhTAQvdpZvmHyaq94KgVyWQaE4DCbbasg3cKThF5FUE";
+        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let mut store = temp_store("admission-candidate-direct-conversation");
         store.save_realm_tree_projection(
             realm_id.to_owned(),

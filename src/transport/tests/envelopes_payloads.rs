@@ -193,7 +193,10 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
     );
     assert_eq!(events[2].payload["policy_revision"], 1);
-    assert!(events[2].payload.get("content_scheme").is_none());
+    assert!(
+        events[2].payload.get("content_scheme").is_none(),
+        "the Realm policy bundle must not duplicate the MLS Genesis content scheme"
+    );
     assert_eq!(events[3].payload["value"], "invite");
     assert_eq!(events[4].payload["from"], serde_json::Value::Null);
     assert_eq!(events[4].payload["to"], "all_history_for_current_members");
@@ -329,8 +332,12 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
 
     // The choice is validated during Realm bootstrap preparation but is frozen
     // only by the accepted MLS group Genesis. It must not leak into the mutable
-    // Realm policy bundle.
-    assert!(events[2].payload.get("content_scheme").is_none());
+    // Realm policy bundle or any other ordinary Realm bootstrap Event.
+    assert!(
+        events
+            .iter()
+            .all(|event| event.payload.get("content_scheme").is_none())
+    );
 }
 
 /// Regression: every genesis bootstrap envelope must produce the SAME
@@ -388,7 +395,8 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
             .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
             .unwrap_or_else(|err| panic!("{kind}: SDK event_digest: {err}"));
         let roundtrip: arkret_sdk::Event = serde_json::from_value(
-            serde_json::to_value(&event).unwrap_or_else(|err| panic!("{kind}: to_value: {err}")),
+            serde_json::to_value(event.event())
+                .unwrap_or_else(|err| panic!("{kind}: to_value: {err}")),
         )
         .unwrap_or_else(|err| panic!("{kind}: SDK roundtrip: {err}"));
         let roundtrip_digest = roundtrip

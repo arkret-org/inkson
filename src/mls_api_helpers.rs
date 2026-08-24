@@ -281,7 +281,8 @@ mod tests {
                 principal_id,
                 device_id,
             } => (principal_id.clone(), device_id.clone()),
-            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
+            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. }
+            | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
                 panic!("test fixture requires a human-device record")
             }
         };

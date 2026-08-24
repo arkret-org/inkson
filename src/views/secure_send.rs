@@ -64,6 +64,7 @@ pub(crate) fn run_local_mls_encrypt(
     device_id: &arkret_sdk::DeviceId,
     plaintext_bytes: &[u8],
     metadata_plaintext_bytes: Option<&[u8]>,
+    expected_sender_domain: Option<&str>,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
@@ -89,6 +90,7 @@ pub(crate) fn run_local_mls_encrypt(
         plaintext_bytes,
         metadata_plaintext_bytes.map(|_| arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
         metadata_plaintext_bytes,
+        expected_sender_domain,
         circle_id,
         sidecar_binding,
     )
@@ -105,6 +107,7 @@ fn run_local_mls_encrypt_for_event(
     plaintext_bytes: &[u8],
     metadata_content_type: Option<&str>,
     metadata_plaintext_bytes: Option<&[u8]>,
+    expected_sender_domain: Option<&str>,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<LocalMlsEncryptResult, crate::mls::runtime::MlsRuntimeError> {
@@ -155,6 +158,7 @@ fn run_local_mls_encrypt_for_event(
         plaintext_bytes,
         metadata_content_type,
         metadata_plaintext_bytes,
+        expected_sender_domain,
         circle_id,
         sidecar_binding,
     )?;
@@ -250,17 +254,25 @@ pub(crate) fn build_secure_send(
     circle_id: Option<&str>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<SecureSendBuild, String> {
-    if state_store
+    let minimal_metadata = state_store
         .read()
-        .realm_projection_is_minimal_metadata(realm_id)
-    {
-        return Err(
-            "minimal_metadata_pairwise_author_unavailable: authoring requires a Realm-scoped pairwise DidCoreId, its did:key proof DidFullId, and the exact accepted MLS LeafNode signing key"
-                .to_owned(),
-        );
-    }
+        .realm_projection_is_minimal_metadata(realm_id);
     let typed_realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
+    let pairwise = minimal_metadata
+        .then(|| {
+            crate::mls::pairwise_identity::derive_pairwise_signing_material(
+                authority,
+                device_id,
+                &typed_realm_id,
+            )
+        })
+        .transpose()?;
+    let event_actor = pairwise
+        .as_ref()
+        .map(|material| material.actor_id.as_str())
+        .unwrap_or(actor)
+        .to_owned();
     let effective_scope = if let Some(binding) = sidecar_binding.as_ref() {
         arkret_sdk::ScopeRef::Sidecar {
             realm_id: typed_realm_id.clone(),
@@ -289,6 +301,7 @@ pub(crate) fn build_secure_send(
         device_id,
         plaintext_bytes,
         metadata_plaintext_bytes,
+        pairwise.as_ref().map(|material| material.actor_id.as_str()),
         circle_id,
         sidecar_binding.as_ref(),
     )
@@ -323,7 +336,7 @@ pub(crate) fn build_secure_send(
                 crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
                     &state_store.read(),
                     realm_id,
-                    actor,
+                    &event_actor,
                     &prepared_commit.envelope,
                     &prepared_commit.previous_governance_binding,
                     binding.clone(),
@@ -333,7 +346,7 @@ pub(crate) fn build_secure_send(
                 &state_store.read(),
                 realm_id,
                 circle_id,
-                actor,
+                &event_actor,
                 &prepared_commit.envelope,
                 &prepared_commit.previous_governance_binding,
             )?,
@@ -343,7 +356,7 @@ pub(crate) fn build_secure_send(
     let typed_strand_id = arkret_sdk::StrandId::new(strand_id.to_owned())
         .map_err(|err| format!("Send Secure strand id invalid: {err:?}"))?;
     let plan_realm_id = realm_id.to_owned();
-    let plan_actor = actor.to_owned();
+    let plan_actor = event_actor;
     let plan_reply_to = reply_to
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned);
@@ -457,6 +470,7 @@ pub(crate) fn build_sidecar_exchange_control_send(
         "application/vnd.arkret.agent-sidecar-exchange-control+json",
         arkret_sdk::EventKind::AgentSidecarExchangeControl.as_str(),
         &plaintext,
+        None,
         None,
         None,
         None,
@@ -586,7 +600,7 @@ pub(crate) async fn submit_secure_send(
         commit_event,
         message_plan,
         message_local_operation_id: _,
-        new_mls_snapshot,
+        new_mls_snapshot: _new_mls_snapshot,
         seal_ref,
         pending_history_secrets,
         effective_scope,
@@ -623,35 +637,6 @@ pub(crate) async fn submit_secure_send(
                             message: format!(
                                 "accepted MLS commit returned an invalid Event id: {error}"
                             ),
-                        };
-                    }
-                }
-                // X14 — persist-on-accept: the server accepted the commit, so
-                // NOW advance the local snapshot to the post-commit epoch. On a
-                // commit reject we skip this and the snapshot stays at the
-                // pre-commit epoch, so the next Send Secure retries at the
-                // correct `expected_prev_epoch` instead of skewing forever.
-                if let Some(snapshot) = new_mls_snapshot {
-                    #[allow(clippy::expect_used)]
-                    let accepted_commit_ref = accepted_commit_event_id
-                        .clone()
-                        .expect("accepted commit id was captured above");
-                    if let Err(error) = state_store.write().record_mls_group_state_ref_for_scope(
-                        &effective_scope,
-                        snapshot.group_id.as_str(),
-                        snapshot.epoch,
-                        accepted_commit_ref,
-                    ) {
-                        return SecureSendOutcome::MessageFailed {
-                            message: format!("persist accepted MLS group-state reference: {error}"),
-                        };
-                    }
-                    if let Err(error) = state_store
-                        .write()
-                        .save_mls_snapshot_for_scope(&effective_scope, snapshot)
-                    {
-                        return SecureSendOutcome::MessageFailed {
-                            message: format!("persist accepted MLS snapshot: {error}"),
                         };
                     }
                 }

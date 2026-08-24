@@ -271,7 +271,7 @@ fn member_display_label_uses_cached_directory_primary_handle() {
 
 #[test]
 fn resolved_member_display_uses_persisted_current_account_handle() {
-    let actor = "did:webvh:zQmCurrentAccount";
+    let actor = "ak:did_core:web:current-account.example";
     let row = RealmMemberRow {
         actor_id: actor.to_owned(),
         membership: Some("join".to_owned()),

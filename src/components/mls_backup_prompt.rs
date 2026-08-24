@@ -584,6 +584,13 @@ fn upload_mls_backup_with_recovery_key(
     generated_in_this_strand: bool,
 ) {
     let mut state_store_for_marker = state_store;
+    let history_records = {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        state_store
+            .read()
+            .local_authoritative_history_secrets_for_backup(secure_store.as_ref(), &authority)
+            .map_err(anyhow::Error::msg)
+    };
     busy.set(true);
     backup_created.set(false);
     status.set(crate::i18n::tr("mls_backup.status.uploading"));
@@ -595,7 +602,8 @@ fn upload_mls_backup_with_recovery_key(
         let session_for_sidecar = session.clone();
         let result = with_authed_api(&base, session, |api| async move {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
+            let backup_id =
+                crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                 &api,
                 secure_store.as_ref(),
                 &authority,
@@ -603,7 +611,19 @@ fn upload_mls_backup_with_recovery_key(
                 &device,
                 &recovery_secret,
             )
-            .await
+            .await?;
+            let (_, recovery_public_key) =
+                crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&recovery_secret)
+                    .map_err(|error| anyhow::anyhow!("derive recovery HPKE keypair: {error}"))?;
+            crate::mls::account_recovery::upload_local_authoritative_mls_history_records_with_recovery_public_key(
+                &api,
+                history_records?,
+                &actor,
+                &device,
+                &recovery_public_key,
+            )
+            .await?;
+            Ok::<_, anyhow::Error>(backup_id)
         })
         .await;
         try_set_signal(busy, false);

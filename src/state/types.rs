@@ -1053,6 +1053,12 @@ pub struct ClientLocalState {
     /// rather than rejoining via Welcome from scratch.
     #[serde(default)]
     pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    /// Checkpoint-proven MLS artifacts committed through Garth's single
+    /// durable consumer. The ready index in this snapshot is authoritative;
+    /// `mls_snapshots` only retains pre-accept authoring state and legacy
+    /// receive-chain snapshots that have not advanced the winning epoch.
+    #[serde(default)]
+    pub accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactSnapshot,
     /// Pre-decrypt MLS checkpoints retained until the combined secure entry
     /// (advanced snapshot + decrypted plaintext cache) is durably confirmed.
     /// These envelopes are already device-secret-encrypted; keeping the oldest
@@ -1215,6 +1221,11 @@ pub struct ClientLocalState {
     /// tasks so ACK high-water and exact retries cannot be rolled back.
     #[serde(default)]
     pub(crate) history_runtime_state: garth::VersionedHistoryRuntimeSnapshot,
+    /// Crash-safe source response attempts. Canonical signed records are kept
+    /// separately as content-addressed secure-store blobs; this snapshot is
+    /// the atomic ready marker and receipt/state-machine ledger.
+    #[serde(default)]
+    pub(crate) history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1523,6 +1534,7 @@ impl Default for ClientLocalState {
             recovery_material_evidence: None,
             pending_account_handoff: None,
             mls_snapshots: BTreeMap::new(),
+            accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactSnapshot::default(),
             mls_receive_recovery_snapshots: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_group_state_refs: BTreeMap::new(),
@@ -1540,6 +1552,7 @@ impl Default for ClientLocalState {
             history_epoch_cipher_suites: BTreeMap::new(),
             history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger::default(),
             history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
+            history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot::default(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             accepted_human_contact_principals: BTreeSet::new(),

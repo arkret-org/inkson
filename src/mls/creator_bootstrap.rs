@@ -72,7 +72,7 @@ pub(crate) async fn ensure_realm_governance_checkpoint(
 /// creator check is what keeps the trust source inside §2.5.1.1's enumeration:
 /// only the actor that created the Realm may establish the initial replay
 /// checkpoint from its genesis. It mirrors the gate in
-/// `group_events::ensure_creator_mls_snapshot_for_encrypted_scope`.
+/// creator test is shared with group-event construction.
 pub(crate) fn creator_mls_bootstrap_pending(
     store: &LocalStateStore,
     realm_id: &str,
@@ -259,10 +259,10 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             Err(error) => Err(error),
         };
         match accepted {
-            Ok(accepted_event_id) => {
+            Ok(_accepted_event_id) => {
                 state_store
                     .write()
-                    .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &accepted_event_id)?;
+                    .mark_mls_genesis_emitted(realm_id.to_owned())?;
             }
             Err(error) => {
                 // The local snapshot and pinned checkpoint stay persisted, but the
@@ -280,7 +280,99 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         }
     }
 
+    let accepted_event_id = submitter
+        .find_mls_genesis_event_id(realm_id)
+        .await
+        .map_err(|error| format!("resolve accepted ak.mls.genesis Event: {error}"))?
+        .ok_or_else(|| {
+            "MLS genesis is marked emitted but its accepted Event is unavailable".to_owned()
+        })?;
+    let checkpoint_has_genesis = state_store
+        .read()
+        .trusted_mls_governance_checkpoint(realm_id)
+        .is_some_and(|checkpoint| {
+            checkpoint
+                .accepted_events
+                .iter()
+                .any(|event| event.event_id == accepted_event_id)
+        });
+    if !checkpoint_has_genesis {
+        let current_basis = state_store
+            .read()
+            .trusted_mls_governance_checkpoint(realm_id)
+            .ok_or_else(|| "creator MLS genesis has no verified base checkpoint".to_owned())?
+            .basis;
+        let seal_view =
+            wait_for_realm_seal_view_after_basis(&submitter, realm_id, &current_basis).await?;
+        state_store.write().set_realm_seal_view(
+            realm_id.to_owned(),
+            crate::state::LocalSealView {
+                frontier: seal_view
+                    .seal_basis
+                    .leaves
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                state_root: None,
+                ..Default::default()
+            },
+        );
+        let request = crate::mls::governance_proof::proof_request(
+            &state_store.read(),
+            realm_id,
+            None,
+            crate::mls::runtime::mls_group_id_for_realm(realm_id)?,
+            0,
+            0,
+            leaves.clone(),
+        )?;
+        crate::mls::governance_proof::fetch_verify_and_cache_proof(
+            api,
+            state_store,
+            &request,
+            &leaves,
+        )
+        .await?;
+    }
+    crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
+    let ready = state_store
+        .read()
+        .accepted_mls_artifact_snapshot()
+        .snapshot
+        .artifacts
+        .contains_key(accepted_event_id.as_str());
+    if !ready {
+        return Err("accepted MLS Genesis did not become durably ready".to_owned());
+    }
+
     Ok(())
+}
+
+async fn wait_for_realm_seal_view_after_basis(
+    submitter: &crate::event_submit::EventSubmitter,
+    realm_id: &str,
+    previous: &arkret_sdk::SealBasis,
+) -> Result<arkret_sdk::RealmSealFrontierView, String> {
+    const ATTEMPTS: usize = 20;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+    for attempt in 0..ATTEMPTS {
+        match submitter.events_frontier_realm_seal_view(realm_id).await {
+            Ok(view) if &view.seal_basis != previous => return Ok(view),
+            Ok(_) if attempt + 1 < ATTEMPTS => {
+                crate::runtime_helpers::sleep_for(DELAY).await;
+            }
+            Ok(_) => {
+                return Err(
+                    "accepted MLS Genesis was not covered by a new Realm Seal frontier".to_owned(),
+                );
+            }
+            Err(error) if realm_seal_view_retry_is_allowed(&error, attempt, ATTEMPTS) => {
+                crate::runtime_helpers::sleep_for(DELAY).await;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    unreachable!("Realm Seal retry loop returns on its final attempt")
 }
 
 /// Poll `ak.self.events.read.frontier` until the Realm has an accepted Seal.

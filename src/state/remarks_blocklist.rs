@@ -437,7 +437,10 @@ mod tests {
             },
             proof_material: arkret_sdk::MlsGovernanceTypedProofMaterial {
                 seal_descriptors: vec![arkret_sdk::MlsGovernanceSealDescriptor {
-                    seal_ref: arkret_sdk::SealId::new("ak:seal:sha256:previous").unwrap(),
+                    seal_ref: arkret_sdk::SealId::new(
+                        "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    )
+                    .unwrap(),
                     seal_digest: arkret_sdk::Hash::new(format!("sha256:{}", "22".repeat(32)))
                         .unwrap(),
                 }],
@@ -446,7 +449,9 @@ mod tests {
             },
             page_digest: arkret_sdk::Hash::new(format!("sha256:{}", "33".repeat(32))).unwrap(),
         };
-        let previous = BTreeSet::from(["ak:seal:sha256:previous"]);
+        let previous = BTreeSet::from([
+            "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ]);
         let unrelated = BTreeSet::from(["ak:seal:sha256:unrelated"]);
 
         assert!(verified_bundle_covers_observed_head(&bundle, &previous));

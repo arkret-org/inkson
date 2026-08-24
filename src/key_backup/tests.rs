@@ -447,6 +447,54 @@ fn recovery_public_key_backup_round_trips_and_validates() {
 }
 
 #[test]
+fn portable_history_backup_round_trips_as_history_only_scope_object() {
+    let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
+    let effective_scope = arkret_sdk::HistoryEffectiveScope::Realm {
+        realm_id: arkret_sdk::RealmId::new(REALM_ID.to_owned()).unwrap(),
+    };
+    let keybag = arkret_models_crypto::KeyBackupKeybag::MlsHistory {
+        effective_scope: effective_scope.clone(),
+        items: vec![arkret_sdk::HistorySecretRange {
+            from_epoch: 2,
+            to_epoch: 3,
+            secrets_b64u: B64.encode([7u8; 64]),
+        }],
+    };
+    let body = build_recovery_public_key_history_backup_body_in_series(
+        BACKUP_ID,
+        ACTOR,
+        DEVICE,
+        &pk,
+        "did:web:alice.example#backup-hpke",
+        keybag,
+        ("ak:policy:01964137-0000-7000-8000-000000000077", 1),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(body.backup_kind, BackupKind::MlsHistory);
+    assert_eq!(body.contents.len(), 1);
+    assert!(body.contents[0].secret_id().is_none());
+    let opened = open_recovery_public_key_backup_body(&sk, &wire(&body)).unwrap();
+    let arkret_models_crypto::KeyBackupKeybag::MlsHistory {
+        effective_scope: opened_scope,
+        items,
+    } = opened.keybag
+    else {
+        panic!("mls_history keybag expected");
+    };
+    assert_eq!(opened_scope, effective_scope);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].from_epoch, 2);
+    assert_eq!(items[0].to_epoch, 3);
+    assert_eq!(
+        B64.decode(items[0].secrets_b64u.as_bytes()).unwrap(),
+        [7u8; 64]
+    );
+}
+
+#[test]
 fn key_backup_rejects_obvious_plaintext_fields() {
     let root = test_root();
     let body =

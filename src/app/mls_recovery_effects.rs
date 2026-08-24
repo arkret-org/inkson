@@ -251,7 +251,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     secure_store.as_ref(),
                                     &authority,
                                     &actor,
-                                );
+                                ).await;
                                 if report.failed > 0 {
                                     tracing::warn!(
                                         failed = report.failed,
@@ -270,7 +270,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     secure_store.as_ref(),
                                     &authority,
                                     &actor,
-                                );
+                                ).await;
                                 if report.failed > 0 {
                                     tracing::warn!(
                                         failed = report.failed,

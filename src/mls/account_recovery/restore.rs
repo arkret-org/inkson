@@ -16,10 +16,10 @@ use super::backup_body::{
     open_mls_account_secret_recovery_public_key_backup,
 };
 use super::selection::{
-    all_mls_account_secret_backups, is_mls_history_backup, mls_account_secret_backup_version,
-    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
-    select_mls_history_backups, select_mls_private_plaintext_backup,
-    select_preferred_mls_account_secret_backup,
+    all_mls_account_secret_backups, is_mls_history_backup, latest_mls_history_backups_by_scope,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 use super::series::verify_series_chain;
 
@@ -47,8 +47,6 @@ fn select_local_secret_mls_history_backups(list_payload: &Value) -> Vec<Value> {
         .filter(is_local_secret_mls_history_backup)
         .collect()
 }
-
-const PORTABLE_HISTORY_PENDING: &str = "portable MLS history restore is not ready: history_secret_ranges authorization requires complete accepted activation views";
 
 /// Decide whether the app should ask the user for their Recovery Key to unlock
 /// MLS history.
@@ -86,11 +84,12 @@ pub fn mls_restore_prompt_required(
             .is_some();
     let account_secret_verified =
         crate::mls::runtime::account_mls_secret_verified(secure_store, authority).unwrap_or(false);
-    let portable_history_pending = select_local_secret_mls_history_backups(list_payload)
+    let portable_history_available = select_local_secret_mls_history_backups(list_payload)
         .into_iter()
         .next()
         .is_some();
-    let required = !account_secret_present || !account_secret_verified || portable_history_pending;
+    let required =
+        !account_secret_present || !account_secret_verified || portable_history_available;
     tracing::warn!(
         target: "recovery_diag",
         actor_id,
@@ -101,10 +100,10 @@ pub fn mls_restore_prompt_required(
             .unwrap_or("<missing>"),
         account_secret_present,
         account_secret_verified,
-        portable_history_pending,
+        portable_history_available,
         required,
-        reason = if portable_history_pending {
-            "portable_history_capability_pending"
+        reason = if portable_history_available {
+            "portable_history_available"
         } else if !account_secret_present {
             "local_account_secret_missing"
         } else if !account_secret_verified {
@@ -597,13 +596,6 @@ async fn verify_active_series_range_completeness(
 /// - `<actor_id>#<device_id>` — the actor-scoped device reference;
 /// - `<device_signing_key>#<multikey>` — the self-describing `did:key` form;
 /// - `<device_signing_key>#device` — the same key with the conventional fragment.
-///
-/// A fourth arm that accepted the **bare** `device_signing_key`
-/// (`did:key:z6Mk…`, no fragment) was removed with the `DidUrl` migration.
-/// `KeyBackupActiveSeriesAuthData.verification_method` is now typed `DidUrl`,
-/// which rejects a bare DID at construction, so the arm was unreachable — but
-/// it was also the one arm that contradicted §2.2, and leaving it would have
-/// silently re-widened acceptance if the field were ever loosened again.
 fn active_series_verification_method_matches(
     verification_method: &str,
     actor_id: &str,
@@ -864,10 +856,9 @@ pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
 /// Restore MLS account secret + history from an already-fetched
 /// `list_key_backups` payload.
 ///
-/// This function is deliberately synchronous: it can run inside a short
-/// `state_store.write()` critical section after all network awaits have
-/// completed.
-pub fn restore_mls_history_with_passphrase_from_payload(
+/// Network reads must complete before entering this function. Candidate bytes
+/// are then committed one at a time through the durable Garth ledger.
+pub async fn restore_mls_history_with_passphrase_from_payload(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -926,8 +917,10 @@ pub fn restore_mls_history_with_passphrase_from_payload(
         state_store,
         secure_store,
         authority,
+        None,
         &mut report,
-    );
+    )
+    .await;
     Ok(report)
 }
 
@@ -939,7 +932,7 @@ pub fn restore_mls_history_with_passphrase_from_payload(
 /// key is the one unlocked by the recovery policy (saved recovery key /
 /// threshold / hardware); on a brand-new browser (empty secure store) this is
 /// the path that works without first holding the account secret.
-pub fn restore_mls_history_with_recovery_key_from_payload(
+pub async fn restore_mls_history_with_recovery_key_from_payload(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -985,8 +978,10 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
         state_store,
         secure_store,
         authority,
+        Some(recovery_private_key),
         &mut report,
-    );
+    )
+    .await;
     Ok(report)
 }
 
@@ -994,7 +989,7 @@ pub fn restore_mls_history_with_recovery_key_from_payload(
 /// that is already present on this device. This is the no-prompt path for an
 /// unlocked device whose local snapshot is stale relative to another device's
 /// uploaded `mls_history` backup.
-pub fn restore_mls_history_with_local_secret_from_payload(
+pub async fn restore_mls_history_with_local_secret_from_payload(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
@@ -1022,8 +1017,10 @@ pub fn restore_mls_history_with_local_secret_from_payload(
         state_store,
         secure_store,
         authority,
+        None,
         &mut report,
-    );
+    )
+    .await;
     report
 }
 
@@ -1031,19 +1028,35 @@ pub fn restore_mls_history_with_local_secret_from_payload(
 /// points): with the account secret already local, restore every `mls_history`
 /// backup and the author's `mls_private_plaintext` sidecar. Per-item failures
 /// are counted, never abort the rest.
-fn restore_history_and_sidecar(
+async fn restore_history_and_sidecar(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    recovery_private_key: Option<&[u8]>,
     report: &mut RestoreReport,
 ) {
-    let portable_history_count = select_local_secret_mls_history_backups(list_payload).len();
-    if portable_history_count > 0 {
-        report.failed = report.failed.saturating_add(portable_history_count);
-        report
-            .first_error
-            .get_or_insert_with(|| PORTABLE_HISTORY_PENDING.to_owned());
+    for body in latest_mls_history_backups_by_scope(list_payload)
+        .into_iter()
+        .filter(|body| body.get("ciphertext").and_then(Value::as_str).is_some())
+    {
+        match restore_history_backup(
+            &body,
+            state_store,
+            secure_store,
+            authority,
+            recovery_private_key,
+        )
+        .await
+        {
+            Ok(()) => report.restored += 1,
+            Err(error) => {
+                report.failed += 1;
+                report
+                    .first_error
+                    .get_or_insert_with(|| format!("portable MLS history restore: {error}"));
+            }
+        }
     }
 
     if let Some(sidecar_body) = select_mls_private_plaintext_backup(list_payload) {
@@ -1057,6 +1070,100 @@ fn restore_history_and_sidecar(
             }
         }
     }
+}
+
+async fn restore_history_backup(
+    body: &Value,
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    recovery_private_key: Option<&[u8]>,
+) -> Result<()> {
+    let plaintext = match mls_history_recipient_method(body) {
+        Some(arkret_sdk::KeyBackupRecipientMethod::SecretStorageKey) => {
+            let account_secret =
+                crate::mls::runtime::load_account_mls_secret(secure_store, authority)
+                    .map_err(|error| anyhow!("load account MLS secret: {error}"))?
+                    .ok_or_else(|| anyhow!("account MLS secret is unavailable"))?;
+            crate::key_backup::open_passphrase_kdf_backup_body(
+                account_secret.secret.as_bytes(),
+                body,
+            )?
+        }
+        Some(arkret_sdk::KeyBackupRecipientMethod::RecoveryPublicKey) => {
+            let private_key = recovery_private_key.ok_or_else(|| {
+                anyhow!("recovery-key MLS history backup requires the recovery private key")
+            })?;
+            crate::key_backup::open_recovery_public_key_backup_body(private_key, body)?
+        }
+        Some(arkret_sdk::KeyBackupRecipientMethod::PassphraseKdf) => {
+            return Err(anyhow!(
+                "mls_history backup must use secret_storage_key or recovery_public_key"
+            ));
+        }
+        None => return Err(anyhow!("mls_history backup omits recipient_method")),
+    };
+    let arkret_models_crypto::KeyBackupKeybag::MlsHistory {
+        effective_scope,
+        items,
+    } = &plaintext.keybag
+    else {
+        return Err(anyhow!(
+            "mls_history envelope opened to a non-history keybag"
+        ));
+    };
+    let first_epoch = items
+        .first()
+        .map(|item| item.from_epoch)
+        .ok_or_else(|| anyhow!("mls_history keybag contains no ranges"))?;
+    let scope = arkret_sdk::ScopeRef::from(effective_scope.clone());
+    let group_id = effective_scope.canonical_mls_group_id()?;
+    let cipher_suite = state_store
+        .history_epoch_cipher_suite(&scope, &group_id, first_epoch)
+        .ok_or_else(|| {
+            anyhow!(
+                "dependency_missing: exact winning transition ciphersuite is unavailable for epoch {first_epoch}"
+            )
+        })?;
+    for item in items {
+        for epoch in item.from_epoch..=item.to_epoch {
+            if state_store
+                .history_epoch_cipher_suite(&scope, &group_id, epoch)
+                .as_deref()
+                != Some(cipher_suite.as_str())
+            {
+                return Err(anyhow!(
+                    "dependency_missing: one portable range is not fully bound to the same replay-derived ciphersuite"
+                ));
+            }
+        }
+    }
+    let kdf_nh = usize::from(arkret_sdk::registered_mls_ciphersuite_kdf_nh(
+        &cipher_suite,
+    )?);
+    let producer = arkret_sdk::DidCoreId::new(
+        body.get("actor_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("mls_history envelope omits actor_id"))?
+            .to_owned(),
+    )?;
+    let candidates = arkret_state::history_backup::restore_history_backup_candidates(
+        &plaintext,
+        &producer,
+        kdf_nh,
+        crate::clock::now_utc(),
+    )?;
+    for candidate in candidates {
+        state_store
+            .receive_history_candidate(
+                secure_store,
+                &candidate.secret,
+                candidate.attribution,
+                crate::clock::now_utc(),
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 /// X5.3 — decrypt the `mls_private_plaintext` sidecar backup with the local
@@ -1089,8 +1196,8 @@ fn restore_private_plaintext_sidecar(
 ///   1. Fetch the server's `mls_account_secret` backup when present, decrypt it with `passphrase`,
 ///      and replace the local account key with it. This also repairs stale local secrets left by
 ///      incomplete bootstraps.
-///   2. Refuse portable full group snapshots until the typed activation-evidence restore path is
-///      available.
+///   2. Restore portable history ranges only after every epoch has an exact replay-derived
+///      ciphersuite pin; restored bytes remain external candidates.
 ///
 /// This is the function the recovery UI / a future "unlock MLS" prompt calls
 /// once the user has supplied the passphrase. Returns per-backup counts.
@@ -1114,6 +1221,7 @@ pub async fn auto_restore_mls_history_with_passphrase(
         device_id,
         passphrase,
     )
+    .await
 }
 
 /// Decide whether the app should prompt the user to set a recovery passphrase

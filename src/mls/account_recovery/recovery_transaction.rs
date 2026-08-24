@@ -438,7 +438,8 @@ pub(crate) async fn execute_pcr_policy_recovery(
             session.requesting_device_id.as_str(),
             prepared.recovery_private_key.as_slice(),
             (session.policy_id.as_str(), session.policy_version),
-        )?;
+        )
+        .await?;
     }
     {
         let store = state_store.write();
@@ -599,7 +600,8 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
             session.requesting_device_id.as_str(),
             &recovery_material.backup_hpke_serialized_private_key,
             (session.policy_id.as_str(), session.policy_version),
-        )?;
+        )
+        .await?;
     }
     {
         let store = state_store.write();
@@ -643,7 +645,7 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
     }
     let binding = transaction
         .recovery_binding()
-        .expect("binding was checked above");
+        .ok_or_else(|| anyhow::anyhow!("completed recovery transaction has no terminal binding"))?;
     let readiness = crate::fresh_device_recovery::RecoveryReadinessEvidence {
         transaction_id: transaction.transaction_id.clone(),
         terminal_receipt_id: binding.terminal_receipt_id.clone(),

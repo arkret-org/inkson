@@ -295,13 +295,23 @@ mod tests {
             .record_mls_coverage_stale(REALM, None, "realm-default")
             .unwrap();
         store
-            .record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle")
+            .record_mls_coverage_stale(
+                REALM,
+                Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"),
+                "circle",
+            )
             .unwrap();
         // Keyed by effective scope, but each record still names its Realm so
         // the Realm's MLS effect can find the Circle group it has to repair.
         let mut scopes = store.stale_mls_coverage_scopes(REALM);
         scopes.sort();
-        assert_eq!(scopes, vec![None, Some("ak:circle:demo".to_owned())]);
+        assert_eq!(
+            scopes,
+            vec![
+                None,
+                Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned())
+            ]
+        );
         assert!(
             store
                 .stale_mls_coverage_scopes("ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo")
@@ -334,12 +344,19 @@ mod tests {
         // A Circle-scoped group is a separate MLS group with its own
         // accumulator; clearing the Realm-default scope must not touch it.
         store
-            .record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle")
+            .record_mls_coverage_stale(
+                REALM,
+                Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"),
+                "circle",
+            )
             .unwrap();
         store.clear_mls_coverage_stale(REALM, None).unwrap();
         assert_eq!(
             store
-                .mls_coverage_stale_reason(REALM, Some("ak:circle:demo"))
+                .mls_coverage_stale_reason(
+                    REALM,
+                    Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"),
+                )
                 .as_deref(),
             Some("circle")
         );
@@ -356,17 +373,21 @@ mod tests {
         assert_eq!(mls_coverage_repair_dedup_hint(&store, REALM), "realm");
 
         store
-            .record_mls_coverage_stale(REALM, Some("ak:circle:demo"), "circle")
+            .record_mls_coverage_stale(
+                REALM,
+                Some("ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"),
+                "circle",
+            )
             .unwrap();
         assert_eq!(
             mls_coverage_repair_dedup_hint(&store, REALM),
-            "ak:circle:demo,realm"
+            "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1,realm"
         );
 
         store.clear_mls_coverage_stale(REALM, None).unwrap();
         assert_eq!(
             mls_coverage_repair_dedup_hint(&store, REALM),
-            "ak:circle:demo"
+            "ak:circle:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"
         );
     }
 }

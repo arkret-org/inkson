@@ -10,10 +10,7 @@ use super::{
 // YGN-ARCH-01 step 2: the MLS commit/genesis event construction moved to
 // `crate::mls::group_events` (it serves any effective scope and is consumed
 // by `mls::admission` / `circle_mls` / `sync_engine`, not just kanban).
-use crate::mls::group_events::{
-    build_creator_mls_genesis_event, ensure_creator_mls_snapshot_for_encrypted_scope,
-    mls_commit_event_from_store,
-};
+use crate::mls::group_events::{build_creator_mls_genesis_event, mls_commit_event_from_store};
 use crate::state::{LocalStateStore, MoveSubmissionState};
 use crate::transport::auth::with_authed_api;
 use crate::views::helpers::short_protocol_id;
@@ -240,21 +237,15 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         },
     };
     let mut fresh_summary = if sidecar_binding.is_none() {
-        apply_local_mls_welcomes_for_realm(
-            state_store,
-            secure_store,
-            realm_id,
-            authority,
-            actor_id,
-            account_device_id,
+        let snapshot = state_store
+            .mls_snapshot_for_scope(&effective_scope)
+            .ok_or_else(|| "checkpoint-proven MLS group state is pending".to_owned())?;
+        state_store.mls_group_state_ref_for_scope(
+            &effective_scope,
+            snapshot.group_id.as_str(),
+            snapshot.epoch,
         )?;
-        ensure_creator_mls_snapshot_for_encrypted_scope(
-            state_store,
-            secure_store,
-            realm_id,
-            authority,
-            account_device_id,
-        )?
+        None
     } else {
         if state_store
             .mls_snapshot_for_scope(&effective_scope)
@@ -409,45 +400,6 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
     ))
 }
 
-fn apply_local_mls_welcomes_for_realm(
-    state_store: &mut LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
-    actor_id: &str,
-    device_id: &arkret_sdk::DeviceId,
-) -> Result<(), String> {
-    if state_store.mls_snapshot_for(realm_id).is_some() {
-        return Ok(());
-    }
-    let inbox = state_store.to_device_inbox();
-    let messages = crate::mls::runtime::collect_mls_welcome_messages_for_realm(&inbox, realm_id);
-    if messages.is_empty() {
-        return Ok(());
-    }
-    let messages_value = json!({ "messages": messages });
-    let outcome = crate::mls::runtime::apply_welcome_messages_with_device_snapshot(
-        state_store,
-        secure_store,
-        realm_id,
-        authority,
-        actor_id,
-        device_id,
-        &messages_value,
-    )
-    .map_err(|err| err.user_message())?;
-    if state_store.mls_snapshot_for(realm_id).is_none() && outcome.failed > 0 {
-        return Err(format!(
-            "MLS Welcome could not be applied from local device inbox: {}",
-            outcome
-                .first_error
-                .as_deref()
-                .unwrap_or("unknown MLS Welcome error")
-        ));
-    }
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_card_detail_update(
     base_url: String,
@@ -509,7 +461,7 @@ pub(super) fn dispatch_card_detail_update(
         genesis: mls_genesis_op,
         genesis_material: mls_genesis_material,
         commit: mls_commit_op,
-        snapshot: mls_new_snapshot,
+        snapshot: _mls_new_snapshot,
         pending_history_secrets,
     } = mls_events;
 
@@ -711,26 +663,8 @@ pub(super) fn dispatch_card_detail_update(
         }
         let mut accepted_commit_event_id = None::<arkret_sdk::EventId>;
         if let Some(commit_op) = mls_commit_op {
-            let snapshot_for_submit = mls_new_snapshot.clone();
-            let realm_for_submit = realm_id.clone();
-            let scope_for_submit = sidecar_effective_scope.clone();
-            let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
             let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                match (snapshot_for_submit, scope_for_submit.as_ref()) {
-                    (Some(snapshot), None) => {
-                        api.event_submitter()?
-                            .submit_mls_event_with_snapshot(
-                                &commit_op,
-                                realm_for_submit,
-                                snapshot,
-                                post_accept_store,
-                            )
-                            .await
-                    }
-                    (Some(_), Some(_)) | (None, _) => {
-                        api.event_submitter()?.submit_sdk_event(&commit_op).await
-                    }
-                }
+                api.event_submitter()?.submit_sdk_event(&commit_op).await
             })
             .await;
             match commit_result {
@@ -743,50 +677,6 @@ pub(super) fn dispatch_card_detail_update(
                         }
                     };
                     accepted_commit_event_id = Some(commit_event_id.clone());
-                    // X14 — persist-on-accept: the server accepted this commit,
-                    // so NOW advance the local snapshot to the post-commit
-                    // epoch. This keeps `snapshot.epoch == server.epoch` in
-                    // lockstep; if the commit had been rejected we'd skip this
-                    // and the snapshot would stay at the pre-commit epoch, so
-                    // the next write retries at the correct `expected_prev_epoch`
-                    // instead of skewing forever.
-                    if let (Some(effective_scope), Some(snapshot)) =
-                        (sidecar_effective_scope.as_ref(), mls_new_snapshot.clone())
-                    {
-                        // The accepted Event id from the submit outcome —
-                        // the build-time id died when the queue re-authored
-                        // the envelope.
-                        let accepted_commit_ref =
-                            match arkret_sdk::EventId::new(resp.event_id.clone()) {
-                                Ok(event_id) => event_id,
-                                Err(error) => {
-                                    board_status.set(format!(
-                                        "accepted MLS commit returned an invalid Event id: {error}"
-                                    ));
-                                    return;
-                                }
-                            };
-                        if let Err(error) =
-                            state_store.write().record_mls_group_state_ref_for_scope(
-                                effective_scope,
-                                snapshot.group_id.as_str(),
-                                snapshot.epoch,
-                                accepted_commit_ref,
-                            )
-                        {
-                            board_status
-                                .set(format!("MLS commit reference persist failed: {error}"));
-                            return;
-                        }
-                        if let Err(error) = state_store
-                            .write()
-                            .save_mls_snapshot_for_scope(effective_scope, snapshot)
-                        {
-                            board_status
-                                .set(format!("MLS commit snapshot persist failed: {error}"));
-                            return;
-                        }
-                    }
                     if let Some(commit_operation_id) = mls_commit_operation_id {
                         state_store.write().record_move_submission_with_event_id(
                             commit_operation_id,

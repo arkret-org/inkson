@@ -648,7 +648,7 @@ mod personal_agent_tests {
             },
         )
         .unwrap();
-        let event_wire = serde_json::to_value(&event).unwrap();
+        let event_wire = serde_json::to_value(event.event()).unwrap();
         let event_created_at = event_wire["created_at"].as_str().unwrap();
         assert_eq!(event_created_at.len(), 24);
         arkret_sdk::canonical::validate_timestamp_canonical(event_created_at).unwrap();

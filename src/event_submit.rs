@@ -66,11 +66,8 @@ pub(crate) struct DurablyQueuedError {
     pub(crate) operation_id: String,
 }
 
-#[derive(Clone)]
-struct InksonPostAcceptHook {
-    state_store: Option<crate::runtime::input::StateStoreHandle>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
-}
+#[derive(Clone, Copy)]
+struct InksonPostAcceptHook;
 
 impl OutboundPostAcceptHook for InksonPostAcceptHook {
     fn post_accept<'a>(
@@ -80,102 +77,10 @@ impl OutboundPostAcceptHook for InksonPostAcceptHook {
         _duplicate: bool,
     ) -> BoxOutboundFuture<'a, ()> {
         Box::pin(async move {
-            let QueuedRecord::SdkEvent(queued) = &item.record else {
-                return Ok(());
-            };
-            let Some(action) = queued.post_accept.as_ref() else {
-                return Ok(());
-            };
-            // Admission persistence runs inside the submitter so failures can
-            // use the unbounded durable RetryAfter path. Garth's generic hook
-            // error policy is intentionally bounded and must not terminally
-            // cancel an accepted Commit's only staged state after eight tries.
-            if matches!(action, PostAcceptAction::MlsAdmission { .. }) {
-                return Ok(());
-            }
-            persist_post_accept_action(
-                self.state_store.as_ref(),
-                &self.authority,
-                action.clone(),
-                event_id.clone(),
-            )
-            .await
+            let _ = (item, event_id);
+            Ok(())
         })
     }
-}
-
-async fn persist_post_accept_action(
-    state_store: Option<&crate::runtime::input::StateStoreHandle>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
-    action: PostAcceptAction,
-    accepted_event_id: arkret_sdk::EventId,
-) -> Result<(), garth::Error> {
-    let store = state_store.ok_or_else(|| {
-        garth::Error::Protocol(
-            "queued post-accept action has no host state-store adapter".to_owned(),
-        )
-    })?;
-    let (realm_id, snapshot, retain_history_for) = match action {
-        PostAcceptAction::MlsSnapshot { realm_id, snapshot } => (realm_id, snapshot, None),
-        PostAcceptAction::MlsAdmission {
-            realm_id,
-            actor_id: _,
-            device_id,
-            stage: _,
-            commit_ingress_receipts: _,
-            commit_was_duplicate: _,
-            welcomes: _,
-            snapshot,
-        } => (realm_id, snapshot, Some(device_id)),
-    };
-    let snapshot: crate::mls::persistence::MlsSnapshotEnvelope = snapshot.into();
-    let snapshot_realm_id = realm_id.clone();
-    let barrier = store.write(|store| {
-        store
-            .record_mls_group_state_ref_for_effective_scope(
-                snapshot_realm_id.clone(),
-                None,
-                snapshot.group_id.as_str(),
-                snapshot.epoch,
-                accepted_event_id,
-            )
-            .map_err(garth::Error::Protocol)?;
-        store
-            .save_mls_snapshot(snapshot_realm_id, snapshot)
-            .map_err(garth::Error::Protocol)?;
-        store.begin_durable_flush().map_err(|error| {
-            garth::Error::Protocol(format!(
-                "begin durable MLS post-accept snapshot persist: {error}"
-            ))
-        })
-    })?;
-    barrier.wait().await.map_err(|error| {
-        garth::Error::Protocol(format!("persist MLS post-accept snapshot: {error}"))
-    })?;
-    if let Some(device_id) = retain_history_for {
-        let device_id = arkret_sdk::DeviceId::new(device_id)
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let derived = store
-            .read(|store| {
-                crate::mls::runtime::derive_and_retain_realm_history_secret(
-                    store,
-                    secure_store.as_ref(),
-                    &realm_id,
-                    authority,
-                    &device_id,
-                )
-            })
-            .map_err(|error| garth::Error::Protocol(error.user_message()))?;
-        if let Some((_epoch, _secret, pending)) = derived {
-            pending
-                .persist(secure_store.as_ref())
-                .await
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-            store.write(|store| store.publish_history_secrets(pending));
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn is_durably_queued_error(error: &anyhow::Error) -> bool {
@@ -219,6 +124,44 @@ struct EventOutboundSubmitter<'a> {
 }
 
 impl EventOutboundSubmitter<'_> {
+    async fn submit_mls_admission_unit(
+        &self,
+        queued: &QueuedSdkEvent,
+        commit: &arkret_sdk::AuthoredEvent,
+    ) -> anyhow::Result<SubmitEventResult> {
+        let Some(PostAcceptAction::MlsAdmission {
+            proposal_events,
+            stage: MlsAdmissionStage::CommitPending,
+            ..
+        }) = queued.post_accept.as_ref()
+        else {
+            anyhow::bail!("MLS admission unit transport requires a commit-pending action");
+        };
+        let mut unit = proposal_events.clone();
+        unit.push(commit.clone());
+        let outcome = self
+            .owner
+            .submit_signed_sdk_events_batch(&unit, Some(commit.event_id().as_str()))
+            .await?;
+        let accepted = outcome.accepted.contains(commit.event_id());
+        let duplicate = outcome.duplicate.contains(commit.event_id());
+        if accepted == duplicate {
+            anyhow::bail!(
+                "MLS admission batch did not classify its Commit exactly once as accepted or duplicate"
+            );
+        }
+        Ok(SubmitEventResult {
+            event_id: commit.event_id().to_string(),
+            status: if duplicate {
+                arkret_sdk::EventsSubmitStatus::Duplicate
+            } else {
+                arkret_sdk::EventsSubmitStatus::Accepted
+            },
+            cursor: outcome.cursor.unwrap_or_default(),
+            ingress_receipts: outcome.ingress_receipts,
+        })
+    }
+
     async fn verify_covering_seal(&self, event: &arkret_sdk::Event) -> anyhow::Result<()> {
         let state_store = self.state_store.as_ref();
         let digest_suite = verify_event_is_covered_by_accepted_seal(
@@ -407,27 +350,6 @@ impl EventOutboundSubmitter<'_> {
                             reason: format!("MLS Welcome finality pending: {error:#}"),
                         });
                     }
-                }
-                if let Err(error) = persist_post_accept_action(
-                    self.state_store.as_ref(),
-                    self.owner
-                        .authority()
-                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
-                    queued
-                        .post_accept
-                        .as_ref()
-                        .expect("MLS admission action remains present")
-                        .clone(),
-                    commit.event_id.clone(),
-                )
-                .await
-                {
-                    return Ok(OutboundSubmitOutcome::RetryAfter {
-                        delay: Duration::from_secs(60),
-                        reason: format!(
-                            "MLS admission state persistence remains repairable: {error}"
-                        ),
-                    });
                 }
                 let result = SubmitEventResult {
                     event_id: commit.event_id.to_string(),
@@ -690,15 +612,24 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                 garth::Error::Protocol("prepared outbound Event has no authored attempt".to_owned())
             })?;
             let event = &attempt.envelope;
-            match self
-                .owner
-                .submit_sdk_event_direct(
-                    event,
-                    &attempt.transport_idempotency_key,
-                    &attempt.canonical_body_bytes,
-                )
-                .await
-            {
+            let submission = if matches!(
+                queued.post_accept.as_ref(),
+                Some(PostAcceptAction::MlsAdmission {
+                    stage: MlsAdmissionStage::CommitPending,
+                    ..
+                })
+            ) {
+                self.submit_mls_admission_unit(&queued, event).await
+            } else {
+                self.owner
+                    .submit_sdk_event_direct(
+                        event,
+                        &attempt.transport_idempotency_key,
+                        &attempt.canonical_body_bytes,
+                    )
+                    .await
+            };
+            match submission {
                 Ok(result) => {
                     // Ingress acceptance is not Commit finality. Freeze this
                     // boundary first, then a later queue pass waits until the
@@ -1484,10 +1415,9 @@ impl EventSubmitter {
         }
     }
 
-    /// Resume MLS commits that carry their encrypted post-accept snapshot.
-    /// The hook commits the snapshot before Garth marks the item sent; hook
-    /// failure leaves the event retryable, so a later duplicate response can
-    /// finish the same idempotent action.
+    /// Resume durable MLS Commit/Welcome admission delivery. Group readiness
+    /// is published separately by the checkpoint-proven accepted-artifact
+    /// consumer; this queue never installs its staged snapshot.
     pub(crate) async fn drain_mls_outbound(
         &self,
         state_store: crate::runtime::input::StateStoreHandle,
@@ -1503,10 +1433,7 @@ impl EventSubmitter {
             results: &results,
             state_store: Some(state_store.clone()),
         };
-        let hook = InksonPostAcceptHook {
-            state_store: Some(state_store),
-            authority: self.authority()?.clone(),
-        };
+        let hook = InksonPostAcceptHook;
         let mut completed = 0usize;
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
@@ -2103,26 +2030,6 @@ impl EventSubmitter {
         .await
     }
 
-    pub(crate) async fn submit_mls_event_with_snapshot(
-        &self,
-        event: &LocalOperation,
-        realm_id: String,
-        snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
-        state_store: crate::runtime::input::StateStoreHandle,
-    ) -> anyhow::Result<SubmitEventResult> {
-        self.submit_sdk_event_queued(
-            event,
-            Some(PostAcceptAction::MlsSnapshot {
-                realm_id,
-                snapshot: snapshot.into_queued(),
-            }),
-            Some(state_store),
-            None,
-            None,
-        )
-        .await
-    }
-
     async fn submit_sdk_event_queued(
         &self,
         operation: &LocalOperation,
@@ -2223,7 +2130,7 @@ impl EventSubmitter {
     /// resume the same immutable admission saga.
     pub(crate) async fn submit_mls_admission_with_snapshot(
         &self,
-        commit: &LocalOperation,
+        commit: &crate::mls::admission::MlsAdmissionAuthoringPlan,
         welcomes: Vec<crate::mls::admission::WelcomeIntentStep>,
         realm_id: String,
         actor_id: String,
@@ -2235,20 +2142,30 @@ impl EventSubmitter {
             anyhow::bail!("MLS admission requires at least one Welcome");
         }
         let _single_writer = outbound_submit_lock().lock().await;
-        let intent = commit.intent();
-        self.ensure_recovery_material_ready(intent, None).await?;
-        let local_operation_id = commit.local_operation_id().to_string();
+        let mut authored = self.author_event_unit(commit.authoring_steps()).await?;
+        let authored_commit = authored
+            .pop()
+            .ok_or_else(|| anyhow::anyhow!("MLS admission unit produced no Commit"))?;
+        if authored_commit.kind != arkret_sdk::EventKind::MlsCommit || authored.is_empty() {
+            anyhow::bail!("MLS admission unit did not produce Add proposal Events then one Commit");
+        }
+        let intent = EventIntent::from_authored(&authored_commit);
+        self.ensure_recovery_material_ready(&intent, None).await?;
+        let local_operation_id = commit
+            .transaction_id()
+            .map_err(anyhow::Error::msg)?
+            .to_owned();
         let authoring_generation =
             match crate::identity::authoring_generation::resolve_event_authoring_generation(
                 &self.http,
-                &EventAuthorityFacts::from_intent(intent),
+                &EventAuthorityFacts::from_intent(&intent),
             )
             .await
             {
                 Ok(generation) => generation,
                 Err(error) if outbound_retry_delay(&error).is_some() => {
                     crate::identity::authoring_generation::cached_event_authoring_generation(
-                        &EventAuthorityFacts::from_intent(intent),
+                        &EventAuthorityFacts::from_intent(&intent),
                     )?
                     .ok_or_else(|| {
                         error.context(
@@ -2262,33 +2179,27 @@ impl EventSubmitter {
         // `event_id`. Building the Welcomes from that value is what makes the
         // reference real; the old path authored both against a draft id and then
         // rewrote the Welcomes when the Commit's id moved.
-        let digest_suite =
-            self.trusted_digest_suite_for_intent(intent, None, Some(&state_store))?;
-        let attempt = self
-            .author_intent(
-                intent,
-                &local_operation_id,
-                SemanticAuthoring::Fresh,
-                digest_suite,
-            )
-            .await?;
+        let digest_suite = authored_commit.digest_suite();
+        let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&authored_commit)?;
+        let transport_idempotency_key = authored_commit.event_id().to_string();
         let welcome_intents = welcomes
             .into_iter()
-            .map(|step| step(attempt.envelope.event_id()).map_err(anyhow::Error::msg))
+            .map(|step| step(authored_commit.event_id()).map_err(anyhow::Error::msg))
             .collect::<anyhow::Result<Vec<_>>>()?;
         self.enqueue_and_drive_sdk_event(
             QueuedSdkEvent::authored(
-                QueuedEventIntent::new(intent.clone(), digest_suite),
-                attempt.envelope,
+                QueuedEventIntent::new(intent, digest_suite),
+                authored_commit,
                 local_operation_id,
-                attempt.transport_idempotency_key,
-                attempt.canonical_body_bytes,
+                transport_idempotency_key,
+                canonical_body_bytes,
                 None,
                 authoring_generation,
                 Some(PostAcceptAction::MlsAdmission {
                     realm_id,
                     actor_id,
                     device_id,
+                    proposal_events: authored,
                     stage: MlsAdmissionStage::CommitPending,
                     commit_ingress_receipts: Vec::new(),
                     commit_was_duplicate: false,
@@ -2447,10 +2358,7 @@ impl EventSubmitter {
             results: &results,
             state_store: state_store.clone(),
         };
-        let hook = InksonPostAcceptHook {
-            state_store,
-            authority: self.authority()?.clone(),
-        };
+        let hook = InksonPostAcceptHook;
         loop {
             let fence = match self.resolve_queue_generation_fence(&outbound).await {
                 Ok(fence) => fence,
@@ -2626,6 +2534,7 @@ impl EventSubmitter {
         let hlc = self.issue_intent_hlc(&intent).await?;
         let proof_context = self.event_proof_context(digest_suite);
         let mut event = intent
+            .clone()
             .author_with_digest_suite(actor_seq, hlc, proof_context.digest_suite)
             .map_err(|error| anyhow::anyhow!("author Event: {error}"))?;
         validate_projected_cba_plane(&event)?;
@@ -2635,12 +2544,7 @@ impl EventSubmitter {
             crate::operation::LOCAL_OPERATION_IDEMPOTENCY_ALIAS,
             Value::String(local_operation_id.to_owned()),
         );
-        crate::event_signer::sign_sdk_event_with_active_context(&mut event, proof_context)
-            .map_err(|err| {
-                anyhow::anyhow!(
-                    "no active signer configured \u{2014} cannot submit unsigned SDK Event: {err}"
-                )
-            })?;
+        self.sign_sdk_event_for_intent(&intent, &mut event, proof_context)?;
         let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&event)?;
         Ok(AuthoredAttempt {
             // Per-attempt transport identity. A byte-identical retry authors the
@@ -2652,6 +2556,50 @@ impl EventSubmitter {
             envelope: event,
             canonical_body_bytes,
         })
+    }
+
+    fn sign_sdk_event_for_intent(
+        &self,
+        intent: &EventIntent,
+        event: &mut arkret_sdk::AuthoredEvent,
+        proof_context: crate::event_signer::EventProofContext,
+    ) -> anyhow::Result<()> {
+        let minimal_metadata = intent.realm_id_opt().is_some_and(|realm_id| {
+            self.state_store.as_ref().is_some_and(|store| {
+                store.read(|state| state.realm_projection_is_minimal_metadata(realm_id.as_str()))
+            })
+        });
+        if !minimal_metadata {
+            return crate::event_signer::sign_sdk_event_with_active_context(event, proof_context)
+                .map_err(|error| anyhow::anyhow!("sign SDK Event: {error}"));
+        }
+        let realm_id = intent
+            .realm_id_opt()
+            .ok_or_else(|| anyhow::anyhow!("minimal-metadata Event has no Realm scope"))?;
+        let authority = self.authority.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("minimal-metadata Event has no captured account authority")
+        })?;
+        let active = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("active endpoint signer is unavailable"))?;
+        let device_id = arkret_sdk::DeviceId::new(
+            active
+                .device_id()
+                .ok_or_else(|| anyhow::anyhow!("active endpoint signer has no device id"))?
+                .to_owned(),
+        )?;
+        let material = crate::mls::pairwise_identity::derive_pairwise_signing_material(
+            authority, &device_id, realm_id,
+        )
+        .map_err(anyhow::Error::msg)?;
+        if intent.actor_id() != &material.actor_id {
+            return Err(anyhow::anyhow!(
+                "minimal-metadata queued intent actor does not equal the Realm pairwise actor"
+            ));
+        }
+        material
+            .signer
+            .sign_sdk_event_with_context(event, proof_context)
+            .map_err(|error| anyhow::anyhow!("sign minimal-metadata SDK Event: {error}"))
     }
 
     /// Author and sign one write for a protocol endpoint that carries the Event
@@ -3031,17 +2979,13 @@ impl EventSubmitter {
                     }
                 };
                 let mut event = intent
+                    .clone()
                     .author_with_digest_suite(actor_seq, hlc, proof_context.digest_suite)
                     .map_err(|error| anyhow::anyhow!("author unit Event: {error}"))?;
                 if !chain.is_genesis_unit() {
                     validate_projected_cba_plane(&event)?;
                 }
-                crate::event_signer::sign_sdk_event_with_active_context(&mut event, proof_context)
-                    .map_err(|err| {
-                        anyhow::anyhow!(
-                            "no active signer configured \u{2014} cannot submit SDK Event batch: {err}"
-                        )
-                    })?;
+                self.sign_sdk_event_for_intent(&intent, &mut event, proof_context)?;
                 chain.record(&event);
                 authored.push(event);
             }
@@ -4488,381 +4432,35 @@ mod tests {
         }
     }
 
-    /// Live probe against the local dev stack; ignored by default. Run with:
-    /// `cargo test --lib live_owner_kanban_writes_against_dev_soland -- --ignored --nocapture`
-    ///
-    /// Exercises the real client pipeline — `create_realm` genesis batch →
-    /// Seal wait → board/list `ak.space.create` → card `ak.strand.create`,
-    /// with the authority-root claim stamped by `prepare_sdk_event_for_submit`
-    /// — against `http://127.0.0.1:8698` using dev-login and the SDK's
-    /// deterministic development signer.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    #[ignore = "requires the local dev soland (SOLAND_DEVELOPMENT_MODE=true) on 127.0.0.1:8698"]
-    async fn live_owner_kanban_writes_against_dev_soland() {
-        const BASE: &str = "http://127.0.0.1:8698/";
-        let unique = uuid_v7();
-        let suffix = unique
-            .rsplit('-')
-            .next()
-            .expect("uuid has segments")
-            .to_owned();
-        let actor = format!("did:web:probe-{suffix}.local.host");
-        let device = format!("ak:device:{}", uuid_v7());
-
-        let login: Value = reqwest::Client::new()
-            .post(format!("{BASE}_soland/gate/auth/dev-login"))
-            .json(&serde_json::json!({ "actor": actor, "device_id": device }))
-            .send()
-            .await
-            .expect("dev-login request")
-            .error_for_status()
-            .expect("dev-login status")
-            .json()
-            .await
-            .expect("dev-login body");
-        let token = login["session_credential"]
-            .as_str()
-            .expect("session_credential")
-            .to_owned();
-
-        // The signer must be device-bound for the submit pipeline (HLC
-        // stamping), but the proof fragment must NOT parse as an
-        // `ak:device:*` id: that routes verification to the device signing
-        // directory (`device-lifecycle.md` §5.4), which this un-enrolled
-        // probe device cannot satisfy. A literal `device` fragment keeps the
-        // dev-mode deterministic-key fallback reachable, and dev-mode soland
-        // derives the expected key from the exact emitted string
-        // `{actor}#device`.
-        let verification_method = format!("{actor}#device");
-        let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(
-            std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
-                arkret_signatures::development_signing_key_seed(&verification_method),
-                actor.clone(),
-                "device",
-            )),
-        ));
-        let previous_proof_mode = crate::operation::current_proof_mode();
-        crate::operation::set_proof_mode(crate::operation::ProofMode::RealEd25519);
-
-        let sdk = arkret_sdk::http_client::ClientBuilder::new(BASE.parse().unwrap())
-            .allow_insecure_localhost()
-            .auth(arkret_sdk::http_client::Auth::Bearer(token.clone()))
-            .build()
-            .expect("sdk client");
-        let submitter = EventSubmitter::new(sdk.clone()).with_authority(test_authority());
-
-        let outcome = async {
-            // Manual genesis batch: the probe principal has no principal
-            // control realm, so the queued submit paths' client-side recovery
-            // gate cannot be satisfied. The real browser flow satisfies it at
-            // onboarding; it is not what this probe tests, so use the same
-            // prepare + lease + submit primitives without the durable queue.
-            let notary_did = submitter
-                .service_full_id()
-                .await
-                .map_err(|error| format!("service describe failed: {error:#}"))?;
-            let notary = submitter
-                .current_service_notary()
-                .await
-                .map_err(|error| format!("service signer evidence failed: {error:#}"))?;
-            let bootstrap = crate::event_builders::build_realm_bootstrap_steps(
-                arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-                    .unwrap(),
-                &actor,
-                &notary_did,
-                notary,
-                BASE,
-                "root-claim live probe",
-                Some("authority-root claim end-to-end probe"),
-                "listed",
-                "invite",
-                "shared",
-                "mls_rfc9420",
-                "standard",
-                "restricted",
-                "sha256",
-                "ak:trust_domain:local.host",
-                &[],
-                std::slice::from_ref(&notary_did),
-                None,
-                None,
-            )
-            .map_err(|error| format!("bootstrap build failed: {error:#}"))?;
-            let prepared = submitter
-                .author_event_unit(bootstrap)
-                .await
-                .map_err(|error| format!("bootstrap authoring failed: {error:#}"))?;
-            // The Realm is named by its own genesis Event, so its id exists only
-            // once that Event is authored.
-            let realm_id = prepared
-                .first()
-                .map(|event| event.realm_id.to_string())
-                .ok_or_else(|| "authored bootstrap is empty".to_owned())?;
-            for event in &prepared {
-                for proof in event
-                    .proofs
-                    .iter()
-                    .filter_map(arkret_sdk::EventProof::as_producer)
-                {
-                    println!(
-                        "prepared {} proof vm={:?} kind={:?}",
-                        event.kind.as_str(),
-                        proof.verification_method,
-                        proof.kind,
-                    );
-                    // Local replica of the server's dev-mode verification
-                    // (`verify_ed25519_detached_jws_proof` + deterministic key)
-                    // to split "bad signature" from "server key selection".
-                    let digest_payload = event
-                        .digest_payload()
-                        .map_err(|error| format!("digest payload: {error:#}"))?;
-                    let envelope_bytes =
-                        arkret_sdk::canonical::canonical_json_bytes(&digest_payload)
-                            .map_err(|error| format!("canonical bytes: {error:#}"))?;
-                    let vm = proof.verification_method.as_str();
-                    let material = arkret_signatures::PublicKeyMaterial::Ed25519Raw {
-                        bytes: arkret_signatures::development_verifying_key(vm)
-                            .to_bytes()
-                            .to_vec(),
-                    };
-                    let local = arkret_signatures::verify_ed25519_detached_jws_proof(
-                        proof,
-                        &envelope_bytes,
-                        &event.actor_id,
-                        &material,
-                    );
-                    println!("  local dev-key verify: {local:?}");
-                }
-            }
-            let prepared_events = prepared
-                .iter()
-                .map(arkret_sdk::AuthoredEvent::event)
-                .cloned()
-                .collect::<Vec<_>>();
-            let prepared_digest_suites = prepared
-                .iter()
-                .map(arkret_sdk::AuthoredEvent::digest_suite)
-                .collect::<Vec<_>>();
-            let submissions = sdk
-                .prepare_initial_submissions(&prepared_events, &prepared_digest_suites)
-                .await
-                .map_err(|error| format!("bootstrap lease issuance rejected: {error:#}"))?;
-            sdk.events_submit_batch(&submissions)
-                .await
-                .map_err(|error| format!("bootstrap events.submit rejected: {error:#}"))?;
-            crate::mls::creator_bootstrap::wait_for_realm_seal_view(&submitter, &realm_id)
-                .await
-                .map_err(|error| format!("realm never sealed: {error:#}"))?;
-
-            let mut accepted = Vec::new();
-            // Each container Space is named by `retype(event_id)` of its own
-            // create, so the probe submits one write at a time and reads the id
-            // off the accepted receipt before it can build the next one.
-            let submit_one = |label: &'static str, operation: crate::operation::LocalOperation| {
-                let sdk = sdk.clone();
-                let submitter = &submitter;
-                async move {
-                    let signed = submitter
-                        .author_for_direct_submission(&operation)
-                        .await
-                        .map_err(|error| format!("{label} authoring failed: {error:#}"))?;
-                    if signed
-                        .authorization_ref
-                        .as_ref()
-                        .map(arkret_sdk::AuthorizationRef::as_str)
-                        != Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
-                    {
-                        return Err(format!(
-                            "{label} was not stamped with the authority-root claim: {:?}",
-                            signed.authorization_ref
-                        ));
-                    }
-                    let submissions = sdk
-                        .prepare_initial_submissions(
-                            std::slice::from_ref(signed.event()),
-                            std::slice::from_ref(&signed.digest_suite()),
-                        )
-                        .await
-                        .map_err(|error| format!("{label} lease issuance rejected: {error:#}"))?;
-                    let submission = submissions
-                        .into_iter()
-                        .next()
-                        .ok_or_else(|| format!("{label} lease outcome is empty"))?;
-                    let result = sdk
-                        .events_submit(&submission)
-                        .await
-                        .map_err(|error| format!("{label} events.submit rejected: {error:#}"))?;
-                    // The accepted id is the only place the object's name can
-                    // come from, so a submit that accepted nothing has nothing
-                    // for the next write to reference.
-                    let event_id = result
-                        .accepted
-                        .first()
-                        .or_else(|| result.duplicate.first())
-                        .ok_or_else(|| format!("{label} accepted no Event"))?
-                        .clone();
-                    Ok::<(arkret_sdk::EventId, String), String>((
-                        event_id,
-                        format!("{label} accepted: {result:?}"),
-                    ))
-                }
-            };
-
-            let (board_event_id, board_line) = submit_one(
-                "board",
-                crate::operation::ak_ops::space_create(
-                    &realm_id,
-                    &actor,
-                    "board",
-                    "probe board",
-                    None,
-                    None,
-                )
-                .and_then(|builder| builder.build_sdk_event("inkson"))
-                .map_err(|error| format!("board event build failed: {error:#}"))?,
-            )
-            .await?;
-            accepted.push(board_line);
-            let board_space_id = arkret_sdk::SpaceId::from_event_id(&board_event_id).to_string();
-
-            let (list_event_id, list_line) = submit_one(
-                "list",
-                crate::operation::ak_ops::space_create(
-                    &realm_id,
-                    &actor,
-                    "list",
-                    "probe list",
-                    None,
-                    Some("a0"),
-                )
-                .and_then(|builder| builder.build_sdk_event("inkson"))
-                .map_err(|error| format!("list event build failed: {error:#}"))?,
-            )
-            .await?;
-            accepted.push(list_line);
-            let list_space_id = arkret_sdk::SpaceId::from_event_id(&list_event_id).to_string();
-
-            let (_card_event_id, card_line) = submit_one(
-                "card",
-                crate::operation::ak_ops::kanban_card_strand_create(
-                    &realm_id,
-                    &actor,
-                    &board_space_id,
-                    &list_space_id,
-                    "probe card",
-                    "a0",
-                )
-                .and_then(|builder| builder.build_sdk_event("inkson"))
-                .map_err(|error| format!("card event build failed: {error:#}"))?,
-            )
-            .await?;
-            accepted.push(card_line);
-            Ok::<Vec<String>, String>(accepted)
-        }
-        .await;
-        crate::operation::set_proof_mode(previous_proof_mode);
-        match outcome {
-            Ok(accepted) => {
-                for line in accepted {
-                    println!("{line}");
-                }
-            }
-            Err(message) => panic!("live probe failed: {message}"),
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn mls_post_accept_hook_persists_snapshot_idempotently() {
-        use std::sync::{Arc, Mutex};
-
-        use garth::OutboundPostAcceptHook;
-
-        let path = std::env::temp_dir().join(format!(
-            "inkson-mls-post-accept-{}-{}.json",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let store = Arc::new(Mutex::new(crate::state::LocalStateStore::with_path(&path)));
-        let read_store = Arc::clone(&store);
-        let write_store = Arc::clone(&store);
-        let handle = crate::runtime::input::StateStoreHandle::new(
-            move |read| read(&read_store.lock().unwrap()),
-            move |write| write(&mut write_store.lock().unwrap()),
-        );
-        let hook = InksonPostAcceptHook {
-            state_store: Some(handle),
-            authority: test_authority(),
-        };
-        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let event = sdk_event_with_kind(
-            "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            realm_id,
-            "ak.mls.commit",
-            "did:web:alice.example",
-        );
-        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
-            realm_id: realm_id.to_owned(),
-            group_id: "010203".to_owned(),
-            epoch: 7,
-            admission_epoch: 0,
-            group_state_event_id: None,
-            salt_hex: "00".repeat(16),
-            ciphertext_hex: "11".repeat(32),
-            mac_hex: "22".repeat(12),
-            recorded_at: chrono::Utc::now(),
-            epoch_started_at: chrono::Utc::now(),
-            app_messages_observed: 1,
-            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
-        };
-        let record = QueuedRecord::SdkEvent(Box::new(
-            QueuedSdkEvent::unauthored(
-                fixture_queued_intent(EventIntent::from_authored(&event)),
-                "mls-operation".to_owned(),
-                "mls-attempt".to_owned(),
-                None,
-                test_authoring_generation(),
-                Some(PostAcceptAction::MlsSnapshot {
-                    realm_id: realm_id.to_owned(),
-                    snapshot: snapshot.into_queued(),
-                }),
-            )
-            .unwrap(),
-        ));
-        let realm = arkret_sdk::RealmId::new(realm_id).unwrap();
-        let mut queue = garth::SendQueue::new();
-        let item = queue
-            .enqueue(Some("txn-mls-hook".to_owned()), realm, record, Vec::new())
-            .unwrap();
-        let event_id =
-            arkret_sdk::EventId::new("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
-                .unwrap();
-
-        hook.post_accept(&item, &event_id, false).await.unwrap();
-        hook.post_accept(&item, &event_id, true).await.unwrap();
-        assert_eq!(
-            store
-                .lock()
-                .unwrap()
-                .mls_snapshot_for(realm_id)
-                .unwrap()
-                .epoch,
-            7
-        );
-        drop(store);
-        let _ = std::fs::remove_file(path);
-    }
-
     #[test]
     fn queued_mls_admission_round_trips_exact_welcome_material() {
         let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         // The admission Commit ships as exact authored bytes, and the Welcomes
         // name it by its FINAL id — so the Commit is authored first and the
         // Welcome is only then authorable at all.
-        let commit_intent =
-            sdk_intent_with_kind(realm_id, "ak.mls.commit", "did:web:alice.example");
-        let commit = crate::operation::author_intent_for_test_at_seq(commit_intent.clone(), 1);
+        let proposal_intent =
+            sdk_intent_with_kind(realm_id, "ak.mls.proposal", "did:web:alice.example");
+        let mut proposal = crate::operation::author_intent_for_test_at_seq(proposal_intent, 1);
+        {
+            use crate::operation::AuthoredEventExt;
+            proposal
+                .sign_ed25519(
+                    "did:web:alice.example",
+                    "did:web:alice.example#device",
+                    &ed25519_dalek::SigningKey::from_bytes(&[30_u8; 32]),
+                )
+                .expect("the Proposal signs");
+        }
+        let commit_intent = serde_json::from_value::<EventIntent>(json!({
+            "kind": "ak.mls.commit",
+            "scope_ref": {"kind": "realm", "realm_id": realm_id},
+            "actor_id": "ak:did_core:web:alice.example",
+            "principal_server_id": "ak:did_core:web:principal.example",
+            "created_at": "2026-05-19T00:00:00.000Z",
+            "payload": {"proposal_refs": [proposal.event_id()]}
+        }))
+        .unwrap();
+        let commit = crate::operation::author_intent_for_test_at_seq(commit_intent.clone(), 2);
         let mut welcome = crate::operation::author_intent_for_test_at_seq(
             serde_json::from_value::<EventIntent>(json!({
                 "kind": "ak.mls.welcome",
@@ -4909,13 +4507,14 @@ mod tests {
             commit.clone(),
             "mls-admission-operation".to_owned(),
             commit.event_id().to_string(),
-            arkret_sdk::canonical::canonical_json_bytes(commit.event()).unwrap(),
+            arkret_sdk::canonical::canonical_json_bytes(&commit).unwrap(),
             None,
             test_authoring_generation(),
             Some(PostAcceptAction::MlsAdmission {
                 realm_id: realm_id.to_owned(),
                 actor_id: "did:web:alice.example".to_owned(),
                 device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
+                proposal_events: vec![proposal],
                 stage: MlsAdmissionStage::WelcomesAuthored,
                 commit_ingress_receipts: Vec::new(),
                 commit_was_duplicate: false,
@@ -4946,71 +4545,6 @@ mod tests {
                 .unwrap()
                 .canonical_body_bytes
         );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn mls_admission_persistence_installs_snapshot_before_reporting_completion() {
-        use std::sync::{Arc, Mutex};
-
-        let path = std::env::temp_dir().join(format!(
-            "inkson-mls-admission-post-accept-{}-{}.json",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let store = Arc::new(Mutex::new(crate::state::LocalStateStore::with_path(&path)));
-        let read_store = Arc::clone(&store);
-        let write_store = Arc::clone(&store);
-        let handle = crate::runtime::input::StateStoreHandle::new(
-            move |read| read(&read_store.lock().unwrap()),
-            move |write| write(&mut write_store.lock().unwrap()),
-        );
-        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let welcome = crate::operation::author_intent_for_test(sdk_intent_with_kind(
-            realm_id,
-            "ak.mls.welcome",
-            "did:web:alice.example",
-        ));
-        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
-            realm_id: realm_id.to_owned(),
-            group_id: "010203".to_owned(),
-            epoch: 1,
-            admission_epoch: 0,
-            group_state_event_id: None,
-            salt_hex: "00".repeat(16),
-            ciphertext_hex: "11".repeat(32),
-            mac_hex: "22".repeat(12),
-            recorded_at: chrono::Utc::now(),
-            epoch_started_at: chrono::Utc::now(),
-            app_messages_observed: 0,
-            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
-        };
-        let action = PostAcceptAction::MlsAdmission {
-            realm_id: realm_id.to_owned(),
-            actor_id: "did:web:alice.example".to_owned(),
-            device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
-            stage: MlsAdmissionStage::WelcomesAcceptedWaitingSeal,
-            commit_ingress_receipts: Vec::new(),
-            commit_was_duplicate: false,
-            welcomes: garth::QueuedMlsWelcomes::Authored {
-                events: vec![welcome],
-            },
-            snapshot: snapshot.into_queued(),
-        };
-
-        let error = persist_post_accept_action(
-            Some(&handle),
-            &test_authority(),
-            action,
-            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
-                .unwrap(),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.to_string().contains("snapshot secret unavailable"));
-        assert!(store.lock().unwrap().mls_snapshot_for(realm_id).is_some());
-        drop(store);
-        let _ = std::fs::remove_file(path);
     }
 
     /// The accepted frontier is an authoring input: the position it reports lands

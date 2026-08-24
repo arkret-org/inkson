@@ -159,6 +159,9 @@ impl MlsEndpoints<'_> {
             arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
                 anyhow::bail!("Native Agent KeyPackage requires the agent-authorized upload flow")
             }
+            arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => anyhow::bail!(
+                "minimal-metadata KeyPackage upload is blocked by the closed v1 pairwise endpoint schema gap"
+            ),
         };
         let entry = crate::mls_api_helpers::mls_key_package_record_upload_entry(record)?;
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {

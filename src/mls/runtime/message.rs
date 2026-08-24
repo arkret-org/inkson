@@ -53,12 +53,7 @@ fn warn_mls_decrypt_once(
     }
 }
 
-/// Outcome of [`apply_welcome_messages_with_device_snapshot`].
-///
-/// Lets callers distinguish "no welcomes present" (`applied == 0 && failed ==
-/// 0`) from "welcomes present but some/all failed" (`failed > 0`). A failure of
-/// one welcome never aborts the others; `first_error` carries the first failure
-/// reason for diagnostics.
+/// Accepted-Welcome convergence and KeyPackage-ack outcome.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WelcomeApplyOutcome {
     pub applied: usize,
@@ -71,6 +66,7 @@ pub struct WelcomeApplyOutcome {
     pub(crate) consumable_claims: Vec<WelcomeConsumeCandidate>,
 }
 
+#[cfg(test)]
 impl WelcomeApplyOutcome {
     fn record_failure(&mut self, reason: String) {
         self.failed += 1;
@@ -144,10 +140,7 @@ pub(crate) fn verify_exporter_sender_domain_for_send(
         return Ok(());
     }
     if is_minimal_metadata {
-        return Err(MlsRuntimeError::Encrypt(
-            "minimal-metadata exporter-AEAD is not ready: the active MLS BasicCredential identity must equal utf8(Event.actor_id), but the current MLS identity profile binds principal#device"
-                .to_owned(),
-        ));
+        return Ok(());
     }
     arkret_sdk::DeviceId::new(device_id.trim().to_owned())
         .map(|_| ())
@@ -1053,6 +1046,18 @@ fn welcome_consume_candidate(
     })
 }
 
+pub(crate) fn accepted_welcome_consume_candidates(
+    messages_value: &serde_json::Value,
+    realm_id: &str,
+    accepted_welcome_event_ids: &std::collections::BTreeSet<String>,
+) -> Vec<WelcomeConsumeCandidate> {
+    collect_welcome_message_entries(messages_value)
+        .iter()
+        .filter_map(|entry| welcome_consume_candidate(entry, realm_id))
+        .filter(|candidate| accepted_welcome_event_ids.contains(&candidate.welcome_event_id))
+        .collect()
+}
+
 pub fn mls_group_id_for_realm(realm_id: &str) -> Result<String, String> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.trim().to_owned())
         .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
@@ -1165,6 +1170,7 @@ pub fn local_mls_welcome_hint_for_realm(messages: &[serde_json::Value], realm_id
     format!("{}:{}", hints.len(), hints.join(","))
 }
 
+#[cfg(test)]
 pub(super) fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<String> {
     let looks_like_durable_payload = value.get("claim_ref").is_some()
         || value.get("claim_id").is_some()
@@ -1204,7 +1210,7 @@ pub(super) fn durable_welcome_wire_payload(value: &serde_json::Value) -> serde_j
     wire_payload
 }
 
-fn decode_welcome_envelope(
+pub(super) fn decode_welcome_envelope(
     value: &serde_json::Value,
 ) -> Result<arkret_sdk::MlsWelcomeEnvelope, String> {
     if value.get("mls_group_id").is_none() {
@@ -1300,7 +1306,9 @@ fn welcome_recipient_endpoint(
 ///
 /// Returns `Ok(())` only when the required claim envelope is present and its
 /// directory-resolved device signature verifies.
-fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Result<(), String> {
+pub(super) fn verify_welcome_claim_envelope_signer(
+    welcome_value: &serde_json::Value,
+) -> Result<(), String> {
     use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 
     let Some(claim_value) = welcome_value.get("claim_envelope") else {
@@ -1422,7 +1430,7 @@ fn verify_welcome_claim_envelope_signer(welcome_value: &serde_json::Value) -> Re
 /// records the Welcome as failed/decryption-pending and MUST NOT persist the
 /// joined snapshot. Server admission and claim signatures are defense in depth,
 /// not substitutes for the independent proof required by §2.5.1.
-fn verify_welcome_governance_binding(
+pub(super) fn verify_welcome_governance_binding(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     group: &arkret_sdk::ArkretMlsGroup,
@@ -1534,7 +1542,8 @@ pub(crate) fn preview_welcome_security_frontiers(
     Ok(previews)
 }
 
-pub fn apply_welcome_messages_with_device_snapshot(
+#[cfg(test)]
+pub(crate) fn apply_welcome_messages_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -2022,6 +2031,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     plaintext: &[u8],
     metadata_content_type: Option<&str>,
     metadata_plaintext: Option<&[u8]>,
+    expected_sender_domain: Option<&str>,
     circle_id: Option<&str>,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
 ) -> Result<DeviceSnapshotEncryption, MlsRuntimeError> {
@@ -2046,6 +2056,14 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+    if let Some(expected_sender_domain) = expected_sender_domain {
+        let active_sender_domain = group
+            .local_content_sender_domain()
+            .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
+        if active_sender_domain != expected_sender_domain {
+            return Err(MlsRuntimeError::EncryptionTransitionPending);
+        }
+    }
     if sidecar_binding.is_none() {
         ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
     }

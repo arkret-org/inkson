@@ -30,6 +30,25 @@ fn seed_next_governance_proof(
     )
 }
 
+fn seed_current_group_state_ref(
+    state: &mut crate::state::LocalStateStore,
+    realm_id: &str,
+) -> arkret_sdk::EventId {
+    let snapshot = state.mls_snapshot_for(realm_id).unwrap();
+    let event_id =
+        arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
+    state
+        .record_mls_group_state_ref_for_effective_scope(
+            realm_id,
+            None,
+            &snapshot.group_id,
+            snapshot.epoch,
+            event_id.clone(),
+        )
+        .unwrap();
+    event_id
+}
+
 mod commit;
 mod genesis_backup;
 mod message;

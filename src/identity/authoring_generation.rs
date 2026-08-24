@@ -38,11 +38,43 @@ fn cache_verified_principal_generation(
     }
 }
 
+#[cfg(test)]
+pub(crate) fn cache_verified_principal_generation_for_test(
+    principal_id: &str,
+    device_id: &str,
+    generation_ref: &str,
+) {
+    cache_verified_principal_generation(
+        principal_id,
+        device_id,
+        &AuthoringGeneration {
+            authority_model: AuthoringAuthorityModel::AcceptedDevice,
+            authority_principal_id: principal_id.to_owned(),
+            generation_ref: generation_ref.to_owned(),
+        },
+    );
+}
+
 pub(crate) fn reset_verified_authoring_generations() {
     verified_generation_cache()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clear();
+}
+
+/// Return the exact accepted device-generation fence cached for one endpoint.
+/// Minimal-metadata pairwise identities bind their KDF to this incarnation;
+/// using only the stable DeviceId would silently reuse an actor after a
+/// reinstall or generation replacement.
+pub(crate) fn cached_principal_authoring_generation(
+    principal_id: &str,
+    device_id: &str,
+) -> Option<AuthoringGeneration> {
+    verified_generation_cache()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&principal_generation_cache_key(principal_id, device_id))
+        .cloned()
 }
 
 /// The envelope facts a generation fence needs, readable from either side of

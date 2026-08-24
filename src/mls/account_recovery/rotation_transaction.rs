@@ -84,12 +84,6 @@ pub(crate) fn prepare_rotation_backup_material(
         vec![account_body],
     )?;
 
-    if !rotation.rewrapped_snapshots.is_empty() {
-        return Err(anyhow!(
-            "device security rotation is not ready for accounts with local MLS snapshots: portable history_secret_ranges rotation requires complete accepted activation views"
-        ));
-    }
-
     let commitment = Hash::new(arkret_sdk::canonical::sha256_digest(
         &arkret_sdk::canonical::canonical_json_bytes(&serde_json::json!({
             "domain": "org.arkret.inkson.account_mls_secret_commitment.v1",

@@ -65,109 +65,6 @@ pub(crate) fn circle_effective_scope(
     })
 }
 
-pub(crate) fn ensure_creator_mls_snapshot_for_encrypted_scope(
-    state_store: &mut LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
-    device_id: &arkret_sdk::DeviceId,
-) -> Result<Option<crate::mls::runtime::InitialMlsSnapshotSummary>, String> {
-    if state_store.mls_snapshot_for(realm_id).is_some() {
-        return Ok(None);
-    }
-    if state_store.mls_genesis_emitted_for(realm_id) {
-        return Err(format!(
-            "accepted MLS genesis exists for {realm_id}, but the local epoch-0 snapshot is missing; restore the device snapshot before sending"
-        ));
-    }
-    let state = state_store.load();
-    let Some(projection) = crate::security_state::security_projection_for_scope_id(
-        &state.realm_tree_projections,
-        realm_id,
-    ) else {
-        // WARN so the wasm console shows it: each of these silent declines
-        // leaves the caller on the Welcome-waiting path, which is the wrong
-        // answer for a Realm creator and otherwise undiagnosable in the field.
-        tracing::warn!(
-            realm = %realm_id,
-            "creator MLS bootstrap declined: no local realm tree projection for this Realm",
-        );
-        return Ok(None);
-    };
-    if !crate::security_state::realm_projection_is_encrypted(projection) {
-        tracing::warn!(
-            realm = %realm_id,
-            "creator MLS bootstrap declined: local projection does not mark the Realm encrypted",
-        );
-        return Ok(None);
-    }
-    if !projected_realm_creator_matches_actor(
-        &state.realm_tree_projections,
-        realm_id,
-        authority.principal_id.as_str(),
-    ) {
-        tracing::warn!(
-            realm = %realm_id,
-            actor = %authority.principal_id,
-            projected_create_controller = ?crate::security_state::realm_authority_root_controller_for_realm(
-                &state.realm_tree_projections,
-                realm_id,
-            ),
-            "creator MLS bootstrap declined: the projected ak.realm.create does not name the actor as creator",
-        );
-        return Ok(None);
-    }
-    // §2.5.1.1 prelude ownership: only `mls::creator_bootstrap` may establish
-    // the trust anchor (accepted Seal view refresh → proof fetch → full
-    // verification → pin). Creating the epoch-0 group here without that pin
-    // would fail deep inside the governance binding with the bare
-    // "requires a locally verified replay checkpoint" error; fail early with an
-    // actionable message instead, and let the background bootstrap (which
-    // retries with backoff) finish the prelude.
-    if let Some(pending) = creator_scope_bootstrap_blocker(state_store, realm_id) {
-        tracing::warn!(
-            realm = %realm_id,
-            "creator MLS bootstrap deferred: {pending}",
-        );
-        return Err(pending);
-    }
-    tracing::warn!(
-        realm = %realm_id,
-        "creator MLS bootstrap engaged: creating the epoch-0 group on this device",
-    );
-    crate::mls::runtime::ensure_creator_mls_snapshot(
-        state_store,
-        secure_store,
-        realm_id,
-        authority,
-        device_id,
-    )
-    .map_err(|err| err.user_message())
-}
-
-/// Why the encrypted-scope path must not create the creator group yet, or
-/// `None` when the §2.5.1.1 prelude has pinned a verified replay checkpoint.
-///
-/// Single precondition point for every inline creator-group creation; the
-/// prelude itself is owned exclusively by
-/// [`crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis`].
-pub(crate) fn creator_scope_bootstrap_blocker(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-) -> Option<String> {
-    if state_store
-        .trusted_mls_governance_checkpoint(realm_id)
-        .is_some()
-    {
-        return None;
-    }
-    Some(format!(
-        "the Realm's governance checkpoint is not verified on this device yet \
-         (creator MLS bootstrap for {realm_id} is still running in the background); \
-         retry in a few seconds"
-    ))
-}
-
 /// Build the `ak.mls.genesis` SDK event for a creator group that has a
 /// local snapshot but whose genesis has not yet been submitted to soland.
 ///
@@ -374,6 +271,7 @@ pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
 /// Held as owned values so the commit can be built later, after the proposals it
 /// references have been authored — the store cannot be borrowed across that
 /// boundary.
+#[derive(Clone)]
 pub(crate) struct MlsCommitBasis {
     realm_id: String,
     actor_id: String,
@@ -386,6 +284,10 @@ pub(crate) struct MlsCommitBasis {
 }
 
 impl MlsCommitBasis {
+    pub(crate) fn governance_binding(&self) -> &arkret_sdk::MlsGovernanceBindingPayload {
+        &self.governance_binding
+    }
+
     /// Build the commit once the proposals it references are authored.
     pub(crate) fn build(
         self,
@@ -506,86 +408,4 @@ fn mls_commit_event_from_store_for_effective_scope_with_options(
         sidecar_binding,
     )?
     .build(proposal_refs)
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-    use crate::state::LocalStateStore;
-
-    const ACTOR: &str = "did:web:alice.example";
-    const REALM: &str = "ak:realm:AUOIeY-cRu4Vmsf-xStVp_Hacq8lfzdbOzYdwA-NGpkX";
-
-    fn temp_store(name: &str) -> LocalStateStore {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        LocalStateStore::with_path(
-            std::env::temp_dir().join(format!("inkson-group-events-{name}-{stamp}.json")),
-        )
-    }
-
-    /// Post-P1 shape: no owner/created_by mirror on the projection; the
-    /// creator fact lives only in the projected `ak.realm.create`.
-    fn creator_realm_projection() -> serde_json::Value {
-        json!({
-            "__kind": "realm",
-            "content_scheme": "mls_rfc9420",
-            "summary": { "title": "Realm", "encryption_profile": "mls_rfc9420" },
-            "state": {
-                "events": [{
-                "kind": "ak.realm.create",
-                    "actor_id": "ak:did_core:web:alice.example",
-                    "payload": { "object": { "encryption_profile": "mls_rfc9420" } }
-                }]
-            }
-        })
-    }
-
-    /// Regression lock (2026-08-01): the encrypted-scope path engaged the
-    /// creator group creation without the §2.5.1.1 anchor prelude and died
-    /// deep inside the governance binding with the bare "requires a locally
-    /// verified replay checkpoint" error. The scope path MUST fail early with an
-    /// actionable message and MUST NOT attempt group creation until
-    /// `mls::creator_bootstrap` has pinned a verified replay checkpoint.
-    #[test]
-    fn creator_scope_bootstrap_is_blocked_until_a_governance_checkpoint_is_pinned() {
-        let mut store = temp_store("anchor-gate");
-        store.save_realm_tree_projection(REALM, creator_realm_projection());
-        assert!(creator_scope_bootstrap_blocker(&store, REALM).is_some());
-
-        let secure = crate::secure_key_store::default_secure_key_store("inkson");
-        let error = ensure_creator_mls_snapshot_for_encrypted_scope(
-            &mut store,
-            secure.as_ref(),
-            REALM,
-            &arkret_sdk::PrincipalAuthorityKey::new(
-                crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-            ),
-            &arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000042".to_owned())
-                .unwrap(),
-        )
-        .expect_err("group creation must not run before the anchor prelude");
-        assert!(error.contains("governance checkpoint"), "{error}");
-        assert!(store.mls_snapshot_for(REALM).is_none());
-    }
-
-    #[test]
-    fn creator_scope_bootstrap_blocker_clears_once_a_verified_checkpoint_is_pinned() {
-        let mut store = temp_store("anchor-pinned");
-        store.save_realm_tree_projection(REALM, creator_realm_projection());
-        crate::mls::governance_proof::seed_test_governance_proof(
-            &mut store,
-            REALM,
-            None,
-            arkret_sdk::base64url_encode(REALM.as_bytes()),
-            0,
-            0,
-        );
-        assert!(creator_scope_bootstrap_blocker(&store, REALM).is_none());
-    }
 }

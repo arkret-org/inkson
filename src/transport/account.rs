@@ -1811,6 +1811,28 @@ mod tests {
     }
 
     #[test]
+    fn suspended_direct_conversation_never_offers_recreation() {
+        let outcome: arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome =
+            serde_json::from_value(json!({
+                "state": "suspended",
+                "coordinates": {
+                    "pair_key": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "realm_id": "ak:realm:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
+                    "main_strand_id": "ak:strand:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M",
+                    "binding_event_ref": "ak:event:AZ6GqZWWvnQ2KFwbBD-MenomzWNz-31MUAuKzBXIP0zv"
+                },
+                "blockers": ["mls_reconcile_required"]
+            }))
+            .expect("suspended Direct Conversation outcome");
+
+        assert_eq!(
+            direct_conversation_entry(&outcome),
+            DirectConversationEntry::Suspended
+        );
+        assert!(direct_conversation_coordinates(&outcome).is_some());
+    }
+
+    #[test]
     fn owned_agent_direct_peer_keeps_its_controller_binding() {
         let peer = direct_conversation_peer_descriptor(
             "did:web:agents.example:assistant",

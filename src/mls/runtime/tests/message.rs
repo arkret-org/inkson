@@ -10,8 +10,10 @@ use crate::state::isolated_store_for_tests as temp_state_store;
 fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
     arkret_sdk::PrincipalAuthorityKey {
         principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-        principal_server_id: arkret_sdk::DidCoreId::new("did:web:principal.example".to_owned())
-            .unwrap(),
+        principal_server_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:principal.example".to_owned(),
+        )
+        .unwrap(),
     }
 }
 
@@ -95,6 +97,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     assert_eq!(summary.realm_id, realm);
     assert_eq!(summary.epoch, 0);
     assert!(state.mls_snapshot_for(realm).is_some());
+    super::seed_current_group_state_ref(&mut state, realm);
     // Ordinary application messages ride epoch 0; no commit event or
     // post-commit snapshot is returned.
     let encrypted = encrypt_values_with_device_snapshot(
@@ -152,6 +155,7 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     )
     .unwrap()
     .expect("creator snapshot");
+    super::seed_current_group_state_ref(&mut state, realm);
 
     let effective_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
@@ -173,6 +177,7 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
             br#"{"kind":"ak.content.text","body":"routed"}"#,
             Some(arkret_sdk::MESSAGE_METADATA_MLS_CONTENT_TYPE),
             Some(br#"{"sidecar_exchange_binding":{}}"#.as_slice()),
+            None,
             None,
             None,
         )
@@ -200,6 +205,59 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn replacement_sender_domain_blocks_before_counter_advance() {
+    let mut state = temp_state_store("replacement-sender-fence");
+    let secure = MemorySecureKeyStore::new();
+    let actor = "did:web:alice.example";
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let realm = "ak:realm:Ae1aXR7egHsJjC7lxnkHz8popOxRV27nKlKY8RDyuOBb";
+
+    super::seed_genesis_governance_proof(&mut state, realm);
+    seed_complete_rfc9420_projection(&mut state, realm, actor);
+    ensure_creator_mls_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+    )
+    .unwrap()
+    .expect("creator snapshot");
+    let effective_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+    };
+    super::seed_current_group_state_ref(&mut state, realm);
+    let before = state.mls_snapshot_for_scope(&effective_scope).unwrap();
+    let group_state_ref = arkret_sdk::EventId::new(
+        "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM".to_owned(),
+    )
+    .unwrap();
+    let error = encrypt_message_with_device_snapshot(
+        &mut state,
+        &secure,
+        realm,
+        &test_authority(actor),
+        &test_device(device),
+        "application/vnd.arkret.message+json",
+        arkret_wire::event_kind_str::MESSAGE_CREATE,
+        group_state_ref,
+        br#"{"kind":"ak.content.text","body":"blocked"}"#,
+        None,
+        None,
+        Some("ak:did_core:key:z6Mkreplacement"),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        MlsRuntimeError::EncryptionTransitionPending
+    ));
+    assert_eq!(state.mls_snapshot_for_scope(&effective_scope), Some(before));
+}
+
 /// client-sync.md §8.1: once a complete roster hint exposes a mismatch with
 /// the local MLS group, sending pauses conservatively until admission
 /// converges. This is the exact regression that produced an epoch-0 message
@@ -223,6 +281,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
     )
     .unwrap()
     .expect("creator snapshot");
+    super::seed_current_group_state_ref(&mut state, realm);
     state.save_realm_tree_projection(
         realm,
         json!({
@@ -277,6 +336,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     )
     .unwrap()
     .expect("creator snapshot");
+    super::seed_current_group_state_ref(&mut state, realm);
     state.save_realm_tree_projection(
         realm,
         json!({
@@ -780,6 +840,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
         &test_device(device),
     )
     .unwrap();
+    super::seed_current_group_state_ref(&mut state, realm);
     let (_, _, encrypted_values, ..) = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
@@ -875,6 +936,10 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
             envelope,
         )
         .unwrap();
+    super::seed_current_group_state_ref(
+        &mut state,
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+    );
 
     let error = encrypt_values_with_device_snapshot(
         &mut state,
@@ -922,6 +987,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     );
     let mut state = temp_state_store("ready-encrypt");
     state.save_mls_snapshot(realm, envelope).unwrap();
+    super::seed_current_group_state_ref(&mut state, realm);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
 
     let (_schedule_hash, member_dids, encrypted_values, _commit, _new_envelope, _) =
@@ -950,12 +1016,19 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
 /// persistence caused.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
-    let actor = "did:web:alice.example";
-    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+fn minimal_overdue_epoch_blocks_before_counter_advance() {
+    let actor = "did:web:minimal-counter.example";
+    let device = "ak:device:01964137-0000-7000-8000-0000000000c1";
     let secure = MemorySecureKeyStore::new();
     let _ = load_or_create_account_mls_secret(&secure, &test_authority(actor)).unwrap();
-    let mut state = temp_state_store("persist-on-accept");
+    crate::identity::authoring_generation::cache_verified_principal_generation_for_test(
+        crate::mls_api_helpers::principal_core_id(actor)
+            .unwrap()
+            .as_str(),
+        device,
+        "ak:event:AYwRmQJZYC4bmkTzqa4XVqbjE6FJmJxq4OTxMe44Ned1",
+    );
+    let mut state = temp_state_store("minimal-counter-transition-fence");
     let realm = "ak:realm:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk";
 
     state.save_realm_tree_projection(
@@ -983,15 +1056,13 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
     )
     .unwrap()
     .expect("creator snapshot created");
-    let epoch_before = state.mls_snapshot_for(realm).unwrap().epoch;
+    let before = state.mls_snapshot_for(realm).unwrap();
     let mut overdue = state.mls_snapshot_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
     state.save_mls_snapshot(realm, overdue).unwrap();
-    super::seed_next_governance_proof(&mut state, realm);
+    let overdue_snapshot = state.mls_snapshot_for(realm).unwrap();
 
-    // An overdue minimal-metadata epoch forces a post-commit envelope at
-    // epoch+1 WITHOUT touching the persisted snapshot.
-    let result = encrypt_values_with_device_snapshot(
+    let error = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
         realm,
@@ -1000,28 +1071,13 @@ fn encrypt_does_not_persist_snapshot_until_caller_saves_on_accept() {
         "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
-    .unwrap();
-    assert!(result.3.is_some());
-    let post_commit_envelope = result.4.expect("forced commit returns snapshot");
-    assert_eq!(
-        state.mls_snapshot_for(realm).unwrap().epoch,
-        epoch_before,
-        "encrypt must NOT advance the persisted snapshot (persist-on-accept)"
-    );
-    assert!(
-        post_commit_envelope.epoch > epoch_before,
-        "returned envelope carries the post-commit (advanced) epoch"
-    );
-
-    // The caller saving the returned envelope (simulating server-accept)
-    // is what advances the persisted snapshot.
-    state
-        .save_mls_snapshot(realm, post_commit_envelope.clone())
-        .unwrap();
-    assert_eq!(
-        state.mls_snapshot_for(realm).unwrap().epoch,
-        post_commit_envelope.epoch
-    );
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        MlsRuntimeError::EncryptionTransitionPending
+    ));
+    assert_eq!(state.mls_snapshot_for(realm), Some(overdue_snapshot));
+    assert_eq!(before.app_messages_observed, 0);
 }
 
 #[test]
@@ -1337,9 +1393,7 @@ fn ordinary_exporter_sender_domain_requires_canonical_device_id() {
 }
 
 #[test]
-fn minimal_exporter_sender_domain_is_unavailable_before_leaf_identity_closes() {
+fn minimal_exporter_sender_domain_uses_the_active_pairwise_leaf() {
     let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-    let error = verify_exporter_sender_domain_for_send(device, true, true).unwrap_err();
-    assert!(matches!(error, MlsRuntimeError::Encrypt(_)));
-    assert!(error.user_message().contains("principal#device"));
+    assert!(verify_exporter_sender_domain_for_send(device, true, true).is_ok());
 }

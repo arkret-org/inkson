@@ -59,13 +59,15 @@ pub use restore::{
 };
 pub(crate) use rotation_transaction::execute_device_revoke_security_rotation;
 pub use selection::{
-    mls_account_secret_backup_version, mls_history_series_tail_ids,
-    select_mls_account_secret_backup, select_mls_account_secret_recovery_public_key_backup,
-    select_mls_history_backups, select_mls_history_tail_for_realm,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
     select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
+pub(crate) use upload::upload_local_authoritative_mls_history_records_with_recovery_public_key;
 pub use upload::{
-    fetch_mls_private_plaintext_backup_body, upload_mls_account_secret_backup_with_passphrase,
+    fetch_mls_private_plaintext_backup_body,
+    upload_local_authoritative_mls_history_backups_with_recovery_public_key,
+    upload_mls_account_secret_backup_with_passphrase,
     upload_mls_account_secret_backup_with_recovery_key,
     upload_mls_account_secret_backup_with_recovery_public_key, upload_mls_private_plaintext_backup,
     upload_mls_private_plaintext_backup_with_previous,
