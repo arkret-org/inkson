@@ -622,7 +622,7 @@ fn build_mls_welcome_payload_with_requester(
         WelcomeRequester::MinimalMetadataPairwise(identity) => {
             let arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise {
                 pairwise_actor_id,
-                pairwise_verification_method,
+                verification_method,
             } = identity.endpoint_identity()
             else {
                 return Err(
@@ -633,7 +633,7 @@ fn build_mls_welcome_payload_with_requester(
                 pairwise_actor_id,
                 None,
                 arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise {
-                    requester_pairwise_verification_method: pairwise_verification_method,
+                    requester_pairwise_verification_method: verification_method,
                 },
                 Some(identity),
             )
@@ -672,11 +672,12 @@ fn build_mls_welcome_payload_with_requester(
         let sender_device_id = sender_device_id
             .as_ref()
             .expect("device requester always carries its device id");
-        sign_welcome_claim_envelope(
-            envelope.signing_input().requester_actor_id.as_str(),
-            sender_device_id.as_str(),
-            envelope,
-        )?
+        let requester_actor_id = envelope
+            .signing_input()
+            .requester_actor_id
+            .as_str()
+            .to_owned();
+        sign_welcome_claim_envelope(&requester_actor_id, sender_device_id.as_str(), envelope)?
     };
     let claim_trust_binding = match (
         claim.device_authorize_event_id.as_ref(),

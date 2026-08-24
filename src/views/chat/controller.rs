@@ -1113,18 +1113,19 @@ impl ChatController {
                     state_store.write().append_raw_operation(
                         operation.local_operation_id().to_string(),
                         Some(message.realm_id.clone()),
-                        json!({
-                            "event_id": submitted.event_id.clone(),
-                            "kind": event_kind_str::MESSAGE_CREATE,
-                            "actor_id": actor,
-                            "body": message.body,
-                            "content": operation.payload()["content"].clone(),
-                            "strand_id": message.strand_id,
-                            "message_id": retry_message_id,
-                            "mentions": mention_values,
-                            "reply_to": message.reply_to,
-                            "status": submitted.status.clone(),
-                        }),
+                        serde_json::to_value(AcceptedChatMessageOperation {
+                            event_id: &submitted.event_id,
+                            kind: event_kind_str::MESSAGE_CREATE,
+                            actor_id: &actor,
+                            body: &message.body,
+                            content: &operation.payload()["content"],
+                            strand_id: &message.strand_id,
+                            message_id: &retry_message_id,
+                            mentions: &mention_values,
+                            reply_to: message.reply_to.as_deref(),
+                            status: &submitted.status,
+                        })
+                        .expect("accepted chat message operation is serializable"),
                     );
                     if let Some(found) = messages
                         .write()

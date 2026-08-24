@@ -979,6 +979,7 @@ where
                     let plaintext = arkret_crypto::secret_share::open_history_secret_chunk(
                         &private_key_b64u,
                         &chunk.seal_context,
+                        &chunk.covered_epoch_range,
                         &chunk.sealed_chunk,
                     )?;
                     plaintext.validate()?;

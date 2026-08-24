@@ -74,7 +74,13 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
             }
         },
         expires_at: grant
-            .expires_at
+            .constraints
+            .iter()
+            .filter(|constraint| {
+                constraint.constraint_kind == arkret_sdk::GrantConstraintKind::Temporal
+            })
+            .filter_map(|constraint| constraint.expires_at)
+            .min()
             .map(arkret_sdk::canonical::format_timestamp_canonical)
             .unwrap_or_default(),
         issuer_authority_refs: grant

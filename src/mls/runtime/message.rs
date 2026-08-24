@@ -1156,7 +1156,7 @@ pub(crate) fn sign_welcome_consume_request(
     };
     let receipt = arkret_sdk::RecipientMlsDurableReceipt {
         domain: arkret_sdk::NonEmptyString::new(
-            arkret_sdk::DomainSeparationId::MLS_RECIPIENT_DURABLE_RECEIPT_V1,
+            arkret_wire::DomainSeparationId::MLS_RECIPIENT_DURABLE_RECEIPT_V1,
         )
         .map_err(|error| error.to_string())?,
         claim_request_id: candidate.claim_request_id.clone(),

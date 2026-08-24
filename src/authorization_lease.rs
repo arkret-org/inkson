@@ -833,7 +833,18 @@ pub(crate) mod test_support {
             .unwrap(),
             event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "d".repeat(64))).unwrap(),
             authorization_lease_id: lease.authorization_lease_id.clone(),
+            qualified_ingress_id: arkret_sdk::DidFullId::new(
+                "did:webvh:z6mkfixture:ingress.example".to_owned(),
+            )
+            .unwrap(),
             received_at,
+            ingress_basis: lease.basis_ref.clone(),
+            ingress_frontier: vec![
+                arkret_sdk::EventId::new(
+                    "ak:event:ATqrupSFYozzL7O90hPaSlvHmLnxxSRiRUZA4RgeuZpD".to_owned(),
+                )
+                .unwrap(),
+            ],
             service_id: crate::mls_api_helpers::principal_core_id(
                 "did:webvh:z6mkfixture:ingress.example",
             )

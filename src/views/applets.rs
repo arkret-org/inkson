@@ -56,11 +56,7 @@ pub fn applet_install_material_from_manifest(
     };
     let preview = serde_json::from_str::<AppletInstallPreviewRequestBody>(raw).ok()?;
     let registration: arkret_sdk::AppletRegistrationPayload = serde_json::from_value(
-        preview
-            .authoring_request_basis
-            .registration_event
-            .payload
-            .clone(),
+        serde_json::to_value(&preview.authoring_request_basis.registration_event.payload).ok()?,
     )
     .ok()?;
     Some((

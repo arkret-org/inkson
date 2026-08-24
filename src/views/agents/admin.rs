@@ -353,10 +353,6 @@ mod directory_refresh_tests {
             &AgentServiceScopePreset::DEFAULTS,
         )
         .unwrap();
-        let scope_digest = arkret_sdk::Hash::new(
-            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        )
-        .unwrap();
         // Keyed agents (ready/replacing) carry an active authorization; never-keyed
         // agents (pending_runtime_key/pairing_expired) do not.
         let active_authorizations = match runtime_state {
