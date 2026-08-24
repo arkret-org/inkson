@@ -1,7 +1,7 @@
 // ── Production-path wire guards ─────────────────────────────────
 //
 // `publish_mls_key_package` produces a real event-signer
-// `device_signature` and fails-closed when no signer is installed
+// `endpoint_signature` and fails-closed when no signer is installed
 // (asserted just below).
 
 #[tokio::test]
@@ -23,7 +23,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
             .unwrap()
             .with_timezone(&chrono::Utc),
         expires_at: None,
-        device_signature: None,
+        endpoint_signature: None,
         last_resort: false,
     };
 
@@ -58,10 +58,6 @@ fn mls_key_package_upload_entry_carries_digest_and_ref() {
 
     let entry = crate::mls_api_helpers::mls_key_package_record_upload_entry(&record).unwrap();
 
-    assert_eq!(
-        entry.keypackage_digest.as_str(),
-        record.keypackage_ref.as_str()
-    );
     assert_eq!(entry.keypackage_ref, record.keypackage_ref.as_str());
     assert_eq!(entry.keypackage.as_str(), record.keypackage.as_str());
 }

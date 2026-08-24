@@ -49,6 +49,7 @@ pub fn message_revise_content(
         metadata: None,
         encrypted_metadata: None,
         reason: None,
+        mimi_provenance: None,
     };
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageRevise>(

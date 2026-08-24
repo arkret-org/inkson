@@ -839,23 +839,13 @@ pub(crate) fn security_frontier_with_added_claims(
         .max()
         .map_or(0, |index| index.saturating_add(1));
     for record in records {
-        let claim_method = arkret_sdk::DidUrl::new(record.device_signature.kid.as_str().to_owned())
-            .map_err(|error| format!("claimed KeyPackage signer kid is invalid: {error}"))?;
-        let signer_full_id = verification_method_did(&claim_method)
-            .map_err(|error| format!("claimed KeyPackage signer is invalid: {error}"))?;
-        if arkret_sdk::project_full_id_to_core_id(&signer_full_id)
-            .map_err(|error| format!("project claimed KeyPackage signer: {error}"))?
-            != record.principal_id
-        {
-            return Err("claimed KeyPackage signer does not project to principal_id".to_owned());
-        }
         let key_package = arkret_sdk::base64url_decode(record.keypackage.as_bytes())
             .map_err(|error| format!("claimed KeyPackage decode failed: {error}"))?;
         let key_package_digest =
             arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&key_package))
                 .map_err(|error| format!("claimed KeyPackage digest is invalid: {error}"))?;
-        if key_package_digest != record.keypackage_digest {
-            return Err("claimed KeyPackage bytes differ from keypackage_digest".to_owned());
+        if key_package_digest.as_str() != record.keypackage_ref {
+            return Err("claimed KeyPackage bytes differ from keypackage_ref".to_owned());
         }
         let author_leaf = arkret_sdk::author_leaf_from_key_package_bytes(&key_package, next_index)
             .map_err(|error| format!("claimed KeyPackage validation failed: {error}"))?;

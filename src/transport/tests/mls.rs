@@ -13,25 +13,24 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
     let timestamp = Utc.timestamp_opt(1_774_310_400, 0).single().unwrap();
     let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
         principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-        device_id: arkret_sdk::DeviceId::new(
-            "ak:device:0196419b-0000-7000-8000-000000000001".to_owned(),
-        )
-        .unwrap(),
+        device_id: Some(
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001".to_owned())
+                .unwrap(),
+        ),
+        pairwise_verification_method: None,
+        intended_realm_id: None,
+        agent_verification_method: None,
+        agent_key_authorize_event_id: None,
         keypackages: vec![arkret_sdk::KeyPackageUploadEntry {
             keypackage_id: "ak:mls:kp:0196419b-0000-7000-8000-000000000001".to_owned(),
             keypackage_ref:
                 "sha256:1111111111111111111111111111111111111111111111111111111111111111".to_owned(),
-            keypackage_digest: arkret_sdk::Hash::new(
-                "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-                    .to_owned(),
-            )
-            .unwrap(),
             keypackage: arkret_sdk::Base64UrlString::new("AA").unwrap(),
             cipher_suites: vec!["MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519".to_owned()],
             capabilities: vec!["ak.content.v1".to_owned()],
             expires_at: timestamp + chrono::Duration::days(7),
             created_at: timestamp,
-            device_signature: None,
+            endpoint_signature: None,
             last_resort: None,
         }],
         expires_at: None,

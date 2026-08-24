@@ -80,6 +80,10 @@ impl WelcomeApplyOutcome {
 pub(crate) struct WelcomeConsumeCandidate {
     pub(crate) key_package_id: String,
     pub(crate) claim_id: String,
+    pub(crate) claim_request_id: arkret_sdk::Base64UrlString,
+    pub(crate) recipient_principal_id: arkret_sdk::DidCoreId,
+    pub(crate) recipient: arkret_sdk::MlsWelcomeRecipient,
+    pub(crate) recipient_service_id: arkret_sdk::DidCoreId,
     pub(crate) welcome_event_id: String,
     pub(crate) realm_id: String,
     pub(crate) strand_id: Option<String>,
@@ -1037,6 +1041,18 @@ fn welcome_consume_candidate(
     Some(WelcomeConsumeCandidate {
         key_package_id: entry.key_package_id.clone()?,
         claim_id: payload.claim_id.as_str().to_owned(),
+        claim_request_id: receipt.claim_request_id.clone(),
+        recipient_principal_id: payload.recipient_principal_id.clone().or_else(
+            || match &payload.recipient {
+                arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+                    recipient_pairwise_actor_id,
+                    ..
+                } => Some(recipient_pairwise_actor_id.clone()),
+                _ => None,
+            },
+        )?,
+        recipient: payload.recipient,
+        recipient_service_id: receipt.destination_service_id.clone(),
         welcome_event_id: entry.welcome_event_id.clone()?,
         realm_id: realm_id.to_owned(),
         strand_id,
@@ -1044,6 +1060,132 @@ fn welcome_consume_candidate(
         epoch: payload.epoch,
         welcome_digest: payload.claim_envelope.welcome_digest,
     })
+}
+
+/// Build both recipient proofs only after the joined MLS snapshot has crossed
+/// the durable barrier. The KeyPackage identity state supplies the exact Leaf
+/// signing key; transport session identity is deliberately not used as the
+/// pairwise actor authority.
+pub(crate) fn sign_welcome_consume_request(
+    secure_store: &dyn SecureKeyStore,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    candidate: &WelcomeConsumeCandidate,
+) -> Result<arkret_sdk::KeyPackagesConsumeRequestBody, String> {
+    let serialized_state = load_mls_key_package_identity_state(
+        secure_store,
+        authority,
+        device_id,
+        &candidate.key_package_id,
+    )
+    .map_err(|error| format!("load consumed KeyPackage identity state: {error}"))?
+    .ok_or_else(|| {
+        format!(
+            "no local KeyPackage identity state for consume key_package_id={}",
+            candidate.key_package_id
+        )
+    })?;
+    let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
+        authority.principal_id.clone(),
+        device_id.clone(),
+        &serialized_state,
+    )
+    .map_err(|error| format!("restore consumed KeyPackage identity state: {error}"))?;
+    let recipient = match &candidate.recipient {
+        arkret_sdk::MlsWelcomeRecipient::Device {
+            recipient_device_id,
+        } => {
+            let signer = crate::event_signer::active_signer().ok_or_else(|| {
+                "recipient device durable receipt requires the active accepted device signer"
+                    .to_owned()
+            })?;
+            let method = arkret_sdk::DidUrl::new(signer.verification_method().to_owned()).map_err(
+                |error| format!("invalid recipient device verification method: {error}"),
+            )?;
+            if method
+                .as_str()
+                .rsplit_once('#')
+                .map(|(_, fragment)| fragment)
+                != Some(recipient_device_id.as_str())
+            {
+                return Err(
+                    "recipient device verification method does not name the Welcome device"
+                        .to_owned(),
+                );
+            }
+            arkret_sdk::RecipientMlsDurableSigner::Device {
+                recipient_device_id: recipient_device_id.clone(),
+                device_verification_method: method,
+            }
+        }
+        arkret_sdk::MlsWelcomeRecipient::NativeAgent { .. } => {
+            return Err(
+                "Inkson cannot sign a Native Agent durable receipt with a human client key"
+                    .to_owned(),
+            );
+        }
+        arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+            recipient_pairwise_actor_id,
+            recipient_pairwise_verification_method,
+        } => {
+            if recipient_pairwise_actor_id != &candidate.recipient_principal_id {
+                return Err("pairwise Welcome recipient actor drifted before consume".to_owned());
+            }
+            arkret_sdk::RecipientMlsDurableSigner::MinimalMetadataPairwise {
+                recipient_pairwise_verification_method: recipient_pairwise_verification_method
+                    .clone(),
+            }
+        }
+    };
+    let kid = match &recipient {
+        arkret_sdk::RecipientMlsDurableSigner::Device {
+            device_verification_method,
+            ..
+        } => device_verification_method.as_str(),
+        arkret_sdk::RecipientMlsDurableSigner::NativeAgent { .. } => unreachable!(),
+        arkret_sdk::RecipientMlsDurableSigner::MinimalMetadataPairwise {
+            recipient_pairwise_verification_method,
+        } => recipient_pairwise_verification_method.as_str(),
+    };
+    let placeholder_signature = arkret_sdk::KeyOperationSignature {
+        kid: arkret_sdk::NonEmptyString::new(kid).map_err(|error| error.to_string())?,
+        signature_algorithm: Some(
+            arkret_sdk::NonEmptyString::new("Ed25519").map_err(|error| error.to_string())?,
+        ),
+        sig: arkret_sdk::Base64UrlString::new("AA").map_err(|error| error.to_string())?,
+    };
+    let receipt = arkret_sdk::RecipientMlsDurableReceipt {
+        domain: arkret_sdk::NonEmptyString::new(
+            arkret_sdk::DomainSeparationId::MLS_RECIPIENT_DURABLE_RECEIPT_V1,
+        )
+        .map_err(|error| error.to_string())?,
+        claim_request_id: candidate.claim_request_id.clone(),
+        key_package_ref: arkret_sdk::NonEmptyString::new(&candidate.key_package_id)
+            .map_err(|error| error.to_string())?,
+        recipient_principal_id: candidate.recipient_principal_id.clone(),
+        recipient,
+        recipient_service_id: candidate.recipient_service_id.clone(),
+        realm_id: arkret_sdk::RealmId::new(candidate.realm_id.clone())
+            .map_err(|error| error.to_string())?,
+        mls_group_id: arkret_sdk::NonEmptyString::new(&candidate.mls_group_id)
+            .map_err(|error| error.to_string())?,
+        mls_epoch: candidate.epoch,
+        welcome_ref: arkret_sdk::NonEmptyString::new(&candidate.welcome_event_id)
+            .map_err(|error| error.to_string())?,
+        welcome_digest: candidate.welcome_digest.clone(),
+        durable_at: crate::clock::now_utc(),
+        signature: placeholder_signature,
+    };
+    let receipt = identity
+        .sign_recipient_mls_durable_receipt(receipt)
+        .map_err(|error| format!("sign recipient durable receipt: {error}"))?;
+    identity
+        .signed_key_packages_consume_request(
+            arkret_sdk::NonEmptyString::new(&candidate.claim_id)
+                .map_err(|error| error.to_string())?,
+            receipt,
+        )
+        .map_err(|error| format!("sign KeyPackage consume request: {error}"))
 }
 
 pub(crate) fn accepted_welcome_consume_candidates(
@@ -1174,7 +1316,6 @@ pub fn local_mls_welcome_hint_for_realm(messages: &[serde_json::Value], realm_id
 pub(super) fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<String> {
     let looks_like_durable_payload = value.get("claim_ref").is_some()
         || value.get("claim_id").is_some()
-        || value.get("keypackage_digest").is_some()
         || value.get("keypackage_ref").is_some();
     if !looks_like_durable_payload {
         return None;
@@ -1244,8 +1385,8 @@ pub(super) fn decode_welcome_envelope(
     })
 }
 
-fn welcome_recipient_endpoint(
-    recipient_principal_id: &arkret_sdk::DidCoreId,
+pub(super) fn welcome_recipient_endpoint(
+    recipient_principal_id: &Option<arkret_sdk::DidCoreId>,
     recipient: arkret_sdk::MlsWelcomeRecipient,
 ) -> Result<arkret_sdk::MlsEndpointIdentity, String> {
     match recipient {
@@ -1259,6 +1400,9 @@ fn welcome_recipient_endpoint(
                     .to_owned(),
             )
             .map_err(|error| format!("active recipient full_id is invalid: {error}"))?;
+            let recipient_principal_id = recipient_principal_id
+                .as_ref()
+                .ok_or_else(|| "device Welcome recipient_principal_id is required".to_owned())?;
             if arkret_sdk::project_full_id_to_core_id(&recipient_full_id)
                 .map_err(|error| format!("project active recipient full_id: {error}"))?
                 != *recipient_principal_id
@@ -1277,7 +1421,7 @@ fn welcome_recipient_endpoint(
             recipient_agent_verification_method,
             agent_key_authorize_event_id,
         } => {
-            if recipient_agent_id != *recipient_principal_id {
+            if recipient_principal_id.as_ref() != Some(&recipient_agent_id) {
                 return Err(
                     "Native Agent Welcome recipient differs from recipient_principal_id".to_owned(),
                 );
@@ -1288,6 +1432,19 @@ fn welcome_recipient_endpoint(
                 agent_key_authorize_event_id,
             )
             .map_err(|error| format!("Native Agent Welcome endpoint is invalid: {error}"))?)
+        }
+        arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+            recipient_pairwise_actor_id,
+            recipient_pairwise_verification_method,
+        } => {
+            if recipient_principal_id.is_some() {
+                return Err("pairwise Welcome must not carry recipient_principal_id".to_owned());
+            }
+            arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+                recipient_pairwise_actor_id,
+                recipient_pairwise_verification_method,
+            )
+            .map_err(|error| format!("pairwise Welcome endpoint is invalid: {error}"))
         }
     }
 }
@@ -1320,6 +1477,50 @@ pub(super) fn verify_welcome_claim_envelope_signer(
     envelope
         .validate_signature_shape()
         .map_err(|reason| format!("claim_envelope signature shape: {reason}"))?;
+
+    if let arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise {
+        requester_pairwise_verification_method,
+    } = &envelope.trust_binding
+    {
+        let endpoint = arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+            envelope.requester_actor_id.clone(),
+            requester_pairwise_verification_method.clone(),
+        )
+        .map_err(|error| format!("claim_envelope pairwise requester is invalid: {error}"))?;
+        if envelope.signature.kid.as_str() != requester_pairwise_verification_method.as_str()
+            || endpoint.actor_id() != &envelope.requester_actor_id
+        {
+            return Err(
+                "claim_envelope pairwise signature key differs from the exact requester endpoint"
+                    .to_owned(),
+            );
+        }
+        let multibase = requester_pairwise_verification_method
+            .as_str()
+            .split_once('#')
+            .and_then(|(controller, fragment)| {
+                controller
+                    .strip_prefix("did:key:")
+                    .filter(|key| *key == fragment)
+            })
+            .ok_or_else(|| {
+                "claim_envelope pairwise verification method is not canonical did:key".to_owned()
+            })?;
+        let key_bytes = arkret_sdk::decode_ed25519_multibase(multibase)
+            .map_err(|error| format!("claim_envelope pairwise key decode: {error}"))?;
+        let verifying_key = VerifyingKey::from_bytes(&key_bytes)
+            .map_err(|error| format!("claim_envelope pairwise key is invalid: {error}"))?;
+        let signing_bytes = envelope
+            .canonical_signing_bytes()
+            .map_err(|error| format!("claim_envelope canonical bytes: {error}"))?;
+        let signature_bytes = arkret_sdk::base64url_decode(envelope.signature.sig.as_bytes())
+            .map_err(|error| format!("claim_envelope signature decode: {error}"))?;
+        let signature = Signature::from_slice(&signature_bytes)
+            .map_err(|error| format!("claim_envelope signature malformed: {error}"))?;
+        return verifying_key
+            .verify(&signing_bytes, &signature)
+            .map_err(|error| format!("claim_envelope signature verification failed: {error}"));
+    }
 
     let (requester_full_id, requester_device_id, requester_authorize_event_id) = match &envelope
         .trust_binding
@@ -1359,6 +1560,9 @@ pub(super) fn verify_welcome_claim_envelope_signer(
                     "Native Agent claim_envelope verification is unavailable until its authorization Event is normatively bound to this Welcome"
                         .to_owned(),
                 );
+        }
+        arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise { .. } => {
+            unreachable!("pairwise claim envelopes are verified above")
         }
     };
     let requester_full_id = requester_full_id.as_str();
@@ -2284,7 +2488,7 @@ mod endpoint_tests {
             arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
                 .unwrap();
         let endpoint = welcome_recipient_endpoint(
-            &agent_id,
+            &Some(agent_id.clone()),
             arkret_sdk::MlsWelcomeRecipient::NativeAgent {
                 recipient_agent_id: agent_id.clone(),
                 recipient_agent_verification_method: method.clone(),
@@ -2299,6 +2503,33 @@ mod endpoint_tests {
                 agent_id,
                 verification_method: method,
                 agent_key_authorize_event_id: authorization_ref,
+            }
+        );
+    }
+
+    #[test]
+    fn pairwise_welcome_recipient_has_no_account_principal_mirror() {
+        let actor = arkret_sdk::DidCoreId::new(
+            "ak:did_core:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x".to_owned(),
+        )
+        .unwrap();
+        let method = arkret_sdk::DidUrl::new(
+            "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x#z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x".to_owned(),
+        )
+        .unwrap();
+        let endpoint = welcome_recipient_endpoint(
+            &None,
+            arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+                recipient_pairwise_actor_id: actor.clone(),
+                recipient_pairwise_verification_method: method.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            endpoint,
+            arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise {
+                pairwise_actor_id: actor,
+                verification_method: method,
             }
         );
     }

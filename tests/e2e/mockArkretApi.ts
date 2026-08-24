@@ -601,12 +601,6 @@ export async function mockArkretApi(
       },
     },
     requested_scope: activeAssistantScope,
-    requested_scope_digest: canonicalSha256({
-      agent_id: activeAssistantId,
-      controller_id: accountPrincipalId,
-      kind: "ak.agent.requested_scope_commitment.v1",
-      requested_scope: activeAssistantScope,
-    }),
     authorized_event_ref: "ak:event:AfoRpfP-sl-s9gK_9-GfLiYW9eincnIfCJF8xRcVowkj",
     active_authorizations: [
       {
@@ -676,12 +670,6 @@ export async function mockArkretApi(
         },
       ],
     };
-    const expiredScopeDigest = canonicalSha256({
-      agent_id: expiredAgentId,
-      controller_id: accountPrincipalId,
-      kind: "ak.agent.requested_scope_commitment.v1",
-      requested_scope: expiredScope,
-    });
     personalAgents.set(expiredAgentId, {
       agent_id: expiredAgentId,
       slug: "summary",
@@ -708,7 +696,6 @@ export async function mockArkretApi(
         },
       },
       requested_scope: expiredScope,
-      requested_scope_digest: expiredScopeDigest,
     });
     personalAgentGrants.set(expiredAgentId, []);
   }
@@ -3262,18 +3249,35 @@ export async function mockArkretApi(
         typeof requestedDevices[0] === "string"
           ? requestedDevices[0]
           : currentDeviceId;
-      const generationRef = "1-did-version-e2e";
+      const generationRef = 1;
+      const attestedAt = "2026-08-24T00:00:00.000Z";
       return json(route, {
         device_keys: {
           [requestedPrincipalId]: {
             [requestedDeviceId]: {
               algorithms: {},
-              device_status: "active",
-              device_signing_key:
-                "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
-              device_authorize_event_id:
-                "ak:event:Ad-rGYKVGY9i32DG2R9ZwMezGzT5g2rmdYjrifmGO6Fe",
-              authorized_generation_ref: generationRef,
+              trust_algorithms: [],
+              device_projection_attestation: {
+                attestation: {
+                  principal_id: requestedPrincipalId,
+                  principal_server_id: "ak:did_core:web:server.local",
+                  device_id: requestedDeviceId,
+                  device_signing_key:
+                    "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  hpke_key: "fixture-hpke-key",
+                  device_authorize_event_id:
+                    "ak:event:Ad-rGYKVGY9i32DG2R9ZwMezGzT5g2rmdYjrifmGO6Fe",
+                  authorized_generation_ref: generationRef,
+                  device_status: "active",
+                  attested_at: attestedAt,
+                  expires_at: "2036-08-24T00:00:00.000Z",
+                },
+                proof: {
+                  verification_method: "did:web:server.local#notary-key",
+                  created_at: attestedAt,
+                  jws: "fixture",
+                },
+              },
             },
           },
         },
@@ -3600,7 +3604,6 @@ export async function mockArkretApi(
         pairing_code: "246810",
         pairing_expires_at: personalAgentPairingExpiresAt,
         requested_scope: body.requested_scope,
-        requested_scope_digest: requestedScopeDigest,
       };
       personalAgents.set(agentId, agent);
       personalAgentKeyStates.set(agentId, keyState);
@@ -3824,7 +3827,12 @@ export async function mockArkretApi(
         agent_id: agentId,
         principal_control_realm_id: keyState.principal_control_realm_id,
         controller_authorization_ref: keyState.controller_authorization_ref,
-        requested_scope_digest: keyState.requested_scope_digest,
+        requested_scope_digest: canonicalSha256({
+          agent_id: keyState.agent_id,
+          controller_id: keyState.controller_id,
+          kind: "ak.agent.requested_scope_commitment.v1",
+          requested_scope: keyState.requested_scope,
+        }),
         pcr_recovery: keyState.pcr_recovery,
         pairing_mode: pairingMode,
         pairing_request_id: keyState.pairing_request_id,

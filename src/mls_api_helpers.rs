@@ -59,9 +59,9 @@ pub(crate) fn sign_keypackage_upload_batch(
 /// Convert a local `MlsKeyPackageRecord` into the typed wire entry for
 /// `keypackages/upload`
 /// (`keypackage-operations.schema.json#/$defs/keypackage_upload_entry`).
-/// `keypackage_ref` (ObjectRef) and `keypackage_digest` (Hash) both carry the
-/// canonical KeyPackage hash; a missing `expires_at` falls back to the SDK
-/// default KeyPackage lifetime (`created_at` + 7 days).
+/// `keypackage_ref` carries the canonical KeyPackage hash; a missing
+/// `expires_at` falls back to the SDK default KeyPackage lifetime
+/// (`created_at` + 7 days).
 pub(crate) fn mls_key_package_record_upload_entry(
     record: &arkret_sdk::MlsKeyPackageRecord,
 ) -> anyhow::Result<arkret_sdk::KeyPackageUploadEntry> {
@@ -78,19 +78,6 @@ pub(crate) fn generate_mls_claim_nonce() -> anyhow::Result<String> {
 pub(crate) fn keypackage_claim_record_to_mls_record(
     claim: &arkret_sdk::KeyPackageClaimRecord,
 ) -> anyhow::Result<arkret_sdk::MlsKeyPackageRecord> {
-    let signer_full_id = arkret_sdk::DidFullId::new(
-        claim
-            .device_signature
-            .kid
-            .as_str()
-            .split_once('#')
-            .ok_or_else(|| anyhow::anyhow!("KeyPackage claim signature kid omits DID fragment"))?
-            .0
-            .to_owned(),
-    )?;
-    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != claim.principal_id {
-        anyhow::bail!("KeyPackage claim signer does not project to principal_id");
-    }
     if claim.device_id.is_some() && claim.device_authorize_event_id.is_none() {
         anyhow::bail!("device KeyPackage claim is missing its authorization event");
     }
@@ -108,9 +95,7 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
             device_id.clone(),
         ),
         (None, Some(agent_id), Some(method), Some(authorization_ref)) => {
-            if agent_id != &claim.principal_id
-                || method.as_str() != claim.device_signature.kid.as_str()
-            {
+            if agent_id != &claim.principal_id {
                 anyhow::bail!("Native Agent KeyPackage claim endpoint binding mismatch");
             }
             arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
@@ -119,20 +104,29 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
                 authorization_ref.clone(),
             )?
         }
+        (None, None, None, None) => arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+            claim.principal_id.clone(),
+            claim
+                .pairwise_verification_method
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("pairwise KeyPackage claim omits its method"))?,
+        )?,
         _ => anyhow::bail!("KeyPackage claim has an incomplete or mixed endpoint identity"),
     };
+    let keypackage = arkret_sdk::base64url_decode(claim.keypackage.as_bytes())?;
+    let keypackage_ref = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&keypackage))?;
     Ok(arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: claim.keypackage_ref.as_str().to_owned(),
         endpoint,
         keypackage: claim.keypackage.clone(),
-        keypackage_ref: claim.keypackage_digest.clone(),
+        keypackage_ref,
         cipher_suites: Vec::new(),
         capabilities: claim.capabilities.clone(),
         state: arkret_sdk::MlsKeyPackageState::Published,
         claim_id: Some(claim.claim_id.clone()),
         created_at: crate::clock::now_utc(),
         expires_at: Some(claim.expires_at),
-        device_signature: None,
+        endpoint_signature: None,
         // Reconstructed claim-side record (admin builds the Welcome from the
         // KeyPackage bytes, which already carry any last_resort extension); the
         // flag is not re-published, so a plain default is correct here.
@@ -197,7 +191,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
         target_agent_id: None,
         target_agent_verification_method: None,
         target_agent_key_authorize_event_id: None,
-        minimal_metadata_allowed: Some(true),
+        target_pairwise_verification_method: None,
         timeout_ms: Some(30_000),
         strand_id: None,
         pair_key: None,
@@ -238,6 +232,10 @@ pub(crate) fn build_mls_keypackage_claim_request(
         }
         | arkret_sdk::PeerKeyPackageRequesterAuthorization::NativeAgent {
             signature: proof, ..
+        }
+        | arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise {
+            signature: proof,
+            ..
         } => proof.sig = signature,
     }
     let body = arkret_sdk::KeyPackagesClaimRequestBody {
@@ -255,7 +253,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
         target_agent_id: unsigned.target_agent_id,
         target_agent_verification_method: unsigned.target_agent_verification_method,
         target_agent_key_authorize_event_id: unsigned.target_agent_key_authorize_event_id,
-        minimal_metadata_allowed: unsigned.minimal_metadata_allowed,
+        target_pairwise_verification_method: unsigned.target_pairwise_verification_method,
         timeout_ms: unsigned.timeout_ms,
         strand_id: unsigned.strand_id,
         pair_key: unsigned.pair_key,
@@ -274,7 +272,7 @@ mod tests {
 
     fn claim_for(
         record: &arkret_sdk::MlsKeyPackageRecord,
-        kid: &str,
+        _kid: &str,
     ) -> arkret_sdk::KeyPackageClaimRecord {
         let (principal_id, device_id) = match &record.endpoint {
             arkret_sdk::MlsEndpointIdentity::HumanDevice {
@@ -289,25 +287,19 @@ mod tests {
         arkret_sdk::KeyPackageClaimRecord {
             claim_id: "claim".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
-            keypackage_digest: record.keypackage_ref.clone(),
             principal_id,
             device_id: Some(device_id),
             agent_id: None,
             agent_verification_method: None,
+            pairwise_verification_method: None,
             keypackage: record.keypackage.clone(),
             capabilities: record.capabilities.clone(),
-            capabilities_digest: record.keypackage_ref.clone(),
             device_authorize_event_id: Some(
                 arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc")
                     .unwrap(),
             ),
             agent_key_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::minutes(5),
-            device_signature: arkret_sdk::KeyOperationSignature {
-                kid: arkret_sdk::NonEmptyString::new(kid).unwrap(),
-                signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
-                sig: arkret_sdk::Base64UrlString::new("YQ").unwrap(),
-            },
             revocation_status: None,
             last_resort: None,
         }

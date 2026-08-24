@@ -654,7 +654,7 @@ fn scheduled_send_test_payload() -> arkret_sdk::MessageCreatePayload {
 }
 
 #[test]
-fn scheduled_send_plan_value_round_trips_with_bound_digest() {
+fn scheduled_send_plan_value_round_trips() {
     let value = build_scheduled_send_value(
         "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
         "2026-08-19T08:30:00.000Z",
@@ -672,10 +672,6 @@ fn scheduled_send_plan_value_round_trips_with_bound_digest() {
     let payload = wire["message_payload"].as_object().unwrap();
     assert!(!payload.contains_key("event_id"));
     assert!(!payload.contains_key("message_id"));
-    assert_eq!(
-        wire["message_payload_digest"].as_str().unwrap(),
-        arkret_sdk::scheduled_send_message_payload_digest(&value.message_payload).unwrap()
-    );
     let parsed = scheduled_send_value_from_account_data(&wire).unwrap();
     assert_eq!(scheduled_send_json(&parsed), scheduled_send_json(&value));
 }
@@ -685,7 +681,7 @@ fn scheduled_send_json(value: &arkret_sdk::ScheduledSendValue) -> serde_json::Va
 }
 
 #[test]
-fn scheduled_send_plan_rejects_preminted_event_identity_and_stale_digest() {
+fn scheduled_send_plan_rejects_preminted_event_identity() {
     let mut wire = scheduled_send_account_data_value(
         &build_scheduled_send_value(
             "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
@@ -701,20 +697,6 @@ fn scheduled_send_plan_rejects_preminted_event_identity_and_stale_digest() {
         json!("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"),
     );
     assert!(scheduled_send_value_from_account_data(&wire).is_err());
-
-    let mut stale_digest = scheduled_send_account_data_value(
-        &build_scheduled_send_value(
-            "ak:scheduled_send:01904100-0000-7000-8000-000000000003",
-            "2026-08-19T08:30:00.000Z",
-            scheduled_send_test_payload(),
-            "01970e589d21-0000-a13f9c2e",
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    stale_digest["message_payload_digest"] =
-        json!("sha256:0000000000000000000000000000000000000000000000000000000000000000");
-    assert!(scheduled_send_value_from_account_data(&stale_digest).is_err());
 
     assert!(
         build_scheduled_send_value(

@@ -72,9 +72,7 @@ impl HostArtifactApplicator {
         &self,
         payload: &arkret_sdk::MlsWelcomePayload,
     ) -> garth::Result<arkret_sdk::Event> {
-        let transition_ref = payload.commit_ref.as_ref().ok_or_else(|| {
-            protocol("accepted post-genesis Welcome has no winning Commit reference")
-        })?;
+        let transition_ref = &payload.commit_ref;
         self.state
             .read()
             .trusted_mls_governance_checkpoint(payload.governance_binding.realm_id().as_str())
@@ -153,17 +151,6 @@ impl HostArtifactApplicator {
             }
             arkret_sdk::EventKind::MlsWelcome => {
                 let payload = event_payload::<arkret_sdk::MlsWelcomePayload>(event)?;
-                if payload.recipient_principal_id != self.authority.principal_id
-                    || !matches!(
-                        &payload.recipient,
-                        arkret_sdk::MlsWelcomeRecipient::Device { recipient_device_id }
-                            if recipient_device_id == &self.device_id
-                    )
-                {
-                    return Err(protocol(
-                        "accepted MLS Welcome is not addressed to this endpoint",
-                    ));
-                }
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                 let value = serde_json::to_value(&payload)?;
                 super::message::verify_welcome_claim_envelope_signer(&value).map_err(protocol)?;
@@ -184,6 +171,16 @@ impl HostArtifactApplicator {
                     &private_state,
                 )
                 .map_err(protocol)?;
+                let expected_endpoint = super::message::welcome_recipient_endpoint(
+                    &payload.recipient_principal_id,
+                    payload.recipient.clone(),
+                )
+                .map_err(protocol)?;
+                if identity.endpoint_identity() != expected_endpoint {
+                    return Err(protocol(
+                        "accepted MLS Welcome is not addressed to the locally persisted KeyPackage endpoint",
+                    ));
+                }
                 let mut group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
                     .map_err(protocol)?;
                 super::message::verify_welcome_governance_binding(
@@ -336,12 +333,28 @@ fn locally_executable(
         arkret_sdk::EventKind::MlsWelcome => {
             let payload = event_payload::<arkret_sdk::MlsWelcomePayload>(event)
                 .map_err(|error| error.to_string())?;
-            Ok(payload.recipient_principal_id == authority.principal_id
-                && matches!(
-                    payload.recipient,
-                    arkret_sdk::MlsWelcomeRecipient::Device { recipient_device_id }
-                        if recipient_device_id == *device_id
-                ))
+            let local_endpoint = matches!(
+                &payload.recipient,
+                arkret_sdk::MlsWelcomeRecipient::Device { recipient_device_id }
+                    if payload.recipient_principal_id.as_ref() == Some(&authority.principal_id)
+                        && recipient_device_id == device_id
+            ) || matches!(
+                &payload.recipient,
+                arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise { .. }
+                    if payload.recipient_principal_id.is_none()
+            );
+            if !local_endpoint {
+                return Ok(false);
+            }
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            super::load_mls_key_package_identity_state(
+                secure_store.as_ref(),
+                authority,
+                device_id,
+                payload.keypackage_ref.as_str(),
+            )
+            .map(|state| state.is_some())
+            .map_err(|error| error.to_string())
         }
         _ => Ok(false),
     }

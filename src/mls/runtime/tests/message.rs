@@ -1238,7 +1238,6 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
                     "recipient_principal_id": "ak:did_core:web:alice.example",
                     "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                     "keypackage_ref": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-                    "keypackage_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "claim_id": "claim-1",
                     "claim_ref": {
                         "claim_id": "claim-1",

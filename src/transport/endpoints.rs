@@ -160,20 +160,62 @@ impl MlsEndpoints<'_> {
                 anyhow::bail!("Native Agent KeyPackage requires the agent-authorized upload flow")
             }
             arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => anyhow::bail!(
-                "minimal-metadata KeyPackage upload is blocked by the closed v1 pairwise endpoint schema gap"
+                "minimal-metadata KeyPackage upload requires publish_pairwise_key_package"
             ),
         };
         let entry = crate::mls_api_helpers::mls_key_package_record_upload_entry(record)?;
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
             principal_id,
-            device_id,
+            device_id: Some(device_id),
+            pairwise_verification_method: None,
+            intended_realm_id: None,
+            agent_verification_method: None,
+            agent_key_authorize_event_id: None,
             keypackages: vec![entry],
             expires_at: None,
             strand_id: None,
             mls_group_id: None,
         };
-        let device_signature = crate::mls_api_helpers::sign_keypackage_upload_batch(&unsigned)?;
-        let body = unsigned.into_signed(device_signature);
+        let endpoint_signature = crate::mls_api_helpers::sign_keypackage_upload_batch(&unsigned)?;
+        let body = unsigned.into_signed(endpoint_signature);
+        self.transport
+            .http()
+            .keypackages_upload(&body)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    pub async fn publish_pairwise_key_package(
+        &self,
+        intended_realm_id: &str,
+        record: &arkret_sdk::MlsKeyPackageRecord,
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
+        let (principal_id, pairwise_verification_method) = match &record.endpoint {
+            arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise {
+                pairwise_actor_id,
+                verification_method,
+            } => (pairwise_actor_id.clone(), verification_method.clone()),
+            _ => anyhow::bail!("pairwise KeyPackage publish requires a pairwise endpoint"),
+        };
+        let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+            principal_id,
+            device_id: None,
+            pairwise_verification_method: Some(pairwise_verification_method),
+            intended_realm_id: Some(arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
+                intended_realm_id,
+            ))?),
+            agent_verification_method: None,
+            agent_key_authorize_event_id: None,
+            keypackages: vec![crate::mls_api_helpers::mls_key_package_record_upload_entry(
+                record,
+            )?],
+            expires_at: None,
+            strand_id: None,
+            mls_group_id: None,
+        };
+        let signature = crate::mls_api_helpers::sign_keypackage_upload_batch(&unsigned)?;
+        let body = unsigned.into_signed(signature);
+        body.validate_shape().map_err(anyhow::Error::msg)?;
         self.transport
             .http()
             .keypackages_upload(&body)
@@ -183,12 +225,14 @@ impl MlsEndpoints<'_> {
 
     pub async fn consume_key_package(
         &self,
-        _candidate: &crate::mls::runtime::WelcomeConsumeCandidate,
-        _consumer_device_id: &str,
+        request: &arkret_sdk::KeyPackagesConsumeRequestBody,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesConsumeOutcome> {
-        anyhow::bail!(
-            "KeyPackage consume is unavailable because the accepted Welcome projection does not expose the required recipient durable receipt"
-        )
+        request.validate_shape().map_err(anyhow::Error::msg)?;
+        self.transport
+            .http()
+            .keypackages_consume(request)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     pub async fn claim_key_package(

@@ -184,6 +184,7 @@ pub(crate) fn chat_message_redact_operation(
         track_name: None,
         reason: Some(reason.to_owned()),
         preserve: None,
+        mimi_provenance: None,
     };
     crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageRedact>(
         realm_id, actor, payload,

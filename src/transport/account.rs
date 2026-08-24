@@ -1294,17 +1294,15 @@ pub async fn revoke_consent(
 }
 
 /// Open an outbound consent request: ask `holder` to grant the
-/// authenticated actor (`peer`) the given scope. Produces a holder-side
-/// pending cell. Spec OpenAPI `ak.self.consent.command.request`.
+/// authenticated actor the given scope. The response is deliberately opaque.
+/// Spec OpenAPI `ak.self.consent.command.request`.
 pub async fn request_consent(
     http: &arkret_sdk::http_client::Client,
     holder: &str,
-    peer: &str,
     scope: &str,
-) -> anyhow::Result<arkret_sdk::ConsentCellView> {
+) -> anyhow::Result<arkret_sdk::ConsentRequestOutcome> {
     let body = arkret_sdk::ConsentRequestRequestBody {
         holder_principal_id: crate::mls_api_helpers::principal_core_id(holder)?,
-        peer_principal_id: Some(crate::mls_api_helpers::principal_core_id(peer)?),
         consent_scope: Some(scope.trim().parse()?),
     };
     http.post(arkret_wire::PATH_SELF_CONSENT_REQUEST, &body)

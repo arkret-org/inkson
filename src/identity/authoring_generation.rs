@@ -259,12 +259,13 @@ fn resolve_principal_authoring_generation_from_keys(
                     "authoring_device_not_active".to_owned(),
                 ));
             };
-            if record.device_status != arkret_models_crypto::DeviceStatus::Active {
+            let attested = &record.device_projection_attestation.attestation;
+            if attested.device_status != arkret_models_crypto::DeviceStatus::Active {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_device_not_active".to_owned(),
                 ));
             }
-            if record.authorized_generation_ref != generation.current_device_generation_ref {
+            if attested.authorized_generation_ref != generation.current_device_generation_ref {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_generation_superseded".to_owned(),
                 ));

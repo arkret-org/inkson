@@ -379,7 +379,6 @@ mod directory_refresh_tests {
                 )
                 .unwrap(),
                 requested_scope: scope,
-                requested_scope_digest: scope_digest,
                 pairing_request_id: matches!(
                     runtime_state,
                     AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
@@ -421,11 +420,17 @@ mod directory_refresh_tests {
         };
         let agent_full_id = row.agent.agent_id;
         let key_state = row.key_state.unwrap();
+        let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
+            &key_state.agent_id,
+            &key_state.controller_id,
+            &key_state.requested_scope,
+        )
+        .unwrap();
         AgentRenewPairingOutcome {
             agent_id: agent_full_id,
             principal_control_realm_id: key_state.principal_control_realm_id,
             controller_authorization_ref: key_state.controller_authorization_ref,
-            requested_scope_digest: key_state.requested_scope_digest,
+            requested_scope_digest,
             pairing_mode: mode,
             pairing_request_id: arkret_sdk::OpaqueLocalId::new("pairing-request-2").unwrap(),
             pairing_code: Some("fresh-code".to_owned()),
@@ -533,10 +538,16 @@ fn apply_renewed_pairing(
         .as_mut()
         .ok_or("renewed Agent details are not loaded")?;
     let outcome_agent_actor_id = outcome.agent_id.clone();
+    let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
+        &key_state.agent_id,
+        &key_state.controller_id,
+        &key_state.requested_scope,
+    )
+    .map_err(|_| "loaded Agent scope is not digestible")?;
     if key_state.agent_id != outcome_agent_actor_id
         || key_state.principal_control_realm_id != outcome.principal_control_realm_id
         || key_state.controller_authorization_ref != outcome.controller_authorization_ref
-        || key_state.requested_scope_digest != outcome.requested_scope_digest
+        || requested_scope_digest != outcome.requested_scope_digest
     {
         return Err("renewed pairing response does not match the loaded Agent binding");
     }

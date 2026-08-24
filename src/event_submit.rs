@@ -3376,7 +3376,6 @@ fn data_event_auth_context(intent: &EventIntent) -> anyhow::Result<arkret_sdk::A
     }
     let key_id = data_event_key_id_for(intent);
     Ok(arkret_sdk::AuthContext {
-        actor_id: actor_id.clone(),
         key_id,
         key_epoch: 0,
         credential_epoch: None,
@@ -4406,8 +4405,6 @@ mod tests {
                 .unwrap(),
             )
             .with_auth_context(arkret_sdk::AuthContext {
-                actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
-                    .unwrap(),
                 key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
                 key_epoch: 0,
                 credential_epoch: None,

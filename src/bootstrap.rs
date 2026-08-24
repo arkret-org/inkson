@@ -899,31 +899,30 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
 
     for candidate in &welcome_outcome.consumable_claims {
         let candidate = candidate.clone();
-        let candidate_for_consume = candidate.clone();
+        let consume_request = crate::mls::runtime::sign_welcome_consume_request(
+            secure_store.as_ref(),
+            &authority,
+            &device_id,
+            &candidate,
+        )?;
         let key_package_id = candidate.key_package_id.clone();
-        let consumer_device_id = device_id.to_string();
         let consume = crate::transport::auth::with_endpoint_clients(
             &base_url,
             session_credential.clone(),
             None,
-            |clients| async move {
-                clients
-                    .mls()
-                    .consume_key_package(&candidate_for_consume, &consumer_device_id)
-                    .await
-            },
+            |clients| async move { clients.mls().consume_key_package(&consume_request).await },
         )
         .await
         .map_err(|error| error.display())?;
-        if !consume.failures.is_empty()
-            || !consume
-                .consumed
-                .iter()
-                .any(|keypackage_ref| keypackage_ref == &key_package_id)
+        if consume
+            .consume_receipt
+            .recipient_durable_receipt
+            .key_package_ref
+            .as_str()
+            != key_package_id
         {
             return Err(format!(
-                "MLS KeyPackage consume did not confirm {}: {:?}",
-                key_package_id, consume.failures
+                "MLS KeyPackage consume did not confirm {key_package_id}"
             ));
         }
     }

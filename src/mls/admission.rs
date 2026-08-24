@@ -165,8 +165,8 @@ fn build_add_proposal_event(
             .map_err(|error| format!("invalid MLS proposal group id: {error}"))?,
         base_epoch: proposal.epoch,
         proposal_type: arkret_sdk::MlsProposalType::Add,
-        proposal_message_ref: None,
-        proposal_digest: Some(proposal.proposal_digest.clone()),
+        proposal_bytes_b64: proposal.proposal.clone(),
+        proposal_digest: proposal.proposal_digest.clone(),
         target_principal_id: Some(claim.principal_id.clone()),
         target_device_id,
         target_authorization_incarnation: Some(target_authorization_incarnation),
@@ -475,30 +475,9 @@ fn validate_claim_receipt_for_admission(
     if receipt.request.mls_group_id.as_str() != expected_group {
         return Err("KeyPackage claim receipt MLS group does not match local state".to_owned());
     }
-    if !receipt.request.target_device_ids.is_empty()
-        && claim
-            .device_id
-            .as_ref()
-            .is_none_or(|device_id| !receipt.request.target_device_ids.contains(device_id))
-    {
-        return Err("KeyPackage claim did not satisfy the exact target device selector".to_owned());
-    }
-    match (
-        &receipt.request.target_agent_id,
-        &receipt.request.target_agent_verification_method,
-        &receipt.request.target_agent_key_authorize_event_id,
-    ) {
-        (None, None, None) => {}
-        (Some(agent_id), Some(method), Some(authorize_event_id))
-            if claim.agent_id.as_ref() == Some(agent_id)
-                && claim.agent_verification_method.as_ref() == Some(method)
-                && claim.agent_key_authorize_event_id.as_ref() == Some(authorize_event_id) => {}
-        _ => {
-            return Err(
-                "KeyPackage claim did not satisfy the exact Native Agent selector".to_owned(),
-            );
-        }
-    }
+    arkret_sdk::validate_target_claim_evidence(claim, receipt).map_err(|error| {
+        format!("KeyPackage claim did not satisfy its exact target selector: {error}")
+    })?;
     Ok(())
 }
 
@@ -549,51 +528,181 @@ pub(crate) fn build_mls_welcome_payload(
     claim_nonce: &str,
     claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
 ) -> Result<arkret_sdk::MlsWelcomePayload, String> {
+    build_mls_welcome_payload_with_requester(
+        realm_id,
+        WelcomeRequester::Device {
+            actor_id,
+            sender_device_id,
+            requester_device_authorize_event_id,
+        },
+        claim,
+        _key_package_id,
+        welcome,
+        commit_event_id,
+        governance_binding,
+        claim_nonce,
+        claim_receipt,
+    )
+}
+
+/// Build the same canonical Welcome payload for a pairwise requester. The
+/// caller supplies the exact persisted MLS identity that owns the did:key;
+/// transport session identity is deliberately outside this authoring API.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_pairwise_mls_welcome_payload(
+    realm_id: &str,
+    requester_identity: &arkret_sdk::ArkretMlsIdentity,
+    claim: &arkret_sdk::KeyPackageClaimRecord,
+    key_package_id: &str,
+    welcome: &arkret_sdk::MlsWelcomeEnvelope,
+    commit_event_id: &arkret_sdk::EventId,
+    governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+    claim_nonce: &str,
+    claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
+) -> Result<arkret_sdk::MlsWelcomePayload, String> {
+    build_mls_welcome_payload_with_requester(
+        realm_id,
+        WelcomeRequester::MinimalMetadataPairwise(requester_identity),
+        claim,
+        key_package_id,
+        welcome,
+        commit_event_id,
+        governance_binding,
+        claim_nonce,
+        claim_receipt,
+    )
+}
+
+enum WelcomeRequester<'a> {
+    Device {
+        actor_id: &'a str,
+        sender_device_id: &'a str,
+        requester_device_authorize_event_id: &'a arkret_sdk::EventId,
+    },
+    MinimalMetadataPairwise(&'a arkret_sdk::ArkretMlsIdentity),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_mls_welcome_payload_with_requester(
+    realm_id: &str,
+    requester: WelcomeRequester<'_>,
+    claim: &arkret_sdk::KeyPackageClaimRecord,
+    _key_package_id: &str,
+    welcome: &arkret_sdk::MlsWelcomeEnvelope,
+    commit_event_id: &arkret_sdk::EventId,
+    governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
+    claim_nonce: &str,
+    claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
+) -> Result<arkret_sdk::MlsWelcomePayload, String> {
     let intended_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS Welcome Realm id: {err:?}"))?;
-    let requester_did = crate::mls_api_helpers::principal_core_id(actor_id)
-        .map_err(|err| format!("invalid MLS Welcome requester principal core id: {err:?}"))?;
-    let sender_device_id = arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
-        .map_err(|err| format!("invalid MLS Welcome sender device id: {err:?}"))?;
+    let (requester_did, sender_device_id, trust_binding, pairwise_identity) = match requester {
+        WelcomeRequester::Device {
+            actor_id,
+            sender_device_id,
+            requester_device_authorize_event_id,
+        } => {
+            let requester_did =
+                crate::mls_api_helpers::principal_core_id(actor_id).map_err(|err| {
+                    format!("invalid MLS Welcome requester principal core id: {err:?}")
+                })?;
+            let sender_device_id = arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
+                .map_err(|err| format!("invalid MLS Welcome sender device id: {err:?}"))?;
+            (
+                requester_did,
+                Some(sender_device_id.clone()),
+                arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
+                    requester_device_id: sender_device_id,
+                    requester_device_authorize_event_id: requester_device_authorize_event_id
+                        .clone(),
+                },
+                None,
+            )
+        }
+        WelcomeRequester::MinimalMetadataPairwise(identity) => {
+            let arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise {
+                pairwise_actor_id,
+                pairwise_verification_method,
+            } = identity.endpoint_identity()
+            else {
+                return Err(
+                    "pairwise Welcome requester requires a pairwise MLS identity".to_owned(),
+                );
+            };
+            (
+                pairwise_actor_id,
+                None,
+                arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise {
+                    requester_pairwise_verification_method: pairwise_verification_method,
+                },
+                Some(identity),
+            )
+        }
+    };
+    let keypackage_bytes = arkret_sdk::base64url_decode(claim.keypackage.as_bytes())
+        .map_err(|err| format!("invalid claimed KeyPackage bytes: {err}"))?;
+    let keypackage_digest =
+        arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&keypackage_bytes))
+            .map_err(|err| format!("invalid claimed KeyPackage digest: {err}"))?;
+    let capabilities_bytes = arkret_sdk::canonical::canonical_json_bytes(&claim.capabilities)
+        .map_err(|err| format!("invalid claimed KeyPackage capabilities: {err}"))?;
+    let capabilities_digest =
+        arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&capabilities_bytes))
+            .map_err(|err| format!("invalid claimed KeyPackage capabilities digest: {err}"))?;
     let envelope = arkret_sdk::UnsignedMlsWelcomeClaimEnvelope::new(
         arkret_sdk::MlsWelcomeClaimEnvelopeSigningInput {
             keypackage_ref: claim.keypackage_ref.clone(),
-            keypackage_digest: claim.keypackage_digest.clone(),
+            keypackage_digest: keypackage_digest.clone(),
             intended_realm_id,
             claim_id: arkret_sdk::NonEmptyString::new(claim.claim_id.clone())
                 .map_err(|err| format!("invalid MLS Welcome claim id: {err}"))?,
             requester_actor_id: requester_did,
-            trust_binding: arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
-                requester_device_id: sender_device_id.clone(),
-                requester_device_authorize_event_id: requester_device_authorize_event_id.clone(),
-            },
+            trust_binding,
             nonce: arkret_sdk::NonEmptyString::new(claim_nonce.trim())
                 .map_err(|err| format!("invalid MLS Welcome claim nonce: {err}"))?,
             welcome_digest: welcome.welcome_hash.clone(),
             created_at: crate::clock::now_utc_canonical(),
         },
     );
-    let envelope = sign_welcome_claim_envelope(actor_id, sender_device_id.as_str(), envelope)?;
+    let envelope = if let Some(identity) = pairwise_identity {
+        identity
+            .sign_pairwise_welcome_claim_envelope(envelope)
+            .map_err(|error| format!("MLS Welcome pairwise requester signature: {error}"))?
+    } else {
+        let sender_device_id = sender_device_id
+            .as_ref()
+            .expect("device requester always carries its device id");
+        sign_welcome_claim_envelope(
+            envelope.signing_input().requester_actor_id.as_str(),
+            sender_device_id.as_str(),
+            envelope,
+        )?
+    };
     let claim_trust_binding = match (
         claim.device_authorize_event_id.as_ref(),
         claim.agent_key_authorize_event_id.as_ref(),
+        claim.pairwise_verification_method.as_ref(),
     ) {
-        (Some(event_id), None) => arkret_sdk::MlsClaimTrustBinding::DeviceAuthorizeEventId(
+        (Some(event_id), None, None) => arkret_sdk::MlsClaimTrustBinding::DeviceAuthorizeEventId(
             arkret_sdk::NonEmptyString::new(event_id.as_str())
                 .map_err(|err| format!("invalid device authorization event id: {err}"))?,
         ),
-        (None, Some(event_id)) => arkret_sdk::MlsClaimTrustBinding::AgentKeyAuthorizeEventId(
+        (None, Some(event_id), None) => arkret_sdk::MlsClaimTrustBinding::AgentKeyAuthorizeEventId(
             arkret_sdk::NonEmptyString::new(event_id.as_str())
                 .map_err(|err| format!("invalid Agent key authorization event id: {err}"))?,
         ),
+        (None, None, Some(method)) => arkret_sdk::MlsClaimTrustBinding::MinimalMetadataPairwise {
+            pairwise_actor_id: claim.principal_id.clone(),
+            pairwise_verification_method: method.clone(),
+        },
         _ => return Err("MLS KeyPackage claim must contain exactly one trust binding".to_owned()),
     };
     let claim_ref = arkret_sdk::MlsWelcomePayloadClaimRef {
         claim_id: arkret_sdk::NonEmptyString::new(claim.claim_id.clone())
             .map_err(|err| format!("invalid MLS Welcome claim id: {err}"))?,
         keypackage_ref: claim.keypackage_ref.clone(),
-        keypackage_digest: claim.keypackage_digest.clone(),
-        capabilities_digest: claim.capabilities_digest.clone(),
+        keypackage_digest,
+        capabilities_digest,
         trust_binding: claim_trust_binding,
     };
     let expires_at =
@@ -615,6 +724,13 @@ pub(crate) fn build_mls_welcome_payload(
                 agent_key_authorize_event_id: authorize_event_id.clone(),
             }
         }
+        (None, None, None, None) => arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+            recipient_pairwise_actor_id: claim.principal_id.clone(),
+            recipient_pairwise_verification_method: claim
+                .pairwise_verification_method
+                .clone()
+                .ok_or_else(|| "pairwise KeyPackage claim omits its method".to_owned())?,
+        },
         _ => return Err("MLS KeyPackage claim has an invalid recipient branch".to_owned()),
     };
     let expected_endpoint = match &recipient {
@@ -634,21 +750,36 @@ pub(crate) fn build_mls_welcome_payload(
             agent_key_authorize_event_id.clone(),
         )
         .map_err(|error| format!("invalid Native Agent Welcome endpoint: {error}"))?,
+        arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+            recipient_pairwise_actor_id,
+            recipient_pairwise_verification_method,
+        } => arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+            recipient_pairwise_actor_id.clone(),
+            recipient_pairwise_verification_method.clone(),
+        )
+        .map_err(|error| format!("invalid pairwise Welcome endpoint: {error}"))?,
     };
     if welcome.recipient != expected_endpoint {
         return Err(
             "MLS Welcome recipient differs from the admitted KeyPackage endpoint".to_owned(),
         );
     }
+    let recipient_principal_id = if matches!(
+        &recipient,
+        arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise { .. }
+    ) {
+        None
+    } else {
+        Some(claim.principal_id.clone())
+    };
     let payload = arkret_sdk::MlsWelcomePayload {
         mls_group_id: arkret_sdk::MlsGroupId::new(welcome.group_id.clone())
             .map_err(|err| format!("invalid MLS Welcome group id: {err}"))?,
         epoch: welcome.epoch,
-        recipient_principal_id: claim.principal_id.clone(),
+        recipient_principal_id,
         recipient,
-        sender_device_id: Some(sender_device_id),
+        sender_device_id,
         keypackage_ref: claim.keypackage_ref.clone(),
-        keypackage_digest: claim.keypackage_digest.clone(),
         claim_id: arkret_sdk::NonEmptyString::new(claim.claim_id.clone())
             .map_err(|err| format!("invalid MLS Welcome claim id: {err}"))?,
         claim_ref,
@@ -663,7 +794,7 @@ pub(crate) fn build_mls_welcome_payload(
             ),
         )
         .map_err(str::to_owned)?,
-        commit_ref: Some(commit_event_id.clone()),
+        commit_ref: commit_event_id.clone(),
         governance_binding,
         expires_at,
     };
@@ -727,25 +858,18 @@ mod tests {
         arkret_sdk::KeyPackageClaimRecord {
             claim_id: "keypackage-test:Y2xhaW0tbm9uY2U".to_owned(),
             keypackage_ref: record.keypackage_ref.as_str().to_owned(),
-            keypackage_digest: record.keypackage_ref.clone(),
             principal_id: principal_id.clone(),
             device_id: Some(device_id),
             agent_id: None,
             agent_verification_method: None,
+            pairwise_verification_method: None,
             keypackage: record.keypackage.clone(),
             capabilities: record.capabilities.clone(),
-            capabilities_digest: record.keypackage_ref.clone(),
             device_authorize_event_id: Some(
                 arkret_sdk::EventId::new(device_authorize_event_id.to_owned()).unwrap(),
             ),
             agent_key_authorize_event_id: None,
             expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
-            device_signature: arkret_sdk::KeyOperationSignature {
-                kid: arkret_sdk::NonEmptyString::new(format!("{}#device", principal_id.as_str()))
-                    .unwrap(),
-                signature_algorithm: Some(arkret_sdk::NonEmptyString::new("Ed25519").unwrap()),
-                sig: arkret_sdk::Base64UrlString::new("c2ln").unwrap(),
-            },
             revocation_status: None,
             last_resort: None,
         }
@@ -780,7 +904,7 @@ mod tests {
             target_agent_id: None,
             target_agent_verification_method: None,
             target_agent_key_authorize_event_id: None,
-            minimal_metadata_allowed: Some(true),
+            target_pairwise_verification_method: None,
             timeout_ms: None,
             strand_id: None,
             pair_key: None,

@@ -488,12 +488,6 @@ mod personal_agent_tests {
         let controller_did = arkret_sdk::DidFullId::new(controller.to_owned()).unwrap();
         let agent_actor_id = arkret_sdk::project_full_id_to_core_id(&agent_did).unwrap();
         let controller_actor_id = arkret_sdk::project_full_id_to_core_id(&controller_did).unwrap();
-        let scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
-            &agent_actor_id,
-            &controller_actor_id,
-            &scope,
-        )
-        .unwrap();
         let created_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
             crate::clock::now_utc().timestamp_millis(),
         )
@@ -508,7 +502,6 @@ mod personal_agent_tests {
             "pairing_code": "12345678",
             "pairing_expires_at": expires_at,
             "requested_scope": scope,
-            "requested_scope_digest": scope_digest,
         }))
         .unwrap();
         let pairing_request_id = arkret_wire::OpaqueLocalId::new(
@@ -690,7 +683,6 @@ mod personal_agent_tests {
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000123Z",
             "requested_scope": key_state.requested_scope,
-            "requested_scope_digest": format!("sha256:{}", "0".repeat(64)),
         });
         assert!(serde_json::from_value::<arkret_sdk::KeyState>(noncanonical_key_state).is_err());
     }
@@ -735,7 +727,6 @@ mod personal_agent_tests {
             "pairing_code": "12345678",
             "pairing_expires_at": "2026-07-06T00:15:00.000Z",
             "requested_scope": scope,
-            "requested_scope_digest": format!("sha256:{}", "0".repeat(64)),
             "active_authorizations": [{
                 "key_id": verification_method,
                 "verification_method": verification_method,

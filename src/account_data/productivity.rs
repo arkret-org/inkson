@@ -34,9 +34,6 @@ pub fn validate_scheduled_send_value(value: &arkret_sdk::ScheduledSendValue) -> 
         .map_err(|error| anyhow::anyhow!("send_at is not canonical: {error:?}"))?;
     arkret_sdk::Hlc::new(value.updated_hlc.clone())?;
     validate_message_payload_omits_event_identity(&value.message_payload)?;
-    value
-        .validate_digest()
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     Ok(())
 }
 
@@ -50,8 +47,6 @@ pub fn build_scheduled_send_value(
         scheduled_send_id: arkret_identifiers::ScheduledSendId::new(scheduled_send_id.to_owned())
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         send_at: send_at.to_owned(),
-        message_payload_digest: arkret_sdk::scheduled_send_message_payload_digest(&message_payload)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         message_payload,
         updated_hlc: updated_hlc.to_owned(),
     };

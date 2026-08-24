@@ -30,7 +30,9 @@ use std::collections::BTreeSet;
 use arkret_models_collaboration::account_lifecycle::AppletRevokeRequestBody;
 use arkret_models_integration::{
     AppletActorPolicy, AppletApprovalRequest, AppletBotMembership, AppletGhostActorMode,
-    AppletInstallPlan, AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletPackage,
+    AppletInstallAuthorRequestBody, AppletInstallAuthoringRequestBasis, AppletInstallPlan,
+    AppletInstallPreviewOutcome, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
+    AppletPackage, AppletRegistrationEpochEvidence,
 };
 use arkret_wire::{AppletRevokeMode, ScopeRef, event_kind_str};
 use dioxus::prelude::*;
@@ -44,13 +46,25 @@ use crate::ui::dialog::Dialog;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
-/// Parse an inline package into the SDK's closed `AppletPackage` wire type.
-/// The v1 install surface accepts a complete signed package, not a manifest URL.
-pub fn applet_package_from_manifest(kind: &ManifestInputKind) -> Option<arkret_sdk::AppletPackage> {
-    match kind {
-        ManifestInputKind::Json(raw) => serde_json::from_str(raw).ok(),
-        ManifestInputKind::Url(_) | ManifestInputKind::Invalid => None,
+/// Parse the exact install material envelope: a closed AppletPackage plus its
+/// install-time registration-epoch evidence sibling.
+pub fn applet_install_material_from_manifest(
+    kind: &ManifestInputKind,
+) -> Option<(AppletPackage, AppletRegistrationEpochEvidence)> {
+    let ManifestInputKind::Json(raw) = kind else {
+        return None;
+    };
+    let value = serde_json::from_str::<Value>(raw).ok()?;
+    let object = value.as_object()?;
+    if object.len() != 2
+        || !object.contains_key("applet_package")
+        || !object.contains_key("registration_epoch_evidence")
+    {
+        return None;
     }
+    let package = serde_json::from_value(object["applet_package"].clone()).ok()?;
+    let evidence = serde_json::from_value(object["registration_epoch_evidence"].clone()).ok()?;
+    Some((package, evidence))
 }
 
 /// The effective-scope object an install/revoke targets. A blank `circle_id`
@@ -103,8 +117,7 @@ pub fn parse_applet_approval_actions(raw: &str) -> Vec<String> {
 #[derive(Clone)]
 struct AppletInstallPreviewSnapshot {
     package: AppletPackage,
-    effective_scope: ScopeRef,
-    plan: AppletInstallPlan,
+    preview: AppletInstallPreviewOutcome,
 }
 
 fn approved_actions_from_plan(
@@ -185,54 +198,55 @@ fn applet_install_resource(scope: &ScopeRef) -> anyhow::Result<arkret_sdk::WireR
 }
 
 fn build_formal_applet_install_events(
-    snapshot: &AppletInstallPreviewSnapshot,
+    package: &AppletPackage,
+    registration_epoch_evidence: &AppletRegistrationEpochEvidence,
+    effective_scope: &ScopeRef,
+    approved_actions: &[String],
     actor_id: &str,
+    target_principal_server_id: &arkret_sdk::DidCoreId,
+    created_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<(
     crate::operation::LocalOperation,
     Vec<crate::operation::LocalOperation>,
 )> {
     let actor = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|error| anyhow::anyhow!("invalid install actor DID: {error}"))?;
-    if snapshot.plan.effective_scope != snapshot.effective_scope {
-        anyhow::bail!("preview effective_scope no longer matches the install target");
-    }
-    let registration_submission = match snapshot.plan.events_to_submit.as_slice() {
-        [submission]
-            if submission.event_kind == arkret_sdk::EventKind::AppletRegistration.as_str() =>
-        {
-            submission
-        }
-        _ => anyhow::bail!("preview must contain exactly one Applet registration payload"),
-    };
-    let registration_payload =
-        serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(Value::Object(
-            registration_submission
-                .payload
-                .clone()
-                .into_iter()
-                .collect(),
-        ))?;
+    package.validate_with_epoch_evidence(registration_epoch_evidence)?;
+    let registration_payload = serde_json::from_value::<arkret_sdk::AppletRegistrationPayload>(
+        serde_json::to_value(package.to_registration(registration_epoch_evidence)?)?,
+    )?;
     let registration = operation_builder_for_scope::<arkret_sdk::event_spec::AppletRegistration>(
-        &snapshot.effective_scope,
+        effective_scope,
         actor_id,
         registration_payload,
     )
+    .created_at(created_at)
     .build_sdk_event("inkson")?;
 
-    let actions = approved_actions_from_plan(&snapshot.plan, &snapshot.package)?;
-    let applet_id = arkret_sdk::AppletId::new(snapshot.package.applet_id.clone())
+    let requested = package
+        .requested_scopes
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let actions = approved_actions
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if actions.is_empty() || !actions.iter().all(|action| requested.contains(action)) {
+        anyhow::bail!("approved Applet actions must be a non-empty subset of requested_scopes");
+    }
+    let applet_id = arkret_sdk::AppletId::new(package.applet_id.clone())
         .map_err(|error| anyhow::anyhow!("Applet grant requires a typed applet_id: {error}"))?;
     let constraint = arkret_sdk::GrantConstraint::applet_authority(
         applet_id,
-        snapshot.package.service_id.clone(),
-        snapshot.package.registration_epoch.clone(),
+        package.service_id.clone(),
+        package.registration_epoch.clone(),
     );
-    let resource = applet_install_resource(&snapshot.effective_scope)?;
-    let realm_id = match &snapshot.effective_scope {
+    let resource = applet_install_resource(effective_scope)?;
+    let realm_id = match effective_scope {
         ScopeRef::Realm { realm_id } | ScopeRef::Circle { realm_id, .. } => realm_id.clone(),
         _ => unreachable!("validated Applet effective scope"),
     };
-    let issued_at = crate::clock::now_utc_millis();
     let registry_digest = arkret_sdk::current_capability_action_registry_digest()
         .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
     let mut grant_events = Vec::with_capacity(actions.len());
@@ -241,9 +255,9 @@ fn build_formal_applet_install_events(
             schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
             realm_id: Some(realm_id.clone()),
             issuer: actor.clone(),
-            subject: arkret_sdk::CapabilitySubject::CoreDid(snapshot.package.service_id.clone()),
-            subject_principal_server_id: Some(snapshot.package.service_id.clone()),
-            actions: vec![action],
+            subject: arkret_sdk::CapabilitySubject::CoreDid(package.service_id.clone()),
+            subject_principal_server_id: Some(target_principal_server_id.clone()),
+            actions: vec![action.to_owned()],
             resources: vec![resource.clone()],
             capability_action_registry_digest: Some(registry_digest.clone()),
             constraints: vec![constraint.clone()],
@@ -255,17 +269,16 @@ fn build_formal_applet_install_events(
                 controller_epoch_at_issuance: 0,
                 authority_generation: 0,
             }],
-            issued_at,
-            not_before: None,
-            expires_at: None,
+            issued_at: created_at,
         };
         let payload = arkret_sdk::CapabilityGrantPayload { grant };
         grant_events.push(
             operation_builder_for_scope::<arkret_sdk::event_spec::CapabilityGrant>(
-                &snapshot.effective_scope,
+                effective_scope,
                 actor_id,
                 payload,
             )
+            .created_at(created_at)
             .build_sdk_event("inkson")?,
         );
     }
@@ -581,9 +594,8 @@ pub fn AppletsPanel(
                             }
                             span { "allow Applet-managed Ghost Actors" }
                         }
-                        // Step 1 — preview: POST the manifest-derived package to
-                        // `applet_install_preview`, capturing the canonical
-                        // plan_digest the commit MUST echo back (P3 API).
+                        // Step 1 — author the administrator Events once, then ask
+                        // the Principal Server to sign the closed authoring request.
                         div { class: "actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
@@ -594,17 +606,22 @@ pub fn AppletsPanel(
                                     move |_| {
                                         let raw = install_manifest();
                                         let kind = classify_manifest_input(&raw);
-                                        let Some(package) = applet_package_from_manifest(&kind) else {
+                                        let Some((package, registration_epoch_evidence)) =
+                                            applet_install_material_from_manifest(&kind)
+                                        else {
                                             install_preview.set(None);
                                             install_status
-                                                .set("manifest must be a complete Applet package JSON body".to_owned());
+                                                .set("manifest must contain exactly applet_package and registration_epoch_evidence".to_owned());
                                             return;
                                         };
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         let api_token = token();
+                                        let actor_id = principal_id();
                                         let circle = install_circle_id();
-                                        let approve_actions = install_approve_actions();
+                                        let approve_actions = parse_applet_approval_actions(
+                                            &install_approve_actions(),
+                                        );
                                         let ghost_actor_mode = if install_ghost_actors_allowed() {
                                             AppletGhostActorMode::PolicyDeclared
                                         } else {
@@ -622,27 +639,131 @@ pub fn AppletsPanel(
                                                     return;
                                                 }
                                             };
-                                            let body = AppletInstallPreviewRequestBody {
-                                                applet_package: package.clone(),
-                                                effective_scope: effective_scope.clone(),
-                                                approval_request: approval_request(
-                                                    parse_applet_approval_actions(&approve_actions),
-                                                    ghost_actor_mode,
-                                                ),
+                                            let approval_request = approval_request(
+                                                approve_actions.clone(),
+                                                ghost_actor_mode.clone(),
+                                            );
+                                            let actor_policy = AppletActorPolicy {
+                                                bot_membership: Some(AppletBotMembership::Join),
+                                                ghost_actor_mode: Some(ghost_actor_mode),
                                             };
-                                            let result = with_authed_sdk_client(&base, api_token, |http| async move {
-                                                http.applet_install_preview(&body).await.map_err(anyhow::Error::from)
+                                            let requested_at = crate::clock::now_utc_millis();
+                                            let requested_expires_at = requested_at
+                                                + chrono::Duration::minutes(5);
+                                            let target_principal_server_id = match
+                                                crate::operation::authoring_principal_server_id()
+                                            {
+                                                Ok(value) => value,
+                                                Err(error) => {
+                                                    install_status.set(format!(
+                                                        "cannot bind install to Principal Server: {error}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
+                                            let install_actor_id = match
+                                                crate::mls_api_helpers::principal_core_id(&actor_id)
+                                            {
+                                                Ok(value) => value,
+                                                Err(error) => {
+                                                    install_status.set(format!(
+                                                        "invalid install actor DID: {error}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
+                                            let package_digest = match package.package_digest.clone() {
+                                                Some(value) => value,
+                                                None => {
+                                                    install_status.set(
+                                                        "Applet package has no signed package_digest".to_owned(),
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                            let authored_package = package.clone();
+                                            let authored_scope = effective_scope.clone();
+                                            let result = with_event_submitter(&base, api_token, |submitter| async move {
+                                                let (registration, grants) =
+                                                    build_formal_applet_install_events(
+                                                        &authored_package,
+                                                        &registration_epoch_evidence,
+                                                        &authored_scope,
+                                                        &approve_actions,
+                                                        actor_id.as_str(),
+                                                        &target_principal_server_id,
+                                                        requested_at,
+                                                    )?;
+                                                let mut events = Vec::with_capacity(1 + grants.len());
+                                                events.push(registration.into_intent());
+                                                events.extend(grants.into_iter().map(
+                                                    crate::operation::LocalOperation::into_intent,
+                                                ));
+                                                let mut events = submitter
+                                                    .author_independent_events(events)
+                                                    .await?
+                                                    .into_iter()
+                                                    .map(arkret_sdk::AuthoredEvent::into_event)
+                                                    .collect::<Vec<_>>();
+                                                let registration_event = events.remove(0);
+                                                let body = AppletInstallPreviewRequestBody {
+                                                    applet_package: authored_package.clone(),
+                                                    authoring_request_basis:
+                                                        AppletInstallAuthoringRequestBasis {
+                                                            schema: AppletInstallAuthoringRequestBasis::SCHEMA.to_owned(),
+                                                            target_principal_server_id,
+                                                            install_actor_id,
+                                                            applet_id: arkret_sdk::AppletInstallAppletId::AppletId(
+                                                                arkret_sdk::AppletId::new(
+                                                                    authored_package.applet_id.clone(),
+                                                                )?,
+                                                            ),
+                                                            service_id: authored_package.service_id.clone(),
+                                                            package_digest,
+                                                            effective_scope: authored_scope.clone(),
+                                                            approval_request,
+                                                            actor_policy: Some(actor_policy),
+                                                            e2ee_policy: None,
+                                                            widget_policy: None,
+                                                            requested_at,
+                                                            requested_expires_at,
+                                                            registration_event,
+                                                            capability_grant_events: events,
+                                                        },
+                                                };
+                                                let requested_basis = body.authoring_request_basis.clone();
+                                                let preview = submitter
+                                                    .http()
+                                                    .applet_install_preview(&body)
+                                                    .await
+                                                    .map_err(anyhow::Error::from)?;
+                                                Ok((preview, requested_basis))
                                             })
                                             .await;
                                             match result {
-                                                Ok(plan) => match approved_actions_from_plan(&plan, &package) {
-                                                    Ok(actions) if plan.effective_scope == effective_scope => {
-                                                        let scope_count = plan.approved_scopes.len();
-                                                        let digest = plan.plan_digest.to_string();
+                                                Ok((preview, requested_basis)) => match (|| {
+                                                    preview.authoring_request.validate_bindings()?;
+                                                    if arkret_sdk::canonical::canonical_json_bytes(
+                                                        &preview.authoring_request.basis,
+                                                    )? != arkret_sdk::canonical::canonical_json_bytes(
+                                                        &requested_basis,
+                                                    )? {
+                                                        anyhow::bail!(
+                                                            "preview changed the exact authoring request basis"
+                                                        );
+                                                    }
+                                                    approved_actions_from_plan(&preview.plan, &package)
+                                                })() {
+                                                    Ok(actions)
+                                                        if preview.plan.effective_scope == effective_scope
+                                                            && preview.authoring_request.basis.effective_scope
+                                                                == effective_scope =>
+                                                    {
+                                                        let scope_count = preview.plan.approved_scopes.len();
+                                                        let digest = preview.plan.plan_digest.to_string();
                                                         install_preview.set(Some(AppletInstallPreviewSnapshot {
                                                             package,
-                                                            effective_scope,
-                                                            plan,
+                                                            preview,
                                                         }));
                                                         install_status.set(format!(
                                                             "plan ready ({} scope(s), {} action(s)); digest {}",
@@ -675,9 +796,9 @@ pub fn AppletsPanel(
                                 },
                                 "Preview plan"
                             }
-                            // Step 2 — author caller-signed formal Events from
-                            // the exact preview snapshot, then commit them with
-                            // its plan_digest and an Idempotency-Key.
+                            // Step 2 — relay the exact Principal Server-signed
+                            // request to the Applet service, then commit the
+                            // returned co-signed managed-actor bundle unchanged.
                             Button {
                                 variant: if install_preview().is_some() { ButtonVariant::Primary } else { ButtonVariant::Secondary },
                                 disabled: install_preview().is_none(),
@@ -691,51 +812,45 @@ pub fn AppletsPanel(
                                         };
                                         let base = base.clone();
                                         let api_token = token();
-                                        let actor_id = principal_id();
-                                        let ghost_actor_mode = if install_ghost_actors_allowed() {
-                                            AppletGhostActorMode::PolicyDeclared
-                                        } else {
-                                            AppletGhostActorMode::Disallowed
-                                        };
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
-                                            let idem = crate::operation::uuid_v7();
-                                            let result = with_event_submitter(&base, api_token, |submitter| async move {
-                                                let (registration, grants) =
-                                                    build_formal_applet_install_events(
-                                                        &snapshot,
-                                                        actor_id.as_str(),
-                                                    )?;
-                                                let mut events = Vec::with_capacity(1 + grants.len());
-                                                events.push(registration.into_intent());
-                                                events.extend(
-                                                    grants.into_iter().map(
-                                                        crate::operation::LocalOperation::into_intent,
-                                                    ),
-                                                );
-                                                let mut events = submitter
-                                                    .author_independent_events(events)
-                                                    .await?
-                                                    .into_iter()
-                                                    .map(arkret_sdk::AuthoredEvent::into_event)
-                                                    .collect::<Vec<_>>();
-                                                let registration_event = events.remove(0);
+                                            let applet_url = match url::Url::parse(
+                                                &snapshot.package.base_url,
+                                            ) {
+                                                Ok(value) => value,
+                                                Err(error) => {
+                                                    install_status.set(format!(
+                                                        "invalid Applet service base_url: {error}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
+                                            let authoring_request =
+                                                snapshot.preview.authoring_request;
+                                            let idem = authoring_request
+                                                .authoring_request_id
+                                                .to_string();
+                                            let result = with_authed_sdk_client(&base, api_token, |http| async move {
+                                                let author_outcome = http
+                                                    .applet_install_author_at(
+                                                        &applet_url,
+                                                        &AppletInstallAuthorRequestBody {
+                                                            authoring_request:
+                                                                authoring_request.clone(),
+                                                        },
+                                                    )
+                                                    .await
+                                                    .map_err(anyhow::Error::from)?;
+                                                author_outcome
+                                                    .managed_actor_bundle
+                                                    .validate_bindings(&authoring_request)?;
                                                 let body = AppletInstallRequestBody {
-                                                    plan_digest: snapshot.plan.plan_digest.clone(),
                                                     applet_package: snapshot.package,
-                                                    effective_scope: snapshot.effective_scope,
-                                                    registration_event,
-                                                    capability_grant_events: events,
-                                                    actor_policy: Some(AppletActorPolicy {
-                                                        bot_membership: Some(AppletBotMembership::Join),
-                                                        ghost_actor_mode: Some(ghost_actor_mode),
-                                                    }),
-                                                    e2ee_policy: None,
-                                                    widget_policy: None,
+                                                    authoring_request,
+                                                    managed_actor_bundle:
+                                                        author_outcome.managed_actor_bundle,
                                                 };
-                                                submitter
-                                                    .http()
-                                                    .applet_install(&idem, &body)
+                                                http.applet_install(&idem, &body)
                                                     .await
                                                     .map_err(anyhow::Error::from)
                                             })
@@ -1048,19 +1163,21 @@ mod tests {
     // ── P3 install wizard helpers ───────────────────────────────
 
     use super::{
-        applet_effective_scope, applet_install_resource, applet_package_from_manifest,
+        applet_effective_scope, applet_install_material_from_manifest, applet_install_resource,
         parse_applet_approval_actions,
     };
 
     #[test]
-    fn applet_package_rejects_incomplete_json_and_url_kinds() {
+    fn applet_install_material_rejects_incomplete_json_and_url_kinds() {
         let json = super::ManifestInputKind::Json("{\"package_id\":\"package:demo\"}".to_owned());
-        assert!(applet_package_from_manifest(&json).is_none());
+        assert!(applet_install_material_from_manifest(&json).is_none());
 
         let url = super::ManifestInputKind::Url("https://x/manifest.json".to_owned());
-        assert!(applet_package_from_manifest(&url).is_none());
+        assert!(applet_install_material_from_manifest(&url).is_none());
 
-        assert!(applet_package_from_manifest(&super::ManifestInputKind::Invalid).is_none());
+        assert!(
+            applet_install_material_from_manifest(&super::ManifestInputKind::Invalid).is_none()
+        );
     }
 
     #[test]

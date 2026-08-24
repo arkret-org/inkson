@@ -349,9 +349,10 @@ async fn current_ordinary_human_endpoint_authorization(
         .ok_or_else(|| {
             anyhow::anyhow!("history request device is absent from the PCR projection")
         })?;
-    if device.device_status != arkret_sdk::DeviceStatus::Active
-        || device.authorized_generation_ref != generation.current_device_generation_ref
-        || device.device_authorize_event_id != requester_device_authorize_event_id
+    let attested = &device.device_projection_attestation.attestation;
+    if attested.device_status != arkret_sdk::DeviceStatus::Active
+        || attested.authorized_generation_ref != generation.current_device_generation_ref
+        || attested.device_authorize_event_id != requester_device_authorize_event_id
     {
         anyhow::bail!("history request device authorization is not the exact current PCR tuple");
     }

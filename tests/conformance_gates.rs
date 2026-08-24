@@ -381,8 +381,6 @@ fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
 /// key, it never selects a capability.
 fn test_auth_context() -> arkret_sdk::AuthContext {
     arkret_sdk::AuthContext {
-        actor_id: arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example")
-            .expect("test actor core is canonical"),
         // `key_id` is the bare verification-method fragment with the `ak:`
         // sigil dropped (the schema pattern forbids both `#` and the typed-ID
         // lexical space), which is what `data_event_key_id_for` produces from

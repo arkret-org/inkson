@@ -125,11 +125,6 @@ pub fn capability_grant_actions_with_resources(
     let realm_typed = arkret_sdk::RealmId::new(realm.clone())?;
     let actor_typed = crate::mls_api_helpers::principal_core_id(actor)?;
     let subject_typed = crate::mls_api_helpers::principal_core_id(subject)?;
-    let constraints_typed = if constraints.is_null() {
-        Vec::new()
-    } else {
-        serde_json::from_value::<Vec<arkret_sdk::GrantConstraint>>(constraints)?
-    };
     let carries_aggregate_admin = actions.iter().any(|action| {
         arkret_sdk::schema::embedded_capability_action(action)
             .ok()
@@ -143,6 +138,19 @@ pub fn capability_grant_actions_with_resources(
         .map(str::parse)
         .transpose()
         .map_err(|error| anyhow::anyhow!("invalid capability grant expires_at: {error}"))?;
+    let mut constraints_typed = if constraints.is_null() {
+        Vec::new()
+    } else {
+        serde_json::from_value::<Vec<arkret_sdk::GrantConstraint>>(constraints)?
+    };
+    if let Some(expires_at) = expires_at {
+        let mut temporal = arkret_sdk::GrantConstraint::new(
+            arkret_sdk::GrantConstraintKind::Temporal,
+            arkret_sdk::GrantConstraintEffect::Allow,
+        );
+        temporal.expires_at = Some(expires_at);
+        constraints_typed.push(temporal);
+    }
     let grant = arkret_sdk::CapabilityGrantCreateBody {
         schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
         realm_id: Some(realm_typed.clone()),
@@ -165,8 +173,6 @@ pub fn capability_grant_actions_with_resources(
             authority_generation: root_basis.authority_generation,
         }],
         issued_at: crate::clock::now_utc_millis(),
-        not_before: None,
-        expires_at,
     };
     let payload = arkret_sdk::CapabilityGrantPayload { grant };
     Ok(TypedOperationBuilder::new::<

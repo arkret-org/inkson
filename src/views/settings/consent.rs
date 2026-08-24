@@ -408,11 +408,9 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                     disabled: request_submit_disabled,
                                     onclick: {
                                         let base = base_url();
-                                        let me_did = me.clone();
                                         move |_| {
                                             let base = base.clone();
                                             let api_token = token();
-                                            let me_did = me_did.clone();
                                             let holder = request_holder().trim().to_owned();
                                             let scope = ui_scope_to_wire(&request_scope()).to_owned();
                                             if holder.is_empty() {
@@ -422,7 +420,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             write_status.set("requesting…".to_owned());
                                             spawn(async move {
                                                 match with_authed_sdk_client(&base, api_token, |http| async move {
-                                                    crate::transport::account::request_consent(&http, &holder, &me_did, &scope).await
+                                                    crate::transport::account::request_consent(&http, &holder, &scope).await
                                                 })
                                                 .await
                                                 {

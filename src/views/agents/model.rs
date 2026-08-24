@@ -478,14 +478,6 @@ pub fn build_requested_scope_disclosure_for_pairing(
         .strip_prefix("agent_pairing_request:")
         .ok_or_else(|| anyhow::anyhow!("agent pairing_request_id is invalid"))?;
     let requested_scope = key_state.requested_scope.clone();
-    let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
-        &agent_id,
-        &controller_actor_id,
-        &requested_scope,
-    )?;
-    if requested_scope_digest != key_state.requested_scope_digest {
-        anyhow::bail!("agent key_state requested_scope digest does not match its trusted scope");
-    }
     let verifier_did = arkret_sdk::DidFullId::new(service_full_id.trim().to_owned())?;
     let verifier_service_id = arkret_sdk::project_full_id_to_core_id(&verifier_did)?;
     if request.proof_of_possession.audience != verifier_service_id {
@@ -514,7 +506,6 @@ pub fn build_requested_scope_disclosure_for_pairing(
         agent_id,
         controller_id: controller_actor_id,
         requested_scope,
-        requested_scope_digest,
         verifier_service_id,
         audience: NonEmptyString::new(ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY)
             .map_err(anyhow::Error::msg)?,

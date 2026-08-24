@@ -470,7 +470,13 @@ async fn current_event_signer_matches_directory(
         .device_keys
         .get(&actor_id)
         .and_then(|devices| devices.get(&device_id))
-        .map(|record| record.device_signing_key.as_str())
+        .map(|record| {
+            record
+                .device_projection_attestation
+                .attestation
+                .device_signing_key
+                .as_str()
+        })
         == Some(expected_key.as_str());
     if !signer_matches {
         return Ok(false);
