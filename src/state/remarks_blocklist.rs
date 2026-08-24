@@ -442,7 +442,7 @@ mod tests {
                         .unwrap(),
                 }],
                 seal_predecessor_edges: Vec::new(),
-                event_descriptors: Vec::new(),
+                event_ids: Vec::new(),
             },
             page_digest: arkret_sdk::Hash::new(format!("sha256:{}", "33".repeat(32))).unwrap(),
         };

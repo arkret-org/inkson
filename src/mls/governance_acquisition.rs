@@ -144,9 +144,9 @@ pub(crate) async fn resolve_mls_governance_proof(
         .collect::<BTreeSet<_>>();
     let provenance_digests = bundle
         .proof_material
-        .event_descriptors
+        .event_ids
         .iter()
-        .map(|descriptor| descriptor.event_digest.clone())
+        .map(arkret_sdk::EventId::event_digest)
         .collect::<BTreeSet<_>>();
     let checkpoint_events = base_checkpoint
         .accepted_events

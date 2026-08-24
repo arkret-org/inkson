@@ -187,7 +187,7 @@ impl CircleErrorKind {
     /// that may be emitted directly as the envelope code.
     pub fn from_error_code(code: &str) -> Option<Self> {
         match arkret_sdk::ErrorCode::from_wire(code) {
-            arkret_sdk::ErrorCode::DeliveryBindingHandedOver => {
+            Some(arkret_sdk::ErrorCode::DeliveryBindingHandedOver) => {
                 Some(Self::DeliveryBindingHandedOver)
             }
             _ => None,

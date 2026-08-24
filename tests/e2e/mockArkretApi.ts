@@ -2237,12 +2237,10 @@ export async function mockArkretApi(
         const receiptEvents = [
           {
             event_id: createEvent.event_id,
-            event_digest: createDigest,
             kind: "ak.realm.create",
           },
           {
             event_id: authorizeEvent.event_id,
-            event_digest: authorizeDigest,
             kind: "ak.device.authorize",
           },
         ].sort((left, right) =>

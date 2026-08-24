@@ -260,7 +260,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         ],
     };
 
-    let coordinator_service_id = arkret_sdk::DidCoreId::new(submitter.service_id().await?)?;
     let proof_summary = verified_session
         .proof_summary
         .clone()
@@ -283,10 +282,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         proof_digest: proof_summary.proof_digest.clone(),
         previous_model_generation_ref: previous_device_generation,
         result_model_generation_ref: result_device_generation,
-        reanchor_unit: PreparedEventUnit::new(
-            coordinator_service_id,
-            serde_json::to_value(reanchor_submission)?,
-        )?,
+        reanchor_unit: PreparedEventUnit::new(digest_suite, reanchor_submission)?,
     };
     let create_request = RecoveryTransactionCreateRequest::new(
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?,

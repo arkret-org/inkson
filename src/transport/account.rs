@@ -405,7 +405,10 @@ async fn submit_contact_response(
         if returned_operation_id != operation_id {
             anyhow::bail!("Contact accept prepare changed operation_id");
         }
-        let signed_event = crate::transport::contacts::sign_prepared_contact_event(&event_draft)?;
+        let signed_event = crate::transport::contacts::sign_prepared_contact_event(
+            &event_draft,
+            arkret_wire::event_kind_str::CONTACT_ACCEPTED,
+        )?;
         let seal_context =
             crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event)
                 .await?;
@@ -459,7 +462,10 @@ async fn submit_contact_response(
         if returned_operation_id != operation_id {
             anyhow::bail!("Contact reject prepare changed operation_id");
         }
-        let signed_event = crate::transport::contacts::sign_prepared_contact_event(&event_draft)?;
+        let signed_event = crate::transport::contacts::sign_prepared_contact_event(
+            &event_draft,
+            arkret_wire::event_kind_str::CONTACT_REJECTED,
+        )?;
         let seal_context =
             crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event)
                 .await?;
@@ -1142,7 +1148,10 @@ pub async fn tombstone_contact(
     if returned_operation_id != operation_id {
         anyhow::bail!("Contact tombstone prepare changed operation_id");
     }
-    let signed_event = crate::transport::contacts::sign_prepared_contact_event(&event_draft)?;
+    let signed_event = crate::transport::contacts::sign_prepared_contact_event(
+        &event_draft,
+        arkret_wire::event_kind_str::CONTACT_TOMBSTONE,
+    )?;
     let seal_context =
         crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event).await?;
     let commit = ContactTombstoneRequestBody::Commit(ContactCommitRequestBody {

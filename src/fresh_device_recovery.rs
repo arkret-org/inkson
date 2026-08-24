@@ -361,13 +361,10 @@ pub struct SecurityRotationDraft {
 }
 
 impl SecurityRotationDraft {
-    pub fn into_create_request(
-        self,
-        coordinator_service_id: DidCoreId,
-    ) -> anyhow::Result<SecurityRotationTransactionCreateRequest> {
+    pub fn into_create_request(self) -> anyhow::Result<SecurityRotationTransactionCreateRequest> {
         let revoke_unit = PreparedEventUnit::new(
-            coordinator_service_id.clone(),
-            serde_json::to_value(&self.revoke_submission)?,
+            arkret_sdk::canonical::DigestSuite::Sha256,
+            self.revoke_submission,
         )?;
         let mut prepared = Vec::with_capacity(self.backup_rotations.len());
         for draft in self.backup_rotations {
@@ -396,8 +393,8 @@ impl SecurityRotationDraft {
                     serde_json::to_value(draft.new_backup_bodies)?,
                 )?,
                 active_series_unit: PreparedEventUnit::new(
-                    coordinator_service_id.clone(),
-                    serde_json::to_value(draft.active_series_submission)?,
+                    arkret_sdk::canonical::DigestSuite::Sha256,
+                    draft.active_series_submission,
                 )?,
             });
         }

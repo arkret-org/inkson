@@ -164,7 +164,6 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     }
     let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
-    let coordinator_service_id = DidFullId::new(submitter.service_id().await?)?;
     let list_payload = super::restore::fetch_mls_restore_payload(api, actor_id).await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
@@ -262,8 +261,6 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let transaction_id =
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?;
     let principal = crate::mls_api_helpers::principal_core_id(principal.as_str())?;
-    let coordinator_service_id =
-        crate::mls_api_helpers::principal_core_id(coordinator_service_id.as_str())?;
     let create = crate::fresh_device_recovery::SecurityRotationDraft {
         transaction_id: transaction_id.clone(),
         principal_id: principal,
@@ -272,7 +269,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         new_secret_commitment: prepared.new_secret_commitment.clone(),
         backup_rotations: drafts,
     }
-    .into_create_request(coordinator_service_id)?;
+    .into_create_request()?;
 
     let staged = Zeroizing::new(serde_json::to_vec(&StagedRotationSecret::from_rotation(
         &prepared.rotation,

@@ -671,7 +671,7 @@ pub(crate) fn seed_test_governance_proof(
                 seal_digest: root.clone(),
             }],
             seal_predecessor_edges: Vec::new(),
-            event_descriptors: Vec::new(),
+            event_ids: Vec::new(),
         },
         page_digest: root,
     };

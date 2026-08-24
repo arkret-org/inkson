@@ -135,8 +135,9 @@ fn prepared_contact_request(
 
 pub(crate) fn sign_prepared_contact_event(
     draft: &PreparedEventDraft,
+    expected_kind: &str,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
-    let mut event = draft.unsigned_event()?;
+    let mut event = draft.unsigned_event_for_kind(expected_kind)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Contact commit"))?;
     signer.sign_sdk_event_with_context(
@@ -212,7 +213,10 @@ impl crate::transport::TransportClient {
         if prepared_operation_id != operation_id {
             anyhow::bail!("Contact prepare changed operation_id");
         }
-        let signed_event = sign_prepared_contact_event(&event_draft)?;
+        let signed_event = sign_prepared_contact_event(
+            &event_draft,
+            arkret_wire::event_kind_str::CONTACT_REQUESTED,
+        )?;
         let seal_context = prepare_principal_successor_seal(&http, &signed_event).await?;
         let commit = ContactOperationRequestBody::Commit(ContactCommitRequestBody {
             phase: ContactCommitPhase::Commit,

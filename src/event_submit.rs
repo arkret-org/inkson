@@ -1664,10 +1664,6 @@ impl EventSubmitter {
             .await
     }
 
-    pub(crate) async fn service_id(&self) -> anyhow::Result<String> {
-        Ok(self.describe_cached().await?.service_id.to_string())
-    }
-
     async fn verify_origin_principal_server(&self, intent: &EventIntent) -> anyhow::Result<()> {
         let origin = self.describe_cached().await?.service_id.clone();
         if intent.principal_server_id() != &origin {
@@ -2940,7 +2936,7 @@ impl EventSubmitter {
             };
             submissions.push(submission);
         }
-        let body = arkret_sdk::EventsSubmitBatchRequestBody {
+        let body = arkret_wire::EventsSubmitBatchRequestBody {
             events: submissions,
         };
         let idem = idempotency_key
