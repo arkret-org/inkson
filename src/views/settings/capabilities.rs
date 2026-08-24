@@ -19,7 +19,7 @@
 //! - `authz/capabilities.md` §10.4 — subject-only relinquish.
 
 use arkret_models_collaboration::governance::grant_constraint::{
-    CapabilityGrant, CapabilitySubject, IssuerAuthorityRef,
+    CapabilityGrant, CapabilitySubject, GrantConstraintKind, IssuerAuthorityRef,
 };
 use dioxus::prelude::*;
 
@@ -74,7 +74,11 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
             }
         },
         expires_at: grant
-            .expires_at
+            .constraints
+            .iter()
+            .filter(|constraint| constraint.constraint_kind == GrantConstraintKind::Temporal)
+            .filter_map(|constraint| constraint.expires_at)
+            .min()
             .map(arkret_sdk::canonical::format_timestamp_canonical)
             .unwrap_or_default(),
         issuer_authority_refs: grant

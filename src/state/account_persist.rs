@@ -460,7 +460,7 @@ mod wasm_bootstrap {
         /// merged result so IndexedDB reflects any pre-init live writes.
         pub(crate) fn hydrate_active_account_state_from_secure_store(
             &mut self,
-            secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+            _secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         ) {
             self.ensure_cached_loaded();
             let effective_did = self.effective_account_key();

@@ -372,16 +372,18 @@ fn ingress_receipts(input: Value) -> Result<Value> {
         let received_at = authorization_lease.issued_at;
         let receipt_unix_ms = u64::try_from(received_at.timestamp_millis())
             .context("ingress receipt time predates the Unix epoch")?;
+        let qualified_ingress_id = arkret_wire::DidFullId::new("did:web:server.local".to_owned())
+            .context("construct ingress service full id")?;
         let mut receipt = arkret_wire::IngressReceipt {
             receipt_id: arkret_wire::ReceiptId::new_v7_at(receipt_unix_ms),
             event_digest: event_digest.clone(),
             authorization_lease_id: authorization_lease.authorization_lease_id.clone(),
+            qualified_ingress_id: qualified_ingress_id.clone(),
             received_at,
-            service_id: arkret_wire::project_full_id_to_core_id(
-                &arkret_wire::DidFullId::new("did:web:server.local".to_owned())
-                    .context("construct ingress service full id")?,
-            )
-            .context("project ingress service core id")?,
+            ingress_basis: authorization_lease.basis_ref.clone(),
+            ingress_frontier: vec![submission.event.event_id.clone()],
+            service_id: arkret_wire::project_full_id_to_core_id(&qualified_ingress_id)
+                .context("project ingress service core id")?,
             authority_set_ref: authorization_lease.authority_set_ref.clone(),
             proofs: Vec::new(),
         };
@@ -415,7 +417,11 @@ fn ingress_receipts(input: Value) -> Result<Value> {
             .validate_structural()
             .context("validate ingress receipt")?;
         receipt
-            .validate_against_lease(authorization_lease, &event_digest)
+            .validate_against_lease(
+                authorization_lease,
+                &event_digest,
+                &submission.event.event_id,
+            )
             .context("validate ingress receipt binding")?;
         receipts.push(receipt);
     }

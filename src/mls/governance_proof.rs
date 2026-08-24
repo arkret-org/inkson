@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_sdk::identity::{DidResolver, verification_method_did};
+use arkret_sdk::identity::DidResolver;
 use dioxus::prelude::{ReadableExt, WritableExt};
 
 pub(crate) fn bind_sidecar_scope(

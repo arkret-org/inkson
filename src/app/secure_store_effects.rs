@@ -34,7 +34,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
         let config_store_for_secure_upgrade = config_store;
         let base_url_for_secure_upgrade = base_url;
         let principal_id_for_secure_upgrade = principal_id;
-        let mut device_id_for_secure_upgrade = device_id;
+        let device_id_for_secure_upgrade = device_id;
         let mut state_store_for_secure_upgrade = state_store;
         let mut secure_store_ready_for_upgrade = secure_store_bootstrap_ready;
         let mut token_for_secure_upgrade = token;
