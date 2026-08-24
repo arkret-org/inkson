@@ -183,14 +183,23 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     };
                     let changed = {
                         let mut store = state_store.write();
-                        let Some(mut projection) =
-                            store.load().realm_tree_projections.get(&realm_id).cloned()
-                        else {
-                            return;
-                        };
-                        let Some(object) = projection.as_object_mut() else {
-                            return;
-                        };
+                        // A Realm created after this browser session booted can
+                        // already be visible in the directory/sidebar while
+                        // its sync-tree snapshot has not arrived yet. The
+                        // authoritative Strand read is sufficient to seed the
+                        // one derived field Chat needs; requiring a preexisting
+                        // projection leaves a valid deep link permanently
+                        // stuck on "Default Strand is unavailable".
+                        let mut projection = store
+                            .load()
+                            .realm_tree_projections
+                            .get(&realm_id)
+                            .cloned()
+                            .filter(Value::is_object)
+                            .unwrap_or_else(|| serde_json::json!({}));
+                        let object = projection
+                            .as_object_mut()
+                            .expect("fresh Realm projection is an object");
                         if object.get("default_strand_id").and_then(Value::as_str)
                             == Some(default_strand_id.as_str())
                         {

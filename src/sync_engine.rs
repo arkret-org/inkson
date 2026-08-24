@@ -60,6 +60,22 @@ use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStat
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::transport::TransportClient;
 
+/// Normalize an account-sync principal coordinate to its stable Core DID.
+///
+/// The account subscribe context carries the accepted Full DID while the
+/// account index is keyed by Core DID. Treating the Full DID as a Core DID
+/// makes every legitimate response look as if it belongs to a different
+/// account and discards the projection after login or reload.
+fn sync_principal_core_id(principal_id: &str) -> Option<arkret_sdk::DidCoreId> {
+    arkret_sdk::DidCoreId::new(principal_id.to_owned())
+        .ok()
+        .or_else(|| {
+            arkret_sdk::DidFullId::new(principal_id.to_owned())
+                .ok()
+                .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+        })
+}
+
 /// Connection-status label surfaced to the app shell's status signal.
 /// A pure sync-layer concept (no Dioxus state, no rendering); the app views
 /// consume it via the `crate::views::ConnectionState` re-export.
@@ -336,8 +352,8 @@ impl AccountStepCommitter for InksonAccountCommitter {
             // not publish a fake business update that remounts resources
             // and fans out viewer/backups/invites requests.
             self.ctx.state_store.write(|store| {
-                if arkret_sdk::DidCoreId::new(self.ctx.principal_id.clone())
-                    .is_ok_and(|principal_id| store.active_account_matches(&principal_id))
+                if sync_principal_core_id(&self.ctx.principal_id)
+                    .is_some_and(|principal_id| store.active_account_matches(&principal_id))
                 {
                     store.save_sync_cursor(cursor);
                 } else {
@@ -672,8 +688,8 @@ impl
                 Ok(invites) => {
                     let invite_notifications = invites.invites;
                     self.ctx.state_store.write(|store| {
-                        if !arkret_sdk::DidCoreId::new(self.ctx.principal_id.clone())
-                            .is_ok_and(|principal_id| store.active_account_matches(&principal_id))
+                        if !sync_principal_core_id(&self.ctx.principal_id)
+                            .is_some_and(|principal_id| store.active_account_matches(&principal_id))
                         {
                             tracing::warn!(
                                 response_principal = %self.ctx.principal_id,
@@ -2013,10 +2029,10 @@ pub fn apply_response(
     }
 
     state_store.write(|store| {
-        let response_principal = arkret_sdk::DidCoreId::new(principal_id.clone());
+        let response_principal = sync_principal_core_id(&principal_id);
         if !response_principal
             .as_ref()
-            .is_ok_and(|principal_id| store.active_account_matches(principal_id))
+            .is_some_and(|principal_id| store.active_account_matches(principal_id))
         {
             tracing::warn!(
                 response_principal = %principal_id,
@@ -3120,6 +3136,23 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    #[test]
+    fn account_sync_principal_accepts_core_and_full_did_coordinates() {
+        let full_id = arkret_sdk::DidFullId::new(
+            "did:webvh:QmXtc5b64aWwQfPjtwNmmqdZbnMCFzm8b6Qqdob9iKq1YA:soland.example:webvh:alice"
+                .to_owned(),
+        )
+        .unwrap();
+        let core_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+
+        assert_eq!(
+            sync_principal_core_id(core_id.as_str()),
+            Some(core_id.clone())
+        );
+        assert_eq!(sync_principal_core_id(full_id.as_str()), Some(core_id));
+        assert!(sync_principal_core_id("not-a-did").is_none());
+    }
 
     #[test]
     fn local_device_revocation_rotates_the_live_device_id() {

@@ -320,6 +320,33 @@ pub(super) async fn inject_test_session_grant(
     // persisting so connect() observes the grant and resumable registration in
     // the same account scope. SecureStoreEffects also selects this scope before
     // hydration so the durable snapshot is loaded from the correct namespace.
+    let configured_account = config_store
+        .read()
+        .load_with_secure_store(secure_store)
+        .active_account;
+    let Some(configured_account) = configured_account.filter(|account| {
+        account.full_id().as_str() == principal_full_id.as_str()
+            && account.device_id.as_str() == device_id
+            && account.server_url.as_str() == server_url
+    }) else {
+        tracing::warn!(
+            principal_id,
+            device_id,
+            server_url,
+            "test session injection skipped: active account config does not match fixture"
+        );
+        return None;
+    };
+    if let Err(error) = state_store
+        .write()
+        .switch_active_account(&configured_account)
+    {
+        tracing::warn!(
+            ?error,
+            "test session injection: account scope activation failed"
+        );
+        return None;
+    }
     if parsed
         .get("recovery_gate_verified")
         .and_then(Value::as_bool)
