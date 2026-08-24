@@ -1146,7 +1146,9 @@ pub fn build_action_reject_payload(
         reason: reason
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
+            .map(arkret_sdk::AuditReasonText::new)
+            .transpose()
+            .map_err(anyhow::Error::msg)?,
         rejected_at: chrono::DateTime::parse_from_rfc3339(rejected_at)?.with_timezone(&chrono::Utc),
     })
 }

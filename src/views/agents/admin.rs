@@ -213,7 +213,6 @@ mod directory_refresh_tests {
                     "ak:realm:AYzH43fmsgS6dn7noiHeYxAKUUdkhaJBnOGaWvu3MlBC",
                 )
                 .unwrap(),
-                status: None,
                 grant_digest: None,
                 expires_at: None,
             }],
@@ -772,7 +771,7 @@ fn spawn_set_agent_enabled(
                     realm_id: key_state.principal_control_realm_id.clone(),
                 },
                 key_state.controller_authorization_ref.clone(),
-                Some("controller_paused".to_owned()),
+                Some(arkret_sdk::AuditReasonText::new("controller_paused").unwrap()),
                 status_changed_at,
             )
         };
@@ -830,7 +829,7 @@ fn spawn_set_agent_enabled(
             } else {
                 let body = AgentPauseRequestBody {
                     reason: Some(
-                        arkret_sdk::NonEmptyString::new("controller_paused")
+                        arkret_sdk::AuditReasonText::new("controller_paused")
                             .map_err(anyhow::Error::msg)?,
                     ),
                     lifecycle_event,
@@ -927,7 +926,7 @@ fn spawn_deactivate_agent(
             return;
         }
 
-        let reason = "controller_deactivated".to_owned();
+        let reason = arkret_sdk::AuditReasonText::new("controller_deactivated").unwrap();
         let changed_at = crate::clock::now_utc_millis();
         let agent_actor_id = key_state.agent_id.clone();
         let controller_actor_id = key_state.controller_id.clone();
@@ -961,7 +960,7 @@ fn spawn_deactivate_agent(
                 .pop()
                 .ok_or_else(|| anyhow::anyhow!("deactivation lifecycle Event is missing"))?;
             let body = AgentDeactivateRequestBody {
-                reason: Some(arkret_sdk::NonEmptyString::new(reason).map_err(anyhow::Error::msg)?),
+                reason: Some(reason),
                 lifecycle_event,
             };
             submitter

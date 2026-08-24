@@ -29,10 +29,10 @@ use std::collections::BTreeSet;
 
 use arkret_models_collaboration::account_lifecycle::AppletRevokeRequestBody;
 use arkret_models_integration::{
-    AppletActorPolicy, AppletApprovalRequest, AppletBotMembership, AppletGhostActorMode,
-    AppletInstallAuthorRequestBody, AppletInstallAuthoringRequestBasis, AppletInstallPlan,
-    AppletInstallPreviewOutcome, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
-    AppletPackage, AppletRegistrationEpochEvidence,
+    AppletActorPolicy, AppletApprovalRequest, AppletGhostActorMode, AppletInstallAuthorRequestBody,
+    AppletInstallAuthoringRequestBasis, AppletInstallPlan, AppletInstallPreviewOutcome,
+    AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletPackage,
+    AppletRegistrationEpochEvidence,
 };
 use arkret_wire::{AppletRevokeMode, ScopeRef, event_kind_str};
 use dioxus::prelude::*;
@@ -46,25 +46,27 @@ use crate::ui::dialog::Dialog;
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
-/// Parse the exact install material envelope: a closed AppletPackage plus its
-/// install-time registration-epoch evidence sibling.
+/// Parse the standard preview request and obtain epoch evidence exclusively
+/// from its formal registration Event manifest.
 pub fn applet_install_material_from_manifest(
     kind: &ManifestInputKind,
 ) -> Option<(AppletPackage, AppletRegistrationEpochEvidence)> {
     let ManifestInputKind::Json(raw) = kind else {
         return None;
     };
-    let value = serde_json::from_str::<Value>(raw).ok()?;
-    let object = value.as_object()?;
-    if object.len() != 2
-        || !object.contains_key("applet_package")
-        || !object.contains_key("registration_epoch_evidence")
-    {
-        return None;
-    }
-    let package = serde_json::from_value(object["applet_package"].clone()).ok()?;
-    let evidence = serde_json::from_value(object["registration_epoch_evidence"].clone()).ok()?;
-    Some((package, evidence))
+    let preview = serde_json::from_str::<AppletInstallPreviewRequestBody>(raw).ok()?;
+    let registration: arkret_sdk::AppletRegistrationPayload = serde_json::from_value(
+        preview
+            .authoring_request_basis
+            .registration_event
+            .payload
+            .clone(),
+    )
+    .ok()?;
+    Some((
+        preview.applet_package,
+        registration.manifest.registration_epoch_evidence,
+    ))
 }
 
 /// The effective-scope object an install/revoke targets. A blank `circle_id`
@@ -608,7 +610,7 @@ pub fn AppletsPanel(
                                         else {
                                             install_preview.set(None);
                                             install_status
-                                                .set("manifest must contain exactly applet_package and registration_epoch_evidence".to_owned());
+                                                .set("input must be a closed AppletInstallPreviewRequestBody whose registration Event manifest carries registration_epoch_evidence".to_owned());
                                             return;
                                         };
                                         let base = base.clone();
@@ -641,7 +643,6 @@ pub fn AppletsPanel(
                                                 ghost_actor_mode.clone(),
                                             );
                                             let actor_policy = AppletActorPolicy {
-                                                bot_membership: Some(AppletBotMembership::Join),
                                                 ghost_actor_mode: Some(ghost_actor_mode),
                                             };
                                             let requested_at = crate::clock::now_utc_millis();
@@ -850,10 +851,6 @@ pub fn AppletsPanel(
                                             .await;
                                             match result {
                                                 Ok(outcome) => {
-                                                    // Surface the three-value effective_status
-                                                    // distinctly: a Rejected outcome is an orphan
-                                                    // registration (registration landed, no active
-                                                    // grant) and grants the applet nothing.
                                                     use arkret_models_integration::AppletInstallEffectiveStatus as Status;
                                                     let aid = short_protocol_id(&outcome.applet_id);
                                                     let line = match outcome.effective_status {
@@ -864,14 +861,11 @@ pub fn AppletsPanel(
                                                             "⚠ partially installed: applet_id {aid} — {} scope(s) rejected",
                                                             outcome.rejected.len(),
                                                         ),
-                                                        Status::Rejected => format!(
-                                                            "⛔ rejected (orphan registration — no active grant): applet_id {aid}"
-                                                        ),
                                                     };
                                                     let installed = matches!(outcome.effective_status, Status::Installed);
                                                     install_status.set(line);
-                                                    // Keep the form open on a rejected / partial
-                                                    // outcome so the admin can adjust and retry.
+                                                    // Keep the form open on a partial outcome so the
+                                                    // admin can adjust and retry denied scopes.
                                                     if installed {
                                                         install_open.set(false);
                                                         install_manifest.set(String::new());

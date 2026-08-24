@@ -2036,7 +2036,6 @@ mod tests {
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:assistant")
                 .unwrap(),
             provisioning_phase: arkret_sdk::PendingSidecarAccessReconciliationStage::MlsWelcome,
-            reason: arkret_sdk::NonEmptyString::new("native_sidecar_mls_welcome_pending").unwrap(),
             membership_frontier: None,
         }]);
         assert!(!session.membership_ready());
