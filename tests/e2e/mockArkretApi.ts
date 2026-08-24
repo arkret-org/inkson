@@ -2232,8 +2232,6 @@ export async function mockArkretApi(
         if (!identityCreation || !createEvent || !authorizeEvent || !descriptor) {
           return {};
         }
-        const createDigest = signedEventDigest(createEvent);
-        const authorizeDigest = signedEventDigest(authorizeEvent);
         const receiptEvents = [
           {
             event_id: createEvent.event_id,
@@ -2266,19 +2264,16 @@ export async function mockArkretApi(
               kind: "pcr_genesis_unit",
               principal_id: body.principal_id,
               realm_id: createEvent.realm_id,
-              create_digest: createDigest,
-              founding_authorize_digest: authorizeDigest,
+              did_version_id: identityCreation.control_proof.did_version_id,
+              log_head_digest: identityCreation.control_proof.log_head_digest,
+              control_key_digest:
+                identityCreation.control_proof.control_key_digest,
+              registration_evidence_digest: `sha256:${"4".repeat(64)}`,
               accepted_device_id: registrationDeviceId,
               device_key_digest: descriptor.device_key_digest,
               hpke_key_digest: descriptor.hpke_key_digest,
               accepted_at: createdAt,
               audience: identityCreation.control_proof.audience,
-            },
-            frontier: {
-              actor_seq: authorizeEvent.actor_seq,
-              event_id: authorizeEvent.event_id,
-              event_digest: authorizeDigest,
-              hlc: authorizeEvent.hlc,
             },
             events: receiptEvents,
             created_at: createdAt,
@@ -2286,7 +2281,7 @@ export async function mockArkretApi(
               {
                 kind: "detached_jws",
                 verification_method: `${receiptIssuer}#receipt`,
-                event_digest: authorizeDigest,
+                payload_digest: `sha256:${"5".repeat(64)}`,
                 created_at: createdAt,
                 jws: "e2e..pcr-genesis-receipt",
               },

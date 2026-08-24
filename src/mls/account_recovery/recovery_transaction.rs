@@ -309,7 +309,7 @@ fn exact_device_reanchor_payload(
 ) -> anyhow::Result<DeviceReanchorPayload> {
     let payload = DeviceReanchorPayload {
         principal_id: session.principal_authority.principal_id.clone(),
-        authority: session.principal_authority.clone(),
+        principal_server_id: session.principal_authority.principal_server_id.clone(),
         recovery_authority_kind: RecoveryAuthorityKind::PcrPolicy,
         recovery_policy_id: session.policy_id.clone(),
         recovery_policy_version: session.policy_version,
