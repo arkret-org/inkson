@@ -60,9 +60,9 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
     unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
     let input = arkret_sdk::keypackages_upload_signing_input(unsigned)?;
-    let sig = signer
-        .sign_raw(&input)
-        .map_err(|err| anyhow::anyhow!("keypackages/upload device_signature sign failed: {err}"))?;
+    let sig = signer.sign_raw(&input).map_err(|err| {
+        anyhow::anyhow!("keypackages/upload endpoint_signature sign failed: {err}")
+    })?;
     Ok(arkret_sdk::KeyOperationSignature {
         kid: arkret_sdk::NonEmptyString::new(signer.verification_method())
             .map_err(anyhow::Error::msg)?,
@@ -79,7 +79,7 @@ pub(crate) fn sign_keypackage_upload_batch(
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!(
-            "keypackages/upload device_signature requires an active event-signer (fail-closed)"
+            "keypackages/upload endpoint_signature requires an active event-signer (fail-closed)"
         )
     })?;
     sign_keypackage_upload_batch_with_signer(&signer, unsigned)
@@ -98,10 +98,7 @@ pub(crate) fn mls_key_package_record_upload_entry(
 }
 
 pub(crate) fn generate_mls_claim_request_id() -> anyhow::Result<String> {
-    let mut bytes = [0u8; 24];
-    getrandom::fill(&mut bytes)
-        .map_err(|err| anyhow::anyhow!("generate MLS KeyPackage claim request id: {err}"))?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
+    crate::random::base64url_token(24, "generate MLS KeyPackage claim request id")
 }
 
 pub(crate) fn keypackage_claim_record_to_mls_record(

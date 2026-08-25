@@ -252,14 +252,6 @@ impl LocalStateStore {
             })
     }
 
-    /// The effective `history_access` from the current projected facet
-    /// state, with materialized/create snapshots used only as fallbacks.
-    pub fn realm_history_access(&self, realm_id: &str) -> Option<String> {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id.trim())
-            .and_then(crate::realm_tree::realm_projection_history_access)
-    }
     /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
     /// realm-tree projection declare the
     /// `ak.profile.mls.minimal_metadata_realm.v1` profile? The committer uses

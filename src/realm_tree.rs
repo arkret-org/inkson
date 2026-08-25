@@ -288,64 +288,6 @@ fn projected_state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
         .chain(state_event_values(body))
 }
 
-fn normalized_history_access(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase())
-}
-
-/// Resolve the Realm's effective history-access projection without
-/// treating the immutable create snapshot as newer than its per-facet state.
-/// `state_after` is the timeline-end state, followed by the current `state`
-/// container. Materialized reducer fields are derived snapshots; the create
-/// event is only an initial-state fallback when no facet is projected.
-pub(crate) fn realm_projection_history_access(body: &Value) -> Option<String> {
-    let facet_value = projected_state_event_values(body)
-        .filter(|event| {
-            event
-                .get("kind")
-                .or_else(|| event.get("type"))
-                .and_then(Value::as_str)
-                == Some(event_kind_str::REALM_HISTORY_ACCESS)
-        })
-        .find_map(|event| {
-            normalized_history_access(event.pointer("/payload/to"))
-                .or_else(|| normalized_history_access(event.pointer("/content/to")))
-        });
-    if facet_value.is_some() {
-        return facet_value;
-    }
-
-    let null = Value::Null;
-    for container in [
-        body,
-        body.get("summary").unwrap_or(&null),
-        body.get("object").unwrap_or(&null),
-        body.get("realm").unwrap_or(&null),
-        body.get("metadata").unwrap_or(&null),
-    ] {
-        if let Some(value) = normalized_history_access(container.get("history_access")) {
-            return Some(value);
-        }
-    }
-
-    projected_state_event_values(body)
-        .filter(|event| {
-            event
-                .get("kind")
-                .or_else(|| event.get("type"))
-                .and_then(Value::as_str)
-                == Some(arkret_sdk::EventKind::RealmCreate.as_str())
-        })
-        .find_map(|event| {
-            normalized_history_access(event.pointer("/payload/object/history_access")).or_else(
-                || normalized_history_access(event.pointer("/content/object/history_access")),
-            )
-        })
-}
-
 /// Resolve the Realm's effective content scheme from the reducer-derived
 /// policy-components facet. `state_after` represents the timeline-end state
 /// and therefore precedes the current `state` container. Materialized fields
@@ -1155,43 +1097,6 @@ mod tests {
 
         assert_eq!(nodes[0].title, "Recovered title");
         assert_eq!(nodes[0].description.as_deref(), Some("Recovered summary"));
-    }
-
-    #[test]
-    fn history_access_prefers_current_facet_state_over_create_snapshot() {
-        let projection = json!({
-            "object": {"history_access": "all_history_for_current_members"},
-            "state": {"events": [
-                {
-                    "kind": "ak.realm.create",
-                    "payload": {"object": {"history_access": "all_history_for_current_members"}}
-                },
-                {
-                    "kind": "ak.realm.history_access",
-                    "payload": {"to": "since_join"}
-                }
-            ]}
-        });
-
-        assert_eq!(
-            realm_projection_history_access(&projection).as_deref(),
-            Some("since_join")
-        );
-    }
-
-    #[test]
-    fn history_access_falls_back_to_canonical_create_state() {
-        let projection = json!({
-            "state": {"events": [{
-                "kind": "ak.realm.create",
-                "payload": {"object": {"history_access": "since_join"}}
-            }]}
-        });
-
-        assert_eq!(
-            realm_projection_history_access(&projection).as_deref(),
-            Some("since_join")
-        );
     }
 
     #[test]

@@ -126,12 +126,6 @@ impl TransportClient {
         Self::new(self.base_url.as_str(), self.context)
     }
 
-    pub fn with_wait_for(mut self, cursor: impl Into<String>) -> anyhow::Result<Self> {
-        let cursor = cursor.into();
-        self.context.cursor = (!cursor.trim().is_empty()).then_some(cursor);
-        Self::new(self.base_url.as_str(), self.context)
-    }
-
     pub(crate) fn sdk_http_client(&self) -> anyhow::Result<arkret_sdk::http_client::Client> {
         Ok(self.http.clone())
     }

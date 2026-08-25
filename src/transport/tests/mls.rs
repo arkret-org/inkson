@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::mls_api_helpers;
 
 #[test]
-fn keypackage_upload_device_signature_is_raw_signature_tuple() {
+fn keypackage_upload_endpoint_signature_is_raw_signature_tuple() {
     let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
         [43u8; 32],
         "did:web:alice.example",

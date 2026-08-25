@@ -1,7 +1,7 @@
 //! Tests for authority- and device-scoped MLS secret management.
 
 use crate::mls::runtime::*;
-use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
+use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
 
 fn authority(principal_full_id: &str, server_id: &str) -> arkret_sdk::PrincipalAuthorityKey {
     let full_id = arkret_sdk::DidFullId::new(principal_full_id).unwrap();
@@ -37,7 +37,7 @@ fn snapshot_secret_load_does_not_create() {
     );
     let missing = load_device_snapshot_secret(&store, &authority, &device(1)).unwrap_err();
     assert!(matches!(missing, SecureKeyStoreError::NotFound));
-    assert!(store.is_empty());
+    assert!(store.list_secret_keys(None).unwrap().is_empty());
 }
 
 #[test]

@@ -42,7 +42,7 @@ async fn publish_mls_key_packages_fails_closed_without_active_signer() {
         .expect_err("MUST refuse to publish without an active event-signer");
     let msg = format!("{err}");
     assert!(
-        msg.contains("device_signature") && msg.contains("event-signer"),
+        msg.contains("endpoint_signature") && msg.contains("event-signer"),
         "error must name the missing signer, got: {msg}"
     );
 }

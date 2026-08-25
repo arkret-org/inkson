@@ -825,14 +825,6 @@ impl ResolveHandleView {
             })
     }
 
-    pub fn claim_audience(&self) -> Option<&str> {
-        self.audience.as_deref().or_else(|| {
-            self.handle_claim
-                .as_ref()
-                .and_then(|claim| claim.audience.as_deref())
-        })
-    }
-
     pub fn member_delivery_binding_ref(
         &self,
     ) -> Option<&arkret_models_identity::DeliveryBindingHint> {

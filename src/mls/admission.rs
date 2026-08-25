@@ -1166,7 +1166,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn welcome_device_signature_uses_active_device_signer() {
+    fn welcome_signature_uses_active_device_signer() {
         let active_signer = std::sync::Arc::new(crate::event_signer::build_ed25519_signer(
             [7u8; 32],
             "did:key:zActiveSigner",

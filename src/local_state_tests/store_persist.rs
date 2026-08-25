@@ -644,7 +644,6 @@ fn local_state_store_persists_push_registration_state() {
     let path = temp_state_path("push-registration");
     let mut store = LocalStateStore::with_path(path.clone());
     store.save_push_registration(PushRegistrationState {
-        schema_version: chime::PUSH_REGISTRATION_STATE_SCHEMA_VERSION,
         principal_id: None,
         registration_id: Some("push:local".to_owned()),
         device_id: "dev_inkson".to_owned(),
@@ -655,9 +654,7 @@ fn local_state_store_persists_push_registration_state() {
         push_key_preview: "desktop:<redacted,len=5>".to_owned(),
         registered_at: Some("2026-04-29T00:00:00.000Z".to_owned()),
         expires_at: None,
-        refresh_hint: None,
         last_success_at: Some("2026-04-29T00:00:00.000Z".to_owned()),
-        last_error: None,
     });
 
     let mut reader = LocalStateStore::with_path(path);

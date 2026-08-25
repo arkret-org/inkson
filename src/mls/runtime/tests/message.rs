@@ -4,7 +4,7 @@
 use serde_json::json;
 
 use crate::mls::runtime::*;
-use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStoreError};
+use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
 use crate::state::isolated_store_for_tests as temp_state_store;
 
 fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
@@ -989,7 +989,7 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
         error,
         MlsRuntimeError::DeviceSecret(SecureKeyStoreError::NotFound)
     ));
-    assert!(store.is_empty());
+    assert!(store.list_secret_keys(None).unwrap().is_empty());
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1133,7 +1133,7 @@ fn empty_welcome_set_reports_no_work() {
     assert_eq!(outcome.failed, 0);
     assert!(outcome.first_error.is_none());
     // No welcomes present => no secret was created either.
-    assert!(store.is_empty());
+    assert!(store.list_secret_keys(None).unwrap().is_empty());
 }
 
 #[test]

@@ -14,7 +14,6 @@ use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_P
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
-use serde::Serialize;
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
@@ -24,38 +23,17 @@ use crate::transport::TransportClient;
 
 pub const FILE_TRANSFER_PURPOSE: &str = "file_transfer";
 pub const FILE_TRANSFER_RECORD_KIND: &str = "file_transfer";
-pub const FILE_TRANSFER_RECORD_ENVELOPE_SCHEME: &str =
-    "org.arkret.inkson.file_transfer.account_data_envelope.v1";
 pub const FILE_TRANSFER_BLOB_SCHEME: &str = arkret_sdk::BLOB_SCHEME_WHOLE_FILE_AEAD_V1;
 pub const FILE_TRANSFER_RETENTION_DAYS: i64 = 7;
 
 const CONTENT_KEY_LEN: usize = 32;
 const XCHACHA_NONCE_LEN: usize = 24;
 const NAMESPACE_KEY_INFO: &[u8] = b"arkret-file-transfer-account-data-key-v1";
-const RECORD_WRAP_KEY_INFO: &[u8] = b"arkret-file-transfer-record-wrap-v1";
-
-#[derive(Serialize)]
-struct FileTransferRecordAad<'a> {
-    schema: &'static str,
-    purpose: &'static str,
-    transfer_key: &'a str,
-    actor_id: &'a str,
-}
-
-#[derive(Serialize)]
-struct FileTransferRecordEnvelope<'a> {
-    scheme: &'static str,
-    aead_profile: &'static str,
-    nonce: String,
-    aad: FileTransferRecordAad<'a>,
-    ciphertext: String,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTransferCryptoContext {
     account_data_secret: [u8; CONTENT_KEY_LEN],
     namespace_key: [u8; CONTENT_KEY_LEN],
-    record_wrap_key: [u8; CONTENT_KEY_LEN],
 }
 
 impl FileTransferCryptoContext {
@@ -65,7 +43,6 @@ impl FileTransferCryptoContext {
         Ok(Self {
             account_data_secret,
             namespace_key: derive_account_subkey(account_secret, NAMESPACE_KEY_INFO)?,
-            record_wrap_key: derive_account_subkey(account_secret, RECORD_WRAP_KEY_INFO)?,
         })
     }
 
@@ -479,40 +456,13 @@ fn seal_record_envelope(
     account_data_key: &str,
     actor_id: &str,
 ) -> anyhow::Result<Value> {
-    let mut nonce = [0u8; XCHACHA_NONCE_LEN];
-    getrandom::fill(&mut nonce)
-        .map_err(|error| anyhow::anyhow!("file-transfer record nonce rng: {error}"))?;
-    let aad = FileTransferRecordAad {
-        schema: SchemaId::FILE_TRANSFER_V1,
-        purpose: "file_transfer_record",
-        transfer_key: account_data_key,
-        actor_id,
-    };
-    let aad_bytes = crate::canonical::canonical_json_bytes(&aad)?;
-    let plaintext = crate::canonical::canonical_json_bytes(record)?;
-    let cipher = XChaCha20Poly1305::new((&crypto.record_wrap_key).into());
-    let ciphertext = cipher
-        .encrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: plaintext.as_slice(),
-                aad: &aad_bytes,
-            },
-        )
-        .map_err(|error| anyhow::anyhow!("file-transfer record seal failed: {error}"))?;
-    let inner_envelope = serde_json::to_value(FileTransferRecordEnvelope {
-        scheme: FILE_TRANSFER_RECORD_ENVELOPE_SCHEME,
-        aead_profile: AEAD_PROFILE_XCHACHA20_POLY1305_V1,
-        nonce: URL_SAFE_NO_PAD.encode(nonce),
-        aad,
-        ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
-    })?;
     let actor_core_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
+    let plaintext = serde_json::to_value(record)?;
     let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
         &crypto.account_data_secret,
         &actor_core_id,
         account_data_key,
-        &inner_envelope,
+        &plaintext,
     )?;
     serde_json::to_value(envelope)
         .map_err(|error| anyhow::anyhow!("file-transfer account-data envelope JSON: {error}"))
@@ -528,66 +478,18 @@ fn open_record_envelope(
             anyhow::anyhow!("file-transfer account-data outer envelope: {error}")
         })?;
     let actor_id = outer.aad.actor_id.clone();
-    let envelope = arkret_sdk::account_data_crypto::open_account_data_value(
+    let plaintext = arkret_sdk::account_data_crypto::open_account_data_value(
         &crypto.account_data_secret,
         &actor_id,
         account_data_key,
         &outer,
     )?;
-    if envelope.get("scheme").and_then(Value::as_str) != Some(FILE_TRANSFER_RECORD_ENVELOPE_SCHEME)
-    {
-        anyhow::bail!("file-transfer account-data envelope scheme mismatch");
-    }
-    if envelope.get("aead_profile").and_then(Value::as_str)
-        != Some(AEAD_PROFILE_XCHACHA20_POLY1305_V1)
-    {
-        anyhow::bail!("file-transfer account-data envelope AEAD mismatch");
-    }
-    let nonce = decode_fixed::<XCHACHA_NONCE_LEN>(required_str(&envelope, "nonce")?)?;
-    let ciphertext = URL_SAFE_NO_PAD
-        .decode(required_str(&envelope, "ciphertext")?)
-        .map_err(|error| anyhow::anyhow!("file-transfer record ciphertext base64: {error}"))?;
-    let aad = envelope
-        .get("aad")
-        .ok_or_else(|| anyhow::anyhow!("file-transfer record envelope aad missing"))?;
-    validate_record_envelope_aad(aad, account_data_key)?;
-    let aad_bytes = crate::canonical::canonical_json_bytes(aad)?;
-    let cipher = XChaCha20Poly1305::new((&crypto.record_wrap_key).into());
-    let plaintext = cipher
-        .decrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: ciphertext.as_slice(),
-                aad: &aad_bytes,
-            },
-        )
-        .map_err(|error| anyhow::anyhow!("file-transfer record open failed: {error}"))?;
-    let record: FileTransferRecord = serde_json::from_slice(&plaintext)
+    let record: FileTransferRecord = serde_json::from_value(plaintext)
         .map_err(|error| anyhow::anyhow!("file-transfer record JSON decode failed: {error}"))?;
     record
         .validate()
         .map_err(|error| anyhow::anyhow!("file-transfer record validation failed: {error}"))?;
     Ok(record)
-}
-
-fn validate_record_envelope_aad(aad: &Value, account_data_key: &str) -> anyhow::Result<()> {
-    if aad.get("schema").and_then(Value::as_str) != Some(SchemaId::FILE_TRANSFER_V1) {
-        anyhow::bail!("file-transfer record envelope AAD schema mismatch");
-    }
-    if aad.get("purpose").and_then(Value::as_str) != Some("file_transfer_record") {
-        anyhow::bail!("file-transfer record envelope AAD purpose mismatch");
-    }
-    if aad.get("transfer_key").and_then(Value::as_str) != Some(account_data_key) {
-        anyhow::bail!("file-transfer record envelope AAD transfer key mismatch");
-    }
-    if aad
-        .get("actor_id")
-        .and_then(Value::as_str)
-        .is_none_or(|actor| actor.trim().is_empty())
-    {
-        anyhow::bail!("file-transfer record envelope AAD actor_id missing");
-    }
-    Ok(())
 }
 
 fn record_account_key(
@@ -695,14 +597,6 @@ fn decode_fixed<const N: usize>(value: &str) -> anyhow::Result<[u8; N]> {
     let mut out = [0u8; N];
     out.copy_from_slice(&bytes);
     Ok(out)
-}
-
-fn required_str<'a>(value: &'a Value, field: &str) -> anyhow::Result<&'a str> {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("{field} is required"))
 }
 
 fn sanitize_filename(value: &str) -> Option<String> {
