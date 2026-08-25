@@ -50,7 +50,7 @@ where
 #[component]
 pub fn MlsUnlockPrompt(
     token: Signal<String>,
-    actor_id: Signal<String>,
+    actor_id: Signal<Option<arkret_sdk::DidCoreId>>,
     device_id: Signal<String>,
     needs_mls_unlock: Signal<bool>,
     restore_payload_cache: Signal<Option<serde_json::Value>>,
@@ -115,7 +115,7 @@ pub fn MlsUnlockPrompt(
         };
         let base = base_url();
         let session = token();
-        let actor = actor_id();
+        let actor = active_account.full_id().to_string();
         let device = device_id();
         let mut state_store = state_store;
         let needs_mls_unlock = needs_mls_unlock;
@@ -396,14 +396,14 @@ pub fn MlsUnlockPrompt(
 #[component]
 pub fn MlsRecoverySetupMissingBanner(
     mut needs_mls_recovery_setup: Signal<bool>,
-    actor_id: Signal<String>,
+    actor_id: Signal<Option<arkret_sdk::DidCoreId>>,
 ) -> Element {
     if !needs_mls_recovery_setup() {
         return rsx! {};
     }
 
     let actor = actor_id();
-    if !actor.trim().is_empty() {
+    if actor.is_some() {
         let Some(account) = crate::app::SessionContext::get().active_account() else {
             return rsx! {};
         };

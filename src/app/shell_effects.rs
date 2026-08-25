@@ -3,7 +3,7 @@ use super::*;
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct ShellEffectState {
     pub account_primary_handle: Signal<String>,
-    pub principal_id: Signal<String>,
+    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub token: Signal<String>,
     pub server_description: Signal<Option<ServiceDescribe>>,
     pub personal_handles: Signal<Vec<String>>,
@@ -51,7 +51,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     // Authority handoff's unsigned account_handle hint.
     use_effect(move || {
         let lookup_base_url = base_url();
-        let lookup_actor = principal_id();
+        let lookup_actor = crate::app::principal_id_owned(principal_id());
         let lookup_device = device_id();
         let lookup_token = token();
         let key = format!(
@@ -99,7 +99,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 return;
             };
             // Ignore a late response from the previous account.
-            if principal_id().trim() != actor.trim() {
+            if crate::app::principal_id_text(&principal_id()) != actor.trim() {
                 return;
             }
             let display_name = viewer
@@ -142,7 +142,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
 
     use_effect(move || {
         let handle = account_primary_handle();
-        let account = principal_id();
+        let account = crate::app::principal_id_owned(principal_id());
         if handle.trim().is_empty() || account.trim().is_empty() {
             return;
         }
@@ -155,8 +155,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     use_effect(move || {
         let store = state_store.read();
         let unread = unread_notification_count(&store.load());
-        let sound_enabled =
-            crate::notification_sound::notification_sound_enabled(&store, &principal_id());
+        let sound_enabled = crate::notification_sound::notification_sound_enabled(
+            &store,
+            crate::app::principal_id_text(&principal_id()),
+        );
         let previous = *previous_unread_notification_count.peek();
         if crate::notification_sound::should_play_notification_sound(
             previous,
@@ -246,7 +248,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     {
         use_effect(move || {
             let lookup_base_url = base_url();
-            let lookup_actor = principal_id();
+            let lookup_actor = crate::app::principal_id_owned(principal_id());
             let lookup_token = token();
             let lookup_supported = server_description().as_ref().is_some_and(|description| {
                 service_supports_operation(

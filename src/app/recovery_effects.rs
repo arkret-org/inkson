@@ -9,13 +9,14 @@ pub(super) fn AccountRecoveryEffects(
     mut account_recovery_detection_key_seen: Signal<Option<String>>,
     mut last_error: Signal<Option<String>>,
     token: Signal<String>,
-    principal_id: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     device_id: Signal<String>,
     sync_generation: Signal<u64>,
     session_boot_state: Signal<SessionBootState>,
     on_onboarding_route: bool,
 ) -> Element {
     let SessionContext {
+        active_account,
         state_store,
         base_url,
         ..
@@ -35,17 +36,26 @@ pub(super) fn AccountRecoveryEffects(
         let base = base_url();
         let credential = token();
         let actor = principal_id();
+        let Some(actor_id) = actor.clone() else {
+            account_recovery_configured.set(None);
+            account_recovery_detection_key_seen.set(None);
+            return;
+        };
+        let Some(account) = active_account() else {
+            account_recovery_configured.set(None);
+            account_recovery_detection_key_seen.set(None);
+            return;
+        };
         let generation = sync_generation();
         if !matches!(session_boot_state(), SessionBootState::Authenticated)
             || base.trim().is_empty()
             || credential.trim().is_empty()
-            || actor.trim().is_empty()
         {
             account_recovery_configured.set(None);
             account_recovery_detection_key_seen.set(None);
             return;
         }
-        let detection_key = format!("{generation}|{base}|{actor}");
+        let detection_key = format!("{generation}|{base}|{actor_id}");
         if account_recovery_detection_key_seen().as_deref() == Some(detection_key.as_str()) {
             return;
         }
@@ -53,12 +63,12 @@ pub(super) fn AccountRecoveryEffects(
         tracing::debug!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (recovery-policy+backups)");
         let local_fingerprint = {
             let store = state_store.read();
-            crate::views::recovery::local_recovery_key_fingerprint(&store, &actor)
+            crate::views::recovery::local_recovery_key_fingerprint(&store, &actor_id)
         };
         let recovery_material_evidence = state_store.read().recovery_material_evidence();
-        let gate_actor = actor.clone();
+        let gate_actor = account.full_id().clone();
         let gate_device = device_id();
-        let remember_actor = actor.clone();
+        let remember_actor = actor_id;
         let remember_device = gate_device.clone();
         let session_coordinator = session_coordinator.clone();
         spawn(async move {
@@ -67,7 +77,7 @@ pub(super) fn AccountRecoveryEffects(
                 let backups = serde_json::to_value(&api.list_key_backups().await?)?;
                 let gate_verified = match recovery_material_evidence.as_ref() {
                     Some(evidence)
-                        if evidence.principal_id.as_str() == gate_actor
+                        if evidence.principal_id == gate_actor
                             && evidence.device_id.as_str() == gate_device =>
                     {
                         crate::recovery_strand::verify_recovery_material_evidence(&api, evidence)
@@ -90,7 +100,7 @@ pub(super) fn AccountRecoveryEffects(
                 Ok((policy, backups, gate_verified)) => {
                     if gate_verified {
                         crate::event_submit::remember_verified_recovery_gate(
-                            &remember_actor,
+                            remember_actor.as_str(),
                             &remember_device,
                         );
                     }

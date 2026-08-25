@@ -518,11 +518,11 @@ fn recovery_setup_prompt_waits_for_server_state() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn recovery_auto_prompt_ignores_old_shown_flag_for_local_only_key() {
-    let actor = "did:web:alice.example";
+    let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
     let mut store = isolated_store("recovery-local-only-auto_prompt");
-    store.save_private_data(actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1");
+    store.save_private_data(actor.as_str(), RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1");
     store.save_private_data(
-        actor,
+        actor.as_str(),
         "recovery.state.v1",
         serde_json::json!({
             "recovery_key_fingerprint": "sha256:abc",
@@ -532,12 +532,12 @@ fn recovery_auto_prompt_ignores_old_shown_flag_for_local_only_key() {
     );
 
     assert_eq!(
-        recovery_auto_prompt_pending_local_only_fingerprint(&store, actor, Some(false)).as_deref(),
+        recovery_auto_prompt_pending_local_only_fingerprint(&store, &actor, Some(false)).as_deref(),
         Some("sha256:abc")
     );
     assert!(!recovery_auto_prompt_already_prompted(
         &store,
-        actor,
+        &actor,
         Some(false)
     ));
 }
@@ -545,11 +545,11 @@ fn recovery_auto_prompt_ignores_old_shown_flag_for_local_only_key() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn recovery_auto_prompt_local_only_key_is_prompted_once_per_fingerprint() {
-    let actor = "did:web:alice.example";
+    let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
     let mut store = isolated_store("recovery-local-only-auto_prompt-once");
-    store.save_private_data(actor, RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1");
+    store.save_private_data(actor.as_str(), RECOVERY_AUTO_PROMPT_SHOWN_KEY, "1");
     store.save_private_data(
-        actor,
+        actor.as_str(),
         "recovery.state.v1",
         serde_json::json!({
             "recovery_key_fingerprint": "sha256:abc",
@@ -558,17 +558,17 @@ fn recovery_auto_prompt_local_only_key_is_prompted_once_per_fingerprint() {
         .to_string(),
     );
     store.save_private_data(
-        actor,
+        actor.as_str(),
         RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
         "sha256:abc",
     );
 
     assert!(
-        recovery_auto_prompt_pending_local_only_fingerprint(&store, actor, Some(false)).is_none()
+        recovery_auto_prompt_pending_local_only_fingerprint(&store, &actor, Some(false)).is_none()
     );
     assert!(recovery_auto_prompt_already_prompted(
         &store,
-        actor,
+        &actor,
         Some(false)
     ));
 }
@@ -1018,13 +1018,14 @@ fn mls_recovery_setup_missing_flags_encrypted_realm_without_account_backup() {
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({ "backups": [] });
+    let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
 
     assert!(mls_recovery_setup_missing(
         &payload,
         &store,
         &secure,
         &test_authority("did:web:alice.example"),
-        "did:web:alice.example",
+        &actor,
         Some(false),
     ));
 }
@@ -1043,6 +1044,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
         }),
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
     let payload = serde_json::json!({
         "active_series": [{
             "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
@@ -1067,7 +1069,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
         &store,
         &secure,
         &test_authority("did:web:alice.example"),
-        "did:web:alice.example",
+        &actor,
         Some(false),
     ));
 }
@@ -1087,13 +1089,14 @@ fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() 
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({ "backups": [] });
+    let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
 
     assert!(!mls_recovery_setup_missing(
         &payload,
         &store,
         &secure,
         &test_authority("did:web:alice.example"),
-        "did:web:alice.example",
+        &actor,
         Some(true),
     ));
 }
@@ -1101,7 +1104,7 @@ fn mls_recovery_setup_missing_stays_false_when_account_recovery_is_configured() 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_storage_backup() {
-    let actor = "did:web:alice.example";
+    let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
     let mut store = isolated_store("mls-recovery-local-did-backup");
     store.save_realm_tree_projection(
         "ak:realm:ACC_KtYySSLem-5NY0yqhOiMuglvO_bk9OnrD0Z8eQHI".to_owned(),
@@ -1113,7 +1116,7 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_stor
         }),
     );
     store.save_private_data(
-        actor,
+        actor.as_str(),
         "recovery.state.v1",
         serde_json::json!({
             "recovery_key_fingerprint": "sha256:abc",
@@ -1134,8 +1137,8 @@ fn mls_recovery_setup_missing_stays_false_for_local_recovery_key_and_secret_stor
         &payload,
         &store,
         &secure,
-        &test_authority(actor),
-        actor,
+        &test_authority("did:web:alice.example"),
+        &actor,
         None,
     ));
 }

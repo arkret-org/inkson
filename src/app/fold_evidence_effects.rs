@@ -8,7 +8,7 @@ const SIDECAR_FOLD_EVIDENCE_HOOK: &str = "__inkson_sidecar_fold_evidence_v1";
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct SidecarFoldEvidenceEffectState {
-    pub principal_id: Signal<String>,
+    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
 }
 
 /// Install the controller-only, read-only fold-cache evidence surface.
@@ -36,14 +36,13 @@ pub(super) fn SidecarFoldEvidenceEffects(state: SidecarFoldEvidenceEffectState) 
                 return;
             };
             let hook = Closure::<dyn Fn(String) -> String>::new(move |source_realm_id: String| {
-                let controller_id = principal_id.peek().clone();
-                if controller_id.is_empty() {
+                let Some(controller_id) = principal_id.peek().clone() else {
                     return serde_json::json!({"error": "no signed-in controller"}).to_string();
-                }
+                };
                 let store = state_store.peek();
                 match crate::sidecar::sidecar_fold_evidence_canonical_json(
                     &store,
-                    &controller_id,
+                    controller_id.as_str(),
                     &source_realm_id,
                 ) {
                     Ok(evidence) => evidence,

@@ -289,7 +289,7 @@ thread_local! {
 
 #[component]
 pub fn LoginPanel(
-    principal_id: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     device_id: Signal<String>,
     token: Signal<String>,
     config_store: Signal<LocalConfigStore>,
@@ -368,7 +368,6 @@ pub fn LoginPanel(
                     };
                 account.profile_id = profile_id;
                 let principal_server_url = normalize_server_url(account.server_url.as_str());
-                let actor = account.full_id().to_string();
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                 let prepared_keys = match prepare_completed_login_dpop_key(
                     secure_store.as_ref(),
@@ -467,7 +466,7 @@ pub fn LoginPanel(
                 }
                 active_account.set(Some(account.clone()));
                 base_url.set(principal_server_url.clone());
-                principal_id.set(actor.clone());
+                principal_id.set(Some(account.principal_id().clone()));
                 device_id.set(account.device_id.to_string());
                 token.set(completed.session_credential.clone());
                 auth_status.set("Signed in on this authorized device.".to_owned());
@@ -515,7 +514,9 @@ pub fn LoginPanel(
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
         let loaded_config = config_store.read().load();
-        let live_actor = principal_id();
+        let live_actor = active_account()
+            .map(|account| account.full_id().to_string())
+            .unwrap_or_default();
         let persisted_actor = if live_actor.trim().is_empty() {
             loaded_config
                 .active_account
@@ -857,7 +858,7 @@ pub fn LoginPanel(
                 {
                     let token_value = token();
                     let device_value = device_id();
-                    let actor_value = principal_id();
+                    let actor_value = crate::app::principal_id_owned(principal_id());
                     let store_snapshot = state_store_write.read();
                     let session_status = compute_session_status(
                         &token_value,

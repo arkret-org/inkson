@@ -10,7 +10,7 @@ use crate::state::LocalStateStore;
 #[component]
 pub fn EncryptionFloorPrompt(
     token: Signal<String>,
-    principal_id: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     sync_bootstrap_complete: Signal<bool>,
     device_authorization_check_complete: Signal<bool>,
     needs_device_authorization: Signal<bool>,
@@ -31,6 +31,9 @@ pub fn EncryptionFloorPrompt(
     use_effect(move || {
         let session = token();
         let actor = principal_id();
+        let Some(actor_id) = actor.as_ref() else {
+            return;
+        };
         if dismissed()
             || !sync_bootstrap_complete()
             || !device_authorization_check_complete()
@@ -39,7 +42,7 @@ pub fn EncryptionFloorPrompt(
             || needs_mls_unlock()
             || needs_mls_backup()
             || recovery_key_setup_prompt()
-            || !account_needs_recommended_encryption_prompt(&state_store.read(), &actor)
+            || !account_needs_recommended_encryption_prompt(&state_store.read(), actor_id.as_str())
         {
             return;
         }
@@ -49,7 +52,7 @@ pub fn EncryptionFloorPrompt(
         // state as not configured so the auto-apply path never assumes a
         // Recovery Key exists before the account recovery probe has completed.
         let local_recovery_configured =
-            crate::views::recovery::recovery_options_configured(&state_store.read(), &actor);
+            crate::views::recovery::recovery_options_configured(&state_store.read(), actor_id);
         let recovery_key_configured =
             matches!(account_recovery_configured(), Some(true)) || local_recovery_configured;
 
@@ -70,14 +73,14 @@ pub fn EncryptionFloorPrompt(
 /// once-per-account suppression.
 fn acknowledge_recommended_encryption(
     mut dismissed: Signal<bool>,
-    principal_id: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     mut state_store: SyncSignal<LocalStateStore>,
 ) {
     dismissed.set(true);
     let actor = principal_id();
-    if !actor.trim().is_empty() {
+    if let Some(actor_id) = actor.as_ref() {
         state_store.write().save_private_data(
-            &actor,
+            actor_id.as_str(),
             crate::app::ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY,
             "1".to_owned(),
         );

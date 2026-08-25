@@ -10,7 +10,7 @@ pub(super) struct MlsRecoveryEffectState {
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub account_recovery_configured: Signal<Option<bool>>,
     pub token: Signal<String>,
-    pub principal_id: Signal<String>,
+    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub device_id: Signal<String>,
     pub sync_generation: Signal<u64>,
     pub session_boot_state: Signal<SessionBootState>,
@@ -121,7 +121,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             let local_mls_epoch_floor = local_mls_epoch_floor_all(&state_for_detection_key);
             let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
                 &state_for_detection_key,
-                &actor,
+                &authority.principal_id,
             )
             .unwrap_or_default();
             drop(state_for_detection_key);
@@ -239,7 +239,9 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                             let mut store = state_store_for_detection.write();
                             if let Some(backup_id) = configured_backup_id.as_deref() {
                                 crate::components::mark_mls_recovery_backup_configured(
-                                    &mut store, &actor, backup_id,
+                                    &mut store,
+                                    &authority.principal_id,
+                                    backup_id,
                                 );
                             }
                             if let Some(history_payload) =
@@ -250,7 +252,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     &mut store,
                                     secure_store.as_ref(),
                                     &authority,
-                                    &actor,
+                                    authority.principal_id.as_str(),
                                 ).await;
                                 if report.failed > 0 {
                                     tracing::warn!(
@@ -269,7 +271,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     &mut store,
                                     secure_store.as_ref(),
                                     &authority,
-                                    &actor,
+                                    authority.principal_id.as_str(),
                                 ).await;
                                 if report.failed > 0 {
                                     tracing::warn!(
@@ -340,7 +342,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     &store,
                                     secure_store.as_ref(),
                                     &authority,
-                                    &actor,
+                                    &authority.principal_id,
                                     account_recovery_configured_value,
                                 )
                             };

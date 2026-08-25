@@ -105,7 +105,8 @@ fn start_recovery_key_generation(
     let base = account.server_url.to_string();
     let authority = account.authority.clone();
     let session = token();
-    let actor = account.principal_id().to_string();
+    let actor = account.full_id().to_string();
+    let account_key = account.principal_id().clone();
     let device = account.device_id.to_string();
     let sidecar_json = if state_store.read().private_plaintext_is_empty() {
         None
@@ -141,7 +142,7 @@ fn start_recovery_key_generation(
             Ok(backup_id) => {
                 crate::components::mark_mls_recovery_backup_configured(
                     &mut state_store.write(),
-                    &actor_for_sidecar,
+                    &account_key,
                     &backup_id,
                 );
                 if let Some(sidecar_json) = sidecar_json {
@@ -207,7 +208,8 @@ pub fn SettingsMlsRecoveryPanel(
             async move {
                 let base = account.server_url.to_string();
                 let session = token();
-                let actor = account.principal_id().to_string();
+                let actor = account.full_id().to_string();
+                let account_key = account.principal_id().clone();
                 let authority = account.authority.clone();
                 if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
                     status.set(MlsRecoveryStatus::NoLocalSecret);
@@ -239,7 +241,7 @@ pub fn SettingsMlsRecoveryPanel(
                         {
                             crate::components::mark_mls_recovery_backup_configured(
                                 &mut state_store.write(),
-                                &actor,
+                                &account_key,
                                 backup_id,
                             );
                         }

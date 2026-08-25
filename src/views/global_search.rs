@@ -227,7 +227,7 @@ use crate::realm_tree::string_field;
 
 #[component]
 pub fn GlobalSearchPanel(
-    principal_id: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     device_id: Signal<String>,
     initial_query: String,
 ) -> Element {

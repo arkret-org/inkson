@@ -337,7 +337,7 @@ async fn commit_completed_account(
     config_store: Signal<crate::config::LocalConfigStore>,
     mut active_account: Signal<Option<crate::config::ActiveAccountContext>>,
     mut token: Signal<String>,
-    mut principal_id: Signal<String>,
+    mut principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     mut device_id: Signal<String>,
     mut needs_device_authorization: Signal<bool>,
     mut device_authorization_check_complete: Signal<bool>,
@@ -402,7 +402,7 @@ async fn commit_completed_account(
 
         active_account.set(Some(completed.account.clone()));
         token.set(completed.session_credential().to_owned());
-        principal_id.set(completed.account.full_id().to_string());
+        principal_id.set(Some(completed.account.principal_id().clone()));
         device_id.set(completed.account.device_id.to_string());
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(true);
@@ -441,7 +441,7 @@ fn must_enter_reserved_recovery_key(handoff: &crate::state::PendingAccountHandof
 pub fn OnboardingPanel(
     secure_store_ready: bool,
     token: Signal<String>,
-    principal_id: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     account_primary_handle: Signal<String>,
@@ -598,6 +598,7 @@ pub fn OnboardingPanel(
         },
         OnboardingSurface::AccountSummary => {
             let did = principal_id();
+            let did = crate::app::principal_id_owned(did);
             let principal_label = short_protocol_id(&did);
             let complete = account_summary_complete(!token().trim().is_empty(), &did);
             rsx! {
@@ -834,7 +835,7 @@ async fn check_device_setup_pairing(
 fn DeviceSetupRequired(
     state_store: SyncSignal<crate::state::LocalStateStore>,
     token: Signal<String>,
-    mut principal_id: Signal<String>,
+    mut principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     needs_device_authorization: Signal<bool>,
@@ -959,9 +960,10 @@ fn DeviceSetupRequired(
                                     let principal = handoff
                                         .bound_principal_id
                                         .as_ref()
-                                        .map(ToString::to_string)
-                                        .unwrap_or_default();
-                                    principal_id.set(principal.clone());
+                                        .and_then(|full_id| {
+                                            arkret_sdk::project_full_id_to_core_id(full_id).ok()
+                                        });
+                                    principal_id.set(principal);
                                     device_id.set(request.device_id.to_string());
                                     pairing_status.set(
                                         "Device authorization is accepted and verified. No session was issued; sign in again to request one."
@@ -1040,7 +1042,7 @@ fn DeviceSetupRequired(
 fn PcrPolicyDeviceRecovery(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     mut token: Signal<String>,
-    mut principal_id: Signal<String>,
+    mut principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     replacement_device_id: String,
@@ -2033,7 +2035,7 @@ fn SetupProgress(current: usize) -> Element {
 #[component]
 fn PendingAccountIdentityCreation(
     mut token: Signal<String>,
-    mut principal_id: Signal<String>,
+    mut principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     mut device_id: Signal<String>,
     config_store: Signal<crate::config::LocalConfigStore>,
     account_primary_handle: Signal<String>,
@@ -2182,6 +2184,7 @@ fn PendingAccountIdentityCreation(
 
     let Some(handoff) = handoff else {
         let did = principal_id();
+        let did = crate::app::principal_id_owned(did);
         let fallback = missing_creation_handoff_surface(busy(), !token().trim().is_empty(), &did);
         let current_status = status();
         return rsx! {
@@ -3526,9 +3529,9 @@ async fn finish_local_recovery_metadata(
     account: &crate::config::ActiveAccountContext,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<()> {
-    let actor = account.principal_id().as_str();
+    let actor = account.principal_id();
     let device = account.device_id.as_str();
-    crate::event_submit::remember_verified_recovery_gate(actor, device);
+    crate::event_submit::remember_verified_recovery_gate(actor.as_str(), device);
     crate::views::recovery::save_generated_recovery_key_metadata(
         &mut state_store,
         actor,

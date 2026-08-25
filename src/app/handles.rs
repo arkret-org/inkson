@@ -121,7 +121,7 @@ pub(super) struct ServerSelectionContext {
     pub(super) server_description: Signal<Option<ServiceDescribe>>,
     pub(super) server_probe_status: Signal<String>,
     pub(super) connection_status: Signal<String>,
-    pub(super) principal_id: Signal<String>,
+    pub(super) principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub(super) device_id: Signal<String>,
     pub(super) account_primary_handle: Signal<String>,
     pub(super) personal_handles: Signal<Vec<String>>,

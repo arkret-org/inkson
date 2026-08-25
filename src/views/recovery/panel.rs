@@ -42,11 +42,7 @@ enum EnrollPhase {
 }
 
 #[component]
-pub fn RecoveryPanel(
-    token: Signal<String>,
-    principal_id: Signal<String>,
-    device_id: Signal<String>,
-) -> Element {
+pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session_context = crate::app::SessionContext::get();
     let base_url = crate::app::SessionContext::base_url_string();
@@ -54,7 +50,7 @@ pub fn RecoveryPanel(
     let Some(account) = session_context.active_account() else {
         return rsx! {};
     };
-    let actor_key = principal_id();
+    let actor_key = account.principal_id().clone();
     let initial = load_state(&state_store, &actor_key);
 
     // Recovery key state — plaintext only in memory after Generate.
@@ -451,7 +447,6 @@ pub fn RecoveryPanel(
                                         );
                                         upload_recovery_key_account_backup(
                                             token,
-                                            principal_id,
                                             device_id,
                                             account.clone(),
                                             state_store,

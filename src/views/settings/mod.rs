@@ -513,7 +513,7 @@ pub(crate) fn push_contact_remark_account_data(
 #[allow(clippy::expect_used)]
 #[component]
 pub fn SettingsPanel(
-    principal_id: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     device_id: Signal<String>,
     token: Signal<String>,
     account_primary_handle: String,
@@ -1518,7 +1518,6 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Recovery {
                         crate::views::recovery::RecoveryPanel {
                             token,
-                            principal_id,
                             device_id,
                         }
                     }

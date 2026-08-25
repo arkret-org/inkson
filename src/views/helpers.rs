@@ -18,7 +18,7 @@ use crate::ui::button::{Button, ButtonVariant};
 pub fn persist_config(
     mut config_store: Signal<LocalConfigStore>,
     server_url: String,
-    principal_id: String,
+    principal_id: Option<arkret_sdk::DidCoreId>,
     device_id: String,
     session_credential: String,
 ) {
@@ -27,7 +27,7 @@ pub fn persist_config(
         return;
     };
     if account.server_url.as_str().trim_end_matches('/') != server_url.trim_end_matches('/')
-        || account.full_id().as_str() != principal_id.trim()
+        || principal_id.as_ref() != Some(account.principal_id())
         || account.device_id.as_str() != device_id.trim()
     {
         tracing::error!(

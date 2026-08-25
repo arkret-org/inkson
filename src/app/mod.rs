@@ -35,6 +35,19 @@ use crate::ui::input::Input;
 use crate::views::ConnectionState;
 use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
 
+pub(crate) fn principal_id_text(principal_id: &Option<arkret_sdk::DidCoreId>) -> &str {
+    principal_id
+        .as_ref()
+        .map(arkret_sdk::DidCoreId::as_str)
+        .unwrap_or_default()
+}
+
+pub(crate) fn principal_id_owned(principal_id: Option<arkret_sdk::DidCoreId>) -> String {
+    principal_id
+        .map(|value| value.to_string())
+        .unwrap_or_default()
+}
+
 // YOU-07-001: post-login / startup-check effects and small types moved to
 // `crate::app::bootstrap` (move-only; logic, signatures, and bytes unchanged).
 // The re-export keeps existing app.rs call sites and `app_tests.rs`
@@ -241,8 +254,7 @@ fn AppBootstrap() -> Element {
         .unwrap_or_else(|| "https://local.host".to_owned());
     let initial_principal_id = initial_active_account
         .as_ref()
-        .map(|account| account.full_id().to_string())
-        .unwrap_or_default();
+        .map(|account| account.principal_id().clone());
     let initial_device_id = initial_active_account
         .as_ref()
         .map(|account| account.device_id.to_string())
@@ -250,13 +262,13 @@ fn AppBootstrap() -> Element {
     let initial_can_restore_session = has_bootstrap_refresh_material(
         &initial_state_store,
         &initial_server_url,
-        &initial_principal_id,
+        crate::app::principal_id_text(&initial_principal_id),
     );
     let initial_secure_store_bootstrap_ready = !cfg!(target_arch = "wasm32");
     let initial_session_boot_state = session_boot_state_from_bootstrap_material(
         &initial_session_credential,
         initial_can_restore_session,
-        &initial_principal_id,
+        crate::app::principal_id_text(&initial_principal_id),
         initial_secure_store_bootstrap_ready,
     );
     let initial_realm_tree_nodes = realm_tree_nodes_from_sync_realms_with_roles(
@@ -276,7 +288,10 @@ fn AppBootstrap() -> Element {
     let initial_locale =
         crate::i18n::resolve_locale(None, initial_state_store.device_pref("locale").as_deref());
     let initial_theme = initial_state_store
-        .load_private_data(&initial_principal_id, "theme")
+        .load_private_data(
+            crate::app::principal_id_text(&initial_principal_id),
+            "theme",
+        )
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
         .unwrap_or_else(|| "night".to_owned());
     // Rehydrate the persisted primary handle for the booted account so any
@@ -285,7 +300,7 @@ fn AppBootstrap() -> Element {
     // by DID (not the active account), so it works regardless of which account
     // is currently active.
     let initial_account_primary_handle = initial_state_store
-        .primary_handle_for_did(&initial_principal_id)
+        .primary_handle_for_did(crate::app::principal_id_text(&initial_principal_id))
         .unwrap_or_default();
     let config_store = use_signal(LocalConfigStore::default);
     let mut state_store = use_signal_sync(LocalStateStore::default);
@@ -399,7 +414,7 @@ fn AppBootstrap() -> Element {
     // the new account. Keeping the owner separately also prevents the render
     // between the DID change and this effect from exposing the old account.
     use_effect(move || {
-        let current_account = principal_id().trim().to_owned();
+        let current_account = crate::app::principal_id_owned(principal_id());
         if realm_tree_owner_did.peek().as_str() != current_account {
             realm_tree_nodes.set(Vec::new());
             projection_events.set(Vec::new());
@@ -686,7 +701,7 @@ fn AppBootstrap() -> Element {
         }
     });
     let active_server_label = normalize_server_url(&base_url());
-    let principal_id_value = principal_id();
+    let principal_id_value = crate::app::principal_id_owned(principal_id());
     let device_id_value = device_id();
     let principal_id_label = short_protocol_id(&principal_id_value);
     let device_id_label = short_protocol_id(&device_id_value);
@@ -734,7 +749,10 @@ fn AppBootstrap() -> Element {
         } else {
             state_store
                 .read()
-                .load_private_data(&principal_id(), "avatar_blob_ref")
+                .load_private_data(
+                    crate::app::principal_id_text(&principal_id()),
+                    "avatar_blob_ref",
+                )
                 .unwrap_or_else(&*current_account_avatar_blob_ref)
         }
     })();
@@ -764,7 +782,7 @@ fn AppBootstrap() -> Element {
     let resolved_realm_surface = resolve_realm_surface(
         &route,
         &state_store.read(),
-        &principal_id(),
+        crate::app::principal_id_text(&principal_id()),
         context_realm_id.as_deref(),
     );
     let realm_members_active = matches!(&route, Route::RealmMembers { .. });
@@ -774,12 +792,15 @@ fn AppBootstrap() -> Element {
             Route::KanbanRealm { .. } | Route::KanbanBoard { .. } | Route::KanbanBoardTask { .. }
         )
     {
-        let stored_surface =
-            load_realm_surface_preference(&state_store.read(), &principal_id(), realm_id);
+        let stored_surface = load_realm_surface_preference(
+            &state_store.read(),
+            crate::app::principal_id_text(&principal_id()),
+            realm_id,
+        );
         if stored_surface != surface {
             persist_realm_surface_preference(
                 &mut state_store.write(),
-                &principal_id(),
+                crate::app::principal_id_text(&principal_id()),
                 realm_id,
                 surface,
             );
@@ -789,7 +810,7 @@ fn AppBootstrap() -> Element {
     let loaded_realm_tree_nodes = if session_boot::account_projections_visible(
         &route,
         has_session,
-        &principal_id(),
+        crate::app::principal_id_text(&principal_id()),
         &realm_tree_owner_did(),
     ) {
         realm_tree_nodes()
@@ -1156,8 +1177,9 @@ fn AppBootstrap() -> Element {
     let active_prompt = {
         let store = state_store.read();
         let actor = principal_id();
-        let local_recovery_configured =
-            crate::views::recovery::recovery_options_configured(&store, &actor);
+        let local_recovery_configured = actor.as_ref().is_some_and(|actor_id| {
+            crate::views::recovery::recovery_options_configured(&store, actor_id)
+        });
         let account_recovery_configured = account_recovery_configured();
         crate::account_health::AccountHealthInputs {
             has_session,
@@ -1176,7 +1198,7 @@ fn AppBootstrap() -> Element {
             needs_mls_recovery_setup: needs_mls_recovery_setup(),
             floor_low:
                 crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
-                    &store, &actor,
+                    &store, crate::app::principal_id_text(&actor),
                 ),
             recovery_unconfigured: recovery_setup_prompt_required_for_account_state(
                 account_recovery_configured,
@@ -1193,8 +1215,9 @@ fn AppBootstrap() -> Element {
     // once auto-acknowledged it stays quiet across navigations and sessions (the
     // in-session `encryption_floor_prompt_dismissed` signal covers the same
     // frame before the persisted flag is read back).
-    let encryption_floor_prompt_acknowledged =
-        crate::app::encryption_floor_prompt_acknowledged(&state_store.read(), &principal_id());
+    let encryption_floor_prompt_acknowledged = principal_id().as_ref().is_some_and(|actor_id| {
+        crate::app::encryption_floor_prompt_acknowledged(&state_store.read(), actor_id)
+    });
     let mobile_connect_session = runtime_services.session.clone();
     let server_connect_session = runtime_services.session.clone();
     let manual_refresh_session = runtime_services.session.clone();
@@ -1650,7 +1673,6 @@ fn AppBootstrap() -> Element {
                 {
                     crate::components::MlsBackupPrompt {
                         token,
-                        actor_id: principal_id,
                         device_id,
                         needs_mls_backup,
                         account_recovery_configured,
@@ -1686,7 +1708,11 @@ fn AppBootstrap() -> Element {
                             let current_theme = theme();
                             let next = next_manual_theme(&current_theme);
                             theme.set(next.clone());
-                            state_store.write().save_private_data(&principal_id(), "theme", next.clone());
+                            state_store.write().save_private_data(
+                                crate::app::principal_id_text(&principal_id()),
+                                "theme",
+                                next.clone(),
+                            );
                             // A4a — best-effort cross-device sync via
                             // `ak.account_data.set(ak.client.ui_state)`.
                             crate::views::settings::push_client_ui_account_data(
@@ -2051,11 +2077,18 @@ fn AppBootstrap() -> Element {
                                 })
                                 || sidebar_text_matches_query(
                                     &direct_sidebar_query_value,
-                                    &[&principal_id(), &actor_display_label(&state_store.read(), &principal_id()), &account_primary_handle()],
+                                    &[
+                                        crate::app::principal_id_text(&principal_id()),
+                                        &actor_display_label(
+                                            &state_store.read(),
+                                            crate::app::principal_id_text(&principal_id()),
+                                        ),
+                                        &account_primary_handle(),
+                                    ],
                                 ))
                             {
                                 {
-                                    let active_principal_id = principal_id();
+                                    let active_principal_id = crate::app::principal_id_owned(principal_id());
                                     let self_did = if active_principal_id.trim().is_empty() {
                                         let configured = config_store
                                             .read()
@@ -2965,7 +2998,7 @@ fn AppBootstrap() -> Element {
                                                         ensure_sidebar_row_perms(
                                                             base_url(),
                                                             token(),
-                                                            principal_id(),
+                                                            crate::app::principal_id_owned(principal_id()),
                                                             perms_realm_id.clone(),
                                                             sidebar_row_perms,
                                                         );
@@ -3107,7 +3140,7 @@ fn AppBootstrap() -> Element {
                                                                 base_url(),
                                                                 token(),
                                                                 id.clone(),
-                                                                principal_id(),
+                                                                crate::app::principal_id_owned(principal_id()),
                                                                 state_store,
                                                                 realm_tree_nodes,
                                                                 selected_realm_id,
@@ -3202,7 +3235,7 @@ fn AppBootstrap() -> Element {
                             RealmContextBar {
                                 realm_id: active_realm_id.clone(),
                                 current_surface: resolved_realm_surface,
-                                principal_id: principal_id(),
+                                principal_id: crate::app::principal_id_owned(principal_id()),
                                 members_active: realm_members_active,
                                 minimal_ready,
                                 kanban_ready,
@@ -3327,7 +3360,11 @@ fn AppBootstrap() -> Element {
                                     let current_theme = theme();
                                     let next = next_manual_theme(&current_theme);
                                     theme.set(next.clone());
-                                    state_store.write().save_private_data(&principal_id(), "theme", next.clone());
+                                    state_store.write().save_private_data(
+                                        crate::app::principal_id_text(&principal_id()),
+                                        "theme",
+                                        next.clone(),
+                                    );
                                     // A4a — best-effort cross-device sync
                                     // via `ak.account_data.set(ak.client.ui_state)`.
                                     crate::views::settings::push_client_ui_account_data(
@@ -3577,8 +3614,8 @@ fn AppBootstrap() -> Element {
                                                                 .await
                                                                 {
                                                                     Ok(account) => {
-                                                                        let canonical_actor = match active_account.peek().as_ref() {
-                                                                            Some(context) if context.principal_id() == &account.principal_id => context.full_id().to_string(),
+                                                                        let canonical_principal = match active_account.peek().as_ref() {
+                                                                            Some(context) if context.principal_id() == &account.principal_id => Some(context.principal_id().clone()),
                                                                             _ => {
                                                                                 last_error.set(Some("account viewer authority does not match the accepted active context".to_owned()));
                                                                                 account_session_state.set(
@@ -3606,17 +3643,17 @@ fn AppBootstrap() -> Element {
                                                                                 personal_handles_status.set("Not published".to_owned());
                                                                             }
                                                                         }
-                                                                        principal_id.set(canonical_actor.clone());
+                                                                        principal_id.set(canonical_principal.clone());
                                                                         persist_config(
                                                                             config_store,
                                                                             active.server_url.to_string(),
-                                                                            active.full_id().to_string(),
+                                                                            Some(active.principal_id().clone()),
                                                                             active.device_id.to_string(),
                                                                             api_token,
                                                                         );
                                                                         account_session_state.set(format!(
                                                                             "Session refresh ok: {}",
-                                                                            canonical_actor
+                                                                            crate::app::principal_id_text(&canonical_principal)
                                                                         ));
                                                                     }
                                                                     Err(error) => {
@@ -3629,7 +3666,7 @@ fn AppBootstrap() -> Element {
                                                                             // login on a routine credential rotation.
                                                                             match session.refresh().await {
                                                                                 crate::runtime::session::CurrentSessionRefresh::Credential(fresh) => {
-                                                                                    let canonical_actor = match self_authed_api(&base, fresh) {
+                                                                                    let canonical_principal = match self_authed_api(&base, fresh) {
                                                                                         Ok(api) => async {
                                                                                             crate::transport::account::account_me(&api.sdk_http_client()?).await
                                                                                         }
@@ -3660,14 +3697,15 @@ fn AppBootstrap() -> Element {
                                                                                                             .set("Not published".to_owned());
                                                                                                     }
                                                                                                 }
-                                                                                                Some(active.principal_id().to_string())
+                                                                                                Some(active.principal_id().clone())
                                                                                             }),
                                                                                         Err(_) => None,
                                                                                     }
-                                                                                    .unwrap_or_else(|| actor.clone());
-                                                                                    principal_id.set(canonical_actor.clone());
+                                                                                    .or(actor.clone());
+                                                                                    principal_id.set(canonical_principal.clone());
                                                                                     account_session_state.set(format!(
-                                                                                        "Session refresh ok: {canonical_actor}"
+                                                                                        "Session refresh ok: {}",
+                                                                                        crate::app::principal_id_text(&canonical_principal)
                                                                                     ));
                                                                                 }
                                                                                 crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
@@ -3766,7 +3804,7 @@ fn AppBootstrap() -> Element {
                                                             gate_account_base: None,
                                                             base_url: active.server_url.clone(),
                                                             session_credential: api_token.clone(),
-                                                            principal_id: actor.clone(),
+                                                            principal_id: crate::app::principal_id_owned(actor.clone()),
                                                             created_at: chrono::Utc::now(),
                                                         };
                                                     let logout_secure_store =
@@ -3946,7 +3984,9 @@ fn AppBootstrap() -> Element {
                 }
                 NotificationsDrawer {
                     open: notifications_drawer_open,
-                    principal_id: principal_id(),
+                    principal_id: active_account()
+                        .map(|account| account.full_id().to_string())
+                        .unwrap_or_default(),
                     device_id: device_id(),
                     token,
                 }

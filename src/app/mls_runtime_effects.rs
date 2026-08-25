@@ -11,7 +11,7 @@ pub(super) struct MlsRuntimeEffectState {
     pub device_authorization_check_complete: Signal<bool>,
     pub needs_device_authorization: Signal<bool>,
     pub token: Signal<String>,
-    pub principal_id: Signal<String>,
+    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub device_id: Signal<String>,
     pub server_description: Signal<Option<ServiceDescribe>>,
     pub sync_bootstrap_complete: Signal<bool>,
@@ -683,7 +683,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             );
             let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
                 &state_for_bootstrap_key,
-                &actor,
+                &authority.principal_id,
             )
             .unwrap_or_default();
             let local_pending_welcome_hint = crate::mls::runtime::local_mls_welcome_hint_for_realm(

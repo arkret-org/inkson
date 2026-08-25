@@ -5,7 +5,7 @@ pub(super) struct RecoveryReminderEffectState {
     pub recovery_key_setup_prompt: Signal<bool>,
     pub recovery_auto_prompt_fired: Signal<bool>,
     pub token: Signal<String>,
-    pub principal_id: Signal<String>,
+    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub sync_bootstrap_complete: Signal<bool>,
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub on_onboarding_route: bool,
@@ -58,7 +58,10 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
             }
             let session = token();
             let actor = principal_id();
-            if session.trim().is_empty() || actor.trim().is_empty() {
+            let Some(actor_id) = actor.as_ref() else {
+                return;
+            };
+            if session.trim().is_empty() {
                 return;
             }
             // Recovery setup publishes account-authority policy and therefore
@@ -72,7 +75,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                 let store = state_store.read();
                 let account_recovery_configured = account_recovery_configured();
                 let local_recovery_configured =
-                    crate::views::recovery::recovery_options_configured(&store, &actor);
+                    crate::views::recovery::recovery_options_configured(&store, actor_id);
                 let inputs = crate::account_health::AccountHealthInputs {
                     has_session: true,
                     sync_bootstrap_complete: sync_bootstrap_complete(),
@@ -87,7 +90,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                     needs_mls_recovery_setup: needs_mls_recovery_setup(),
                     floor_low:
                         crate::components::encryption_floor_prompt::account_needs_recommended_encryption_prompt(
-                            &store, &actor,
+                            &store, actor_id.as_str(),
                         ),
                     recovery_unconfigured: recovery_setup_prompt_required_for_account_state(
                         account_recovery_configured,
@@ -97,7 +100,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                 };
                 let already = recovery_auto_prompt_already_prompted(
                     &store,
-                    &actor,
+                    actor_id,
                     account_recovery_configured,
                 );
                 (inputs, already)

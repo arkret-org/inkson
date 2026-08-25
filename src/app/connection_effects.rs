@@ -5,7 +5,7 @@ pub(super) struct ConnectionEffectState {
     pub connection_status: Signal<String>,
     pub sync_cursor: Signal<String>,
     pub token: Signal<String>,
-    pub principal_id: Signal<String>,
+    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub device_id: Signal<String>,
     pub selected_realm_id: Signal<String>,
     pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
@@ -246,7 +246,11 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         }
         let can_restore_session = {
             let store = state_store.read();
-            has_bootstrap_refresh_material(&store, &base, &principal_id())
+            has_bootstrap_refresh_material(
+                &store,
+                &base,
+                crate::app::principal_id_text(&principal_id()),
+            )
         };
         if !base.trim().is_empty()
             && secure_store_ready
@@ -257,7 +261,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             let bootstrap_state = session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
-                &principal_id(),
+                crate::app::principal_id_text(&principal_id()),
                 secure_store_ready,
             );
             session_boot_state.set(bootstrap_state);
@@ -302,7 +306,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             let bootstrap_state = session_boot_state_from_bootstrap_material(
                 &session,
                 can_restore_session,
-                &principal_id(),
+                crate::app::principal_id_text(&principal_id()),
                 secure_store_ready,
             );
             if *session_boot_state.peek() != bootstrap_state {

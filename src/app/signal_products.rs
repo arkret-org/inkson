@@ -45,7 +45,7 @@ pub(super) struct AppSignalProductSink {
     read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
     base_url: Signal<String>,
     token: Signal<String>,
-    principal_id: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     state_store: crate::runtime::input::StateStoreHandle,
     authz_verdicts: RefCell<BTreeMap<String, CachedVerdict>>,
@@ -58,7 +58,7 @@ impl AppSignalProductSink {
         read_receipt_hub: crate::views::read_receipts::ReadReceiptHub,
         base_url: Signal<String>,
         token: Signal<String>,
-        principal_id: Signal<String>,
+        principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
         did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
         state_store: crate::runtime::input::StateStoreHandle,
     ) -> Self {
@@ -246,7 +246,7 @@ impl SignalProductSink for AppSignalProductSink {
             crate::views::call_signals::route_decrypted_call_signals(
                 &mut hub,
                 std::slice::from_ref(&(envelope.clone(), body)),
-                &local_actor,
+                crate::app::principal_id_text(&local_actor),
                 api.as_ref(),
                 &anchor,
             )
@@ -299,7 +299,11 @@ impl SignalProductSink for AppSignalProductSink {
         // read the receipt to apply them.
         let local_actor = self.principal_id.peek().clone();
         let mut hub = self.read_receipt_hub;
-        hub.apply_authorized(plaintext, policy, &local_actor);
+        hub.apply_authorized(
+            plaintext,
+            policy,
+            crate::app::principal_id_text(&local_actor),
+        );
     }
 
     fn advance_clock(&self, now: chrono::DateTime<chrono::Utc>) {

@@ -36,7 +36,10 @@ struct PendingAgentRuntimeApproval {
 }
 
 #[component]
-pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<String>) -> Element {
+pub fn AgentRuntimeApprovalPrompt(
+    token: Signal<String>,
+    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
+) -> Element {
     let mut pending = use_signal(|| None::<PendingAgentRuntimeApproval>);
     let mut handled = use_signal(HashSet::<OpaqueLocalId>::new);
     let mut status = use_signal(String::new);
@@ -322,7 +325,7 @@ pub fn AgentRuntimeApprovalPrompt(token: Signal<String>, principal_id: Signal<St
                                 return;
                             }
                             let controller = principal_id();
-                            if controller.trim().is_empty() {
+                            if controller.is_none() {
                                 status.set(crate::i18n::tr("agent_runtime.err_no_account"));
                                 return;
                             };

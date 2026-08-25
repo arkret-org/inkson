@@ -3,7 +3,7 @@ use super::*;
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct SecureStoreEffectState {
     pub config_store: Signal<LocalConfigStore>,
-    pub principal_id: Signal<String>,
+    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub device_id: Signal<String>,
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub token: Signal<String>,
@@ -120,7 +120,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             &mut state_store_for_secure_upgrade,
                             config_store_for_secure_upgrade,
                             &base_url_for_secure_upgrade(),
-                            &principal_id_for_secure_upgrade(),
+                            active_account.peek().clone(),
                             &device_id_for_secure_upgrade(),
                             secure_store.as_ref(),
                         )
@@ -129,7 +129,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             inject_test_session_credential(
                                 config_store_for_secure_upgrade,
                                 &base_url_for_secure_upgrade(),
-                                &principal_id_for_secure_upgrade(),
+                                principal_id_for_secure_upgrade(),
                                 &device_id_for_secure_upgrade(),
                             )
                         });
@@ -363,7 +363,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                     persist_config(
                                         config_store_for_secure_upgrade,
                                         base_url_for_secure_upgrade(),
-                                        active_signer_account.full_id().to_string(),
+                                        Some(active_signer_account.principal_id().clone()),
                                         stable_device_id.clone(),
                                         String::new(),
                                     );

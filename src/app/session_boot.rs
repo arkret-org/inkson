@@ -231,7 +231,7 @@ pub(super) const TEST_SESSION_CREDENTIAL_INJECTION_KEY: &str =
 pub(super) fn inject_test_session_credential(
     config_store: Signal<LocalConfigStore>,
     server_url: &str,
-    principal_id: &str,
+    principal_id: Option<arkret_sdk::DidCoreId>,
     device_id: &str,
 ) -> Option<String> {
     let credential = web_sys::window()
@@ -248,7 +248,7 @@ pub(super) fn inject_test_session_credential(
     persist_config(
         config_store,
         server_url.to_owned(),
-        principal_id.to_owned(),
+        principal_id,
         device_id.to_owned(),
         credential.clone(),
     );
@@ -275,7 +275,7 @@ pub(super) async fn inject_test_session_grant(
     state_store: &mut SyncSignal<LocalStateStore>,
     config_store: Signal<LocalConfigStore>,
     server_url: &str,
-    principal_id: &str,
+    account: Option<crate::config::ActiveAccountContext>,
     device_id: &str,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<String> {
@@ -303,17 +303,12 @@ pub(super) async fn inject_test_session_grant(
             return None;
         }
     };
-    let principal_full_id = match arkret_sdk::DidFullId::new(principal_id.to_owned()) {
-        Ok(principal_full_id) => principal_full_id,
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                principal_id = %principal_id,
-                "test session injection skipped: active principal is not a valid DidFullId"
-            );
-            return None;
-        }
+    let Some(expected_account) = account else {
+        tracing::warn!("test session injection skipped: active account context is unavailable");
+        return None;
     };
+    let principal_full_id = expected_account.full_id().clone();
+    let account_key = expected_account.principal_id().clone();
     // The browser fixture starts with the account DID already present in the
     // config signals, but a fresh LocalStateStore can still be scoped to the
     // anonymous namespace. Defensively select the fixture account before
@@ -325,12 +320,13 @@ pub(super) async fn inject_test_session_grant(
         .load_with_secure_store(secure_store)
         .active_account;
     let Some(configured_account) = configured_account.filter(|account| {
-        account.full_id().as_str() == principal_full_id.as_str()
+        account.principal_id() == &account_key
+            && account.full_id() == &principal_full_id
             && account.device_id.as_str() == device_id
             && account.server_url.as_str() == server_url
     }) else {
         tracing::warn!(
-            principal_id,
+            principal_id = %principal_full_id,
             device_id,
             server_url,
             "test session injection skipped: active account config does not match fixture"
@@ -352,7 +348,7 @@ pub(super) async fn inject_test_session_grant(
         .and_then(Value::as_bool)
         == Some(true)
     {
-        crate::event_submit::remember_verified_recovery_gate(principal_id, device_id);
+        crate::event_submit::remember_verified_recovery_gate(principal_full_id.as_str(), device_id);
     }
     for (fixture_field, private_data_key) in [
         ("local_recovery_state", "recovery.state.v1"),
@@ -372,12 +368,12 @@ pub(super) async fn inject_test_session_grant(
             };
             state_store
                 .write()
-                .save_private_data(principal_id, private_data_key, payload);
+                .save_private_data(account_key.as_str(), private_data_key, payload);
         }
     }
     if let Some(value) = parsed.get("pending_principal_registration").cloned() {
         match serde_json::from_value::<crate::state::PendingPrincipalRegistration>(value) {
-            Ok(registration) if registration.full_id.as_str() == principal_id => {
+            Ok(registration) if registration.full_id == principal_full_id => {
                 if let Err(error) = state_store
                     .write()
                     .set_pending_principal_registration(Some(registration))
@@ -518,16 +514,6 @@ pub(super) async fn inject_test_session_grant(
         );
         return None;
     }
-    let principal_core_id = match arkret_sdk::project_full_id_to_core_id(&principal_full_id) {
-        Ok(principal_core_id) => principal_core_id,
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                "test session injection: principal core projection failed"
-            );
-            return None;
-        }
-    };
     if let Err(error) =
         crate::event_signer::bind_active_signer_principal_device_id(&principal_full_id, device_id)
     {
@@ -547,7 +533,7 @@ pub(super) async fn inject_test_session_grant(
         session_private_key_pem: String::new(),
         grant_id,
         audience: audience.clone(),
-        principal_id: principal_core_id,
+        principal_id: account_key.clone(),
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?,
         // MUST match the active server so the bootstrap does not discard the
         // grant as stale (see `grant_matches_principal_server`).
@@ -593,7 +579,7 @@ pub(super) async fn inject_test_session_grant(
     persist_config(
         config_store,
         server_url.to_owned(),
-        principal_id.to_owned(),
+        Some(account_key),
         device_id.to_owned(),
         grant_jwt.clone(),
     );

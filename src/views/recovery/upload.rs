@@ -50,7 +50,6 @@ pub(crate) enum RecoveryKeyBackupOutcome {
 
 pub(crate) fn upload_recovery_key_account_backup(
     token: Signal<String>,
-    principal_id: Signal<String>,
     device_id: Signal<String>,
     account: crate::config::ActiveAccountContext,
     state_store: SyncSignal<LocalStateStore>,
@@ -69,8 +68,9 @@ pub(crate) fn upload_recovery_key_account_backup(
     let base = account.server_url.to_string();
     let authority = account.authority.clone();
     let actor_full_id = account.full_id().clone();
+    let account_key = account.principal_id().clone();
     let session = token();
-    let actor = principal_id();
+    let actor = actor_full_id.to_string();
     let device = device_id();
     if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
         if let Some(handler) = on_outcome {
@@ -100,6 +100,7 @@ pub(crate) fn upload_recovery_key_account_backup(
     spawn(async move {
         let _publication_guard = publication_guard;
         let actor_for_sidecar = actor.clone();
+        let account_key_for_marker = account_key;
         let authority_for_sidecar = authority.clone();
         let device_for_sidecar = device.clone();
         let base_for_sidecar = base.clone();
@@ -157,7 +158,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                 {
                     crate::components::mark_mls_recovery_backup_configured(
                         &mut store,
-                        &actor_for_sidecar,
+                        &account_key_for_marker,
                         configured_backup_id,
                     );
                 }

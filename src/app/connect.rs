@@ -236,7 +236,7 @@ pub(super) async fn refresh_session_credential_for_active_context(
                 persist_config(
                     config_store,
                     account.server_url.to_string(),
-                    account.full_id().to_string(),
+                    Some(account.principal_id().clone()),
                     account.device_id.to_string(),
                     session_credential.clone(),
                 );
@@ -278,7 +278,7 @@ pub(super) struct ConnectContext {
     pub(super) connection_status: Signal<String>,
     pub(super) sync_cursor: Signal<String>,
     pub(super) token: Signal<String>,
-    pub(super) principal_id: Signal<String>,
+    pub(super) principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub(super) device_id: Signal<String>,
     pub(super) selected_realm_id: Signal<String>,
     pub(super) realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
@@ -488,7 +488,12 @@ async fn current_event_signer_matches_directory(
     )
 }
 
-pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectContext) {
+pub(super) fn connect(
+    base: String,
+    actor: Option<arkret_sdk::DidCoreId>,
+    device: String,
+    ctx: ConnectContext,
+) {
     let mut device = crate::config::normalize_device_id(&device);
     let mut active_account = SessionContext::get().active_account;
     spawn(async move {
@@ -786,7 +791,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     Err(retry_error) if !is_auth_expired_error(&retry_error) => {
                                         last_error.set(Some(format!("account_me: {retry_error}")));
-                                        actor.clone()
+                                        crate::app::principal_id_owned(actor.clone())
                                     }
                                     Err(retry_error) if is_auth_expired_error(&retry_error) => {
                                         invalidate_bootstrap_session(
@@ -801,7 +806,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     }
                                     Err(retry_error) => {
                                         last_error.set(Some(format!("account_me: {retry_error}")));
-                                        actor.clone()
+                                        crate::app::principal_id_owned(actor.clone())
                                     }
                                 }
                             }
@@ -836,7 +841,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     }
                     Err(error) => {
                         last_error.set(Some(format!("account_me: {error}")));
-                        actor.clone()
+                        crate::app::principal_id_owned(actor.clone())
                     }
                 };
                 let canonical_principal_id = arkret_sdk::DidCoreId::new(
@@ -898,6 +903,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     return;
                 }
                 let canonical_actor = accepted_account.full_id().to_string();
+                let canonical_runtime_principal = Some(canonical_principal_id.clone());
                 let mut profiles = config_store.read().load_profiles();
                 let profile_id =
                     match profiles.upsert_and_activate(crate::config::AccountProfile::new(
@@ -971,7 +977,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                     // new owner's isolated entry. Device-level state
                     // (local_identity, push_registration, DPoP key) is
                     // preserved.
-                    if !actor.trim().is_empty() {
+                    if actor.is_some() {
                         let store = state_store.write();
                         // Also wipe the in-memory UI signals so the
                         // sidebar can't paint the previous actor's
@@ -1003,9 +1009,9 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                         // who the scope now belongs to (don't wipe: a
                         // just-established grant could be dropped).
                     }
-                    principal_id.set(canonical_actor.clone());
+                    principal_id.set(canonical_runtime_principal.clone());
                 }
-                principal_id.set(canonical_actor.clone());
+                principal_id.set(canonical_runtime_principal);
                 // DID-P2-B step 5, trust-domain half: an account entry can be
                 // re-pointed at a different Principal Server. A binding accepted
                 // against the previous deployment must not authorize anything
@@ -1226,7 +1232,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                 persist_config(
                     config_store,
                     accepted_account.server_url.to_string(),
-                    accepted_account.full_id().to_string(),
+                    Some(accepted_account.principal_id().clone()),
                     accepted_account.device_id.to_string(),
                     session_credential.clone(),
                 );
@@ -1515,7 +1521,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                 match crate::sidecar::ingest_sidecar_view_state_account_data(
                                     &mut store,
                                     &accepted_account.authority,
-                                    &principal_id(),
+                                    crate::app::principal_id_text(&principal_id()),
                                     account_data_key,
                                     entry,
                                 ) {
@@ -1551,7 +1557,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             {
                                                 theme.set(remote_theme.clone());
                                                 store.save_private_data(
-                                                    &principal_id(),
+                                                    crate::app::principal_id_text(&principal_id()),
                                                     "theme",
                                                     remote_theme,
                                                 );
@@ -1591,13 +1597,13 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                             )
                                         {
                                             store.save_private_data(
-                                                &principal_id(),
+                                                crate::app::principal_id_text(&principal_id()),
                                                 "avatar_blob_ref",
                                                 avatar_blob_ref,
                                             );
                                         } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(&content) {
                                             store.save_private_data(
-                                                &principal_id(),
+                                                crate::app::principal_id_text(&principal_id()),
                                                 "avatar_blob_ref",
                                                 "",
                                             );
@@ -1675,7 +1681,7 @@ pub(super) fn connect(base: String, actor: String, device: String, ctx: ConnectC
                                     .and_then(|content| {
                                         let payload = crate::account_data::blocklist_payload_from_account_data(
                                             &content,
-                                            &principal_id(),
+                                            crate::app::principal_id_text(&principal_id()),
                                         )
                                         .map_err(anyhow::Error::msg)?;
                                         let revision = entry

@@ -334,11 +334,7 @@ pub fn classify_manifest_input(raw: &str) -> ManifestInputKind {
 }
 
 #[component]
-pub fn AppletsPanel(
-    token: Signal<String>,
-    principal_id: Signal<String>,
-    selected_realm_id: String,
-) -> Element {
+pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session = crate::app::SessionContext::get();
     let base_url = crate::app::SessionContext::base_url_string();
@@ -612,7 +608,15 @@ pub fn AppletsPanel(
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         let api_token = token();
-                                        let actor_id = principal_id();
+                                        let Some(account) = active_account.peek().clone() else {
+                                            install_status.set(
+                                                "cannot preview install: active account context is unavailable"
+                                                    .to_owned(),
+                                            );
+                                            return;
+                                        };
+                                        let actor_id = account.full_id().clone();
+                                        let install_actor_id = account.principal_id().clone();
                                         let circle = install_circle_id();
                                         let approve_actions = parse_applet_approval_actions(
                                             &install_approve_actions(),
@@ -651,17 +655,6 @@ pub fn AppletsPanel(
                                                 Err(error) => {
                                                     install_status.set(format!(
                                                         "cannot bind install to Principal Server: {error}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
-                                            let install_actor_id = match
-                                                crate::mls_api_helpers::principal_core_id(&actor_id)
-                                            {
-                                                Ok(value) => value,
-                                                Err(error) => {
-                                                    install_status.set(format!(
-                                                        "invalid install actor DID: {error}"
                                                     ));
                                                     return;
                                                 }
@@ -930,11 +923,6 @@ pub fn AppletsPanel(
                                                     let realm = realm.clone();
                                                     let aid = aid.clone();
                                                     let api_token = token();
-                                                    let actor_id = principal_id().trim().to_owned();
-                                                    if actor_id.is_empty() {
-                                                        install_status.set("revoke failed: account is not connected".to_owned());
-                                                        return;
-                                                    };
                                                     let Some(account) = active_account.peek().clone() else {
                                                         install_status.set("revoke failed: active account context is unavailable".to_owned());
                                                         return;

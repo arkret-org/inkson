@@ -6,7 +6,10 @@ use super::backup_summary::{
     BackupInventoryStatus, backup_inventory_status, parse_backup_list, parse_backup_summary,
     sorted_backups_latest_first,
 };
-use super::state::{decode_recovery_public_key_multibase, recovery_state_has_user_material};
+use super::state::{
+    decode_recovery_public_key_multibase, recovery_options_configured,
+    recovery_state_has_user_material,
+};
 use super::types::RecoveryState;
 
 #[test]
@@ -107,6 +110,29 @@ fn recovery_state_with_key_is_configured() {
         ..Default::default()
     };
     assert!(recovery_state_has_user_material(&keyed));
+}
+
+#[test]
+fn webvh_recovery_metadata_is_looked_up_by_stable_core_id() {
+    let full_id = arkret_sdk::DidFullId::new(
+        "did:webvh:zQ3shExampleScid:alice.example:webvh:user".to_owned(),
+    )
+    .unwrap();
+    let core_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+    assert_ne!(full_id.as_str(), core_id.as_str());
+
+    let state = RecoveryState {
+        recovery_key_fingerprint: "sha256:configured".to_owned(),
+        ..Default::default()
+    };
+    let mut store = crate::state::LocalStateStore::default();
+    store.save_private_data(
+        core_id.as_str(),
+        super::RECOVERY_STATE_KEY,
+        serde_json::to_string(&state).unwrap(),
+    );
+
+    assert!(recovery_options_configured(&store, &core_id));
 }
 
 #[test]
