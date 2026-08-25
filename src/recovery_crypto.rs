@@ -5,33 +5,25 @@
 
 use anyhow::{Result, anyhow};
 pub use arkret_crypto::backup::{
-    RECOVERY_KEY_BYTES, VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, VAULT_KDF_OUTPUT_LEN,
-    VAULT_NONCE_LEN, VAULT_NONCE_SALT_LEN, VAULT_SALT_LEN, VaultKek, derive_vault_kek,
-    derive_vault_kek_with_salt,
+    VAULT_ARGON2_M_KIB, VAULT_ARGON2_P, VAULT_ARGON2_T, VAULT_KDF_OUTPUT_LEN, VAULT_NONCE_LEN,
+    VAULT_NONCE_SALT_LEN, VAULT_SALT_LEN, VaultKek, derive_vault_kek, derive_vault_kek_with_salt,
 };
 use sha2::{Digest, Sha256};
 
-/// Generate a fresh 24-word BIP-39 Recovery Key.
+pub const IDENTITY_RECOVERY_ENTROPY_BYTES: usize = 32;
+
+/// Generate a fresh 24-word BIP-39 identity recovery secret.
 pub fn generate_recovery_key() -> Result<String> {
-    let mut bytes = [0u8; RECOVERY_KEY_BYTES];
-    getrandom::fill(&mut bytes).map_err(|error| anyhow!("recovery key rng: {error}"))?;
-    Ok(format_recovery_key(&bytes))
+    arkret_crypto::identity_root::generate_bip39_identity_recovery_mnemonic()
+        .map_err(|error| anyhow!("recovery key generation: {error}"))
 }
 
 pub fn format_recovery_key(bytes: &[u8]) -> String {
-    bip39::Mnemonic::from_entropy_in(bip39::Language::English, bytes)
-        .map(|mnemonic| mnemonic.words().collect::<Vec<_>>().join(" "))
-        .unwrap_or_default()
+    arkret_crypto::identity_root::format_bip39_identity_recovery_mnemonic(bytes).unwrap_or_default()
 }
 
 pub fn normalize_recovery_key_input(input: &str) -> Option<String> {
-    let collapsed = input.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.split_whitespace().count() != 24 {
-        return None;
-    }
-    let candidate = collapsed.to_ascii_lowercase();
-    let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, &candidate).ok()?;
-    Some(mnemonic.words().collect::<Vec<_>>().join(" "))
+    arkret_crypto::identity_root::normalize_bip39_identity_recovery_mnemonic(input).ok()
 }
 
 pub fn recovery_key_confirmation_matches(recovery_key: &str, confirmation: &str) -> bool {
@@ -103,7 +95,7 @@ mod tests {
 
     #[test]
     fn recovery_key_round_trips_through_input_normalization() {
-        let key = format_recovery_key(&[0u8; RECOVERY_KEY_BYTES]);
+        let key = format_recovery_key(&[0u8; IDENTITY_RECOVERY_ENTROPY_BYTES]);
         let noisy = key
             .split_whitespace()
             .map(str::to_ascii_uppercase)
@@ -114,7 +106,7 @@ mod tests {
 
     #[test]
     fn confirmation_reports_first_mismatch() {
-        let key = format_recovery_key(&[0u8; RECOVERY_KEY_BYTES]);
+        let key = format_recovery_key(&[0u8; IDENTITY_RECOVERY_ENTROPY_BYTES]);
         let mut words = key.split_whitespace().collect::<Vec<_>>();
         words[6] = "zebra";
         assert_eq!(

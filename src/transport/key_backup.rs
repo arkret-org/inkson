@@ -140,36 +140,16 @@ impl crate::transport::TransportClient {
     }
 
     pub async fn list_key_backups(&self) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
-        let http = self.sdk_http_client()?;
-        let mut backups = Vec::new();
-        let mut cursor = None;
-        let mut seen_cursors = std::collections::BTreeSet::new();
-        loop {
-            let page = http
-                .list_key_backups(&arkret_sdk::KeyBackupsListQuery {
-                    series_id: None,
-                    backup_kind: None,
-                    cursor: cursor.clone(),
-                    limit: None,
-                })
-                .await
-                .map_err(anyhow::Error::from)?;
-            backups.extend(page.backups);
-            if !page.has_more {
-                return Ok(arkret_sdk::KeysBackupsList {
-                    backups,
-                    next_cursor: None,
-                    has_more: false,
-                });
-            }
-            let next = page
-                .next_cursor
-                .ok_or_else(|| anyhow::anyhow!("key backup page omitted required next_cursor"))?;
-            if !seen_cursors.insert(next.to_string()) {
-                anyhow::bail!("key backup pagination cursor repeated");
-            }
-            cursor = Some(next);
-        }
+        let backups = self
+            .sdk_http_client()?
+            .list_all_key_backups()
+            .await
+            .map_err(anyhow::Error::from)?;
+        Ok(arkret_sdk::KeysBackupsList {
+            backups,
+            next_cursor: None,
+            has_more: false,
+        })
     }
 
     // ── REC-1 recovery policy + session (6.1 / 6.3) ─────────────────────────
@@ -192,9 +172,10 @@ impl crate::transport::TransportClient {
     pub async fn put_recovery_policy(
         &self,
         body: &arkret_sdk::RecoveryPolicyPublishRequest,
+        digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
         self.sdk_http_client()?
-            .post("/_arkret/root/identity/recovery-policy", body)
+            .identity_recovery_policy_publish(body, digest_suite)
             .await
             .map_err(anyhow::Error::from)
     }

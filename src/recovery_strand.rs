@@ -629,7 +629,10 @@ async fn publish_recovery_policy(
     const FRONTIER_RETRY_ATTEMPTS: usize = 120;
     let mut successor_seal_submitted = false;
     for attempt in 0..FRONTIER_RETRY_ATTEMPTS {
-        match api.put_recovery_policy(&request).await {
+        match api
+            .put_recovery_policy(&request, event.digest_suite())
+            .await
+        {
             Ok(outcome) => return Ok(outcome),
             Err(error)
                 if recovery_policy_frontier_pending(&error)

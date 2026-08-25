@@ -4190,7 +4190,6 @@ dependencies = [
  "arkret-state",
  "arkret-wire",
  "base64",
- "bip39",
  "chacha20poly1305",
  "chime",
  "chrono",
