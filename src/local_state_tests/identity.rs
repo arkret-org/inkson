@@ -20,7 +20,9 @@ fn ensure_local_identity_generates_persists_and_round_trips() {
     };
     // Round-trip across store instances.
     let mut reader = LocalStateStore::with_path(path);
-    let loaded = reader.ensure_local_identity().expect("persisted identity loads");
+    let loaded = reader
+        .ensure_local_identity()
+        .expect("persisted identity loads");
     assert_eq!(loaded.local_signing_did, id.local_signing_did);
     assert_eq!(loaded.signing_key.to_bytes(), id.signing_key.to_bytes());
 }

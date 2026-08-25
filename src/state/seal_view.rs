@@ -98,7 +98,6 @@ impl LocalSealView {
             .cloned()
             .unwrap_or_else(|| Self::EMPTY_ANCHOR_REF.to_owned())
     }
-
 }
 
 impl LocalSealView {

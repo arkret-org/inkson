@@ -96,10 +96,7 @@ mod tests {
     /// to `Invalid`, never to the recoverable `Exhausted` signal.
     #[test]
     fn rank_between_rejects_invalid_input() {
-        assert!(matches!(
-            rank_between("U", "U"),
-            Err(RankError::Invalid(_))
-        ));
+        assert!(matches!(rank_between("U", "U"), Err(RankError::Invalid(_))));
         assert!(matches!(
             rank_between("ab cd", ""),
             Err(RankError::Invalid(_))

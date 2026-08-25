@@ -2,10 +2,9 @@ use reqwest::StatusCode;
 
 use crate::api_error::{
     TransportClientError, decode_arkret_error, is_actor_seq_cas_conflict_error,
-    is_auth_expired_error, is_device_not_authorized_error,
-    is_plaintext_visibility_policy_error, is_space_membership_denied_error,
-    is_terminal_session_grant_error, is_terminal_session_grant_refresh_error,
-    rate_limited_retry_after,
+    is_auth_expired_error, is_device_not_authorized_error, is_plaintext_visibility_policy_error,
+    is_space_membership_denied_error, is_terminal_session_grant_error,
+    is_terminal_session_grant_refresh_error, rate_limited_retry_after,
 };
 
 fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {

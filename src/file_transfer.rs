@@ -6,8 +6,7 @@
 
 pub use arkret_sdk::{
     FileTransferAad, FileTransferAccess, FileTransferAccessVisibility, FileTransferEncryption,
-    FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferRecord,
-    FileTransferStatus,
+    FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferRecord, FileTransferStatus,
 };
 use arkret_wire::{AEAD_PROFILE_XCHACHA20_POLY1305_V1, SchemaId};
 use base64::Engine as _;
