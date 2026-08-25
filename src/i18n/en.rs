@@ -2599,6 +2599,10 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.recovery_gate.body",
         "This workspace is end-to-end encrypted. If you lose this device and have no Recovery Key or backup configured, its contents are permanently unrecoverable. Set up your 24-word Recovery Key and back up your keys before creating it.",
     );
+    dict.set(
+        "setup.recovery_gate.checking",
+        "Checking your recovery setup. Please try again in a moment.",
+    );
 
     // Actions.
     dict.set("setup.action.back", "Back");

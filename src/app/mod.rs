@@ -593,6 +593,7 @@ fn AppBootstrap() -> Element {
     let recovery_auto_prompt_fired = use_signal(|| false);
     let mut account_recovery_configured = use_signal(|| Option::<bool>::None);
     let account_recovery_detection_key_seen = use_signal(|| Option::<String>::None);
+    let account_recovery_retry_attempt = use_signal(|| 0_u8);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
@@ -1378,6 +1379,7 @@ fn AppBootstrap() -> Element {
                 AccountRecoveryEffects {
                     account_recovery_configured,
                     account_recovery_detection_key_seen,
+                    account_recovery_retry_attempt,
                     last_error,
                     token,
                     principal_id,
@@ -3944,6 +3946,7 @@ fn AppBootstrap() -> Element {
                             principal_id,
                             device_id,
                             token,
+                            account_recovery_configured,
                             config_store,
                             account_primary_handle,
                             personal_handles,

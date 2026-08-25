@@ -1,5 +1,10 @@
 use super::*;
 
+fn recovery_state_retry_delay(attempt: u8) -> std::time::Duration {
+    let exponent = u32::from(attempt.saturating_sub(1).min(5));
+    std::time::Duration::from_secs(1_u64 << exponent)
+}
+
 /// Tracks whether the authenticated account has a server-side recovery path.
 /// The result feeds account-health reminders; transport and session invalidation
 /// stay owned by the mounted session shell instead of route rendering.
@@ -7,6 +12,7 @@ use super::*;
 pub(super) fn AccountRecoveryEffects(
     mut account_recovery_configured: Signal<Option<bool>>,
     mut account_recovery_detection_key_seen: Signal<Option<String>>,
+    mut account_recovery_retry_attempt: Signal<u8>,
     mut last_error: Signal<Option<String>>,
     token: Signal<String>,
     principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
@@ -31,6 +37,7 @@ pub(super) fn AccountRecoveryEffects(
             // turns its final transition into redundant network traffic.
             account_recovery_configured.set(None);
             account_recovery_detection_key_seen.set(None);
+            account_recovery_retry_attempt.set(0);
             return;
         }
         let base = base_url();
@@ -39,11 +46,13 @@ pub(super) fn AccountRecoveryEffects(
         let Some(actor_id) = actor.clone() else {
             account_recovery_configured.set(None);
             account_recovery_detection_key_seen.set(None);
+            account_recovery_retry_attempt.set(0);
             return;
         };
         let Some(account) = active_account() else {
             account_recovery_configured.set(None);
             account_recovery_detection_key_seen.set(None);
+            account_recovery_retry_attempt.set(0);
             return;
         };
         let generation = sync_generation();
@@ -53,6 +62,7 @@ pub(super) fn AccountRecoveryEffects(
         {
             account_recovery_configured.set(None);
             account_recovery_detection_key_seen.set(None);
+            account_recovery_retry_attempt.set(0);
             return;
         }
         let detection_key = format!("{generation}|{base}|{actor_id}");
@@ -109,6 +119,7 @@ pub(super) fn AccountRecoveryEffects(
                         &backups,
                         local_fingerprint,
                     );
+                    account_recovery_retry_attempt.set(0);
                     account_recovery_configured.set(Some(state.server_recovery_configured()));
                 }
                 Err(error) if error.is_auth_expired() => {
@@ -119,10 +130,31 @@ pub(super) fn AccountRecoveryEffects(
                 Err(error) => {
                     last_error.set(Some(format!("recovery_state: {}", error.display())));
                     account_recovery_configured.set(None);
+                    let attempt = account_recovery_retry_attempt().saturating_add(1);
+                    account_recovery_retry_attempt.set(attempt);
+                    crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt)).await;
+                    if account_recovery_detection_key_seen().as_deref()
+                        == Some(detection_key.as_str())
+                    {
+                        account_recovery_detection_key_seen.set(None);
+                    }
                 }
             }
         });
     });
 
     rsx! {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recovery_state_retry_delay;
+
+    #[test]
+    fn recovery_state_retry_uses_bounded_exponential_backoff() {
+        assert_eq!(recovery_state_retry_delay(1).as_secs(), 1);
+        assert_eq!(recovery_state_retry_delay(2).as_secs(), 2);
+        assert_eq!(recovery_state_retry_delay(6).as_secs(), 32);
+        assert_eq!(recovery_state_retry_delay(u8::MAX).as_secs(), 32);
+    }
 }

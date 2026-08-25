@@ -101,11 +101,43 @@ fn realm_create_available(
         && !has_created_realm
 }
 
+/// Recovery readiness has three states because `None` means the authoritative
+/// server check has not completed (or could not complete), not that Recovery
+/// is absent. Treating it as `false` makes a transient request race look like a
+/// request to configure a second Recovery Key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EncryptedRealmRecoveryGateState {
+    Ready,
+    Checking,
+    Missing,
+}
+
+/// Accepted server policy is the account-level authority for Recovery setup.
+/// Local metadata and the MLS backup marker remain useful offline fallbacks,
+/// but a missing local cache must not contradict an already accepted policy.
+fn encrypted_realm_recovery_gate_state(
+    account_recovery_configured: Option<bool>,
+    local_recovery_configured: bool,
+    mls_recovery_backup_configured: bool,
+) -> EncryptedRealmRecoveryGateState {
+    if matches!(account_recovery_configured, Some(true))
+        || local_recovery_configured
+        || mls_recovery_backup_configured
+    {
+        EncryptedRealmRecoveryGateState::Ready
+    } else if matches!(account_recovery_configured, Some(false)) {
+        EncryptedRealmRecoveryGateState::Missing
+    } else {
+        EncryptedRealmRecoveryGateState::Checking
+    }
+}
+
 #[component]
 pub(super) fn RealmsSection(
     plaintext_service_id: String,
     secure_store_ready: bool,
     token: Signal<String>,
+    account_recovery_configured: Signal<Option<bool>>,
     device_id: Signal<String>,
     config_store: Signal<LocalConfigStore>,
     mut selected_realm_id: Signal<String>,
@@ -213,6 +245,30 @@ pub(super) fn RealmsSection(
         realm_create_busy_value,
         has_created_realm,
     );
+
+    // The authoritative recovery check is asynchronous. If the gate was
+    // opened from an earlier negative result, close it as soon as either the
+    // server policy or a local fallback proves Recovery is configured.
+    use_effect(move || {
+        let gate_state =
+            active_account().map_or(EncryptedRealmRecoveryGateState::Checking, |account| {
+                let store = state_store.read();
+                encrypted_realm_recovery_gate_state(
+                    account_recovery_configured(),
+                    crate::views::recovery::recovery_options_configured(
+                        &store,
+                        account.principal_id(),
+                    ),
+                    crate::components::mls_recovery_backup_configured(
+                        &store,
+                        account.principal_id(),
+                    ),
+                )
+            });
+        if gate_state == EncryptedRealmRecoveryGateState::Ready && pending_recovery_gate() {
+            pending_recovery_gate.set(false);
+        }
+    });
 
     rsx! {
         if pending_recovery_gate() {
@@ -767,19 +823,38 @@ pub(super) fn RealmsSection(
                                             &encryption_profile,
                                         )
                                         {
-                                            let recovery_ready = active_account().is_some_and(|account| {
-                                                let store = state_store.read();
-                                                crate::views::recovery::recovery_options_configured(
-                                                    &store,
-                                                    account.principal_id(),
-                                                ) || crate::components::mls_recovery_backup_configured(
-                                                    &store,
-                                                    account.principal_id(),
-                                                )
-                                            });
-                                            if !recovery_ready {
-                                                pending_recovery_gate.set(true);
-                                                return;
+                                            let recovery_gate_state = active_account().map_or(
+                                                EncryptedRealmRecoveryGateState::Checking,
+                                                |account| {
+                                                    let store = state_store.read();
+                                                    encrypted_realm_recovery_gate_state(
+                                                        account_recovery_configured(),
+                                                        crate::views::recovery::recovery_options_configured(
+                                                            &store,
+                                                            account.principal_id(),
+                                                        ),
+                                                        crate::components::mls_recovery_backup_configured(
+                                                            &store,
+                                                            account.principal_id(),
+                                                        ),
+                                                    )
+                                                },
+                                            );
+                                            match recovery_gate_state {
+                                                EncryptedRealmRecoveryGateState::Ready => {}
+                                                EncryptedRealmRecoveryGateState::Missing => {
+                                                    pending_recovery_gate.set(true);
+                                                    return;
+                                                }
+                                                EncryptedRealmRecoveryGateState::Checking => {
+                                                    let message = tr("setup.recovery_gate.checking");
+                                                    realm_state.set(message);
+                                                    crate::components::feedback::toast_info(
+                                                        "setup.recovery_gate.checking",
+                                                        vec![],
+                                                    );
+                                                    return;
+                                                }
                                             }
                                         }
                                         realm_create_busy.set(true);
@@ -1231,7 +1306,10 @@ pub(super) fn RealmsSection(
 
 #[cfg(test)]
 mod tests {
-    use super::realm_create_available;
+    use super::{
+        EncryptedRealmRecoveryGateState, encrypted_realm_recovery_gate_state,
+        realm_create_available,
+    };
 
     #[test]
     fn realm_create_does_not_wait_for_background_grant_rotation() {
@@ -1254,5 +1332,41 @@ mod tests {
         ));
         assert!(!realm_create_available(true, true, true, true, true, false));
         assert!(!realm_create_available(true, true, true, true, false, true));
+    }
+
+    #[test]
+    fn encrypted_realm_accepts_server_recovery_policy_without_local_cache() {
+        assert_eq!(
+            encrypted_realm_recovery_gate_state(Some(true), false, false),
+            EncryptedRealmRecoveryGateState::Ready
+        );
+    }
+
+    #[test]
+    fn encrypted_realm_waits_while_server_state_is_unknown() {
+        assert_eq!(
+            encrypted_realm_recovery_gate_state(None, false, false),
+            EncryptedRealmRecoveryGateState::Checking
+        );
+    }
+
+    #[test]
+    fn encrypted_realm_prompts_only_after_server_confirms_recovery_is_missing() {
+        assert_eq!(
+            encrypted_realm_recovery_gate_state(Some(false), false, false),
+            EncryptedRealmRecoveryGateState::Missing
+        );
+    }
+
+    #[test]
+    fn encrypted_realm_keeps_local_recovery_fallbacks() {
+        assert_eq!(
+            encrypted_realm_recovery_gate_state(None, true, false),
+            EncryptedRealmRecoveryGateState::Ready
+        );
+        assert_eq!(
+            encrypted_realm_recovery_gate_state(None, false, true),
+            EncryptedRealmRecoveryGateState::Ready
+        );
     }
 }

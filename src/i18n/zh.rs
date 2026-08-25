@@ -2123,6 +2123,10 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.recovery_gate.body",
         "这个工作区是端到端加密的。如果你丢失本设备且没有配置恢复密钥或备份，其中的内容将永久无法恢复。请先设置 24 词恢复密钥并备份密钥，再创建它。",
     );
+    dict.set(
+        "setup.recovery_gate.checking",
+        "正在检查恢复设置，请稍后重试。",
+    );
 
     // 操作。
     dict.set("setup.action.back", "上一步");
