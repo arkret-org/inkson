@@ -520,14 +520,7 @@ where
         ) -> Result<arkret_sdk::signatures::PublicKeyMaterial, arkret_sdk::WireError>
         + Copy,
 {
-    let frontier = http
-        .events_frontier(&arkret_sdk::EventsFrontierSelector::RealmSeal {
-            realm_id: event.realm_id.clone(),
-        })
-        .await?;
-    let arkret_sdk::EventsFrontierView::RealmSeal(frontier) = frontier.frontier else {
-        anyhow::bail!("Realm Seal frontier returned the wrong selector variant");
-    };
+    let frontier = http.seals_frontier(event.realm_id.clone()).await?.frontier;
     let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(
         http,
         &event.realm_id,
@@ -1746,8 +1739,8 @@ impl EventSubmitter {
         self.submit_signal_envelope(&envelope).await
     }
 
-    /// `QUERY /_arkret/self/events/frontier` — Realm Seal view
-    /// `{realm_id, seal_id, control_event_set_root, state_root, hlc?}`.
+    /// `QUERY /_arkret/self/seals/frontier` — complete accepted Realm Seal
+    /// antichain.
     ///
     /// This is the spec-registered account-client sourcing for minting a
     /// single-leaf Control Move `seal_basis` (`view.seal_basis()`) and a
@@ -1795,23 +1788,15 @@ impl EventSubmitter {
         arkret_sdk::RealmSealFrontierView,
         Vec<arkret_sdk::ManagedAgentPcrSealHeadReceipt>,
     )> {
-        let selector = arkret_sdk::EventsFrontierSelector::RealmSeal {
-            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
-        };
         let state = self
             .http
-            .events_frontier(&selector)
+            .seals_frontier(arkret_sdk::RealmId::new(realm_id.to_owned())?)
             .await
             .map_err(anyhow::Error::from)?;
-        let arkret_sdk::EventsFrontierView::RealmSeal(view) = state.frontier else {
-            anyhow::bail!(
-                "events/frontier for realm_id={realm_id} did not return a Realm Seal view — \
-                 cannot mint seal_basis / seal_ref"
-            );
-        };
+        let view = state.frontier;
         if view.realm_id.as_str() != realm_id {
             anyhow::bail!(
-                "events/frontier answered for realm {} instead of {realm_id}",
+                "seals/frontier answered for realm {} instead of {realm_id}",
                 view.realm_id
             );
         }
@@ -1831,7 +1816,7 @@ impl EventSubmitter {
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
         let (view, receipts) = self.events_frontier_realm_state(realm_id).await?;
         let receipt = receipts.first().ok_or_else(|| {
-            anyhow::anyhow!("events/frontier omitted the accepted managed Agent PCR Seal head")
+            anyhow::anyhow!("seals/frontier omitted the accepted managed Agent PCR Seal head")
         })?;
         let seal = receipt.seal.clone();
         let checkpoint = state_store

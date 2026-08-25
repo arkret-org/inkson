@@ -23,13 +23,7 @@ pub(crate) async fn prepare_principal_successor_seal(
         anyhow::bail!("prepared principal Event actor does not match the active signer");
     }
     let control_realm = contact_event.realm_id.clone();
-    let selector = arkret_sdk::EventsFrontierSelector::RealmSeal {
-        realm_id: control_realm.clone(),
-    };
-    let state = http.events_frontier(&selector).await?;
-    let arkret_sdk::EventsFrontierView::RealmSeal(view) = state.frontier else {
-        anyhow::bail!("principal control frontier did not return a Realm Seal view");
-    };
+    let view = http.seals_frontier(control_realm.clone()).await?.frontier;
     if view.realm_id != control_realm {
         anyhow::bail!("principal control frontier returned a different Realm");
     }
