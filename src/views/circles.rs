@@ -100,8 +100,8 @@ pub fn CirclesPanel(
         busy() || create_title().trim().is_empty() || (plaintext_selected && !plaintext_ack());
 
     rsx! {
-        main { class: "circle-workspace", "data-testid": "circles-panel",
-            header { class: "circle-workspace-header",
+        main { class: "circle-realm", "data-testid": "circles-panel",
+            header { class: "circle-realm-header",
                 div {
                     p { class: "eyebrow", "Realm access scopes" }
                     h1 { "Circles" }
@@ -129,7 +129,7 @@ pub fn CirclesPanel(
                 div { class: "circle-status", role: "status", "data-testid": "circle-status", "{status}" }
             }
 
-            div { class: "circle-workspace-grid",
+            div { class: "circle-realm-grid",
                 nav { class: "circle-list", "aria-label": "Ordinary Circles",
                     if loading() {
                         p { class: "muted", "Loading Circles…" }

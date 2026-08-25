@@ -70,11 +70,7 @@ pub(super) fn AccountRecoveryEffects(
             return;
         }
         account_recovery_detection_key_seen.set(Some(detection_key.clone()));
-        tracing::debug!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (recovery-policy+backups)");
-        let local_fingerprint = {
-            let store = state_store.read();
-            crate::views::recovery::local_recovery_key_fingerprint(&store, &actor_id)
-        };
+        tracing::debug!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (authoritative recovery policy)");
         let recovery_material_evidence = state_store.read().recovery_material_evidence();
         let gate_actor = account.full_id().clone();
         let gate_device = device_id();
@@ -84,43 +80,75 @@ pub(super) fn AccountRecoveryEffects(
         spawn(async move {
             match crate::transport::auth::with_authed_api(&base, credential, |api| async move {
                 let policy = api.get_recovery_policy().await?;
-                let backups = serde_json::to_value(&api.list_key_backups().await?)?;
-                let gate_verified = match recovery_material_evidence.as_ref() {
+                let gate_verification = match recovery_material_evidence.as_ref() {
                     Some(evidence)
                         if evidence.principal_id == gate_actor
                             && evidence.device_id.as_str() == gate_device =>
                     {
-                        crate::recovery_strand::verify_recovery_material_evidence(&api, evidence)
-                            .await?;
-                        true
+                        Some(
+                            crate::recovery_strand::verify_recovery_material_evidence(
+                                &api, evidence,
+                            )
+                            .await,
+                        )
                     }
-                    _ => false,
+                    _ => None,
                 };
-                Ok::<
-                    (
-                        arkret_sdk::RecoveryPolicyActiveOutcome,
-                        serde_json::Value,
-                        bool,
-                    ),
-                    anyhow::Error,
-                >((policy, backups, gate_verified))
+                Ok::<_, anyhow::Error>((
+                    policy,
+                    gate_verification,
+                ))
             })
             .await
             {
-                Ok((policy, backups, gate_verified)) => {
-                    if gate_verified {
-                        crate::event_submit::remember_verified_recovery_gate(
-                            remember_actor.as_str(),
-                            &remember_device,
-                        );
+                Ok((policy, gate_verification)) => {
+                    let mut retry_gate_verification = false;
+                    if let Some(gate_verification) = gate_verification {
+                        match gate_verification {
+                            Ok(()) => crate::event_submit::remember_verified_recovery_gate(
+                                remember_actor.as_str(),
+                                &remember_device,
+                            ),
+                            Err(error) if crate::api_error::is_auth_expired_error(&error) => {
+                                session_coordinator.invalidate(
+                                    "session expired while verifying recovery material evidence",
+                                );
+                                account_recovery_configured.set(None);
+                                return;
+                            }
+                            Err(error) => {
+                                retry_gate_verification = true;
+                                last_error.set(Some(format!(
+                                    "recovery_material_evidence: {}",
+                                    crate::api_error::display_with_reason_detail(&error)
+                                )));
+                            }
+                        }
                     }
-                    let state = crate::recovery_strand::account_recovery_state(
-                        &policy,
-                        &backups,
-                        local_fingerprint,
-                    );
-                    account_recovery_retry_attempt.set(0);
-                    account_recovery_configured.set(Some(state.server_recovery_configured()));
+                    // Realm creation is gated by the accepted Recovery Policy,
+                    // not by the independently retryable ciphertext-backup
+                    // collection. A failed backup list/upload must not erase an
+                    // authoritative policy result and strand the UI in
+                    // `Checking` forever.
+                    let recovery_configured =
+                        crate::recovery_strand::active_recovery_policy(&policy).is_some();
+                    account_recovery_configured.set(Some(recovery_configured));
+                    if retry_gate_verification {
+                        // The accepted policy remains authoritative for the UI,
+                        // while the independent local-evidence rail retries
+                        // until Event submission can cache the verified PCR
+                        // bootstrap basis as well.
+                        let attempt = account_recovery_retry_attempt().saturating_add(1);
+                        account_recovery_retry_attempt.set(attempt);
+                        crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt)).await;
+                        if account_recovery_detection_key_seen().as_deref()
+                            == Some(detection_key.as_str())
+                        {
+                            account_recovery_detection_key_seen.set(None);
+                        }
+                    } else {
+                        account_recovery_retry_attempt.set(0);
+                    }
                 }
                 Err(error) if error.is_auth_expired() => {
                     session_coordinator

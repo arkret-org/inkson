@@ -424,7 +424,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                         }
                                         if !outcome.is_active() {
                                             anyhow::bail!(
-                                                "the agent's control workspace has not finished accepting this change yet — wait a moment and try again"
+                                                "the agent's control Realm has not finished accepting this change yet — wait a moment and try again"
                                             );
                                         }
                                         let recovery_refresh_error = bootstrap_provisioned_agent(

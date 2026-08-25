@@ -24,7 +24,7 @@ adapt to your local toolchain.
 Current Realm / Space vocabulary:
 
 - **Realm:** security boundary — membership, capability, E2EE, federation.
-  Surfaced in the UI as **Workspace** (zh: 工作区).
+  Surfaced in the UI as **Realm** in every locale; it has no alternate product alias.
 - **Space:** navigation container — board, list, section, calendar bucket
   inside a Realm. Surfaced in the UI as **Space** (zh: 空间).
 

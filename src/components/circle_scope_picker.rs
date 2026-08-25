@@ -10,7 +10,7 @@ use crate::circle::{CircleScope, CircleSummary};
 use crate::ui::select::{Select, SelectOption};
 
 /// Dropdown picker. Renders a `<select>` with one option per Circle the
-/// caller passed in plus a default everyone-in-workspace option (label
+/// caller passed in plus a default everyone-in-realm option (label
 /// resolved via `circle.scope.realm_everyone`). Emits the
 /// chosen [`CircleScope`] via `onchange`.
 ///
@@ -196,7 +196,7 @@ mod tests {
         // a Realm-scope selection. The component itself is a Dioxus
         // surface; full render coverage lives in the e2e harness.
         let selected = CircleScope::default();
-        assert_eq!(selected.label(), "Workspace");
+        assert_eq!(selected.label(), "Realm");
     }
 
     #[test]

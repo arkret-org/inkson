@@ -59,11 +59,11 @@
   letter-spacing: -0.01em;
 }
 
-/* ----- 6.2 Workspace ----- */
+/* ----- 6.2 Realm ----- */
 
-.workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.realm { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
-.workspace-header {
+.realm-header {
   height: var(--topbar-h);
   flex: 0 0 var(--topbar-h);
   border-bottom: 1px solid var(--border);
@@ -72,11 +72,11 @@
   padding: 0 16px;
   gap: 12px;
 }
-.workspace-header .actions {
+.realm-header .actions {
   margin-left: auto;
   display: flex; gap: 6px; align-items: center;
 }
-.workspace-header .search {
+.realm-header .search {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -85,15 +85,14 @@
   width: 240px;
   display: flex; align-items: center; gap: 6px;
 }
-.workspace-header .search kbd { background: var(--surface); border: 1px solid var(--border); padding: 0 4px; border-radius: 3px; margin-left: auto; }
+.realm-header .search kbd { background: var(--surface); border: 1px solid var(--border); padding: 0 4px; border-radius: 3px; margin-left: auto; }
 
-.workspace-body {
+.realm-body {
   overflow: auto;
   background: var(--bg);
   padding: 18px 22px 48px;
   flex: 1 1 auto;
 }
-.workspace-body.no-pad { padding: 0; }
-.workspace-body.tight  { padding: 14px 18px; }
-.workspace-body.narrow { padding: 30px 28px 80px; max-width: 920px; margin: 0 auto; width: 100%; }
-
+.realm-body.no-pad { padding: 0; }
+.realm-body.tight  { padding: 14px 18px; }
+.realm-body.narrow { padding: 30px 28px 80px; max-width: 920px; margin: 0 auto; width: 100%; }

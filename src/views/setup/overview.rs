@@ -13,7 +13,7 @@ pub(super) fn OverviewSection(selected_realm_id: Signal<String>) -> Element {
     let has_selected_realm = !selected_realm_value.trim().is_empty();
 
     rsx! {
-        div { class: "event", "data-testid": "workspace-setup-map",
+        div { class: "event", "data-testid": "realm-setup-map",
             div { class: "event-head",
                 span { {tr("setup.overview.surfaces")} }
                 span { {tr("setup.overview.surfaces.hint")} }
@@ -74,7 +74,7 @@ pub(super) fn OverviewSection(selected_realm_id: Signal<String>) -> Element {
             }
         }
 
-        div { class: "event", "data-testid": "workspace-setup-checklist",
+        div { class: "event", "data-testid": "realm-setup-checklist",
             div { class: "event-head",
                 span { {tr("setup.overview.moved")} }
                 span { {tr("setup.overview.moved.hint")} }

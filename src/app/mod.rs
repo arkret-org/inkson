@@ -195,7 +195,7 @@ const APP_OVERRIDES: &str = concat!(
     include_str!("../styles/app_overrides/account-trigger-menu.css"),
     include_str!("../styles/app_overrides/members-agents-admin.css"),
     include_str!("../styles/app_overrides/sidecar-shell.css"),
-    include_str!("../styles/app_overrides/circle-workspace.css"),
+    include_str!("../styles/app_overrides/circle-realm.css"),
 );
 
 /// C3: yoface shared-component design tokens. The first layer is shadcn
@@ -1925,9 +1925,9 @@ fn AppBootstrap() -> Element {
                         }
                     }
 
-                    div { class: "sidebar-nav-group workspace-tab-group", "data-testid": "realm-tree-list",
+                    div { class: "sidebar-nav-group realm-tab-group", "data-testid": "realm-tree-list",
                         if !sidebar_is_collapsed {
-                            div { class: "sidebar-scope-toggle workspace-tabs", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": "Collaboration and contacts",
+                            div { class: "sidebar-scope-toggle realm-tabs", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": "Collaboration and contacts",
                                 Button {
                                     variant: ButtonVariant::Secondary,
                                     class: if realm_sidebar_tab() == "collaboration" { "scope-chip active" } else { "scope-chip" },
@@ -3184,8 +3184,8 @@ fn AppBootstrap() -> Element {
                     }
                     }
 
-                main { class: "main workspace", "data-testid": "main-view", role: "main", "aria-label": "Main content",
-                    div { class: "topbar workspace-header",
+                main { class: "main realm", "data-testid": "main-view", role: "main", "aria-label": "Main content",
+                    div { class: "topbar realm-header",
                         div { class: "topbar-left",
                             Button {
                                 variant: ButtonVariant::Ghost,

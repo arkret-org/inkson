@@ -90,7 +90,7 @@ test.describe("responsive viewport — mobile", () => {
     await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
     await expect(page.getByTestId("mobile-theme-toggle")).toBeVisible();
     await expect(page.getByTestId("sidebar")).toBeHidden();
-    await expect(page.locator(".workspace-header")).toBeHidden();
+    await expect(page.locator(".realm-header")).toBeHidden();
 
     const layout = await page.evaluate(() => {
       const shellbar = document
@@ -142,28 +142,28 @@ test.describe("responsive viewport — mobile", () => {
     await page.getByTestId("kanban-board-grid").scrollIntoViewIfNeeded();
 
     const metrics = await page.evaluate(() => {
-      const workspace = document
-        .querySelector(".workspace-body")
+      const realm = document
+        .querySelector(".realm-body")
         ?.getBoundingClientRect();
       const board = document
         .querySelector('[data-testid="kanban-board-grid"]')
         ?.getBoundingClientRect();
-      return workspace && board
+      return realm && board
         ? {
             boardRight: board.right,
             boardBottom: board.bottom,
-            workspaceRight: workspace.right,
-            workspaceBottom: workspace.bottom,
+            realmRight: realm.right,
+            realmBottom: realm.bottom,
           }
         : null;
     });
 
     expect(metrics).not.toBeNull();
     expect(metrics!.boardRight).toBeLessThanOrEqual(
-      metrics!.workspaceRight + 1,
+      metrics!.realmRight + 1,
     );
     expect(metrics!.boardBottom).toBeLessThanOrEqual(
-      metrics!.workspaceBottom + 1,
+      metrics!.realmBottom + 1,
     );
     await expectNoHorizontalOverflow(page);
   });
@@ -185,15 +185,15 @@ test.describe("responsive viewport — narrow tablet", () => {
     await expect(page.getByTestId("mobile-shellbar")).toBeVisible();
 
     const metrics = await page.evaluate(() => {
-      const workspace = document
-        .querySelector(".workspace-body")
+      const realm = document
+        .querySelector(".realm-body")
         ?.getBoundingClientRect();
       const board = document.querySelector('[data-testid="kanban-board-grid"]');
       const boardRect = board?.getBoundingClientRect();
-      return workspace && board && boardRect
+      return realm && board && boardRect
         ? {
             boardRight: boardRect.right,
-            workspaceRight: workspace.right,
+            realmRight: realm.right,
             boardScrollWidth: board.scrollWidth,
             boardClientWidth: board.clientWidth,
           }
@@ -202,7 +202,7 @@ test.describe("responsive viewport — narrow tablet", () => {
 
     expect(metrics).not.toBeNull();
     expect(metrics!.boardRight).toBeLessThanOrEqual(
-      metrics!.workspaceRight + 1,
+      metrics!.realmRight + 1,
     );
     expect(metrics!.boardScrollWidth).toBeGreaterThanOrEqual(
       metrics!.boardClientWidth,

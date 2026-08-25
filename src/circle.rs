@@ -84,11 +84,11 @@ impl CircleScope {
         }
     }
 
-    /// Human-readable label used by the composer banner. `"Workspace"` for
+    /// Human-readable label used by the composer banner. `"Realm"` for
     /// Realm scope (the friendly UI name), the Circle title otherwise.
     pub fn label(&self) -> &str {
         match self {
-            CircleScope::Realm => "Workspace",
+            CircleScope::Realm => "Realm",
             CircleScope::Circle { title, .. } => title.as_str(),
         }
     }
@@ -260,9 +260,9 @@ mod tests {
     }
 
     #[test]
-    fn realm_scope_default_label_is_workspace() {
+    fn realm_scope_default_label_is_realm() {
         let scope = CircleScope::default();
-        assert_eq!(scope.label(), "Workspace");
+        assert_eq!(scope.label(), "Realm");
         assert_eq!(scope.circle_id(), None);
     }
 

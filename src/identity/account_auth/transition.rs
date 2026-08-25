@@ -28,7 +28,7 @@ pub enum LoginStage {
     /// A signed session grant request was issued or exactly replayed.
     SessionIssuance,
     /// An authorized session is active.
-    Workspace,
+    Authenticated,
     /// This installation must have a device accepted before it can hold a
     /// session.
     DeviceSetup,
@@ -47,7 +47,7 @@ impl LoginStage {
             Self::IdentityCreation => "identity_creation",
             Self::LocalNormalization => "local_normalization",
             Self::SessionIssuance => "session_issuance",
-            Self::Workspace => "workspace",
+            Self::Authenticated => "authenticated",
             Self::DeviceSetup => "device_setup",
             Self::RootRecovery => "root_recovery",
             Self::LoginDiagnostics => "login_diagnostics",
@@ -572,7 +572,7 @@ mod tests {
         record_login_transition(
             LoginStage::SessionIssuance,
             "session_grant_admission",
-            LoginStage::Workspace,
+            LoginStage::Authenticated,
             "accepted_device_session_issued",
             Some(LoginTransitionOutcome::AuthorizedLogin),
             &LoginCorrelation::default(),
@@ -590,7 +590,7 @@ mod tests {
         let record = LoginTransitionRecord {
             from_state: LoginStage::SessionIssuance.as_str(),
             authoritative_input: "session_grant_admission",
-            next_state: LoginStage::Workspace.as_str(),
+            next_state: LoginStage::Authenticated.as_str(),
             reason: "recovery_key=abandon hope",
             outcome: Some(LoginTransitionOutcome::AuthorizedLogin.as_str()),
             correlation: &LoginCorrelation::default(),

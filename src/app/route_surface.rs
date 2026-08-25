@@ -236,7 +236,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         .unwrap_or_default();
 
     rsx! {
-                div { class: "workspace-body",
+                div { class: "realm-body",
                 match content_route {
                     Route::Login => rsx! {
                         crate::views::login::LoginPanel {

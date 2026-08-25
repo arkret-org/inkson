@@ -74,6 +74,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 @media print {
   .sidebar, .panel, .actions, .composer { display: none !important; }
   .shell.app { grid-template-columns: 1fr !important; }
-  .shell.app > .workspace { grid-column: 1 !important; }
+  .shell.app > .realm { grid-column: 1 !important; }
   .event { break-inside: avoid; }
 }

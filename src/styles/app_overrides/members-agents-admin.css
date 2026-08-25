@@ -660,13 +660,13 @@
 }
 
 @media (min-width: 981px) {
-  .workspace-body > .settings-page .settings-content-column:has(> .agent-admin-page) {
+  .realm-body > .settings-page .settings-content-column:has(> .agent-admin-page) {
     grid-template-rows: auto minmax(0, 1fr);
     align-content: stretch;
     overflow: hidden;
   }
 
-  .workspace-body > .settings-page .agent-admin-page {
+  .realm-body > .settings-page .agent-admin-page {
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -674,21 +674,21 @@
     overflow: hidden;
   }
 
-  .workspace-body > .settings-page .agent-admin-layout {
+  .realm-body > .settings-page .agent-admin-layout {
     flex: 1 1 auto;
     min-height: 0;
     align-items: stretch;
     overflow: hidden;
   }
 
-  .workspace-body > .settings-page .agent-admin-list-pane {
+  .realm-body > .settings-page .agent-admin-list-pane {
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
   }
 
-  .workspace-body > .settings-page .agent-admin-list-rows {
+  .realm-body > .settings-page .agent-admin-list-rows {
     flex: 1 1 auto;
     min-height: 0;
     max-height: none;
@@ -698,7 +698,7 @@
     scrollbar-gutter: stable;
   }
 
-  .workspace-body > .settings-page .agent-admin-detail-pane {
+  .realm-body > .settings-page .agent-admin-detail-pane {
     height: 100%;
     min-height: 0;
     align-content: start;
@@ -1045,7 +1045,7 @@
     display: none;
   }
 
-  .main.workspace {
+  .main.realm {
     grid-column: 1;
     grid-row: 3;
     height: auto;
@@ -1053,8 +1053,8 @@
     overflow: hidden;
   }
 
-  .shell.app > .workspace,
-  .shell.app.rtl > .workspace {
+  .shell.app > .realm,
+  .shell.app.rtl > .realm {
     grid-column: 1;
     grid-row: 3;
   }
@@ -1086,14 +1086,14 @@
     flex: 1 1 160px;
   }
 
-  .topbar.workspace-header {
+  .topbar.realm-header {
     display: none;
   }
 
-  .workspace-body,
-  .workspace-body > .timeline,
-  .workspace-body > .settings,
-  .workspace-body > .workflow-form {
+  .realm-body,
+  .realm-body > .timeline,
+  .realm-body > .settings,
+  .realm-body > .workflow-form {
     min-width: 0;
   }
 
@@ -1102,16 +1102,16 @@
     min-width: 0;
   }
 
-  .workspace-header .actions {
+  .realm-header .actions {
     gap: 4px;
   }
 
-  .workspace-body {
+  .realm-body {
     padding: 14px 12px max(40px, env(safe-area-inset-bottom));
     overflow-x: hidden;
   }
 
-  .workspace-body table,
+  .realm-body table,
   .surface table,
   .event table {
     display: block;
@@ -1232,17 +1232,17 @@
     max-width: calc(100vw - 24px);
   }
 
-  .workspace-body:has(> .kanban-panel) {
+  .realm-body:has(> .kanban-panel) {
     overflow-y: auto;
     overflow-x: hidden;
     padding: 12px;
   }
 
-  .workspace-body > .kanban-panel {
+  .realm-body > .kanban-panel {
     overflow: visible;
   }
 
-  .workspace-body > .timeline.kanban-panel {
+  .realm-body > .timeline.kanban-panel {
     min-height: 0;
     overflow: visible;
   }

@@ -23,25 +23,6 @@ use serde_json::Value;
 
 use crate::transport::TransportClient;
 
-/// Account-level recovery state derived from server facts plus optional local
-/// display metadata.
-#[derive(Clone, Debug, Default)]
-pub struct AccountRecoveryState {
-    pub active_policy: Option<RecoveryPolicySummary>,
-    pub recovery_public_key_secret_storage_backup_count: usize,
-    pub local_recovery_key_fingerprint: Option<String>,
-}
-
-impl AccountRecoveryState {
-    /// The recovery-material gate is satisfied by the accepted recovery
-    /// policy. Identity-root generations are derived from the offline recovery
-    /// secret and verified public DID history; there is no wire backup class
-    /// for DID recovery.
-    pub fn server_recovery_configured(&self) -> bool {
-        self.active_policy.is_some()
-    }
-}
-
 /// Return the accepted policy from the already-validated transport DTO.
 pub fn active_recovery_policy(
     outcome: &RecoveryPolicyActiveOutcome,
@@ -274,46 +255,6 @@ pub async fn verify_recovery_authority_evidence(
         anyhow::bail!("server no longer resolves the durable PCR bootstrap evidence exactly");
     }
     Ok(())
-}
-
-pub fn account_recovery_state(
-    recovery_policy_outcome: &RecoveryPolicyActiveOutcome,
-    backup_list_payload: &Value,
-    local_recovery_key_fingerprint: Option<String>,
-) -> AccountRecoveryState {
-    let active_policy = active_recovery_policy(recovery_policy_outcome);
-    AccountRecoveryState {
-        active_policy,
-        recovery_public_key_secret_storage_backup_count: count_backups_by_class_and_method(
-            backup_list_payload,
-            "secret_storage",
-            "recovery_public_key",
-        ),
-        local_recovery_key_fingerprint: local_recovery_key_fingerprint
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty()),
-    }
-}
-
-fn count_backups_by_class_and_method(
-    list_payload: &Value,
-    backup_kind: &str,
-    recipient_method: &str,
-) -> usize {
-    list_payload
-        .get("backups")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|backup| {
-            backup.get("backup_kind").and_then(Value::as_str) == Some(backup_kind)
-                && backup
-                    .get("encryption")
-                    .and_then(|encryption| encryption.get("recipient_method"))
-                    .and_then(Value::as_str)
-                    == Some(recipient_method)
-        })
-        .count()
 }
 
 /// 6.1 — fetch + parse the active recovery policy.
@@ -713,8 +654,7 @@ async fn submit_first_recovery_policy_seal(
 }
 
 fn recovery_policy_frontier_pending(error: &anyhow::Error) -> bool {
-    crate::api_error::api_error_status_and_envelope(error)
-        .is_some_and(|(_, envelope)| envelope.code() == "frontier_unavailable")
+    crate::api_error::is_recovery_policy_frontier_pending_error(error)
 }
 
 fn validate_active_policy_key_material(

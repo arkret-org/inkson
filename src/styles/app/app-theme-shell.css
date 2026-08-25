@@ -269,7 +269,7 @@
   z-index: var(--layer-sticky);
 }
 
-.workspace-body:has(> .kanban-panel) {
+.realm-body:has(> .kanban-panel) {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -278,7 +278,7 @@
   background: var(--bg);
 }
 
-.workspace-body > .kanban-panel {
+.realm-body > .kanban-panel {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;

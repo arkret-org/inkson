@@ -557,6 +557,11 @@ mod tests {
             20,
         ));
         assert!(!realm_seal_view_retry_is_allowed(
+            &frontier_error(412, "frontier_unavailable"),
+            0,
+            20,
+        ));
+        assert!(!realm_seal_view_retry_is_allowed(
             &frontier_error(503, "frontier_unavailable"),
             19,
             20,

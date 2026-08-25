@@ -34,7 +34,7 @@ test("Circle creation establishes initial membership and opens the detail view",
   await expect(panel.getByTestId("circle-detail")).toContainText("Member");
 });
 
-test("workspace sidebar separates contact-based direct chats", async ({ page }) => {
+test("realm sidebar separates contact-based direct chats", async ({ page }) => {
   const shell = latestTestId(page, "client-shell");
   await expect(shell.getByTestId("realm-tree-list")).toContainText("Arkret Demo Realm");
   await expect(shell.getByTestId("realm-sidebar-toolbar")).toBeVisible();
@@ -165,7 +165,7 @@ test("new space strand uses sidebar realm context without home realm picker", as
   await expect(setupPanel.getByTestId("new-space-submit-button")).toBeEnabled();
 });
 
-test("workspace header collapses and sidebar edge resizes the menu", async ({ page }) => {
+test("realm header collapses and sidebar edge resizes the menu", async ({ page }) => {
   const sidebar = page.getByTestId("sidebar");
   const mainView = page.getByTestId("main-view");
   const toggle = page.getByTestId("sidebar-collapse-toggle");

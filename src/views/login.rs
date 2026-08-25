@@ -1759,7 +1759,7 @@ async fn exchange_bound_handoff_session(
     .await;
     let (next_state, reason, metric) = match &outcome {
         Ok(_) => (
-            LoginStage::Workspace,
+            LoginStage::Authenticated,
             "accepted_device_session_issued",
             LoginTransitionOutcome::AuthorizedLogin,
         ),

@@ -98,7 +98,7 @@ pub fn ShortcutHelpOverlay(visible: Signal<bool>) -> Element {
     if !visible() {
         // Render nothing when hidden. A placeholder `div` here becomes an
         // auto-placed grid item inside `.shell.app` and stretches to cover the
-        // workspace column, painting on top of live content (it is the last
+        // main-content column, painting on top of live content (it is the last
         // child) and silently intercepting pointer events — which blocked
         // clicks on modal buttons such as the Recovery Key setup dialog.
         return rsx! {};

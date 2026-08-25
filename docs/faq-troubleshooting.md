@@ -75,10 +75,13 @@ is fine for low-stakes testing or read-only browsing.
 
 **Symptom**: clicking **Finish** on `/onboarding` stays on step 4.
 
-**Cause**: no active recovery policy has been accepted yet.
+**Cause**: the account has no accepted genesis recovery policy yet, or this
+device has not verified the accepted PCR bootstrap Seal evidence.
 
-**Fix**: complete the recovery-policy step. The gate is hard-blocking and
-intentional — inception without a backup envelope is unrecoverable.
+**Fix**: complete the recovery-policy step and allow its covering Control Seal
+to materialize. The gate requires the first accepted Seal plus the genesis
+recovery policy; it does not require a separate DID-recovery backup envelope
+(that wire class does not exist in Arkret v1).
 
 ---
 

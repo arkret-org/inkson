@@ -1,4 +1,4 @@
-.circle-workspace {
+.circle-realm {
   display: grid;
   gap: 20px;
   width: min(1180px, 100%);
@@ -6,7 +6,7 @@
   padding: 24px;
 }
 
-.circle-workspace-header,
+.circle-realm-header,
 .circle-detail-heading,
 .circle-list-item-head,
 .circle-member-row {
@@ -16,12 +16,12 @@
   gap: 16px;
 }
 
-.circle-workspace-header h1,
+.circle-realm-header h1,
 .circle-detail-heading h2 {
   margin: 0;
 }
 
-.circle-workspace-grid {
+.circle-realm-grid {
   display: grid;
   grid-template-columns: minmax(260px, 0.8fr) minmax(0, 2fr);
   gap: 18px;
@@ -114,11 +114,11 @@
 }
 
 @media (max-width: 820px) {
-  .circle-workspace {
+  .circle-realm {
     padding: 14px;
   }
 
-  .circle-workspace-grid,
+  .circle-realm-grid,
   .circle-boundary-grid,
   .circle-member-form {
     grid-template-columns: 1fr;

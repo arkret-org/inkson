@@ -49,27 +49,27 @@ pub(super) fn RealmsManagePage(
     let selection_count = selected_ids.len();
 
     rsx! {
-        div { class: "settings workspace-manage-page", "data-testid": "realms-manage-page",
-            div { class: "settings-shell workspace-manage-shell",
-                section { class: "settings-content-stack workspace-manage-main",
-                    div { class: "event workspace-manage-hero",
-                        div { class: "workspace-manage-title-block",
-                            span { class: "workspace-manage-icon", UiIcon { name: "home" } }
+        div { class: "settings realm-manage-page", "data-testid": "realms-manage-page",
+            div { class: "settings-shell realm-manage-shell",
+                section { class: "settings-content-stack realm-manage-main",
+                    div { class: "event realm-manage-hero",
+                        div { class: "realm-manage-title-block",
+                            span { class: "realm-manage-icon", UiIcon { name: "home" } }
                             div {
                                 h2 { class: "settings-content-title", {crate::i18n::tr("manage.realms_title")} }
                                 div { class: "muted", {crate::i18n::tr("manage.realms_subtitle")} }
                             }
                         }
-                        div { class: "workspace-manage-stats",
+                        div { class: "realm-manage-stats",
                             span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_shown", &[("count", filtered_rows.len().to_string())])} }
                             span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_total", &[("count", realm_rows.len().to_string())])} }
                             span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_selected", &[("count", selection_count.to_string())])} }
                         }
                     }
 
-                    div { class: "event workspace-manage-toolbar", "data-testid": "realms-manage-toolbar",
-                        div { class: "workspace-manage-search",
-                            span { class: "workspace-manage-search-icon", UiIcon { name: "search" } }
+                    div { class: "event realm-manage-toolbar", "data-testid": "realms-manage-toolbar",
+                        div { class: "realm-manage-search",
+                            span { class: "realm-manage-search-icon", UiIcon { name: "search" } }
                             Input {
                                 "data-testid": "realms-manage-search-input",
                                 value: "{query}",
@@ -77,7 +77,7 @@ pub(super) fn RealmsManagePage(
                                 oninput: move |event: FormEvent| query.set(event.value()),
                             }
                         }
-                        div { class: "actions workspace-manage-actions",
+                        div { class: "actions realm-manage-actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 size: ButtonSize::Sm,
@@ -238,7 +238,7 @@ pub(super) fn RealmsManagePage(
                         }
                     }
 
-                    div { class: "event workspace-manage-list-card",
+                    div { class: "event realm-manage-list-card",
                         div { class: "event-head",
                             span { {crate::i18n::tr("manage.realms_list_title")} }
                             span { {crate::i18n::tr_args("manage.rows", &[("count", filtered_rows.len().to_string())])} }
@@ -256,7 +256,7 @@ pub(super) fn RealmsManagePage(
                                 div { class: "muted members-empty-hint", {crate::i18n::tr("manage.no_results_hint")} }
                             }
                         } else {
-                            div { class: "workspace-manage-list", "data-testid": "realms-manage-list",
+                            div { class: "realm-manage-list", "data-testid": "realms-manage-list",
                                 for row in filtered_rows {
                                     {
                                         let realm_id = row.realm_id.clone();
@@ -269,7 +269,7 @@ pub(super) fn RealmsManagePage(
                                         let security_icon = if row.encrypted { "lock" } else { "unlock" };
                                         rsx! {
                                             label {
-                                                class: "workspace-manage-row",
+                                                class: "realm-manage-row",
                                                 "data-testid": "realms-manage-row",
                                                 "data-realm-id": "{realm_id}",
                                                 Checkbox {
@@ -287,11 +287,11 @@ pub(super) fn RealmsManagePage(
                                                         }
                                                     },
                                                 }
-                                                div { class: "workspace-manage-row-main",
+                                                div { class: "realm-manage-row-main",
                                                     strong { title: "{row.title}", "{row.display_name}" }
                                                     span { class: "muted mono", title: "{realm_id}", "{realm_id}" }
                                                 }
-                                                div { class: "workspace-manage-row-meta",
+                                                div { class: "realm-manage-row-meta",
                                                     span { class: "pill muted xs", title: "{security_label}",
                                                         UiIcon { name: security_icon }
                                                         "{security_label}"
@@ -369,27 +369,27 @@ pub(super) fn ContactsManagePage(
     let selection_count = selected_ids.len();
 
     rsx! {
-        div { class: "settings workspace-manage-page", "data-testid": "contacts-manage-page",
-            div { class: "settings-shell workspace-manage-shell",
-                section { class: "settings-content-stack workspace-manage-main",
-                    div { class: "event workspace-manage-hero",
-                        div { class: "workspace-manage-title-block",
-                            span { class: "workspace-manage-icon", UiIcon { name: "users" } }
+        div { class: "settings realm-manage-page", "data-testid": "contacts-manage-page",
+            div { class: "settings-shell realm-manage-shell",
+                section { class: "settings-content-stack realm-manage-main",
+                    div { class: "event realm-manage-hero",
+                        div { class: "realm-manage-title-block",
+                            span { class: "realm-manage-icon", UiIcon { name: "users" } }
                             div {
                                 h2 { class: "settings-content-title", {crate::i18n::tr("manage.contacts_title")} }
                                 div { class: "muted", {crate::i18n::tr("manage.contacts_subtitle")} }
                             }
                         }
-                        div { class: "workspace-manage-stats",
+                        div { class: "realm-manage-stats",
                             span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_shown", &[("count", filtered_rows.len().to_string())])} }
                             span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_total", &[("count", rows.len().to_string())])} }
                             span { class: "pill muted xs", {crate::i18n::tr_args("manage.stats_selected", &[("count", selection_count.to_string())])} }
                         }
                     }
 
-                    div { class: "event workspace-manage-toolbar", "data-testid": "contacts-manage-toolbar",
-                        div { class: "workspace-manage-search",
-                            span { class: "workspace-manage-search-icon", UiIcon { name: "search" } }
+                    div { class: "event realm-manage-toolbar", "data-testid": "contacts-manage-toolbar",
+                        div { class: "realm-manage-search",
+                            span { class: "realm-manage-search-icon", UiIcon { name: "search" } }
                             Input {
                                 "data-testid": "contacts-manage-search-input",
                                 value: "{query}",
@@ -397,7 +397,7 @@ pub(super) fn ContactsManagePage(
                                 oninput: move |event: FormEvent| query.set(event.value()),
                             }
                         }
-                        div { class: "actions workspace-manage-actions",
+                        div { class: "actions realm-manage-actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 size: ButtonSize::Sm,
@@ -542,7 +542,7 @@ pub(super) fn ContactsManagePage(
                         }
                     }
 
-                    div { class: "event workspace-manage-list-card",
+                    div { class: "event realm-manage-list-card",
                         div { class: "event-head",
                             span { {crate::i18n::tr("manage.contacts_list_title")} }
                             span { {crate::i18n::tr_args("manage.rows", &[("count", filtered_rows.len().to_string())])} }
@@ -560,7 +560,7 @@ pub(super) fn ContactsManagePage(
                                 div { class: "muted members-empty-hint", {crate::i18n::tr("manage.no_results_hint")} }
                             }
                         } else {
-                            div { class: "workspace-manage-list", "data-testid": "contacts-manage-list",
+                            div { class: "realm-manage-list", "data-testid": "contacts-manage-list",
                                 for contact in filtered_rows {
                                     {
                                         let peer = crate::models::contact_peer_id(&contact).to_string();
@@ -590,7 +590,7 @@ pub(super) fn ContactsManagePage(
                                             crate::models::contact_state_wire(contact.state);
                                         rsx! {
                                             label {
-                                                class: "workspace-manage-row",
+                                                class: "realm-manage-row",
                                                 "data-testid": "contacts-manage-row",
                                                 "data-peer": "{peer}",
                                                 Checkbox {
@@ -608,11 +608,11 @@ pub(super) fn ContactsManagePage(
                                                         }
                                                     },
                                                 }
-                                                div { class: "workspace-manage-row-main",
+                                                div { class: "realm-manage-row-main",
                                                     strong { title: "{peer}", "{peer_label}" }
                                                     span { class: "muted", title: "{scopes_label}", "{scopes_label}" }
                                                 }
-                                                div { class: "workspace-manage-row-meta",
+                                                div { class: "realm-manage-row-meta",
                                                     span { class: "pill muted xs", "{contact_state}" }
                                                     span { class: "pill muted xs", "{direct_label}" }
                                                 }

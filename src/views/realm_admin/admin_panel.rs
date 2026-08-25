@@ -2264,7 +2264,7 @@ pub fn RealmAdminPanel(
                     let title = if is_destroy { "Destroy Realm" } else { "Archive Realm" };
                     let confirm_label = if is_destroy { "Destroy Realm" } else { "Archive Realm" };
                     let body = if is_destroy {
-                        "Destroying a Realm is destructive and may make its workspace, members, policy, and encrypted history unavailable. This should only be used when the operator has verified the recovery and audit path."
+                        "Destroying a Realm is destructive and may make its realm, members, policy, and encrypted history unavailable. This should only be used when the operator has verified the recovery and audit path."
                     } else {
                         "Archiving removes the Realm from active collaboration flows. Members may lose the normal working entry point until an operator restores or migrates it."
                     };

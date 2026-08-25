@@ -11,7 +11,7 @@ import {
 
 registerStrandsBeforeEach();
 
-test("setup realm form stays in the main workspace layout", async ({ page }) => {
+test("setup realm form stays in the main realm layout", async ({ page }) => {
   await refreshServer(page);
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("setup-panel")).toBeVisible();
@@ -44,11 +44,11 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
       sidebar: rectOf('[data-testid="sidebar"]'),
       main: rectOf('[data-testid="main-view"]'),
       setup: rectOf('[data-testid="setup-panel"]'),
-      header: rectOf(".workspace-header"),
+      header: rectOf(".realm-header"),
     };
   });
 
-  const assertWorkspaceLayout = (layout: Awaited<ReturnType<typeof measureLayout>>) => {
+  const assertRealmLayout = (layout: Awaited<ReturnType<typeof measureLayout>>) => {
     expect(layout.sidebar).not.toBeNull();
     expect(layout.main).not.toBeNull();
     expect(layout.setup).not.toBeNull();
@@ -72,7 +72,7 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
   };
 
   const layout = await measureLayout();
-  assertWorkspaceLayout(layout);
+  assertRealmLayout(layout);
 
   await page.evaluate(() => {
     const accountKey = "did:web:alice.example";
@@ -89,7 +89,7 @@ test("setup realm form stays in the main workspace layout", async ({ page }) => 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("client-shell")).toHaveAttribute("data-direction", "rtl");
   await expect(page.getByTestId("setup-panel")).toBeVisible();
-  assertWorkspaceLayout(await measureLayout());
+  assertRealmLayout(await measureLayout());
 });
 
 test("setup, onboarding, and Board entry works", async ({ page }) => {
@@ -114,7 +114,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await expect(setupPanel.getByRole("button", { name: "Delete Space" })).toHaveCount(0);
 
   await page.getByTestId("realm-title-input").fill("Setup Strand Space");
-  await page.getByTestId("realm-summary-input").fill("Created from inkson workspace setup");
+  await page.getByTestId("realm-summary-input").fill("Created from inkson realm setup");
   await page.getByTestId("new-realm-next-button").click();
   await expect(page.getByTestId("realm-lifecycle-strand")).toContainText("three independent axes");
   await page.getByTestId("new-realm-next-button").click();

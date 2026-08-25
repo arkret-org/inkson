@@ -241,7 +241,7 @@
   color: var(--danger-ink);
 }
 
-.main.workspace {
+.main.realm {
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -252,7 +252,7 @@
   overflow: hidden;
 }
 
-.topbar.workspace-header {
+.topbar.realm-header {
   flex: 0 0 auto;
   margin: 0;
   border-radius: 0;
@@ -263,7 +263,7 @@
   overflow: visible;
 }
 
-.workspace-body {
+.realm-body {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -271,13 +271,13 @@
   padding: 16px;
 }
 
-.workspace-body > .timeline {
+.realm-body > .timeline {
   overflow: visible;
   align-content: start;
   gap: 16px;
 }
 
-.workspace-body > .timeline.kanban-panel {
+.realm-body > .timeline.kanban-panel {
   display: flex;
   flex-direction: column;
   min-height: 100%;
@@ -458,28 +458,28 @@ label.avatar-upload-button .ui-icon {
 }
 
 @media (max-width: 760px) {
-  .workspace-manage-hero {
+  .realm-manage-hero {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .workspace-manage-stats {
+  .realm-manage-stats {
     justify-content: flex-start;
   }
 
-  .workspace-manage-toolbar {
+  .realm-manage-toolbar {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .workspace-manage-actions {
+  .realm-manage-actions {
     justify-content: flex-start;
   }
 
-  .workspace-manage-row {
+  .realm-manage-row {
     grid-template-columns: 20px minmax(0, 1fr);
   }
 
-  .workspace-manage-row-meta {
+  .realm-manage-row-meta {
     grid-column: 2;
     justify-content: flex-start;
   }
@@ -490,20 +490,20 @@ label.avatar-upload-button .ui-icon {
   background: var(--surface-2);
 }
 
-.workspace-manage-page {
+.realm-manage-page {
   width: min(100%, 1080px);
   margin: 0 auto;
 }
 
-.workspace-manage-shell {
+.realm-manage-shell {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.workspace-manage-main {
+.realm-manage-main {
   gap: 12px;
 }
 
-.workspace-manage-hero {
+.realm-manage-hero {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -514,14 +514,14 @@ label.avatar-upload-button .ui-icon {
     var(--surface);
 }
 
-.workspace-manage-title-block {
+.realm-manage-title-block {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.workspace-manage-icon {
+.realm-manage-icon {
   flex: 0 0 auto;
   width: 40px;
   height: 40px;
@@ -534,12 +534,12 @@ label.avatar-upload-button .ui-icon {
   background: color-mix(in srgb, var(--accent-soft) 60%, var(--surface-2));
 }
 
-.workspace-manage-icon .ui-icon {
+.realm-manage-icon .ui-icon {
   width: 20px;
   height: 20px;
 }
 
-.workspace-manage-stats {
+.realm-manage-stats {
   flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
@@ -547,25 +547,25 @@ label.avatar-upload-button .ui-icon {
   flex-wrap: wrap;
 }
 
-.workspace-manage-toolbar {
+.realm-manage-toolbar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
   align-items: center;
   gap: 12px;
 }
 
-.workspace-manage-search {
+.realm-manage-search {
   position: relative;
   min-width: 0;
 }
 
-.workspace-manage-search input:not([type="checkbox"]):not([type="radio"]) {
+.realm-manage-search input:not([type="checkbox"]):not([type="radio"]) {
   width: 100%;
   min-height: 36px;
   padding-left: 34px;
 }
 
-.workspace-manage-search-icon {
+.realm-manage-search-icon {
   position: absolute;
   left: 11px;
   top: 50%;
@@ -577,37 +577,37 @@ label.avatar-upload-button .ui-icon {
   transform: translateY(-50%);
 }
 
-.workspace-manage-search-icon .ui-icon {
+.realm-manage-search-icon .ui-icon {
   width: 16px;
   height: 16px;
 }
 
-.shell.rtl .workspace-manage-search input:not([type="checkbox"]):not([type="radio"]) {
+.shell.rtl .realm-manage-search input:not([type="checkbox"]):not([type="radio"]) {
   padding-right: 34px;
   padding-left: 12px;
 }
 
-.shell.rtl .workspace-manage-search-icon {
+.shell.rtl .realm-manage-search-icon {
   right: 11px;
   left: auto;
 }
 
-.workspace-manage-actions {
+.realm-manage-actions {
   justify-content: flex-end;
   gap: 8px;
 }
 
-.workspace-manage-list-card {
+.realm-manage-list-card {
   gap: 12px;
 }
 
-.workspace-manage-list {
+.realm-manage-list {
   display: grid;
   gap: 8px;
   min-width: 0;
 }
 
-.workspace-manage-row {
+.realm-manage-row {
   min-width: 0;
   min-height: 56px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
@@ -623,27 +623,27 @@ label.avatar-upload-button .ui-icon {
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.workspace-manage-row:hover,
-.workspace-manage-row:focus-within {
+.realm-manage-row:hover,
+.realm-manage-row:focus-within {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
   background: color-mix(in srgb, var(--surface-2) 64%, var(--accent-soft));
 }
 
-.workspace-manage-row-main {
+.realm-manage-row-main {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
-.workspace-manage-row-main strong,
-.workspace-manage-row-main span {
+.realm-manage-row-main strong,
+.realm-manage-row-main span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workspace-manage-row-meta {
+.realm-manage-row-meta {
   min-width: 0;
   display: flex;
   justify-content: flex-end;
@@ -651,13 +651,13 @@ label.avatar-upload-button .ui-icon {
   flex-wrap: wrap;
 }
 
-.workspace-manage-row-meta .pill {
+.realm-manage-row-meta .pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
-.workspace-manage-row-meta .ui-icon {
+.realm-manage-row-meta .ui-icon {
   width: 12px;
   height: 12px;
 }

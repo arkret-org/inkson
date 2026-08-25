@@ -12,7 +12,7 @@ import { mockArkretApi } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
-test("bootstrap login and sync shows the connected workspace", async ({
+test("bootstrap login and sync shows the connected realm", async ({
   page,
 }) => {
   await refreshServer(page);
@@ -230,7 +230,7 @@ test("selected Realm security badge matches its encrypted sidebar marker", async
   );
 });
 
-test("authenticated login route returns to the workspace", async ({ page }) => {
+test("authenticated login route returns to the realm", async ({ page }) => {
   await page.goto("/login", { waitUntil: "domcontentloaded" });
 
   await expect(latestTestId(page, "client-shell")).toBeVisible({

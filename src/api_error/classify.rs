@@ -22,6 +22,17 @@ pub(crate) fn is_realm_seal_frontier_pending_error(error: &anyhow::Error) -> boo
     })
 }
 
+/// True only for the retry-safe Recovery Policy publication state where the
+/// submitted Event is accepted but its covering Control Seal has not yet
+/// materialized. The error registry binds `frontier_unavailable` to HTTP 503;
+/// accepting a different status here would hide a server/spec binding drift.
+pub(crate) fn is_recovery_policy_frontier_pending_error(error: &anyhow::Error) -> bool {
+    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
+        status == StatusCode::SERVICE_UNAVAILABLE
+            && envelope.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
+    })
+}
+
 pub fn is_mls_keypackage_not_found_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         envelope.code() == "mls_keypackage_not_found"
@@ -360,4 +371,35 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
         return None;
     }
     Some(tokens.join(","))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_recovery_policy_frontier_pending_error;
+
+    fn api_error(status: u16, code: &str) -> anyhow::Error {
+        anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status,
+            error: Box::new(arkret_sdk::ErrorEnvelope::new(
+                code,
+                "recovery policy Seal coverage is pending",
+            )),
+        })
+    }
+
+    #[test]
+    fn recovery_policy_frontier_retry_requires_the_registry_status_and_code() {
+        assert!(is_recovery_policy_frontier_pending_error(&api_error(
+            503,
+            arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
+        )));
+        assert!(!is_recovery_policy_frontier_pending_error(&api_error(
+            412,
+            arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
+        )));
+        assert!(!is_recovery_policy_frontier_pending_error(&api_error(
+            503,
+            arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
+        )));
+    }
 }

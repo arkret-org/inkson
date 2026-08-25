@@ -1880,7 +1880,7 @@ export async function mockArkretApi(
           event.payload?.object?.summary ??
           event.payload?.summary ??
           event.payload?.fields?.summary ??
-          "Created from inkson workspace setup";
+          "Created from inkson realm setup";
         const encryptionProfile =
           event.payload?.object?.encryption_profile ??
           event.payload?.encryption_profile ??

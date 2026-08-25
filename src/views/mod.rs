@@ -16,7 +16,7 @@
 // | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ak.key.verification.*, ak.mls.welcome                              |
 // | realm_admin        | desktop/realm-admin.html          | authz/{capabilities,policy-server}, governance/content-moderation, sync/federation | ak.policy.{rule,action,set}, ak.capability.{grant,revoke}, ak.realm.owner.transfer, ak.realm.authority.{reset,basis_update} |
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle, authz/capabilities §10.4 | ak.profile.update, ak.account.status, ak.identity.disclosure_*, ak.capability.relinquish (subject-only, settings/capabilities) |
-// | setup              | (workspace bootstrap helper page) | overview/architecture                                  | (workspace bootstrap)                                              |
+// | setup              | (Realm bootstrap helper page)     | overview/architecture                                  | (Realm bootstrap)                                                  |
 //
 // Pending views:
 // - onboarding   → desktop/onboarding.html        (independent stepper; T12)

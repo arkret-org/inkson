@@ -413,13 +413,13 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("agent-admin-provision-button")).toBeEnabled();
   const scrollLayout = await page.evaluate(() => {
     const root = document.documentElement;
-    const workspace = document.querySelector(".workspace-body") as HTMLElement | null;
+    const realm = document.querySelector(".realm-body") as HTMLElement | null;
     const settingsContent = document.querySelector(
       ".settings-page .settings-content-column",
     ) as HTMLElement | null;
     const detailPane = document.querySelector(".agent-admin-detail-pane") as HTMLElement | null;
-    if (workspace) {
-      workspace.scrollTop = 200;
+    if (realm) {
+      realm.scrollTop = 200;
     }
     if (detailPane) {
       detailPane.scrollTop = 200;
@@ -434,15 +434,15 @@ test("account settings split account/server info and surface personal agents", a
         ? getComputedStyle(settingsContent).overflowY
         : null,
       settingsContentScrollTop: settingsContent?.scrollTop ?? 0,
-      workspaceOverflowY: workspace ? getComputedStyle(workspace).overflowY : null,
-      workspaceScrollTop: workspace?.scrollTop ?? 0,
+      realmOverflowY: realm ? getComputedStyle(realm).overflowY : null,
+      realmScrollTop: realm?.scrollTop ?? 0,
     };
   });
   expect(scrollLayout.rootOverflowY).toBe("hidden");
   expect(scrollLayout.bodyOverflowY).toBe("hidden");
   expect(scrollLayout.viewportScrollbarGap).toBe(0);
-  expect(scrollLayout.workspaceOverflowY).toBe("auto");
-  expect(scrollLayout.workspaceScrollTop).toBe(0);
+  expect(scrollLayout.realmOverflowY).toBe("auto");
+  expect(scrollLayout.realmScrollTop).toBe(0);
   expect(scrollLayout.settingsContentOverflowY).toBe("hidden");
   expect(scrollLayout.settingsContentScrollTop).toBe(0);
   expect(scrollLayout.detailOverflowY).toBe("auto");

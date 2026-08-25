@@ -4184,7 +4184,7 @@ fn sidecar_strand_title_reads_canonical_metadata_object() {
         "strand_id": strand_id,
         "metadata": {
             "title": "AI sidecar",
-            "summary": "Controller-private AI workspace"
+            "summary": "Controller-private AI context"
         },
         "tracks": { "discussion": { "enabled": true } }
     });

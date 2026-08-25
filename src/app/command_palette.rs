@@ -12,12 +12,8 @@ pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)>
             "inbox, mentions, approvals",
             Route::Notifications,
         ),
-        ("Search", "messages across workspaces", Route::Search),
-        (
-            "Directory",
-            "search workspaces, orgs, actors",
-            Route::Directory,
-        ),
+        ("Search", "messages across realms", Route::Search),
+        ("Directory", "search realms, orgs, actors", Route::Directory),
         (
             "Onboarding",
             "DID, handle, device, recovery",
@@ -44,7 +40,7 @@ pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)>
             Route::Quarantine,
         ),
         (
-            "New Workspace",
+            "New Realm",
             "create security boundary",
             Route::SetupSection {
                 section: "realms".to_owned(),

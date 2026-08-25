@@ -5,7 +5,7 @@
 //!   examples, no MLS epoch / key package talk, no PCR / RRK / SAS acronyms. Jargon belongs inside
 //!   "technical details" affordances and Developer surfaces only.
 //! * Error copy formula: what happened + what it means + what to do next.
-//! * English: short sentences, sentence case. Chinese: 简洁口语化，统一使用 工作区 / 空间 / 设备 /
+//! * English: short sentences, sentence case. Chinese: 简洁口语化，统一使用 Realm / 空间 / 设备 /
 //!   恢复密钥 这套词汇，UI 名称不中英混杂。
 
 use std::collections::HashMap;
@@ -284,7 +284,7 @@ pub fn set_locale(signal: &mut I18nSignal, locale: UiLocale) {
 /// Convenience: pull the current i18n signal from Dioxus context and
 /// translate `key`. Views call this once they have been wrapped in a
 /// `provide_context(init_i18n_with_locale(...))` ancestor — currently
-/// `WorkspaceView`. Falls back to the key itself when no context is
+/// `RealmView`. Falls back to the key itself when no context is
 /// installed (e.g. unit tests outside Dioxus runtime).
 pub fn tr(key: &str) -> String {
     match try_consume_context::<I18nSignal>() {

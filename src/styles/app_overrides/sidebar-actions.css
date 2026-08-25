@@ -210,14 +210,14 @@
   padding: 0;
 }
 
-.workspace-header {
+.realm-header {
   position: relative;
   z-index: var(--layer-chrome);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   min-width: 0;
-  container: workspace-header / inline-size;
+  container: realm-header / inline-size;
 }
 
 .topbar-left {
@@ -229,7 +229,7 @@
   justify-self: stretch;
 }
 
-.workspace-header .actions {
+.realm-header .actions {
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
@@ -237,11 +237,11 @@
   min-width: 0;
 }
 
-.workspace-header .actions > * {
+.realm-header .actions > * {
   flex-shrink: 0;
 }
 
-.workspace-header .actions > .topbar-command-search {
+.realm-header .actions > .topbar-command-search {
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -436,47 +436,47 @@
   color: var(--accent);
 }
 
-.workspace-header > .actions {
+.realm-header > .actions {
   grid-column: 3;
   justify-self: end;
 }
 
-@container workspace-header (max-width: 940px) {
-  .workspace-header .realm-nav-inline {
+@container realm-header (max-width: 940px) {
+  .realm-header .realm-nav-inline {
     display: none;
   }
 
-  .workspace-header .realm-nav-menu-host {
+  .realm-header .realm-nav-menu-host {
     display: block;
   }
 
-  .workspace-header .topbar-current-surface {
+  .realm-header .topbar-current-surface {
     display: inline-flex;
   }
 }
 
-@container workspace-header (max-width: 700px) {
-  .workspace-header .topbar-current-surface-label {
+@container realm-header (max-width: 700px) {
+  .realm-header .topbar-current-surface-label {
     display: none;
   }
 
-  .workspace-header .realm-nav-menu-panel {
+  .realm-header .realm-nav-menu-panel {
     left: auto;
     right: 0;
     transform: none;
   }
 }
 
-.workspace-header .actions .btn,
-.workspace-header .actions .pill {
+.realm-header .actions .btn,
+.realm-header .actions .pill {
   height: 34px;
 }
 
-.workspace-header .actions .btn {
+.realm-header .actions .btn {
   border-radius: 7px;
 }
 
-.workspace-header .actions .btn.icon {
+.realm-header .actions .btn.icon {
   width: 34px;
   min-width: 34px;
 }
@@ -666,7 +666,7 @@
   z-index: var(--layer-global-popover);
 }
 
-.workspace-header .actions .pill {
+.realm-header .actions .pill {
   display: inline-flex;
   align-items: center;
 }
@@ -876,7 +876,7 @@
   background: color-mix(in srgb, var(--accent) 13%, var(--nav-soft));
 }
 
-.workspace-header .search input{
+.realm-header .search input{
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border);

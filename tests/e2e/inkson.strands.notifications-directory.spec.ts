@@ -13,10 +13,10 @@ test("notifications are derived from index projections and respect per-realm mut
   page,
 }) => {
   await refreshServer(page);
-  const workspaceUrl = page.url();
+  const realmUrl = page.url();
   await page.getByTestId("topbar-notifications-button").click();
 
-  expect(page.url()).toBe(workspaceUrl);
+  expect(page.url()).toBe(realmUrl);
   await expect(page.getByTestId("notifications-drawer")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toBeVisible();
   await expect(page.getByTestId("notifications-panel")).toContainText(
@@ -81,11 +81,11 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
   await page.goto(`/kanban/${DEMO_REALM}`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("kanban-panel")).toBeVisible();
   await dismissBlockingRecoveryModal(page);
-  const workspaceUrl = page.url();
+  const realmUrl = page.url();
 
   await page.getByTestId("topbar-notifications-button").click();
 
-  expect(page.url()).toBe(workspaceUrl);
+  expect(page.url()).toBe(realmUrl);
   await expect(page.getByTestId("notifications-drawer")).toBeVisible();
   await expect(page.getByTestId("notifications-drawer-scrim")).toHaveCount(0);
   await expect(page.getByTestId("notifications-drawer-settings")).toBeVisible();
@@ -98,7 +98,7 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
 
   const drawerLayout = await page.evaluate(() => {
     const header = document
-      .querySelector(".workspace-header")
+      .querySelector(".realm-header")
       ?.getBoundingClientRect();
     const sidebar = document
       .querySelector('[data-testid="sidebar"]')
@@ -144,7 +144,7 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
 
   await page.getByTestId("notifications-drawer-close").click();
   await expect(page.getByTestId("notifications-drawer")).toBeHidden();
-  expect(page.url()).toBe(workspaceUrl);
+  expect(page.url()).toBe(realmUrl);
 });
 
 test("directory search resolve and space selection strand works", async ({

@@ -937,8 +937,8 @@ pub fn recommended_realm_policy_bundle_for_profile(
 }
 
 /// Build a `ak.space.create` event per spec realm-and-space.md §3.2.
-/// Space is the product-structure container (workspace / project /
-/// folder / board / list); it lives inside a Realm (`realm_id`) and
+/// Space is the product-structure container (project / folder / board /
+/// list); it lives inside a Realm (`realm_id`) and
 /// has no membership / policy / E2EE of its own — all security
 /// semantics inherit from the home Realm.
 ///
