@@ -1124,7 +1124,7 @@ mod tests {
             &test_authority(EXPORTER_ACTOR),
         )
         .unwrap();
-        let identity = ArkretMlsIdentity::new_basic(
+        let identity = ArkretMlsIdentity::new_test_identity(
             crate::mls_api_helpers::principal_core_id(EXPORTER_ACTOR).unwrap(),
             DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         )
@@ -1283,12 +1283,12 @@ mod tests {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         // Build a REAL two-member MLS group: Alice creates, Bob joins via Welcome.
-        let alice_identity = ArkretMlsIdentity::new_basic(
+        let alice_identity = ArkretMlsIdentity::new_test_identity(
             crate::mls_api_helpers::principal_core_id(ALICE_ACTOR).unwrap(),
             DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
-        let bob_identity = ArkretMlsIdentity::new_basic(
+        let bob_identity = ArkretMlsIdentity::new_test_identity(
             crate::mls_api_helpers::principal_core_id(BOB_ACTOR).unwrap(),
             DeviceId::new(BOB_DEVICE.to_owned()).unwrap(),
         )

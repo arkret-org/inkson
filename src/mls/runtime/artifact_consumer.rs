@@ -142,6 +142,12 @@ impl HostArtifactApplicator {
                         realm_id.as_str(),
                     )
                     .map_err(protocol)?;
+                crate::mls::governance_proof::install_accepted_transition_leaf_bindings(
+                    &self.state.read(),
+                    realm_id.as_str(),
+                    &mut group,
+                )
+                .map_err(protocol)?;
                 Ok((
                     scope,
                     payload.governance_binding().clone(),
@@ -183,6 +189,12 @@ impl HostArtifactApplicator {
                 }
                 let mut group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
                     .map_err(protocol)?;
+                crate::mls::governance_proof::install_accepted_transition_leaf_bindings(
+                    &self.state.read(),
+                    payload.governance_binding.realm_id().as_str(),
+                    &mut group,
+                )
+                .map_err(protocol)?;
                 super::message::verify_welcome_governance_binding(
                     &self.state.read(),
                     payload.governance_binding.realm_id().as_str(),

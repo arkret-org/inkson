@@ -30,7 +30,6 @@ fn keypackage_upload_device_signature_is_raw_signature_tuple() {
             capabilities: vec!["ak.content.v1".to_owned()],
             expires_at: timestamp + chrono::Duration::days(7),
             created_at: timestamp,
-            endpoint_signature: None,
             last_resort: None,
         }],
         expires_at: None,

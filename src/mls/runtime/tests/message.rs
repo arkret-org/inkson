@@ -466,13 +466,13 @@ fn two_member_group_with_bob_snapshot(
     bob_actor: &str,
     bob_device: &str,
 ) -> arkret_sdk::ArkretMlsGroup {
-    let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
+    let alice = arkret_sdk::ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
-    let bob = arkret_sdk::ArkretMlsIdentity::new_basic(
+    let bob = arkret_sdk::ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -990,7 +990,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     let realm = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_account_mls_secret(&store, &test_authority(actor)).unwrap();
-    let identity = ArkretMlsIdentity::new_basic(
+    let identity = ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -1162,13 +1162,13 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
     let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
-    let alice = arkret_sdk::ArkretMlsIdentity::new_basic(
+    let alice = arkret_sdk::ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
-    let bob = arkret_sdk::ArkretMlsIdentity::new_basic(
+    let bob = arkret_sdk::ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )

@@ -345,12 +345,12 @@ fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let _account_scope = active_account_scope(bob_actor, bob_device);
-    let alice = ArkretMlsIdentity::new_basic(
+    let alice = ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
-    let bob = ArkretMlsIdentity::new_basic(
+    let bob = ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -421,12 +421,12 @@ fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let _account_scope = active_account_scope(bob_actor, bob_device);
-    let alice = ArkretMlsIdentity::new_basic(
+    let alice = ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
-    let bob = ArkretMlsIdentity::new_basic(
+    let bob = ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -634,7 +634,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let secret =
         crate::mls::runtime::load_or_create_account_mls_secret(&secure, &test_authority(actor))
             .unwrap();
-    let identity = ArkretMlsIdentity::new_basic(
+    let identity = ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -941,7 +941,7 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         sidecar_id: sidecar_id.clone(),
     };
-    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
+    let identity = arkret_sdk::ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -968,7 +968,7 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         &secret,
         &salt,
     );
-    let realm_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
+    let realm_identity = arkret_sdk::ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )

@@ -1228,10 +1228,9 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
         return None;
     }
     let store = state_store?;
-    // Minimal-metadata authoring is not yet executable: the current SDK MLS
-    // BasicCredential identity is `principal#device`, while this profile
-    // requires the exact active leaf identity to equal `utf8(Event.actor_id)`.
-    // Do not manufacture actor bytes as a substitute sender domain.
+    // This projection path has no pairwise endpoint carrier, so it cannot bind
+    // an Event actor to the accepted minimal-metadata leaf. Fail closed rather
+    // than substituting the account device identity.
     if store.realm_projection_is_minimal_metadata(realm_id) {
         return None;
     }

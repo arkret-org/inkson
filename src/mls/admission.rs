@@ -1102,7 +1102,7 @@ mod tests {
     #[test]
     fn human_and_native_agent_adds_bind_the_exact_authorization_incarnation() {
         let realm = "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx";
-        let bob = arkret_sdk::ArkretMlsIdentity::new_basic(
+        let bob = arkret_sdk::ArkretMlsIdentity::new_test_identity(
             crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1".to_owned())
                 .unwrap(),
@@ -1288,7 +1288,7 @@ mod tests {
         let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let bob = "did:web:bob.example";
         let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
-        let bob_identity = arkret_sdk::ArkretMlsIdentity::new_basic(
+        let bob_identity = arkret_sdk::ArkretMlsIdentity::new_test_identity(
             crate::mls_api_helpers::principal_core_id(bob).unwrap(),
             arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
         )

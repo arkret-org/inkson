@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use serde::{Deserialize, Serialize};
 
 use super::MlsRuntimeError;
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
@@ -19,13 +20,7 @@ const ACCOUNT_MLS_SECRET_VERIFIED_MARKER: &str = "verified";
 pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.identity_state.v1";
-// Direct Conversation peer claims must use single-use KeyPackages, so every
-// device republishes an ordinary package after each successfully applied
-// Welcome.
-const MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str = "inkson.mls_key_package.publish_marker.v1";
-// Canonical server-visible KeyPackage reference paired with the local publish
-// marker. It is local durable routing state, not a governance authorization.
-const MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX: &str = "inkson.mls_key_package.publish_ref.v1";
+const MLS_KEY_PACKAGE_INVENTORY_PREFIX: &str = "inkson.mls_key_package.inventory.v1";
 const MLS_PAIRWISE_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str =
     "inkson.mls_key_package.pairwise_publish_marker.v1";
 /// Per-(account authority, device) X25519 keypair used to open HPKE-sealed history-key
@@ -61,6 +56,14 @@ pub struct AccountMlsSecretRotation {
     /// instead of aborting the whole rotation. `(realm_id, error)` pairs so the
     /// caller can surface a partial-success report. Empty on a clean rotation.
     pub failed_realms: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalMlsKeyPackageInventoryEntry {
+    pub key_package_id: String,
+    pub key_package_ref: String,
+    pub expires_at: i64,
 }
 
 /// Account-scoped storage key for a specific MLS snapshot-secret version.
@@ -394,82 +397,75 @@ fn account_device_storage_suffix(
     Ok(format!("{authority}.{device}"))
 }
 
-pub fn mls_key_package_publish_marker_key(
+pub fn mls_key_package_inventory_key(
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
     let scope = account_device_storage_suffix(authority, device_id)?;
-    Ok(format!("{MLS_KEY_PACKAGE_PUBLISH_MARKER_PREFIX}.{scope}"))
+    Ok(format!("{MLS_KEY_PACKAGE_INVENTORY_PREFIX}.{scope}"))
 }
 
-pub fn store_mls_key_package_publish_marker(
+pub async fn store_mls_key_package_inventory_durable(
     store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
-    key_package_id: &str,
+    entries: &[LocalMlsKeyPackageInventoryEntry],
 ) -> Result<(), SecureKeyStoreError> {
-    let key_package = key_package_id.trim();
-    if key_package.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "key_package_id is required for MLS KeyPackage publish marker".to_owned(),
-        ));
+    for entry in entries {
+        if entry.key_package_id.trim().is_empty()
+            || entry.key_package_ref.trim().is_empty()
+            || entry.expires_at <= 0
+        {
+            return Err(SecureKeyStoreError::Backend(
+                "MLS KeyPackage inventory entry is invalid".to_owned(),
+            ));
+        }
     }
-    let key = mls_key_package_publish_marker_key(authority, device_id)?;
-    store.store_secret(&key, key_package)
-}
-
-pub fn load_mls_key_package_publish_marker(
-    store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-) -> Result<Option<String>, SecureKeyStoreError> {
-    let key = mls_key_package_publish_marker_key(authority, device_id)?;
-    Ok(store
-        .get_secret(&key)?
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty()))
-}
-
-pub fn delete_mls_key_package_publish_marker(
-    store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-) -> Result<(), SecureKeyStoreError> {
-    let key = mls_key_package_publish_marker_key(authority, device_id)?;
-    store.delete_secret(&key)
-}
-
-pub fn mls_key_package_publish_ref_key(
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-) -> Result<String, SecureKeyStoreError> {
-    let scope = account_device_storage_suffix(authority, device_id)?;
-    Ok(format!("{MLS_KEY_PACKAGE_PUBLISH_REF_PREFIX}.{scope}"))
-}
-
-pub fn store_mls_key_package_publish_ref(
-    store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-    key_package_ref: &str,
-) -> Result<(), SecureKeyStoreError> {
-    let key_package_ref = key_package_ref.trim();
-    if key_package_ref.is_empty() {
-        return Err(SecureKeyStoreError::Backend(
-            "key_package_ref is required for MLS KeyPackage publish ref".to_owned(),
-        ));
+    let key = mls_key_package_inventory_key(authority, device_id)?;
+    if entries.is_empty() {
+        return store.delete_secret(&key);
     }
-    let key = mls_key_package_publish_ref_key(authority, device_id)?;
-    store.store_secret(&key, key_package_ref)
+    let encoded = serde_json::to_string(entries).map_err(|error| {
+        SecureKeyStoreError::Backend(format!("encode MLS KeyPackage inventory: {error}"))
+    })?;
+    store.store_secret_durable(&key, &encoded).await
 }
 
-pub fn delete_mls_key_package_publish_ref(
+pub fn load_mls_key_package_inventory(
     store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
-) -> Result<(), SecureKeyStoreError> {
-    let key = mls_key_package_publish_ref_key(authority, device_id)?;
-    store.delete_secret(&key)
+) -> Result<Vec<LocalMlsKeyPackageInventoryEntry>, SecureKeyStoreError> {
+    let key = mls_key_package_inventory_key(authority, device_id)?;
+    let Some(encoded) = store.get_secret(&key)? else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(&encoded).map_err(|error| {
+        SecureKeyStoreError::Backend(format!("decode MLS KeyPackage inventory: {error}"))
+    })
+}
+
+pub async fn remove_mls_key_package_inventory_entry_durable(
+    store: &dyn SecureKeyStore,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    key_package_id_or_ref: &str,
+) -> Result<Vec<LocalMlsKeyPackageInventoryEntry>, SecureKeyStoreError> {
+    let mut entries = load_mls_key_package_inventory(store, authority, device_id)?;
+    let removed = entries
+        .iter()
+        .filter(|entry| {
+            entry.key_package_id == key_package_id_or_ref
+                || entry.key_package_ref == key_package_id_or_ref
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    entries.retain(|entry| {
+        entry.key_package_id != key_package_id_or_ref
+            && entry.key_package_ref != key_package_id_or_ref
+    });
+    store_mls_key_package_inventory_durable(store, authority, device_id, &entries).await?;
+    Ok(removed)
 }
 
 pub fn mls_pairwise_key_package_publish_marker_key(

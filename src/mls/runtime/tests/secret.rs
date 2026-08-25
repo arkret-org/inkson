@@ -115,7 +115,7 @@ fn account_secret_is_shared_across_devices_but_keypackage_state_is_not() {
 }
 
 #[test]
-fn keypackage_marker_is_v1_and_authority_device_scoped() {
+fn keypackage_inventory_is_v1_and_authority_device_scoped() {
     let first_authority = authority(
         "did:webvh:z6mkalice:alice.example",
         "ak:did_core:web:server-a.example",
@@ -126,15 +126,15 @@ fn keypackage_marker_is_v1_and_authority_device_scoped() {
     );
     let first_device = device(1);
     let second_device = device(2);
-    let key = mls_key_package_publish_marker_key(&first_authority, &first_device).unwrap();
-    assert!(key.starts_with("inkson.mls_key_package.publish_marker.v1."));
+    let key = mls_key_package_inventory_key(&first_authority, &first_device).unwrap();
+    assert!(key.starts_with("inkson.mls_key_package.inventory.v1."));
     assert_ne!(
         key,
-        mls_key_package_publish_marker_key(&second_authority, &first_device).unwrap()
+        mls_key_package_inventory_key(&second_authority, &first_device).unwrap()
     );
     assert_ne!(
         key,
-        mls_key_package_publish_marker_key(&first_authority, &second_device).unwrap()
+        mls_key_package_inventory_key(&first_authority, &second_device).unwrap()
     );
 }
 

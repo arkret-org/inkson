@@ -3225,7 +3225,6 @@ export async function mockArkretApi(
         key_package_refs: keyPackages
           .map((entry) => entry.keypackage_ref)
           .filter((value): value is string => typeof value === "string"),
-        available_count: keyPackages.length,
       });
     }
 

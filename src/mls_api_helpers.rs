@@ -45,26 +45,6 @@ pub(crate) fn sign_keypackage_upload_batch_with_signer(
     })
 }
 
-pub(crate) fn sign_keypackage_upload_entry_with_signer(
-    signer: &crate::event_signer::InksonEventSigner,
-    unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
-    entry: &arkret_sdk::KeyPackageUploadEntry,
-) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
-    let input = arkret_sdk::keypackage_upload_endpoint_entry_signing_input(unsigned, entry)?;
-    let sig = signer
-        .sign_raw(&input)
-        .map_err(|err| anyhow::anyhow!("keypackages/upload entry signature failed: {err}"))?;
-    Ok(arkret_sdk::KeyOperationSignature {
-        kid: arkret_sdk::NonEmptyString::new(signer.verification_method())
-            .map_err(anyhow::Error::msg)?,
-        signature_algorithm: Some(
-            arkret_sdk::NonEmptyString::new(signer.algorithm()).map_err(anyhow::Error::msg)?,
-        ),
-        sig: arkret_sdk::Base64UrlString::new(URL_SAFE_NO_PAD.encode(sig))
-            .map_err(anyhow::Error::msg)?,
-    })
-}
-
 pub(crate) fn sign_keypackage_upload_batch(
     unsigned: &arkret_sdk::KeyPackagesUploadUnsignedRequest,
 ) -> anyhow::Result<arkret_sdk::KeyOperationSignature> {
@@ -146,7 +126,6 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
         claim_id: Some(claim.claim_id.clone()),
         created_at: crate::clock::now_utc(),
         expires_at: Some(claim.expires_at),
-        endpoint_signature: None,
         // Reconstructed claim-side record (admin builds the Welcome from the
         // KeyPackage bytes, which already carry any last_resort extension); the
         // flag is not re-published, so a plain default is correct here.
@@ -481,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn pairwise_upload_signs_batch_and_entry_with_the_same_exact_method() {
+    fn pairwise_upload_signs_the_complete_batch_with_the_exact_method() {
         let realm_id = pairwise_realm();
         let material = crate::mls::pairwise_identity::pairwise_signing_material_for_test(&realm_id);
         let verification_method =
@@ -512,12 +491,8 @@ mod tests {
 
         let batch =
             sign_keypackage_upload_batch_with_signer(material.signer.as_ref(), &unsigned).unwrap();
-        let entry =
-            sign_keypackage_upload_entry_with_signer(material.signer.as_ref(), &unsigned, &entry)
-                .unwrap();
         assert_eq!(batch.kid.as_str(), verification_method.as_str());
-        assert_eq!(entry.kid.as_str(), verification_method.as_str());
-        assert_ne!(batch.sig, entry.sig);
+        assert!(!batch.sig.as_str().is_empty());
     }
 
     #[test]
@@ -526,7 +501,8 @@ mod tests {
         let device =
             arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
                 .unwrap();
-        let identity = arkret_sdk::ArkretMlsIdentity::new_basic(principal.clone(), device).unwrap();
+        let identity =
+            arkret_sdk::ArkretMlsIdentity::new_test_identity(principal.clone(), device).unwrap();
         let record = identity.key_package_record().unwrap();
         let method = arkret_sdk::DidUrl::new("did:web:agent.example#runtime-key").unwrap();
         let mut claim = claim_for(&record, method.as_str());

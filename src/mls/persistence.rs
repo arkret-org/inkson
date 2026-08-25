@@ -632,7 +632,7 @@ mod tests {
         // report the same group_id + epoch.
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
-        let identity = ArkretMlsIdentity::new_basic(
+        let identity = ArkretMlsIdentity::new_test_identity(
             crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             // SDK 0.7 requires the canonical `ak:device:<uuid7>` form.
             DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned()).unwrap(),

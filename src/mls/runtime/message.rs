@@ -1236,6 +1236,7 @@ pub fn mls_group_member_principal_ids_for_effective_scope(
     Some(
         group
             .member_principal_ids()
+            .ok()?
             .iter()
             .map(|did| did.as_str().to_owned())
             .collect(),
@@ -1650,6 +1651,7 @@ pub(crate) struct WelcomeSecurityFrontierPreview {
 /// verifier can use the transcript-authenticated post-Commit leaf set before
 /// any snapshot is persisted.
 pub(crate) fn preview_welcome_security_frontiers(
+    state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
@@ -1689,8 +1691,13 @@ pub(crate) fn preview_welcome_security_frontiers(
             &serialized_state,
         )
         .map_err(|error| format!("restore Welcome KeyPackage identity: {error}"))?;
-        let group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
+        let mut group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
             .map_err(|error| format!("preview Welcome group: {error}"))?;
+        crate::mls::governance_proof::install_accepted_transition_leaf_bindings(
+            state_store,
+            binding.realm_id().as_str(),
+            &mut group,
+        )?;
         let embedded = group
             .current_governance_binding()
             .map_err(|error| format!("read preview governance binding: {error}"))?;
@@ -1785,7 +1792,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
                 }
                 Ok(None) => {
                     // The Welcome names a KeyPackage we have no stored private
-                    // identity state for. A fresh `new_basic` identity can NEVER
+                    // identity state for. A fresh identity can NEVER
                     // hold that KeyPackage's init key, so `join_from_welcome`
                     // would fail with `NoMatchingKeyPackage`. Fail closed with a
                     // diagnosable message instead of silently retrying with an
@@ -2115,7 +2122,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         None
     };
     let schedule_hash = group.schedule_hash();
-    let member_dids = group.member_principal_ids();
+    let member_dids = group
+        .member_principal_ids()
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -2318,7 +2327,9 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         None
     };
     let schedule_hash = group.schedule_hash();
-    let member_dids = group.member_principal_ids();
+    let member_dids = group
+        .member_principal_ids()
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -2382,6 +2393,7 @@ fn ensure_realm_membership_is_covered_for_send(
     };
     let group_members = group
         .member_principal_ids()
+        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?
         .into_iter()
         .map(|did| did.to_string())
         .collect::<std::collections::BTreeSet<_>>();

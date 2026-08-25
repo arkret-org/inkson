@@ -23,7 +23,6 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
             .unwrap()
             .with_timezone(&chrono::Utc),
         expires_at: None,
-        endpoint_signature: None,
         last_resort: false,
     };
 
@@ -35,7 +34,10 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
     let clients = crate::transport::EndpointClients::new(transport);
     let err = clients
         .mls()
-        .publish_key_package("ak:device:01904100-0000-7000-8000-000000000001", &record)
+        .publish_key_packages(
+            "ak:device:01904100-0000-7000-8000-000000000001",
+            std::slice::from_ref(&record),
+        )
         .await
         .expect_err("MUST refuse to publish without an active event-signer");
     let msg = format!("{err}");
@@ -48,7 +50,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn mls_key_package_upload_entry_carries_digest_and_ref() {
-    let identity = arkret_sdk::ArkretMlsIdentity::new_basic(
+    let identity = arkret_sdk::ArkretMlsIdentity::new_test_identity(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned())
             .unwrap(),

@@ -142,36 +142,47 @@ impl KeysEndpoints<'_> {
 }
 
 impl MlsEndpoints<'_> {
-    pub async fn publish_key_package(
+    pub async fn publish_key_packages(
         &self,
         device_id: &str,
-        record: &arkret_sdk::MlsKeyPackageRecord,
+        records: &[arkret_sdk::MlsKeyPackageRecord],
     ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
+        if records.is_empty() {
+            anyhow::bail!("KeyPackage upload batch must not be empty");
+        }
         let requested_device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
-        let (principal_id, device_id) = match &record.endpoint {
-            arkret_sdk::MlsEndpointIdentity::HumanDevice {
-                principal_id,
-                device_id,
-            } if device_id == &requested_device_id => (principal_id.clone(), device_id.clone()),
-            arkret_sdk::MlsEndpointIdentity::HumanDevice { .. } => {
-                anyhow::bail!("KeyPackage endpoint device differs from upload signer device")
-            }
-            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
-                anyhow::bail!("Native Agent KeyPackage requires the agent-authorized upload flow")
-            }
-            arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => anyhow::bail!(
-                "minimal-metadata KeyPackage upload requires publish_pairwise_key_package"
-            ),
-        };
-        let entry = crate::mls_api_helpers::mls_key_package_record_upload_entry(record)?;
+        let principal_id = records
+            .first()
+            .and_then(|record| match &record.endpoint {
+                arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                    principal_id,
+                    device_id,
+                } if device_id == &requested_device_id => Some(principal_id.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| anyhow::anyhow!("KeyPackage batch has an invalid endpoint"))?;
+        let entries = records
+            .iter()
+            .map(|record| match &record.endpoint {
+                arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                    principal_id: entry_principal,
+                    device_id: entry_device,
+                } if entry_principal == &principal_id && entry_device == &requested_device_id => {
+                    crate::mls_api_helpers::mls_key_package_record_upload_entry(record)
+                }
+                _ => Err(anyhow::anyhow!(
+                    "KeyPackage batch entries must share the upload signer endpoint"
+                )),
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
             principal_id,
-            device_id: Some(device_id),
+            device_id: Some(requested_device_id),
             pairwise_verification_method: None,
             intended_realm_id: None,
             agent_verification_method: None,
             agent_key_authorize_event_id: None,
-            keypackages: vec![entry],
+            keypackages: entries,
             expires_at: None,
             strand_id: None,
             mls_group_id: None,
@@ -198,7 +209,7 @@ impl MlsEndpoints<'_> {
             } => (pairwise_actor_id.clone(), verification_method.clone()),
             _ => anyhow::bail!("pairwise KeyPackage publish requires a pairwise endpoint"),
         };
-        let mut unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
+        let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
             principal_id,
             device_id: None,
             pairwise_verification_method: Some(pairwise_verification_method),
@@ -216,18 +227,6 @@ impl MlsEndpoints<'_> {
         };
         let signature =
             crate::mls_api_helpers::sign_keypackage_upload_batch_with_signer(signer, &unsigned)?;
-        let entry_signatures = unsigned
-            .keypackages
-            .iter()
-            .map(|entry| {
-                crate::mls_api_helpers::sign_keypackage_upload_entry_with_signer(
-                    signer, &unsigned, entry,
-                )
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        for (entry, entry_signature) in unsigned.keypackages.iter_mut().zip(entry_signatures) {
-            entry.endpoint_signature = Some(entry_signature);
-        }
         let body = unsigned.into_signed(signature);
         body.validate_shape().map_err(anyhow::Error::msg)?;
         self.transport

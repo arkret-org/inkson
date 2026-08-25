@@ -40,7 +40,7 @@ fn principal_core_id(principal_full_id: &str) -> anyhow::Result<arkret_sdk::DidC
 impl LocalMlsDevice {
     fn new(principal_id: &str, device_id: &str) -> anyhow::Result<Self> {
         Ok(Self {
-            identity: Some(ArkretMlsIdentity::new_basic(
+            identity: Some(ArkretMlsIdentity::new_test_identity(
                 principal_core_id(principal_id)?,
                 DeviceId::new(device_id.to_owned())?,
             )?),

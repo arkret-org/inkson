@@ -131,8 +131,22 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
         )
         .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
     } else {
-        arkret_sdk::ArkretMlsIdentity::new_basic(authority.principal_id.clone(), device_id.clone())
-            .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
+        let signing_seed =
+            crate::secure_key_store::UserLocalStore::new(authority.clone(), device_id.clone())
+                .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
+                .load_signing_seed(secure_store)
+                .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
+                .ok_or_else(|| {
+                    MlsRuntimeError::Identity(
+                        "accepted device signer is unavailable for MLS group creation".to_owned(),
+                    )
+                })?;
+        arkret_sdk::ArkretMlsIdentity::from_authorized_device_signing_key(
+            authority.principal_id.clone(),
+            device_id.clone(),
+            &ed25519_dalek::SigningKey::from_bytes(&signing_seed.seed),
+        )
+        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
     };
     let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,

@@ -231,7 +231,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             seen_publish_key.set(Some(publish_key.clone()));
             spawn(async move {
                 let attempted_publish_key = publish_key;
-                let ordinary = ensure_local_mls_key_package_published(
+                let ordinary = ensure_local_mls_key_package_inventory(
                     base.clone(),
                     session.clone(),
                     authority.clone(),
