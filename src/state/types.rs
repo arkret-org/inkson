@@ -885,6 +885,11 @@ pub struct ClientLocalState {
     /// cursors are not interchangeable and MUST NOT be cross-used.
     #[serde(default)]
     pub realm_events_cursors: BTreeMap<String, String>,
+    /// Per-realm bounded scan cursors, keyed by service, realm, and scan
+    /// order. Scan cursors are not interchangeable with live stream cursors
+    /// and different orderings may advance independently.
+    #[serde(default)]
+    pub realm_events_scan_cursors: BTreeMap<String, String>,
     /// Crash-safe client-core deliveries. A Realm cursor and the batch it
     /// admits are committed in one local-state write; the UI projector acks
     /// only after its own durable fold succeeds.
@@ -1470,6 +1475,7 @@ impl Default for ClientLocalState {
             sync_cursor: None,
             key_backup_active_series_highest_seen: BTreeMap::new(),
             realm_events_cursors: BTreeMap::new(),
+            realm_events_scan_cursors: BTreeMap::new(),
             client_core_pending_deliveries: VecDeque::new(),
             client_core_next_delivery_id: 0,
             device_message_cursors: BTreeMap::new(),

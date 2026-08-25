@@ -269,27 +269,16 @@ impl crate::transport::TransportClient {
     ) -> anyhow::Result<arkret_sdk::InviteDeliveryOutcome> {
         let event_id = arkret_sdk::EventId::new(accepted_event_id.to_owned())
             .map_err(|error| anyhow::anyhow!("accepted invite event id is invalid: {error}"))?;
-        let resolved = self
-            .sdk_http_client()?
-            .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-                event_ids: vec![event_id.clone()],
-                event_digests: Vec::new(),
-                include_payload: Some(true),
-                history_traversal_access: None,
-                max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
-            })
-            .await?;
-        let event = resolved
-            .events
-            .into_iter()
-            .find(|event| event.event_id == event_id)
-            .ok_or_else(|| anyhow::anyhow!("accepted invite Event was not resolvable"))?;
-        let delivery = arkret_sdk::InviteDeliveryRequestBody::new(
-            event,
-            invitee.invite_address(),
-            invitee.introduction_evidence.clone(),
-            accepted_event_id,
-        );
+        // The self dispatch endpoint resolves the already accepted Event from
+        // durable local storage.  Carrying the full Event here would be the
+        // peer-delivery wire shape and is rejected by the closed self schema.
+        let delivery = arkret_sdk::SelfInviteDispatchRequestBody {
+            schema: arkret_sdk::SchemaId::INVITE_DELIVERY_REQUEST_V1.to_owned(),
+            invite_event_id: event_id,
+            invite_address: invitee.invite_address(),
+            introduction_evidence: invitee.introduction_evidence.clone(),
+            idempotency_key: accepted_event_id.to_owned(),
+        };
         delivery
             .validate_minimal()
             .map_err(|error| anyhow::anyhow!("invite delivery request is invalid: {error}"))?;

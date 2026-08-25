@@ -2,6 +2,21 @@ use arkret_wire::event_kind_str;
 
 use super::*;
 
+const CURSOR_SCOPE_SEPARATOR: char = '\u{1f}';
+
+fn realm_events_scan_cursor_key(
+    service_id: Option<&arkret_sdk::DidCoreId>,
+    realm_id: &arkret_sdk::RealmId,
+    order: Option<&str>,
+) -> String {
+    format!(
+        "realm_scan{CURSOR_SCOPE_SEPARATOR}{}{CURSOR_SCOPE_SEPARATOR}{}{CURSOR_SCOPE_SEPARATOR}{}",
+        service_id.map(|id| id.as_str()).unwrap_or_default(),
+        realm_id.as_str(),
+        order.unwrap_or_default()
+    )
+}
+
 impl LocalStateStore {
     fn set_client_cursor_cached(
         &mut self,
@@ -20,6 +35,22 @@ impl LocalStateStore {
                     self.cached.realm_events_cursors.remove(realm_id.as_str());
                 }
             },
+            garth::CursorScope::RealmEventsScan {
+                service_id,
+                realm_id,
+                order,
+            } => {
+                let key =
+                    realm_events_scan_cursor_key(service_id.as_ref(), realm_id, order.as_deref());
+                match cursor {
+                    Some(cursor) => {
+                        self.cached.realm_events_scan_cursors.insert(key, cursor);
+                    }
+                    None => {
+                        self.cached.realm_events_scan_cursors.remove(&key);
+                    }
+                }
+            }
             garth::CursorScope::DeviceMessages {
                 service_id,
                 actor_id,
@@ -242,6 +273,11 @@ impl LocalStateStore {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 self.realm_events_cursor(realm_id.as_str())
             }
+            garth::CursorScope::RealmEventsScan {
+                service_id,
+                realm_id,
+                order,
+            } => self.realm_events_scan_cursor(service_id.as_ref(), realm_id, order.as_deref()),
             garth::CursorScope::DeviceMessages {
                 service_id,
                 actor_id,
@@ -264,6 +300,16 @@ impl LocalStateStore {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 self.save_realm_events_cursor(realm_id.as_str(), Some(cursor));
             }
+            garth::CursorScope::RealmEventsScan {
+                service_id,
+                realm_id,
+                order,
+            } => self.save_realm_events_scan_cursor(
+                service_id.as_ref(),
+                realm_id,
+                order.as_deref(),
+                Some(cursor),
+            ),
             garth::CursorScope::DeviceMessages {
                 service_id,
                 actor_id,
@@ -286,6 +332,16 @@ impl LocalStateStore {
             garth::CursorScope::RealmEvents { realm_id, .. } => {
                 self.save_realm_events_cursor(realm_id.as_str(), None);
             }
+            garth::CursorScope::RealmEventsScan {
+                service_id,
+                realm_id,
+                order,
+            } => self.save_realm_events_scan_cursor(
+                service_id.as_ref(),
+                realm_id,
+                order.as_deref(),
+                None,
+            ),
             garth::CursorScope::DeviceMessages {
                 service_id,
                 actor_id,
@@ -351,6 +407,39 @@ impl LocalStateStore {
             }
             None => {
                 self.cached.realm_events_cursors.remove(realm_id);
+            }
+        }
+        let _ = self.flush();
+    }
+
+    pub fn realm_events_scan_cursor(
+        &self,
+        service_id: Option<&arkret_sdk::DidCoreId>,
+        realm_id: &arkret_sdk::RealmId,
+        order: Option<&str>,
+    ) -> Option<String> {
+        let key = realm_events_scan_cursor_key(service_id, realm_id, order);
+        self.load().realm_events_scan_cursors.get(&key).cloned()
+    }
+
+    pub fn save_realm_events_scan_cursor(
+        &mut self,
+        service_id: Option<&arkret_sdk::DidCoreId>,
+        realm_id: &arkret_sdk::RealmId,
+        order: Option<&str>,
+        cursor: Option<String>,
+    ) {
+        self.ensure_cached_loaded();
+        let key = realm_events_scan_cursor_key(service_id, realm_id, order);
+        if self.cached.realm_events_scan_cursors.get(&key).cloned() == cursor {
+            return;
+        }
+        match cursor {
+            Some(cursor) => {
+                self.cached.realm_events_scan_cursors.insert(key, cursor);
+            }
+            None => {
+                self.cached.realm_events_scan_cursors.remove(&key);
             }
         }
         let _ = self.flush();
@@ -900,6 +989,63 @@ mod durable_inbox_tests {
                 .pending_client_deliveries(10)
                 .unwrap()
                 .is_empty()
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn realm_scan_cursors_are_isolated_from_stream_and_order() {
+        let path = temp_path();
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let stream_scope = garth::CursorScope::RealmEvents {
+            service_id: None,
+            realm_id: realm_id.clone(),
+        };
+        let ascending_scope = garth::CursorScope::RealmEventsScan {
+            service_id: None,
+            realm_id: realm_id.clone(),
+            order: Some("asc".to_owned()),
+        };
+        let descending_scope = garth::CursorScope::RealmEventsScan {
+            service_id: None,
+            realm_id,
+            order: Some("desc".to_owned()),
+        };
+        let mut store = LocalStateStore::with_path(&path);
+
+        store
+            .save_client_cursor(&stream_scope, "stream-cursor".to_owned())
+            .unwrap();
+        store
+            .save_client_cursor(&ascending_scope, "ascending-cursor".to_owned())
+            .unwrap();
+        store
+            .save_client_cursor(&descending_scope, "descending-cursor".to_owned())
+            .unwrap();
+
+        let restarted = LocalStateStore::with_path(&path);
+        assert_eq!(
+            restarted
+                .load_client_cursor(&stream_scope)
+                .unwrap()
+                .as_deref(),
+            Some("stream-cursor")
+        );
+        assert_eq!(
+            restarted
+                .load_client_cursor(&ascending_scope)
+                .unwrap()
+                .as_deref(),
+            Some("ascending-cursor")
+        );
+        assert_eq!(
+            restarted
+                .load_client_cursor(&descending_scope)
+                .unwrap()
+                .as_deref(),
+            Some("descending-cursor")
         );
         let _ = std::fs::remove_file(path);
     }
