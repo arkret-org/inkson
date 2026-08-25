@@ -1,12 +1,12 @@
 //! Private-data load/save and recovery-material predicates.
 
+use arkret_sdk::DidCoreId;
 use dioxus::prelude::*;
 
 use super::RECOVERY_STATE_KEY;
 use super::types::RecoveryState;
 use crate::recovery_crypto::fingerprint_recovery_key;
 use crate::state::LocalStateStore;
-use arkret_sdk::DidCoreId;
 
 pub(crate) fn load_state(
     state_store: &SyncSignal<LocalStateStore>,
