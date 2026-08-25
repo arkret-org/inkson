@@ -252,11 +252,16 @@ mod tests {
         // is named by `retype(event_id)`, so the write only has a subject once
         // the Event is finalized.
         let event = crate::operation::author_for_test(&operation);
-        let writes = crate::operation::direct_registered_cell_writes(
+        let projected = arkret_sdk::schema::project_registered_cell_writes_with_authority_resolver(
             &event,
             arkret_sdk::DigestSuite::Sha256,
+            &|_| None,
         )
         .unwrap();
+        let writes = projected
+            .iter()
+            .filter_map(arkret_sdk::ProjectedCellWrite::as_direct)
+            .collect::<Vec<_>>();
         assert_eq!(writes.len(), 1);
         let grant_id = arkret_sdk::GrantId::from_event_id(event.event_id());
         assert_eq!(
@@ -277,6 +282,20 @@ mod tests {
                 "issuer_principal_server_id".to_owned(),
                 Value::String(operation.intent().principal_server_id().to_string()),
             );
+        let projected_grant = projected_payload
+            .get_mut("grant")
+            .and_then(Value::as_object_mut)
+            .unwrap();
+        projected_grant.insert("authority_depth".to_owned(), json!(1));
+        projected_grant.insert(
+            "authority_root_refs".to_owned(),
+            json!([{
+                "kind": "realm_root",
+                "realm_id": "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
+                "cell_ref": "ak:cell:ak.component.realm.authority_root.v1:null",
+                "authority_generation": 0
+            }]),
+        );
         assert_eq!(
             writes[0].op.value.as_ref(),
             Some(&Value::Object(projected_payload.into_iter().collect()))
