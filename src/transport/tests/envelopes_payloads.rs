@@ -4,8 +4,7 @@ use crate::ephemeral::validate_outgoing_registered_event_payload;
 use crate::event_builders::{
     build_member_state_transition_event, build_realm_bootstrap_steps, build_realm_create_event,
     build_realm_state_event, build_sas_key_verification_content,
-    build_signed_device_verification_proof, build_space_create_event,
-    ensure_device_verification_proof_is_signed, test_single_signer_notary,
+    build_signed_device_verification_proof, build_space_create_event, test_single_signer_notary,
 };
 use crate::operation::TypedOperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
@@ -643,7 +642,6 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
 
 #[test]
 fn device_verification_proof_requires_signed_envelope() {
-    assert!(ensure_device_verification_proof_is_signed(&json!({})).is_err());
     let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
     let proof = build_signed_device_verification_proof(
         "did:web:alice.example",
@@ -657,7 +655,6 @@ fn device_verification_proof_requires_signed_envelope() {
     )
     .unwrap();
     let proof = proof.to_value().unwrap();
-    ensure_device_verification_proof_is_signed(&proof).expect("signed proof");
     assert_eq!(
         proof["device_envelope"]["type"].as_str(),
         Some("org.arkret.inkson.device_verification.proof.v1")
@@ -783,7 +780,6 @@ fn sas_key_verification_content_carries_the_required_members() {
         Some("ak:device:01904100-0000-7000-8000-0000000000aa")
     );
     assert_eq!(content["key"].as_str(), Some("alice-x25519-public"));
-    ensure_device_verification_proof_is_signed(&content).expect("proof rides in the same object");
 }
 
 #[test]

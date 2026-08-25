@@ -19,6 +19,5 @@ pub(crate) mod governance_proof;
 /// with governance bindings; moved out of `views/kanban` (YGN-ARCH-01).
 pub(crate) mod group_events;
 pub(crate) mod pairwise_identity;
-pub mod pairwise_replacement;
 pub mod persistence;
 pub mod runtime;

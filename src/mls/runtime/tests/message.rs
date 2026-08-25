@@ -633,13 +633,15 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
 
     // Decrypt m1: plaintext returned AND the persisted snapshot advanced
     // (same epoch, new ciphertext, observed-message counter bumped).
-    let plain1 = decrypt_application_payload(
+    let plain1 = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
         realm,
         &test_authority(bob_actor),
         &test_device(bob_device),
         &m1,
+        None,
+        None,
     )
     .expect("bob decrypts m1");
     assert_eq!(plain1, br#"{"body":"m1"}"#);
@@ -650,13 +652,15 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
 
     // Same session: m1 re-renders from the in-memory plaintext cache (a ratchet
     // replay would fail — its message key was consumed before the write-back).
-    let same_session_replay1 = decrypt_application_payload(
+    let same_session_replay1 = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
         realm,
         &test_authority(bob_actor),
         &test_device(bob_device),
         &m1,
+        None,
+        None,
     )
     .expect("m1 served from the in-session plaintext cache");
     assert_eq!(same_session_replay1, br#"{"body":"m1"}"#);
@@ -670,26 +674,30 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     // real restart m1 is NOT recoverable — its ratchet key was consumed and its
     // plaintext was never written to durable storage.
     assert!(
-        decrypt_application_payload(
+        decrypt_application_payload_for_effective_scope_internal(
             &restarted,
             &secure,
             realm,
             &test_authority(bob_actor),
             &test_device(bob_device),
             &m1,
+            None,
+            None,
         )
         .is_none(),
         "consumed-message plaintext must never survive a restart (nothing at rest)"
     );
     // m2 (the next generation in the same epoch) still decrypts from the
     // persisted advanced chain.
-    let plain2 = decrypt_application_payload(
+    let plain2 = decrypt_application_payload_for_effective_scope_internal(
         &restarted,
         &secure,
         realm,
         &test_authority(bob_actor),
         &test_device(bob_device),
         &m2,
+        None,
+        None,
     )
     .expect("bob decrypts m2 after restart");
     assert_eq!(plain2, br#"{"body":"m2"}"#);
@@ -716,7 +724,7 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
     let mut alice_group =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let circle_snapshot = state.mls_snapshot_for(realm).unwrap();
-    state.drop_mls_snapshot(realm);
+    state.drop_mls_snapshot_for_test(realm);
     state
         .save_mls_snapshot_for_effective_scope(
             realm.to_owned(),
@@ -730,18 +738,20 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
         .unwrap();
 
     assert!(
-        decrypt_application_payload(
+        decrypt_application_payload_for_effective_scope_internal(
             &state,
             &secure,
             realm,
             &test_authority(bob_actor),
             &test_device(bob_device),
             &encrypted,
+            None,
+            None,
         )
         .is_none(),
         "Realm-scoped decrypt must not borrow a Circle snapshot"
     );
-    let plaintext = decrypt_application_payload_for_effective_scope(
+    let plaintext = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
         realm,
@@ -749,6 +759,7 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
         &test_device(bob_device),
         &encrypted,
         Some(circle),
+        None,
     )
     .expect("Circle-scoped message decrypts with the Circle snapshot");
     assert_eq!(plaintext, br#"{"body":"sidecar"}"#);
@@ -790,26 +801,30 @@ fn out_of_order_skipped_keys_survive_restart() {
 
     // Out-of-order: m3 first (within OpenMLS's default
     // out_of_order_tolerance of 5).
-    let plain3 = decrypt_application_payload(
+    let plain3 = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
         realm,
         &test_authority(bob_actor),
         &test_device(bob_device),
         &m3,
+        None,
+        None,
     )
     .expect("bob decrypts m3 ahead of m1/m2");
     assert_eq!(plain3, br#""three""#);
 
     // Restart, then decrypt the skipped earlier message.
     let restarted = crate::state::LocalStateStore::with_path(path.clone());
-    let plain1 = decrypt_application_payload(
+    let plain1 = decrypt_application_payload_for_effective_scope_internal(
         &restarted,
         &secure,
         realm,
         &test_authority(bob_actor),
         &test_device(bob_device),
         &m1,
+        None,
+        None,
     )
     .expect("persisted skipped key decrypts m1 after restart");
     assert_eq!(plain1, br#""one""#);
@@ -855,13 +870,15 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
         serde_json::from_value(encrypted_values[0].clone()).unwrap();
     let after_send = state.mls_snapshot_for(realm).unwrap();
 
-    let decrypted = decrypt_application_payload(
+    let decrypted = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
         realm,
         &test_authority(actor),
         &test_device(device),
         &payload,
+        None,
+        None,
     );
     assert!(decrypted.is_none(), "author must not decrypt own message");
     // No cache entry and no snapshot churn from the failed attempt.
@@ -892,26 +909,30 @@ fn plaintext_cache_outlives_group_state() {
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let header = test_message_header(&alice_group, realm);
     let m1 = alice_group.encrypt_payload(header, br#""cached""#).unwrap();
-    let first = decrypt_application_payload(
+    let first = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
         realm,
         &test_authority(bob_actor),
         &test_device(bob_device),
         &m1,
+        None,
+        None,
     )
     .expect("first decrypt");
     assert_eq!(first, br#""cached""#);
 
-    state.drop_mls_snapshot(realm);
+    state.drop_mls_snapshot_for_test(realm);
     assert!(state.mls_snapshot_for(realm).is_none());
-    let cached = decrypt_application_payload(
+    let cached = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
         realm,
         &test_authority(bob_actor),
         &test_device(bob_device),
         &m1,
+        None,
+        None,
     )
     .expect("cache hit requires no group state");
     assert_eq!(cached, br#""cached""#);

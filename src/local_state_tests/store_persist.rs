@@ -4,6 +4,21 @@
 
 use super::*;
 
+fn read_cursor_for(
+    store: &LocalStateStore,
+    realm_id: &str,
+    topic_id: Option<&str>,
+) -> Option<ReadMarkerRecord> {
+    store
+        .load()
+        .read_cursors
+        .get(&read_cursor_key(
+            realm_id,
+            &read_scope_for_cursor(realm_id, topic_id),
+        ))
+        .cloned()
+}
+
 #[test]
 fn local_state_store_tracks_cursor_operations_and_projections() {
     let path = temp_state_path("tracks");
@@ -264,9 +279,6 @@ fn local_state_store_persists_notifications_and_mute_preferences() {
 
     let reader = LocalStateStore::with_path(path);
     assert_eq!(reader.notification_projection().len(), 1);
-    assert!(reader.notification_state_for(&notification_id).read);
-    assert!(reader.notification_state_for(&notification_id).archived);
-    assert!(reader.is_realm_muted("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"));
     assert!(!reader.notification_kind_enabled("message"));
 }
 
@@ -315,8 +327,6 @@ fn realm_watch_level_set_get_roundtrip() {
         reader.muted_realms(),
         vec!["ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo".to_owned()]
     );
-    assert!(reader.is_realm_muted("ak:realm:AF-jk6ju8IdjVa7Gf0eeCnOu9EHYKDaY47I98_7lPyfo"));
-    assert!(!reader.is_realm_muted("ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk"));
 }
 
 #[test]
@@ -337,9 +347,7 @@ fn local_state_store_persists_private_read_cursors() {
     assert_eq!(marker.body.read_scope.track, None);
 
     let reader = LocalStateStore::with_path(path);
-    let persisted = reader
-        .read_cursor_for(REALM_ID, None)
-        .expect("read marker persisted");
+    let persisted = read_cursor_for(&reader, REALM_ID, None).expect("read marker persisted");
     assert_eq!(persisted.body.id, marker.body.id);
     assert_eq!(persisted.actor, "did:web:alice.example");
     assert_eq!(persisted.device_id, DEVICE_ID);
@@ -374,12 +382,13 @@ fn local_state_store_persists_canonical_read_cursor_outcome() {
 
     store.apply_read_cursor_outcome(outcome).unwrap();
 
-    let persisted = LocalStateStore::with_path(path)
-        .read_cursor_for(
-            "ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3",
-            None,
-        )
-        .expect("canonical read cursor outcome persisted");
+    let reader = LocalStateStore::with_path(path);
+    let persisted = read_cursor_for(
+        &reader,
+        "ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3",
+        None,
+    )
+    .expect("canonical read cursor outcome persisted");
     assert_eq!(
         persisted.body.position.event_id.as_str(),
         "ak:event:AapALysveT_m0ubp6kTGkXSK9371_ilR-kAJwNFmxyjr"
@@ -423,12 +432,12 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     .unwrap()]);
 
     let reader = LocalStateStore::with_path(path);
-    let marker = reader
-        .read_cursor_for(
-            "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
-            Some("ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy"),
-        )
-        .expect("read cursor update persisted");
+    let marker = read_cursor_for(
+        &reader,
+        "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+        Some("ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy"),
+    )
+    .expect("read cursor update persisted");
     assert_eq!(marker.actor, "ak:did_core:web:alice.example");
     assert_eq!(
         marker.body.position.event_id.as_str(),
@@ -498,12 +507,12 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
     );
 
     let reader = LocalStateStore::with_path(path);
-    let marker = reader
-        .read_cursor_for(
-            "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
-            Some("ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy"),
-        )
-        .expect("canonical server read cursor persisted");
+    let marker = read_cursor_for(
+        &reader,
+        "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+        Some("ak:strand:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy"),
+    )
+    .expect("canonical server read cursor persisted");
     assert_eq!(
         marker.body.position.event_id.as_str(),
         canonical_server_event_id.as_str()
@@ -611,8 +620,7 @@ fn local_state_store_keeps_thread_read_cursors_separate() {
     store.seed_read_cursor_projection(thread_marker).unwrap();
 
     assert_eq!(
-        store
-            .read_cursor_for(REALM_ID, None)
+        read_cursor_for(&store, REALM_ID, None)
             .expect("topic marker")
             .body
             .position
@@ -621,8 +629,7 @@ fn local_state_store_keeps_thread_read_cursors_separate() {
         TOPIC_EVENT_ID
     );
     assert_eq!(
-        store
-            .read_cursor_for(REALM_ID, Some(THREAD_ID))
+        read_cursor_for(&store, REALM_ID, Some(THREAD_ID))
             .expect("thread marker")
             .body
             .position
@@ -868,17 +875,6 @@ fn account_switch_isolates_authority_namespaces() {
         "active account points at the new identity"
     );
 
-    // Both accounts are tracked, and switching back to alice restores her own
-    // independent state — structural per-account isolation, not a wipe.
-    let mut known = store.known_principal_ids();
-    known.sort();
-    assert_eq!(
-        known,
-        vec![
-            "ak:did_core:web:alice.example",
-            "ak:did_core:web:bob.example"
-        ]
-    );
     assert!(!store.switch_test_account("did:web:alice.example"));
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
     assert!(
@@ -1004,36 +1000,6 @@ fn same_principal_core_on_different_servers_uses_distinct_local_state() {
 }
 
 #[test]
-fn forget_account_purges_only_the_target_entry_and_device_prefs_survive() {
-    let path = temp_state_path("forget-account");
-    let mut store = LocalStateStore::with_path(path);
-    store.set_device_pref("theme", "night");
-    store.switch_test_account("did:web:alice.example");
-    store.save_sync_cursor("sx:alice");
-    store.switch_test_account("did:web:bob.example");
-    store.save_sync_cursor("sx:bob");
-
-    let bob_authority = test_authority("did:web:bob.example");
-    store.forget_account(&test_profile_id(&bob_authority));
-    assert!(
-        !store
-            .known_principal_ids()
-            .iter()
-            .any(|did| did == "ak:did_core:web:bob.example"),
-        "purged account leaves known_profiles"
-    );
-    assert!(
-        store.active_principal_id().is_none(),
-        "purging the active account clears the active pointer"
-    );
-    // Cross-account device prefs are untouched by purging an account.
-    assert_eq!(store.device_pref("theme").as_deref(), Some("night"));
-    // Alice's entry is intact.
-    store.switch_test_account("did:web:alice.example");
-    assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:alice"));
-}
-
-#[test]
 fn accepted_context_promotion_keeps_pending_device_for_new_account() {
     // begin/accepted-context promotion mutate the process-global pending-login id.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
@@ -1094,11 +1060,6 @@ fn accepted_context_promotion_preserves_returning_account_entry() {
     assert!(
         store.active_principal_id().is_none(),
         "pending transaction must not expose an authenticated account"
-    );
-    assert_eq!(
-        store.last_selected_principal_id().as_deref(),
-        Some("ak:did_core:web:alice.example"),
-        "pending login must retain the last-selected account for cancellation/reload"
     );
     assert!(
         store.load().sync_cursor.is_none(),
@@ -1170,10 +1131,6 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
     store.begin_test_pending_login(&handoff.device_id, Some(&handoff.holder_jkt));
 
     assert!(store.active_principal_id().is_none());
-    assert_eq!(
-        store.last_selected_principal_id().as_deref(),
-        Some("ak:did_core:web:old.example")
-    );
     assert!(store.pending_account_handoff().is_none());
     assert!(store.pending_principal_registration().is_none());
     assert!(store.load().sync_cursor.is_none());

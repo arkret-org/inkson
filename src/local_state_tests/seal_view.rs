@@ -51,145 +51,6 @@ fn seal_view_set_persists_and_picks_lex_min_frontier() {
 }
 
 #[test]
-fn seal_view_bottom_cells_signal_conflict() {
-    let mut view = LocalSealView::default();
-    assert!(!view.has_bottom_cells());
-    view.bottom_cells.insert(
-        "ak:cell:ak.component.member.state.v1:did:web:alice".to_owned(),
-        BottomCellInfo {
-            status: "expose".to_owned(),
-            heads: vec![],
-        },
-    );
-    assert!(view.has_bottom_cells());
-}
-
-#[test]
-fn safer_winner_for_member_state_prefers_ban_over_join() {
-    let mut view = LocalSealView::default();
-    let cell = "ak:cell:ak.component.member.state.v1:did:web:alice".to_owned();
-    view.bottom_cells.insert(
-        cell.clone(),
-        BottomCellInfo {
-            status: "expose".to_owned(),
-            heads: vec![
-                BottomCellHead {
-                    move_id: "ak:event:AReE983vfLAvHBb4ZLAr1_sY_ndBL3re3FkDrsyTVSpw".to_owned(),
-                    value: serde_json::json!({"membership": "join"}),
-                },
-                BottomCellHead {
-                    move_id: "ak:event:AWXcctzU-Daf2jpmXX0bAgbadCowetMxC0YjP1qd5cF4".to_owned(),
-                    value: serde_json::json!({"membership": "ban", "reason": "abuse"}),
-                },
-            ],
-        },
-    );
-    let (head_a, head_b, winner) = view.safer_winner_for(&cell).expect("ban beats join");
-    assert_eq!(
-        head_a,
-        "ak:event:AReE983vfLAvHBb4ZLAr1_sY_ndBL3re3FkDrsyTVSpw"
-    );
-    assert_eq!(
-        head_b,
-        "ak:event:AWXcctzU-Daf2jpmXX0bAgbadCowetMxC0YjP1qd5cF4"
-    );
-    assert_eq!(
-        winner.get("membership").and_then(|v| v.as_str()),
-        Some("ban")
-    );
-}
-
-#[test]
-fn safer_winner_for_capability_grant_prefers_revoked_over_active() {
-    let mut view = LocalSealView::default();
-    let cell = "ak:cell:ak.component.capability.grant.v1:ak.grant.01".to_owned();
-    view.bottom_cells.insert(
-        cell.clone(),
-        BottomCellInfo {
-            status: "expose".to_owned(),
-            heads: vec![
-                BottomCellHead {
-                    move_id: "ak:event:Aa2EzrP8yA9Fr5zyuLo4lJlaByHDotpd6k3zEfr6N3Xs".to_owned(),
-                    value: serde_json::json!({"status": "active"}),
-                },
-                BottomCellHead {
-                    move_id: "ak:event:AoWCSzECf9RSOWMPoh-6iZolpbV9V1ipd4BovmZ4fcUI".to_owned(),
-                    value: serde_json::json!({"status": "revoked"}),
-                },
-            ],
-        },
-    );
-    let (_, _, winner) = view.safer_winner_for(&cell).expect("revoked beats active");
-    assert_eq!(
-        winner.get("status").and_then(|v| v.as_str()),
-        Some("revoked")
-    );
-}
-
-#[test]
-fn safer_winner_for_unknown_cell_family_returns_none() {
-    let mut view = LocalSealView::default();
-    let cell = "ak:cell:ak.component.test.unknown.v1:ak:realm:demo".to_owned();
-    view.bottom_cells.insert(
-        cell.clone(),
-        BottomCellInfo {
-            status: "expose".to_owned(),
-            heads: vec![
-                BottomCellHead {
-                    move_id: "ak:event:ASnA61b1h_g939GicWajzCOTfc2Z3pGGQvQlQ_YHYbN4".to_owned(),
-                    value: serde_json::json!({"title": "alpha"}),
-                },
-                BottomCellHead {
-                    move_id: "ak:event:AWSsryl67JAGALOqh0ZH5T-813hPA-GnZxpV3_U9Xp8c".to_owned(),
-                    value: serde_json::json!({"title": "beta"}),
-                },
-            ],
-        },
-    );
-    // No semantic safety ordering for this test-only cell family — operator
-    // must pick manually.
-    assert!(view.safer_winner_for(&cell).is_none());
-}
-
-#[test]
-fn safer_winner_for_tied_heads_returns_none() {
-    let mut view = LocalSealView::default();
-    let cell = "ak:cell:ak.component.member.state.v1:did:web:alice".to_owned();
-    view.bottom_cells.insert(
-        cell.clone(),
-        BottomCellInfo {
-            status: "expose".to_owned(),
-            heads: vec![
-                BottomCellHead {
-                    move_id: "ak:event:Au2T3BLNdduScvUF0P0rwtWeZa-yB6WHkNFC6wylvBW0".to_owned(),
-                    value: serde_json::json!({"membership": "ban", "reason": "spam"}),
-                },
-                BottomCellHead {
-                    move_id: "ak:event:A9H_9_6sL1LysIAS-FGKrfqDaHoLYc-UUhCGW1uwMxDI".to_owned(),
-                    value: serde_json::json!({"membership": "ban", "reason": "abuse"}),
-                },
-            ],
-        },
-    );
-    // Both heads tie on safety rank → no preference; operator picks.
-    assert!(view.safer_winner_for(&cell).is_none());
-}
-
-#[test]
-fn safer_winner_for_missing_heads_returns_none() {
-    let mut view = LocalSealView::default();
-    let cell = "ak:cell:ak.component.member.state.v1:did:web:alice".to_owned();
-    view.bottom_cells.insert(
-        cell.clone(),
-        BottomCellInfo {
-            status: "expose".to_owned(),
-            heads: vec![],
-        },
-    );
-    assert!(view.safer_winner_for(&cell).is_none());
-}
-
-#[test]
 fn seal_view_from_sync_body_parses_full_payload() {
     let body = serde_json::json!({
         "seal_view": {
@@ -485,7 +346,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
     merged.merge_realm_seal_view_from_sync_body(realm, &body);
     assert!(
         merged
-            .cached_mls_governance_proof(&request, chrono::Utc::now())
+            .cached_mls_governance_proof_entry(&request, chrono::Utc::now())
             .expect("cache read")
             .is_some(),
         "a sync body carrying no Seal view must not evict a verified proof",
@@ -507,7 +368,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
     evicted.set_realm_seal_view(realm, LocalSealView::from_sync_body(&body));
     assert!(
         evicted
-            .cached_mls_governance_proof(&request, chrono::Utc::now())
+            .cached_mls_governance_proof_entry(&request, chrono::Utc::now())
             .expect("cache read")
             .is_none()
     );

@@ -290,15 +290,6 @@ impl UserLocalStore {
         ensure_signing_seed_at(store, &self.key(SIGNING_SEED_ENTRY))
     }
 
-    /// Load the account device signer or durably create it before a protocol
-    /// transition starts depending on that key.
-    pub async fn ensure_signing_seed_durable(
-        &self,
-        store: &dyn SecureKeyStore,
-    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
-        ensure_signing_seed_at_durable(store, &self.key(SIGNING_SEED_ENTRY)).await
-    }
-
     pub fn save_signing_seed(
         &self,
         store: &dyn SecureKeyStore,
@@ -416,13 +407,6 @@ impl PendingLocalStore {
         store: &dyn SecureKeyStore,
     ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
         ensure_signing_seed_at(store, &self.key(SIGNING_SEED_ENTRY))
-    }
-
-    pub async fn ensure_signing_seed_durable(
-        &self,
-        store: &dyn SecureKeyStore,
-    ) -> Result<SigningSeedMaterial, SecureKeyStoreError> {
-        ensure_signing_seed_at_durable(store, &self.key(SIGNING_SEED_ENTRY)).await
     }
 
     /// Create or reload the signer for a transaction that is still authoring a

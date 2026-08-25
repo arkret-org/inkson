@@ -155,49 +155,13 @@ pub(crate) fn verify_exporter_sender_domain_for_send(
         })
 }
 
-pub fn decrypt_application_payload(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-    payload: &arkret_sdk::EncryptedPayload,
-) -> Option<Vec<u8>> {
-    decrypt_application_payload_for_effective_scope_internal(
-        state_store,
-        secure_store,
-        realm_id,
-        authority,
-        device_id,
-        payload,
-        None,
-        None,
-    )
-}
-
-pub fn decrypt_application_payload_for_effective_scope(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    authority: &PrincipalAuthorityKey,
-    device_id: &DeviceId,
-    payload: &arkret_sdk::EncryptedPayload,
-    circle_id: Option<&str>,
-) -> Option<Vec<u8>> {
-    decrypt_application_payload_for_effective_scope_internal(
-        state_store,
-        secure_store,
-        realm_id,
-        authority,
-        device_id,
-        payload,
-        circle_id,
-        None,
-    )
-}
-
+/// Test-only entry point: production decryption always carries a verified
+/// sender domain and enters via
+/// [`decrypt_application_payload_for_scope_from_verified_sender`]; these
+/// realm/circle-string adapters exist for the receive-chain test matrix.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-fn decrypt_application_payload_for_effective_scope_internal(
+pub(crate) fn decrypt_application_payload_for_effective_scope_internal(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,

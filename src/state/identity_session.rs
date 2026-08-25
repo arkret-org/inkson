@@ -1,37 +1,6 @@
 use super::*;
 
 impl LocalStateStore {
-    /// Look up the persisted device identity record without generating
-    /// a fresh one. Returns `None` when the device hasn't been initialised
-    /// yet (e.g. fresh install before `ensure_local_identity` has been
-    /// called).
-    pub fn local_identity_record(&self) -> Option<LocalIdentityRecord> {
-        #[cfg(not(test))]
-        {
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            load_identity_record_from_secure_store(secure_store.as_ref())
-        }
-        // The plaintext `local_identity` member of the persisted state is a
-        // unit-test carrier only; a shipped build never reads an identity seed
-        // from it (see `plaintext_identity_seed_fallback_allowed`).
-        #[cfg(test)]
-        {
-            self.load().local_identity
-        }
-    }
-
-    /// Read the in-memory device identity. Returns `None` when no record
-    /// is persisted; callers that need a key should call
-    /// [`Self::ensure_local_identity`] which generates + persists on first
-    /// access. Distinct from `ensure_*` so callers that only want to
-    /// **observe** an existing identity (e.g. status UI) don't trigger a
-    /// write.
-    pub fn local_identity(&self) -> Option<LocalIdentity> {
-        self.local_identity_record()
-            .as_ref()
-            .and_then(|record| LocalIdentity::from_record(record).ok())
-    }
-
     /// Load — or generate + persist — the device identity. First call on
     /// a fresh install fills `getrandom::fill` 32-byte seed, derives the
     /// `did:key`, and writes the record to disk. Subsequent calls return

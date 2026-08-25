@@ -781,7 +781,7 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
     assert_eq!(seal_against_accepted_epoch(patched, &mls_events), patch);
     assert!(mls_events.commit.is_none());
     assert!(mls_events.genesis.is_none());
-    assert!(state.local_identity_record().is_none());
+    assert!(state.load().local_identity.is_none());
 }
 
 #[test]

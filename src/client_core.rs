@@ -392,39 +392,6 @@ impl garth::DurableInboxStore for InksonLocalStateStoreAdapter {
     }
 }
 
-#[derive(Clone)]
-pub struct ClientCoreState<E, C, D, S> {
-    pub http: arkret_sdk::http_client::Client,
-    pub secure_key_store: S,
-    core: garth::ArkretClient<E, C, D>,
-}
-
-impl<E, C, D, S> ClientCoreState<E, C, D, S>
-where
-    E: garth::Executor,
-    C: garth::CursorStore,
-    D: garth::EventCacheStore,
-{
-    pub fn new(
-        http: arkret_sdk::http_client::Client,
-        secure_key_store: S,
-        core: garth::ArkretClient<E, C, D>,
-    ) -> Self {
-        Self {
-            http,
-            secure_key_store,
-            core,
-        }
-    }
-
-    pub fn subscription_engine(&self) -> garth::SubscriptionEngine<E, C, D>
-    where
-        E: Clone,
-    {
-        self.core.subscription_engine()
-    }
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 type InksonSubscriptionEngine = garth::SubscriptionEngine<
     garth::NativeExecutor,

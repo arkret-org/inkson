@@ -69,8 +69,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let mls_coverage_repair_in_flight = use_signal(std::collections::BTreeSet::<String>::new);
     let accepted_artifact_basis_seen = use_signal(|| Option::<String>::None);
     let accepted_artifact_convergence_in_flight = use_signal(|| false);
-    let history_response_poll_tick = use_signal(|| 0_u64);
-    let history_response_poll_in_flight = use_signal(|| false);
 
     {
         let ready = secure_store_bootstrap_ready;
@@ -150,105 +148,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     }
                 }
                 in_flight.set(false);
-            });
-        });
-    }
-
-    {
-        let ready = secure_store_bootstrap_ready;
-        let sync_ready = sync_bootstrap_complete;
-        let mut poll_tick = history_response_poll_tick;
-        let mut in_flight = history_response_poll_in_flight;
-        let mut response_stream_error = last_error;
-        let response_stream_store = state_store;
-        use_effect(move || {
-            let Some(account) = active_account() else {
-                return;
-            };
-            let _ = poll_tick();
-            let base = account.server_url.to_string();
-            let credential = token();
-            let actor = account.full_id().to_string();
-            let device = account.device_id.clone();
-            let authority = account.authority.clone();
-            if !ready()
-                || !sync_ready()
-                || base.trim().is_empty()
-                || credential.trim().is_empty()
-                || actor.trim().is_empty()
-                || *in_flight.peek()
-            {
-                return;
-            }
-            in_flight.set(true);
-            spawn(async move {
-                let request_ids =
-                    crate::history_recovery::accepted_history_request_ids(response_stream_store);
-                let result = match request_ids {
-                    Ok(request_ids) => {
-                        crate::transport::auth::with_authed_api(
-                            &base,
-                            credential,
-                            move |api| async move {
-                                let secure_store = crate::secure_key_store::default_secure_key_store(
-                                    "inkson",
-                                );
-                                let mut first_error = None;
-                                if let Err(error) = crate::history_recovery::drain_source_outbox(
-                                    response_stream_store,
-                                    &api,
-                                    secure_store.as_ref(),
-                                    chrono::Utc::now(),
-                                )
-                                .await
-                                {
-                                    tracing::warn!(
-                                        %error,
-                                        "history source outbox drain remains pending"
-                                    );
-                                    first_error = Some(error);
-                                }
-                                for request_id in request_ids {
-                                    if let Err(error) = crate::history_recovery::verify_and_install_response_page_from_local_state(
-                                        response_stream_store,
-                                        &api,
-                                        secure_store.as_ref(),
-                                        &authority,
-                                        &device,
-                                        &request_id,
-                                        Some(64),
-                                        chrono::Utc::now(),
-                                    )
-                                    .await
-                                    {
-                                        tracing::warn!(
-                                            request_id = %request_id,
-                                            %error,
-                                            "history response stream request remains pending"
-                                        );
-                                        if first_error.is_none() {
-                                            first_error = Some(error);
-                                        }
-                                    }
-                                }
-                                first_error.map_or(Ok(()), Err)
-                            },
-                        )
-                        .await
-                        .map_err(|error| anyhow::anyhow!(error.display()))
-                    }
-                    Err(error) => Err(error),
-                };
-                if let Err(error) = result {
-                    let detail = error.to_string();
-                    response_stream_error.set(Some(crate::history_ui::status_message(
-                        crate::history_ui::classify_runtime_error(&detail),
-                        &detail,
-                    )));
-                }
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(10)).await;
-                in_flight.set(false);
-                poll_tick.set(poll_tick().wrapping_add(1));
             });
         });
     }

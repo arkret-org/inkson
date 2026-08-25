@@ -190,10 +190,6 @@ pub fn missing_v1_principal_server_requirements(
     missing
 }
 
-pub fn service_is_v1_principal_server_ready(description: &ServiceDescribe) -> bool {
-    missing_v1_principal_server_requirements(description).is_empty()
-}
-
 // R35: `ak.identity.describe` body. The SDK's canonical type is
 // `IdentityDescription` (same fields, with `service_id: DidCoreId` validated on
 // construction); the SDK's own `IdentityDescription` is a transparent

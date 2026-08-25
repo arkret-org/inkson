@@ -80,11 +80,16 @@ fn move_submission_record_round_trips_through_store() {
     assert!(!store.realm_has_paused_notary(realm));
 
     // Update to NotaryPaused — Space should now flag the banner.
-    assert!(store.update_move_submission_state(
-        mid,
-        MoveSubmissionState::NotaryPaused,
-        Some("recovery notary not signed".to_owned()),
-    ));
+    {
+        let record = store
+            .cached
+            .move_submissions
+            .get_mut(mid)
+            .expect("tracked move");
+        record.state = MoveSubmissionState::NotaryPaused;
+        record.reason = Some("recovery notary not signed".to_owned());
+    }
+    let _ = store.flush();
     assert!(store.realm_has_paused_notary(realm));
     let listed = store.move_submissions_for_realm(realm);
     assert_eq!(listed[0].state, MoveSubmissionState::NotaryPaused);
@@ -99,7 +104,9 @@ fn move_submission_record_round_trips_through_store() {
 
     // Drop it and the banner clears.
     let mut store = LocalStateStore::with_path(reader.path.clone());
-    store.drop_move_submission(mid);
+    store.ensure_cached_loaded();
+    store.cached.move_submissions.remove(mid);
+    let _ = store.flush();
     assert!(!store.realm_has_paused_notary(realm));
 }
 

@@ -211,13 +211,12 @@ pub enum EnvelopeError {
     SdkRestore(String),
     /// F-WASM-MLS-1: the byte-level envelope decrypted cleanly but
     /// the live MLS group can't be reconstructed on this target —
-    /// today, wasm32. The caller already has the inner
-    /// `MlsGroupStateRecord` (returned via
-    /// [`restore_state_record_only`]) and can render the metadata
+    /// today, wasm32. The caller can still decrypt the envelope and
+    /// parse the inner `MlsGroupStateRecord` to render the metadata
     /// (epoch / device_id / signer_public_key), but encrypt /
     /// decrypt of new messages requires the native SDK provider.
     #[error(
-        "wasm32 MLS group restore is not supported — use the metadata returned by restore_state_record_only"
+        "wasm32 MLS group restore is not supported — render the decrypted state record metadata instead"
     )]
     WasmMlsRestoreUnsupported,
 }
@@ -399,20 +398,6 @@ impl MlsSnapshotEnvelope {
         serde_json::from_slice::<MlsGroupStateRecord>(bytes)
             .map_err(|err| EnvelopeError::InvalidStateRecord(err.to_string()))
     }
-}
-
-/// Helper that decrypts an [`MlsSnapshotEnvelope`] + parses out the typed
-/// [`MlsGroupStateRecord`] without trying to reconstruct the live MLS group
-/// via the OpenMLS provider. Callers that need an executable
-/// [`arkret_sdk::ArkretMlsGroup`] should use [`restore_envelope`].
-pub fn restore_state_record_only(
-    envelope: &MlsSnapshotEnvelope,
-    snapshot_secret: &str,
-    current_epoch_floor: u64,
-) -> Result<MlsGroupStateRecord, EnvelopeError> {
-    let bytes = decrypt_with_epoch_check(envelope, snapshot_secret, current_epoch_floor)?;
-    serde_json::from_slice::<MlsGroupStateRecord>(&bytes)
-        .map_err(|err| EnvelopeError::InvalidStateRecord(err.to_string()))
 }
 
 /// Helper used by the boot path and local MLS actions. Decrypts the envelope,

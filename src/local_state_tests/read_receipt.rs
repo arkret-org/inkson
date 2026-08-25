@@ -149,11 +149,6 @@ fn read_receipt_clearing_override_falls_back_to_default() {
         None,
         Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
     ));
-    assert!(
-        store
-            .read_receipt_realm_override("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE")
-            .is_none()
-    );
 }
 
 #[test]

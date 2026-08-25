@@ -10,8 +10,7 @@ fn ensure_local_identity_generates_persists_and_round_trips() {
     let path = temp_state_path("local-identity");
     let id = {
         let mut store = LocalStateStore::with_path(path.clone());
-        assert!(store.local_identity_record().is_none());
-        assert!(store.local_identity().is_none());
+        assert!(store.load().local_identity.is_none());
         let id = store.ensure_local_identity().expect("first generate");
         assert!(id.local_signing_did.starts_with("did:key:z"));
         // Idempotent on the same store instance.
@@ -20,8 +19,8 @@ fn ensure_local_identity_generates_persists_and_round_trips() {
         id
     };
     // Round-trip across store instances.
-    let reader = LocalStateStore::with_path(path);
-    let loaded = reader.local_identity().expect("persisted identity loads");
+    let mut reader = LocalStateStore::with_path(path);
+    let loaded = reader.ensure_local_identity().expect("persisted identity loads");
     assert_eq!(loaded.local_signing_did, id.local_signing_did);
     assert_eq!(loaded.signing_key.to_bytes(), id.signing_key.to_bytes());
 }
@@ -81,7 +80,7 @@ fn local_identity_two_calls_to_generate_diverge() {
 }
 
 #[test]
-fn local_identity_record_tamper_detection_regenerates() {
+fn local_identity_tamper_detection_regenerates() {
     let path = temp_state_path("local-identity-tamper");
     let mut store = LocalStateStore::with_path(path.clone());
     let original = store.ensure_local_identity().unwrap();

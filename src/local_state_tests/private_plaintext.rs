@@ -135,7 +135,13 @@ fn private_plaintext_sidecar_stays_memory_only_without_secure_store() {
                 .as_deref(),
             Some("\"author synthesis\"")
         );
-        let fields = store.private_plaintext_fields(realm, strand);
+        let fields = store
+            .load()
+            .mls_private_plaintext
+            .get(realm)
+            .and_then(|strands| strands.get(strand))
+            .cloned()
+            .unwrap_or_default();
         assert_eq!(fields.len(), 2);
         let account_path = store.account_state_path(&store.effective_account_key());
         let raw = std::fs::read_to_string(&account_path).expect("account state written");
@@ -156,7 +162,13 @@ fn private_plaintext_sidecar_stays_memory_only_without_secure_store() {
             .private_plaintext_for(realm, strand, "synthesis")
             .is_none()
     );
-    let fields = reader.private_plaintext_fields(realm, strand);
+    let fields = reader
+        .load()
+        .mls_private_plaintext
+        .get(realm)
+        .and_then(|strands| strands.get(strand))
+        .cloned()
+        .unwrap_or_default();
     assert!(fields.is_empty());
     // Missing keys return None.
     assert!(
@@ -410,7 +422,10 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
             digest,
             b"cached plaintext",
         );
-        writer.drop_mls_snapshot(realm);
+        writer.absorb_mls_receive_overlay();
+        writer.cached.mls_snapshots.remove(realm);
+        writer.cached.mls_receive_recovery_snapshots.remove(realm);
+        let _ = writer.flush();
         assert!(writer.mls_snapshot_for(realm).is_none());
         assert!(writer.load().mls_receive_recovery_snapshots.is_empty());
         writer

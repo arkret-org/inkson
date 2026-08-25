@@ -48,20 +48,6 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
 }
 
 #[test]
-fn mls_snapshot_drop_clears_persisted_record() {
-    use crate::mls::persistence::encrypt_state;
-    let path = temp_state_path("mls-snapshot-drop");
-    let mut store = LocalStateStore::with_path(path);
-    let realm = "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI";
-    store
-        .save_mls_snapshot(realm, encrypt_state(realm, "abcd", 1, b"x", "p", b"salt"))
-        .unwrap();
-    assert!(store.mls_snapshot_for(realm).is_some());
-    store.drop_mls_snapshot(realm);
-    assert!(store.mls_snapshot_for(realm).is_none());
-}
-
-#[test]
 fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     use crate::mls::persistence::encrypt_state;
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};

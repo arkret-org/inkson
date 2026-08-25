@@ -760,34 +760,6 @@ impl LocalStateStore {
             .collect())
     }
 
-    /// Persist an exact replay-derived ciphersuite for externally received
-    /// candidate material. A conflicting value is a cryptographic transcript
-    /// contradiction and must not overwrite the first verified binding.
-    pub(crate) fn record_history_epoch_cipher_suite(
-        &mut self,
-        effective_scope: &arkret_sdk::ScopeRef,
-        group_id: &str,
-        epoch: u64,
-        cipher_suite: &str,
-    ) -> Result<(), String> {
-        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id)?;
-        let by_epoch = self
-            .cached
-            .history_epoch_cipher_suites
-            .entry(scope_group_key)
-            .or_default();
-        if let Some(existing) = by_epoch.get(&epoch) {
-            if existing != cipher_suite {
-                return Err(
-                    "verified history epoch ciphersuite conflicts with durable state".to_owned(),
-                );
-            }
-            return Ok(());
-        }
-        by_epoch.insert(epoch, cipher_suite.to_owned());
-        self.flush().map_err(|error| error.to_string())
-    }
-
     /// Snapshot of every persisted MLS envelope. Used by the boot
     /// path to rehydrate every known Realm's group in one pass and by
     /// device-recovery strands to enumerate the encrypted snapshots that
@@ -796,58 +768,26 @@ impl LocalStateStore {
         self.load().mls_snapshots
     }
 
-    /// Drop the MLS snapshot for a Realm — used after a successful
-    /// "rotate group" / "leave group" Move so the next boot doesn't
-    /// try to rehydrate a stale leaf.
-    pub fn drop_mls_snapshot(&mut self, realm_id: &str) {
-        self.drop_mls_snapshot_for_effective_scope(realm_id, None);
-    }
-
-    pub fn drop_mls_snapshot_for_effective_scope(
-        &mut self,
-        realm_id: &str,
-        circle_id: Option<&str>,
-    ) {
-        let Ok(scope) = mls_realm_or_circle_scope(realm_id, circle_id) else {
-            return;
-        };
-        self.drop_mls_snapshot_for_scope(&scope);
-    }
-
-    pub fn drop_mls_snapshot_for_scope(&mut self, effective_scope: &arkret_sdk::ScopeRef) {
+    /// Test-only scenario helper: drop the persisted MLS snapshot for a
+    /// Realm scope (rotate/leave simulation) so receive-chain tests can
+    /// verify behaviour without group state.
+    #[cfg(test)]
+    pub(crate) fn drop_mls_snapshot_for_test(&mut self, realm_id: &str) {
         self.absorb_mls_receive_overlay();
-        let Ok(key) = mls_scope_snapshot_key(effective_scope) else {
+        let Ok(scope) = mls_realm_or_circle_scope(realm_id, None) else {
             return;
         };
-        let keys = match effective_scope {
-            arkret_sdk::ScopeRef::Sidecar { .. } => {
-                let prefix = format!("{key}\u{1f}");
-                self.cached
-                    .mls_snapshots
-                    .keys()
-                    .chain(self.cached.mls_receive_recovery_snapshots.keys())
-                    .filter(|candidate| candidate.starts_with(&prefix))
-                    .cloned()
-                    .collect::<std::collections::BTreeSet<_>>()
-            }
-            _ => [key].into_iter().collect(),
+        let Ok(key) = mls_scope_snapshot_key(&scope) else {
+            return;
         };
-        let mut dropped_snapshot = false;
-        let mut dropped_recovery = false;
-        for key in keys {
-            dropped_snapshot |= self.cached.mls_snapshots.remove(&key).is_some();
-            dropped_recovery |= self
+        let dropped = self.cached.mls_snapshots.remove(&key).is_some()
+            | self
                 .cached
                 .mls_receive_recovery_snapshots
                 .remove(&key)
                 .is_some();
-        }
-        // The decrypted-plaintext cache is keyed to ciphertext minted under
-        // the dropped group state; it stays readable history (same lifetime
-        // policy as the author sidecar) and is NOT wiped here.
-        if dropped_snapshot || dropped_recovery {
+        if dropped {
             let _ = self.flush();
-            self.persist_e2ee_plaintext_cache_if_ready();
         }
     }
 
@@ -1432,22 +1372,6 @@ impl LocalStateStore {
             .and_then(|fields| fields.get(field_path.trim()))
             .filter(|plaintext| !plaintext.is_empty())
             .cloned()
-    }
-
-    /// X5.1 — all sidecar plaintext fields for a single strand (`field_path
-    /// -> plaintext`). Convenience for callers that want to enumerate
-    /// every stored field at once.
-    pub fn private_plaintext_fields(
-        &self,
-        realm_id: &str,
-        strand_id: &str,
-    ) -> BTreeMap<String, String> {
-        self.load()
-            .mls_private_plaintext
-            .get(realm_id.trim())
-            .and_then(|strands| strands.get(strand_id.trim()))
-            .cloned()
-            .unwrap_or_default()
     }
 
     /// X5.3 — serialize the ENTIRE local-plaintext sidecar map

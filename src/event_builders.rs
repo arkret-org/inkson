@@ -1667,23 +1667,6 @@ pub fn build_sas_key_verification_content(
     Ok(content)
 }
 
-pub fn ensure_device_verification_proof_is_signed(proof: &Value) -> anyhow::Result<()> {
-    let Some(signature) = proof.get("signature") else {
-        anyhow::bail!("device verification proof must include a signed device envelope")
-    };
-    let jws = signature
-        .get("jws")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if arkret_sdk::signatures::proof::validate_ed25519_detached_jws_shape(jws).is_err() {
-        anyhow::bail!("device verification proof must carry an Ed25519 compact JWS")
-    }
-    if proof.get("device_envelope").is_none() {
-        anyhow::bail!("device verification proof missing device_envelope")
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod notary_derivation_tests {
     use serde_json::json;

@@ -41,14 +41,6 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    pub fn notification_state_for(&self, notification_id: &str) -> NotificationClientState {
-        self.load()
-            .notification_client_state
-            .get(notification_id)
-            .cloned()
-            .unwrap_or_default()
-    }
-
     pub fn build_read_cursor_candidate(
         &self,
         actor: impl Into<String>,
@@ -117,20 +109,6 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         self.replace_read_cursor_projection(marker);
         self.flush()
-    }
-
-    pub fn read_cursor_for(
-        &self,
-        realm_id: &str,
-        topic_id: Option<&str>,
-    ) -> Option<ReadMarkerRecord> {
-        self.load()
-            .read_cursors
-            .get(&read_cursor_key(
-                realm_id,
-                &read_scope_for_cursor(realm_id, topic_id),
-            ))
-            .cloned()
     }
 
     pub fn latest_read_cursor(&self, realm_id: &str) -> Option<ReadMarkerRecord> {
@@ -248,10 +226,6 @@ impl LocalStateStore {
         self.set_realm_watch_level(realm_id, level);
     }
 
-    pub fn is_realm_muted(&self, realm_id: &str) -> bool {
-        self.realm_watch_level(realm_id) == WatchLevel::Muted
-    }
-
     pub fn muted_realms(&self) -> Vec<String> {
         self.load()
             .realm_watch_levels
@@ -268,10 +242,6 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         self.cached.presence_visibility = visibility;
         let _ = self.flush();
-    }
-
-    pub fn presence_should_send(&self) -> bool {
-        self.presence_visibility().allows_presence_send()
     }
 
     // ── Manual presence preference (profiles-presence.md §3.6) ─
@@ -306,13 +276,6 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         self.cached.read_receipt_default_display = display;
         let _ = self.flush();
-    }
-
-    pub fn read_receipt_realm_override(&self, realm_id: &str) -> Option<bool> {
-        self.load()
-            .read_receipt_realm_overrides
-            .get(realm_id)
-            .copied()
     }
 
     pub fn set_read_receipt_realm_override(

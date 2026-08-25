@@ -8,7 +8,7 @@ use inkson::api_error::{TransportClientError, decode_arkret_error, is_auth_expir
 use inkson::config::{ClientConfig, LocalConfigStore};
 use inkson::models::{
     missing_event_envelope_write_requirements, missing_v1_principal_server_requirements,
-    service_is_v1_principal_server_ready, service_supports_event_envelope_write_plane,
+    service_supports_event_envelope_write_plane,
 };
 use inkson::operation::TypedOperationBuilder;
 
@@ -550,7 +550,7 @@ fn server_description_gates_event_envelope_write_plane() {
     }))
     .unwrap();
     assert!(service_supports_event_envelope_write_plane(&events_ready));
-    assert!(service_is_v1_principal_server_ready(&events_ready));
+    assert!(missing_v1_principal_server_requirements(&events_ready).is_empty());
     assert!(missing_event_envelope_write_requirements(&events_ready).is_empty());
 
     // `service-describe.schema.json` closes the interop-surface object

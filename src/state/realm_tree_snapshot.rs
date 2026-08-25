@@ -84,56 +84,6 @@ impl LocalStateStore {
         self.load().realm_collaboration_roles.get(realm_id).copied()
     }
 
-    pub fn apply_snapshot_chunks(
-        &mut self,
-        manifest: &arkret_sdk::SnapshotManifest,
-        chunks: &[arkret_sdk::SnapshotChunkPayload],
-        trust_state: crate::snapshot::SnapshotTrustState,
-    ) -> anyhow::Result<()> {
-        let report = arkret_sdk::verify_snapshot_manifest(
-            manifest,
-            chunks,
-            &arkret_sdk::SnapshotVerifyOptions::standard(
-                Utc::now(),
-                arkret_sdk::CORE_REDUCER_PROFILE,
-            ),
-        )
-        .map_err(|error| anyhow::anyhow!("{}: {}", error.code.as_str(), error.message))?;
-
-        let mut projections = Vec::new();
-        for chunk in chunks {
-            for item in &chunk.items {
-                if item.id.trim().is_empty() {
-                    anyhow::bail!("snapshot item id must not be empty");
-                }
-                projections.push((item.id.clone(), item.object.clone()));
-            }
-        }
-
-        let status = SnapshotSyncStatus {
-            manifest_id: manifest.id.to_string(),
-            trust_state,
-            updated_at: Utc::now(),
-            source_event_ids: report
-                .source_event_ids
-                .into_iter()
-                .map(|event_id| event_id.to_string())
-                .collect(),
-            degraded_reason: None,
-        };
-        let realm_id = manifest.realm_id.to_string();
-
-        self.batch(|store| {
-            for (projection_id, projection) in projections {
-                store.save_realm_tree_projection(projection_id, projection);
-            }
-            store.ensure_cached_loaded();
-            store.cached.snapshot_sync.insert(realm_id, status);
-            store.flush_pending.store(true, Ordering::Relaxed);
-        });
-        Ok(())
-    }
-
     pub fn snapshot_sync_status(&self, realm_id: &str) -> Option<SnapshotSyncStatus> {
         self.load().snapshot_sync.get(realm_id).cloned()
     }
@@ -211,9 +161,6 @@ impl LocalStateStore {
         self.cached
             .move_submissions
             .retain(|_, record| record.realm_id != projection_id);
-        // `pending_encrypted_messages` are keyed by message id, not space id,
-        // so we leave them alone — the per-message flush path will reject
-        // them if the target Space is gone.
     }
 
     /// True when the latest cached realm-tree projection declares an

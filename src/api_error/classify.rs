@@ -300,28 +300,6 @@ pub fn rate_limited_retry_after(error: &anyhow::Error) -> Option<u64> {
     Some(envelope.retry_after_ms().unwrap_or(0))
 }
 
-/// `true` when account subscribe rejected the cursor — expired, invalid,
-/// integrity-mismatched, or unrecognized — so the SyncEngine knows to
-/// demote to a `after=None` full sync instead of looping on the same
-/// broken cursor. Per client-sync.md §2/§12.3, `cursor_expired` /
-/// `cursor_integrity_invalid` / `cursor_unrecognized` all recover by
-/// clearing the local cursor and redoing initial sync.
-pub fn is_invalid_cursor_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
-        let code = envelope.code();
-        // `param_invalid` only counts when the message mentions the
-        // cursor — soland uses it for generic schema rejections too.
-        let cursor_message = envelope.message().to_lowercase().contains("cursor");
-        matches!(
-            code,
-            code if code == arkret_sdk::ErrorCode::CURSOR_EXPIRED
-                || code == arkret_sdk::error_codes::ErrorCode::CURSOR_INTEGRITY_INVALID
-                || code == arkret_sdk::error_codes::ErrorCode::CURSOR_UNRECOGNIZED
-        ) || (cursor_message
-            && matches!(code, code if code == arkret_sdk::ErrorCode::PARAM_INVALID || code == arkret_sdk::ErrorCode::CURSOR_INVALID))
-    })
-}
-
 /// `true` for a typed MLS Security Frontier refusal: the submitted binding does
 /// not match the frontier projected from accepted control state and active MLS
 /// leaves.

@@ -183,16 +183,6 @@ impl LocalStateStore {
         });
     }
 
-    pub fn display_name_for_actor(&self, actor_id: &str, public_name: &str) -> String {
-        match self
-            .active_contact_remark(actor_id)
-            .map(|r| r.display_name(public_name).to_owned())
-        {
-            Some(name) => name,
-            None => public_name.to_owned(),
-        }
-    }
-
     // ── Personal blocklist (spec client-preferences.md "ak.account.blocklist") ─
 
     /// Current personal blocklist. Cheap clone — the underlying `Vec`

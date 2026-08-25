@@ -47,7 +47,6 @@ pub mod event_signer;
 pub mod event_submit;
 pub mod file_transfer;
 pub mod fresh_device_recovery;
-pub mod history_recovery;
 pub mod history_ui;
 pub mod hpke_backup;
 pub mod i18n;

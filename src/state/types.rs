@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use arkret_sdk::EncryptedPayload;
 pub use arkret_sdk::{PresencePreference, PresenceVisibility, ReadCursorPosition, ReadCursorScope};
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
@@ -886,10 +885,6 @@ pub struct ClientLocalState {
     /// cursors are not interchangeable and MUST NOT be cross-used.
     #[serde(default)]
     pub realm_events_cursors: BTreeMap<String, String>,
-    /// Realm scan cursors are filter-bound and cannot share the subscription
-    /// cursor slot. Keys include service, realm, and order.
-    #[serde(default)]
-    pub realm_scan_cursors: BTreeMap<String, String>,
     /// Crash-safe client-core deliveries. A Realm cursor and the batch it
     /// admits are committed in one local-state write; the UI projector acks
     /// only after its own durable fold succeeds.
@@ -926,7 +921,6 @@ pub struct ClientLocalState {
     /// envelope at expiry.
     #[serde(default)]
     pub scheduled_send_target_realms: BTreeMap<String, String>,
-    pub pending_encrypted_messages: BTreeMap<String, EncryptedPayload>,
     #[serde(default)]
     pub notification_projection: Vec<StoredNotification>,
     #[serde(default)]
@@ -1216,16 +1210,6 @@ pub struct ClientLocalState {
     /// the hardened secure store and never enter this metadata snapshot.
     #[serde(default)]
     pub(crate) history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger,
-    /// Crash-safe history request/response-stream/retry state owned by Garth. The
-    /// revision participates in compare-and-swap updates across concurrent UI
-    /// tasks so ACK high-water and exact retries cannot be rolled back.
-    #[serde(default)]
-    pub(crate) history_runtime_state: garth::VersionedHistoryRuntimeSnapshot,
-    /// Crash-safe source response attempts. Canonical signed records are kept
-    /// separately as content-addressed secure-store blobs; this snapshot is
-    /// the atomic ready marker and receipt/state-machine ledger.
-    #[serde(default)]
-    pub(crate) history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1389,11 +1373,6 @@ impl RootIndex {
         }
     }
 
-    pub fn forget_profile(&mut self, profile_id: &str) {
-        self.known_profiles
-            .retain(|known| known.profile_id != profile_id);
-    }
-
     pub fn active_entry(&self) -> Option<&AccountIndexEntry> {
         let profile_id = self.active_profile_id.as_deref()?;
         self.known_profiles
@@ -1491,7 +1470,6 @@ impl Default for ClientLocalState {
             sync_cursor: None,
             key_backup_active_series_highest_seen: BTreeMap::new(),
             realm_events_cursors: BTreeMap::new(),
-            realm_scan_cursors: BTreeMap::new(),
             client_core_pending_deliveries: VecDeque::new(),
             client_core_next_delivery_id: 0,
             device_message_cursors: BTreeMap::new(),
@@ -1504,7 +1482,6 @@ impl Default for ClientLocalState {
             saved_account_data: BTreeMap::new(),
             scheduled_send_account_data: BTreeMap::new(),
             scheduled_send_target_realms: BTreeMap::new(),
-            pending_encrypted_messages: BTreeMap::new(),
             notification_projection: Vec::new(),
             presence_projection: Vec::new(),
             presence_visibility: PresenceVisibility::Public,
@@ -1551,8 +1528,6 @@ impl Default for ClientLocalState {
             history_secrets: BTreeMap::new(),
             history_epoch_cipher_suites: BTreeMap::new(),
             history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger::default(),
-            history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
-            history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot::default(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             accepted_human_contact_principals: BTreeSet::new(),

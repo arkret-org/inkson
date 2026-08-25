@@ -229,8 +229,7 @@ async fn deliver_realm_inbox(
         let mut handled = false;
         for delivery in pending {
             let delivery_realm = match &delivery.scope {
-                garth::CursorScope::RealmEvents { realm_id, .. }
-                | garth::CursorScope::RealmEventsScan { realm_id, .. } => realm_id,
+                garth::CursorScope::RealmEvents { realm_id, .. } => realm_id,
                 _ => continue,
             };
             if delivery_realm.as_str() != provider.realm_id {

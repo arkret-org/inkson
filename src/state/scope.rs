@@ -21,30 +21,12 @@ impl LocalStateStore {
             .flatten()
     }
 
-    /// Last profile selected on this installation. This survives sign-in
-    /// failure/cancellation and is never used as authority for the pending
-    /// transaction.
-    pub fn last_selected_principal_id(&self) -> Option<String> {
-        self.read_root()
-            .active_entry()
-            .map(|entry| entry.authority.principal_id.to_string())
-    }
-
     /// Whether `principal` is the foreground identity. Equality is based on
     /// the stable DID core id, so a legitimate full-id resolution update does
     /// not create a second local account namespace.
     pub fn active_account_matches(&self, principal: &arkret_sdk::DidCoreId) -> bool {
         self.active_authority()
             .is_some_and(|authority| authority.principal_id == *principal)
-    }
-
-    /// Every account DID with a persisted per-account entry on this browser.
-    pub fn known_principal_ids(&self) -> Vec<String> {
-        self.read_root()
-            .known_profiles
-            .into_iter()
-            .map(|entry| entry.authority.principal_id.to_string())
-            .collect()
     }
 
     pub fn known_profile_id_for_authority(
@@ -209,43 +191,6 @@ impl LocalStateStore {
         self.hydrate_e2ee_plaintext_cache_if_ready();
         self.flush()?;
         Ok(true)
-    }
-
-    /// Purge a single account's persisted state: its `…account.<did>` entry,
-    /// its secure-store wrap_seed namespace (wasm), and its `known_profiles` entry.
-    /// Cross-account [`DevicePrefs`] and every other account are untouched. When
-    /// the purged account was active, the active pointer is cleared.
-    pub fn forget_account(&mut self, profile_id: &str) {
-        self.ensure_cached_loaded();
-        let root = self.read_root();
-        let Some(entry) = root
-            .known_profiles
-            .iter()
-            .find(|entry| entry.profile_id == profile_id)
-            .cloned()
-        else {
-            return;
-        };
-        let Ok(namespace) = account_storage_scope(&entry.authority) else {
-            return;
-        };
-        self.delete_account_state(&namespace);
-        let was_active = root.active_profile_id.as_deref() == Some(profile_id);
-        self.mutate_root(|root| {
-            root.forget_profile(profile_id);
-            if root.active_profile_id.as_deref() == Some(profile_id) {
-                root.active_profile_id = None;
-            }
-        });
-        if was_active {
-            *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
-            // E7: reset the account-scoped cursor overlay alongside the receive
-            // overlay so a stale cursor never leaks across account scope changes.
-            self.cached = ClientLocalState::default();
-            self.cached_account_key = Some(self.effective_account_key());
-            self.loaded.store(true, Ordering::Relaxed);
-            let _ = self.flush();
-        }
     }
 
     /// Start a fresh pre-DID login. Any onboarding checkpoint owned by the
@@ -662,24 +607,5 @@ impl LocalStateStore {
             .scheduled_send_target_realms
             .get(scheduled_send_id)
             .cloned()
-    }
-
-    pub fn preserve_encrypted_message(
-        &mut self,
-        message_id: impl Into<String>,
-        payload: EncryptedPayload,
-    ) {
-        self.ensure_cached_loaded();
-        self.cached
-            .pending_encrypted_messages
-            .insert(message_id.into(), payload);
-        let _ = self.flush();
-    }
-
-    pub fn pending_encrypted_count(&self) -> usize {
-        // Read through `load()` (like `snapshot_sync_status`) so a
-        // freshly-constructed store whose `cached` has not yet been populated
-        // still reports the durable pending count instead of a spurious 0.
-        self.load().pending_encrypted_messages.len()
     }
 }

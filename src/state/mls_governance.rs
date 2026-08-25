@@ -155,17 +155,6 @@ impl LocalStateStore {
             .map_err(|error| format!("persist MLS governance proof cache: {error}"))
     }
 
-    pub fn cached_mls_governance_proof(
-        &self,
-        request: &arkret_sdk::MlsGovernanceProofRequestBody,
-        now: DateTime<Utc>,
-    ) -> Result<Option<arkret_sdk::MlsGovernanceProofBundle>, String> {
-        let Some(entry) = self.cached_mls_governance_proof_entry(request, now)? else {
-            return Ok(None);
-        };
-        Ok(Some(entry.bundle))
-    }
-
     pub fn cached_mls_governance_proof_entry(
         &self,
         request: &arkret_sdk::MlsGovernanceProofRequestBody,

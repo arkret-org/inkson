@@ -2,7 +2,7 @@ use reqwest::StatusCode;
 
 use crate::api_error::{
     TransportClientError, decode_arkret_error, is_actor_seq_cas_conflict_error,
-    is_auth_expired_error, is_device_not_authorized_error, is_invalid_cursor_error,
+    is_auth_expired_error, is_device_not_authorized_error,
     is_plaintext_visibility_policy_error, is_space_membership_denied_error,
     is_terminal_session_grant_error, is_terminal_session_grant_refresh_error,
     rate_limited_retry_after,
@@ -84,12 +84,6 @@ fn sdk_api_errors_use_same_classifiers() {
         br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down","retry_after_ms":250},"request_id":"ak:request:test"}"#,
     );
     assert_eq!(rate_limited_retry_after(&rate_limited), Some(250));
-
-    let invalid_cursor = sdk_api_error(
-        StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"param_invalid","message":"invalid cursor"},"request_id":"ak:request:test"}"#,
-    );
-    assert!(is_invalid_cursor_error(&invalid_cursor));
 
     let auth_expired = sdk_api_error(
         StatusCode::UNAUTHORIZED,

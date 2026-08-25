@@ -7,7 +7,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use arkret_sdk::EncryptedPayload;
 use chime::PushRegistrationState;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -68,11 +67,7 @@ pub(crate) use mls_sidecar::{
 };
 
 mod history_candidates;
-mod history_runtime;
-mod history_source_outbox;
 mod identity_links;
-pub(crate) use history_runtime::{InksonHistoryRuntimeStore, history_runtime};
-pub(crate) use history_source_outbox::{InksonHistorySourceBlobStore, history_source_outbox};
 
 mod agent_evidence;
 mod did_bindings;
@@ -904,24 +899,6 @@ impl LocalStateStore {
         // frozen here so a later account switch cannot misroute this write.
         account_persist::enqueue_account_state_persist(account_state_key(did), json);
         Ok(())
-    }
-
-    /// Delete a single account's persisted entry. Best-effort (a missing entry
-    /// is fine). Native: removes the sibling file. wasm: removes the
-    /// secure-store key and its corrupt sidecar.
-    fn delete_account_state(&self, did: &str) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let path = self.account_state_path(did);
-            let _ = fs::remove_file(&path);
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let key = account_state_key(did);
-            let store = crate::secure_key_store::default_secure_key_store("inkson");
-            let _ = store.delete_secret(&key);
-            let _ = store.delete_secret(&format!("{key}.corrupt"));
-        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

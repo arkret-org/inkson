@@ -6,7 +6,7 @@
 
 pub use arkret_sdk::{
     FileTransferAad, FileTransferAccess, FileTransferAccessVisibility, FileTransferEncryption,
-    FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferKeyMessage, FileTransferRecord,
+    FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferRecord,
     FileTransferStatus,
 };
 use arkret_wire::{AEAD_PROFILE_XCHACHA20_POLY1305_V1, SchemaId};
@@ -29,7 +29,6 @@ pub const FILE_TRANSFER_RECORD_ENVELOPE_SCHEME: &str =
     "org.arkret.inkson.file_transfer.account_data_envelope.v1";
 pub const FILE_TRANSFER_BLOB_SCHEME: &str = arkret_sdk::BLOB_SCHEME_WHOLE_FILE_AEAD_V1;
 pub const FILE_TRANSFER_RETENTION_DAYS: i64 = 7;
-pub const FILE_TRANSFER_KEY_HPKE_INFO: &[u8] = b"arkret-file-transfer-key-hpke-x25519-v1";
 
 const CONTENT_KEY_LEN: usize = 32;
 const XCHACHA_NONCE_LEN: usize = 24;
@@ -87,22 +86,6 @@ pub struct FileTransferItem {
 pub struct FileTransferUploadResult {
     pub item: FileTransferItem,
     pub server_response: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileTransferRecipientDevice {
-    pub actor_id: String,
-    pub device_id: String,
-    pub hpke_public_key: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FileTransferDeviceKeyDispatch {
-    pub target_actor_id: String,
-    pub target_device_id: String,
-    pub txn_id: String,
-    pub expires_at: String,
-    pub content: FileTransferKeyMessage,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -90,7 +90,7 @@ fn contact_remark_set_tombstone_and_display_name() {
     let path = temp_state_path("contact-remark-set");
     let mut store = LocalStateStore::with_path(path);
     let did = "ak:did_core:web:alice.example";
-    assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice");
+    assert!(store.active_contact_remark(did).is_none());
 
     let accepted = crate::models::ContactListRow {
         peer: arkret_sdk::contact_operations::ContactPeer::Human {
@@ -121,11 +121,17 @@ fn contact_remark_set_tombstone_and_display_name() {
             chrono::Utc::now(),
         ),
     );
-    assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice from Ops");
+    assert_eq!(
+        store
+            .active_contact_remark(did)
+            .expect("active remark")
+            .display_name("Alice"),
+        "Alice from Ops"
+    );
     assert!(store.contact_remarks().contains_key(did));
 
     store.replace_accepted_human_contacts(&[]);
-    assert_eq!(store.display_name_for_actor(did, "Alice"), "Alice");
+    assert!(store.active_contact_remark(did).is_none());
     assert!(store.contact_remarks().contains_key(did));
     store.replace_accepted_human_contacts(&[accepted]);
 

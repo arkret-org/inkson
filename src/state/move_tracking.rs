@@ -53,37 +53,6 @@ impl LocalStateStore {
         record
     }
 
-    /// Update the lifecycle state of a tracked Move. Called when the
-    /// next `/sync` cycle surfaces an Seal inclusion / rejection.
-    /// Returns `false` when the move id isn't tracked (no-op).
-    pub fn update_move_submission_state(
-        &mut self,
-        move_id: &str,
-        state: MoveSubmissionState,
-        reason: Option<String>,
-    ) -> bool {
-        self.ensure_cached_loaded();
-        let Some(record) = self.move_submission_record_mut(move_id) else {
-            return false;
-        };
-        record.state = state;
-        if reason.is_some() {
-            record.reason = reason;
-        }
-        let _ = self.flush();
-        true
-    }
-
-    fn move_submission_record_mut(&mut self, id: &str) -> Option<&mut MoveSubmissionRecord> {
-        if self.cached.move_submissions.contains_key(id) {
-            return self.cached.move_submissions.get_mut(id);
-        }
-        self.cached
-            .move_submissions
-            .values_mut()
-            .find(|record| record.event_id.as_deref() == Some(id))
-    }
-
     fn move_submission_lookup_key(
         &self,
         event_id: Option<&str>,
@@ -259,14 +228,5 @@ impl LocalStateStore {
             let _ = self.flush();
         }
         updated
-    }
-
-    /// Drop a tracked Move (after it terminates and the user
-    /// dismisses the row). Idempotent.
-    pub fn drop_move_submission(&mut self, move_id: &str) {
-        self.ensure_cached_loaded();
-        if self.cached.move_submissions.remove(move_id).is_some() {
-            let _ = self.flush();
-        }
     }
 }

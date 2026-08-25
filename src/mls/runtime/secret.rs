@@ -146,7 +146,8 @@ pub fn replace_account_mls_secret_version(
 }
 
 /// Store (or overwrite) the default/current account-scoped MLS snapshot secret.
-/// Used by the recovery import path after unwrapping the recovery vault.
+/// Used by [`load_or_create_account_mls_secret`] on first creation and by the
+/// recovery import path after unwrapping the recovery vault.
 pub fn store_account_mls_secret(
     store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
@@ -303,6 +304,7 @@ pub fn mls_key_package_identity_state_key(
     ))
 }
 
+#[cfg(test)]
 pub fn store_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
@@ -320,7 +322,8 @@ pub fn store_mls_key_package_identity_state(
     store.store_secret(&key, &encoded)
 }
 
-/// Durable variant of [`store_mls_key_package_identity_state`].
+/// Durable variant of the KeyPackage identity-state write (test setups use the
+/// synchronous `store_mls_key_package_identity_state`).
 pub async fn store_mls_key_package_identity_state_durable(
     store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
