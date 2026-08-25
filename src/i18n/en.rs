@@ -985,6 +985,26 @@ pub fn english_translations() -> TranslationDict {
         "settings.mls_recovery.submit",
         "Create / replace recovery key words",
     );
+    dict.set(
+        "settings.mls_keypackages.refill_description",
+        "If invitations cannot reach this device, publish one bounded batch of fresh MLS KeyPackages.",
+    );
+    dict.set(
+        "settings.mls_keypackages.refill_button",
+        "Publish 8 fresh KeyPackages",
+    );
+    dict.set(
+        "settings.mls_keypackages.refill_busy",
+        "Publishing fresh MLS KeyPackages…",
+    );
+    dict.set(
+        "settings.mls_keypackages.refill_done",
+        "Fresh MLS KeyPackages published:",
+    );
+    dict.set(
+        "settings.mls_keypackages.refill_failed",
+        "MLS KeyPackage refill failed:",
+    );
 
     // Space-admin view (section labels)
     dict.set("realm_admin.title", "Realm Settings");

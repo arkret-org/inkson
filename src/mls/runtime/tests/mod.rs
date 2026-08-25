@@ -1,6 +1,23 @@
 //! Unit and integration tests for the MLS runtime helpers, grouped by the
 //! runtime submodule each set exercises.
 
+fn seed_human_creator_authorization(actor: &str, device: &str) {
+    let actor = crate::mls_api_helpers::principal_core_id(actor).unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[41; 32])
+        .verifying_key()
+        .to_bytes()
+        .to_vec();
+    crate::identity::device_directory::seed_device_authorization_for_test(
+        actor.as_str(),
+        device,
+        arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw { bytes: key },
+        arkret_sdk::EventId::new(
+            "ak:event:AdU2TJKBkRBC1Jk1dY8ExFkUgDvhnVG8jmKT5BdWMeYp".to_owned(),
+        )
+        .unwrap(),
+    );
+}
+
 fn seed_genesis_governance_proof(
     state: &mut crate::state::LocalStateStore,
     realm_id: &str,

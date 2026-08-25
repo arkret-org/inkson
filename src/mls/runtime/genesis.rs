@@ -108,10 +108,9 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
 
     let secret = load_or_create_account_mls_secret(secure_store, authority)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let identity = if sidecar_binding.is_none()
-        && state_store.realm_projection_is_minimal_metadata(realm)
-    {
-        let material =
+    let identity =
+        if sidecar_binding.is_none() && state_store.realm_projection_is_minimal_metadata(realm) {
+            let material =
             crate::mls::pairwise_identity::derive_pairwise_signing_material_from_account_secret(
                 secret.as_bytes(),
                 authority,
@@ -119,35 +118,24 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
                 &realm_typed,
             )
             .map_err(MlsRuntimeError::Identity)?;
-        let verification_method =
-            arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned())
-                .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
-        arkret_sdk::ArkretMlsIdentity::from_minimal_metadata_ed25519_signing_seed(
-            authority.principal_id.clone(),
-            device_id.clone(),
-            material.actor_id.clone(),
-            verification_method,
-            material.signing_seed(),
-        )
-        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
-    } else {
-        let signing_seed =
-            crate::secure_key_store::UserLocalStore::new(authority.clone(), device_id.clone())
-                .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
-                .load_signing_seed(secure_store)
-                .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
-                .ok_or_else(|| {
-                    MlsRuntimeError::Identity(
-                        "accepted device signer is unavailable for MLS group creation".to_owned(),
-                    )
-                })?;
-        arkret_sdk::ArkretMlsIdentity::from_authorized_device_signing_key(
-            authority.principal_id.clone(),
-            device_id.clone(),
-            &ed25519_dalek::SigningKey::from_bytes(&signing_seed.seed),
-        )
-        .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
-    };
+            let verification_method =
+                arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned())
+                    .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
+            arkret_sdk::ArkretMlsIdentity::new_minimal_metadata_pairwise(
+                material.actor_id.clone(),
+                verification_method,
+                arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
+                    ed25519_dalek::SigningKey::from_bytes(&material.signing_seed()),
+                ),
+            )
+            .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))?
+        } else {
+            crate::mls_api_helpers::ordinary_mls_identity(
+                authority.principal_id.clone(),
+                device_id.clone(),
+            )
+            .map_err(MlsRuntimeError::Identity)?
+        };
     let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
         &effective_scope,
@@ -163,9 +151,30 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
             "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
         ));
     }
-    let group = identity
+    let mut group = identity
         .create_group_with_governance_binding(group_seed.as_bytes(), &governance_binding)
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
+    let device_authorize_event_id = match &group.identity().endpoint {
+        arkret_sdk::MlsEndpointIdentity::HumanDevice {
+            principal_id,
+            device_id,
+        } => Some(
+            crate::identity::device_directory::cached_device_authorize_event_id(
+                principal_id.as_str(),
+                device_id.as_str(),
+            )
+            .ok_or_else(|| {
+                MlsRuntimeError::Genesis(
+                    "accepted device authorization is unavailable for MLS genesis".to_owned(),
+                )
+            })?,
+        ),
+        arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. }
+        | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => None,
+    };
+    group
+        .install_local_creator_binding(device_authorize_event_id)
+        .map_err(|error| MlsRuntimeError::Genesis(format!("bind creator leaf: {error}")))?;
     let (group_info_bytes, ratchet_tree_bytes) = group
         .public_group_state_bytes()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export public group state: {err}")))?;

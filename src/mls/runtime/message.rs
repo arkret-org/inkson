@@ -1049,9 +1049,12 @@ pub(crate) fn sign_welcome_consume_request(
             candidate.key_package_id
         )
     })?;
+    let expected_endpoint = welcome_recipient_endpoint(
+        &Some(candidate.recipient_principal_id.clone()),
+        candidate.recipient.clone(),
+    )?;
     let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
-        authority.principal_id.clone(),
-        device_id.clone(),
+        expected_endpoint,
         &serialized_state,
     )
     .map_err(|error| format!("restore consumed KeyPackage identity state: {error}"))?;
@@ -1686,18 +1689,15 @@ pub(crate) fn preview_welcome_security_frontiers(
             )
         })?;
         let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
-            principal_did.clone(),
-            device_id_typed.clone(),
+            arkret_sdk::MlsEndpointIdentity::human_device(
+                principal_did.clone(),
+                device_id_typed.clone(),
+            ),
             &serialized_state,
         )
         .map_err(|error| format!("restore Welcome KeyPackage identity: {error}"))?;
-        let mut group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
+        let group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
             .map_err(|error| format!("preview Welcome group: {error}"))?;
-        crate::mls::governance_proof::install_accepted_transition_leaf_bindings(
-            state_store,
-            binding.realm_id().as_str(),
-            &mut group,
-        )?;
         let embedded = group
             .current_governance_binding()
             .map_err(|error| format!("read preview governance binding: {error}"))?;
@@ -1707,12 +1707,12 @@ pub(crate) fn preview_welcome_security_frontiers(
                     .to_owned(),
             );
         }
-        previews.push(WelcomeSecurityFrontierPreview {
-            binding,
-            leaves: group
-                .security_frontier_leaves()
-                .map_err(|error| format!("derive Welcome MLS leaf set: {error}"))?,
-        });
+        let leaves = crate::mls::governance_proof::reconstruct_transition_security_frontier(
+            state_store,
+            &group,
+            &binding,
+        )?;
+        previews.push(WelcomeSecurityFrontierPreview { binding, leaves });
     }
     Ok(previews)
 }
@@ -1777,8 +1777,10 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
             ) {
                 Ok(Some(serialized_state)) => {
                     match arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
-                        principal_did.clone(),
-                        device_id_typed.clone(),
+                        arkret_sdk::MlsEndpointIdentity::human_device(
+                            principal_did.clone(),
+                            device_id_typed.clone(),
+                        ),
                         &serialized_state,
                     ) {
                         Ok(identity) => identity,
@@ -1792,7 +1794,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
                 }
                 Ok(None) => {
                     // The Welcome names a KeyPackage we have no stored private
-                    // identity state for. A fresh identity can NEVER
+                    // identity state for. A freshly generated identity can NEVER
                     // hold that KeyPackage's init key, so `join_from_welcome`
                     // would fail with `NoMatchingKeyPackage`. Fail closed with a
                     // diagnosable message instead of silently retrying with an
@@ -1825,7 +1827,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        let group = match arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome) {
+        let mut group = match arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome) {
             Ok(group) => group,
             Err(err) => {
                 outcome.record_failure(format!("join welcome: {err}"));
@@ -1844,6 +1846,26 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
             &welcome_value_for_governance,
         ) {
             outcome.record_failure(format!("welcome governance_binding authz: {reason}"));
+            continue;
+        }
+        let Some(welcome_binding) = welcome_value_for_governance
+            .get("governance_binding")
+            .cloned()
+            .and_then(|value| {
+                serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(value).ok()
+            })
+        else {
+            outcome.record_failure(
+                "Welcome governance binding disappeared before persistence".to_owned(),
+            );
+            continue;
+        };
+        if let Err(reason) = crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+            state_store,
+            &mut group,
+            &welcome_binding,
+        ) {
+            outcome.record_failure(format!("install Welcome T3 leaf bindings: {reason}"));
             continue;
         }
         let post_state = match group.export_state_record() {
@@ -1868,21 +1890,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
         // generation/nonce reuse on the next send) and desync `expected_prev_epoch`
         // from the server. Skip when we already hold an equal-or-higher epoch for
         // the same group.
-        let welcome_binding = welcome_value_for_governance
-            .get("governance_binding")
-            .cloned()
-            .and_then(|value| {
-                serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(value).ok()
-            });
-        let Some(effective_scope) = welcome_binding
-            .as_ref()
-            .map(|binding| binding.effective_scope().clone())
-        else {
-            outcome.record_failure(
-                "Welcome governance binding disappeared before persistence".to_owned(),
-            );
-            continue;
-        };
+        let effective_scope = welcome_binding.effective_scope().clone();
         if let Some(existing) =
             state_store.mls_snapshot_for_scope_and_group(&effective_scope, &post_state.group_id)
             && existing.group_id == post_state.group_id
@@ -2124,7 +2132,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     let schedule_hash = group.schedule_hash();
     let member_dids = group
         .member_principal_ids()
-        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+        .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -2329,7 +2337,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     let schedule_hash = group.schedule_hash();
     let member_dids = group
         .member_principal_ids()
-        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
+        .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -2393,7 +2401,7 @@ fn ensure_realm_membership_is_covered_for_send(
     };
     let group_members = group
         .member_principal_ids()
-        .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?
+        .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
         .into_iter()
         .map(|did| did.to_string())
         .collect::<std::collections::BTreeSet<_>>();

@@ -136,16 +136,59 @@ impl HostArtifactApplicator {
                 let realm_id = scope
                     .realm_id_opt()
                     .ok_or_else(|| protocol("accepted MLS Commit has no Realm scope"))?;
+                let checkpoint = self
+                    .state
+                    .read()
+                    .trusted_mls_governance_checkpoint(realm_id.as_str())
+                    .ok_or_else(|| protocol("accepted MLS Commit has no verified checkpoint"))?;
+                for proposal_ref in payload.proposal_refs() {
+                    let mut matches = checkpoint
+                        .accepted_events
+                        .iter()
+                        .filter(|candidate| &candidate.event_id == proposal_ref);
+                    let proposal_event = matches.next().ok_or_else(|| {
+                        protocol("accepted MLS Commit references an unavailable Proposal")
+                    })?;
+                    if matches.next().is_some()
+                        || proposal_event.kind != arkret_sdk::EventKind::MlsProposal
+                    {
+                        return Err(protocol(
+                            "accepted MLS Commit proposal reference is ambiguous or has the wrong kind",
+                        ));
+                    }
+                    let proposal = event_payload::<arkret_sdk::MlsProposalPayload>(proposal_event)?;
+                    if proposal.mls_group_id.as_str() != payload.mls_group_id()
+                        || proposal.base_epoch != payload.base_epoch()
+                    {
+                        return Err(protocol(
+                            "accepted MLS Commit proposal belongs to another group or epoch",
+                        ));
+                    }
+                    let proposal_type = serde_json::to_value(proposal.proposal_type)?
+                        .as_str()
+                        .ok_or_else(|| protocol("MLS Proposal type is not a string"))?
+                        .to_owned();
+                    group
+                        .apply_proposal(&arkret_sdk::MlsProposalEnvelope {
+                            group_id: proposal.mls_group_id.to_string(),
+                            epoch: proposal.base_epoch,
+                            proposal_type,
+                            proposal: proposal.proposal_bytes_b64,
+                            proposal_digest: proposal.proposal_digest,
+                            ratchet_tree: None,
+                        })
+                        .map_err(protocol)?;
+                }
                 group
                     .apply_commit_and_retain_history_secret(
                         &payload.commit_envelope(),
                         realm_id.as_str(),
                     )
                     .map_err(protocol)?;
-                crate::mls::governance_proof::install_accepted_transition_leaf_bindings(
+                crate::mls::governance_proof::install_cached_transition_leaf_bindings(
                     &self.state.read(),
-                    realm_id.as_str(),
                     &mut group,
+                    payload.governance_binding(),
                 )
                 .map_err(protocol)?;
                 Ok((
@@ -171,15 +214,14 @@ impl HostArtifactApplicator {
                 .ok_or_else(|| {
                     protocol("accepted Welcome KeyPackage private state is unavailable")
                 })?;
-                let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
-                    self.authority.principal_id.clone(),
-                    self.device_id.clone(),
-                    &private_state,
-                )
-                .map_err(protocol)?;
                 let expected_endpoint = super::message::welcome_recipient_endpoint(
                     &payload.recipient_principal_id,
                     payload.recipient.clone(),
+                )
+                .map_err(protocol)?;
+                let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
+                    expected_endpoint.clone(),
+                    &private_state,
                 )
                 .map_err(protocol)?;
                 if identity.endpoint_identity() != expected_endpoint {
@@ -189,10 +231,10 @@ impl HostArtifactApplicator {
                 }
                 let mut group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
                     .map_err(protocol)?;
-                crate::mls::governance_proof::install_accepted_transition_leaf_bindings(
+                crate::mls::governance_proof::install_cached_transition_leaf_bindings(
                     &self.state.read(),
-                    payload.governance_binding.realm_id().as_str(),
                     &mut group,
+                    &payload.governance_binding,
                 )
                 .map_err(protocol)?;
                 super::message::verify_welcome_governance_binding(
@@ -235,10 +277,18 @@ impl HostArtifactApplicator {
         .map_err(protocol)?;
         let (scope, binding, mut group, transition) =
             self.prepare_group(event, previous, &snapshot_secret)?;
-        if group.current_governance_binding().map_err(protocol)? != Some(binding) {
+        if group.current_governance_binding().map_err(protocol)? != Some(binding.clone()) {
             return Err(protocol(
                 "applied MLS state differs from the accepted governance binding",
             ));
+        }
+        if event.kind != arkret_sdk::EventKind::MlsGenesis {
+            crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+                &self.state.read(),
+                &mut group,
+                &binding,
+            )
+            .map_err(protocol)?;
         }
         let realm_id = scope
             .realm_id_opt()

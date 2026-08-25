@@ -592,7 +592,7 @@ fn AppBootstrap() -> Element {
     // proactive nudge can never re-pop within a session.
     let recovery_auto_prompt_fired = use_signal(|| false);
     let mut account_recovery_configured = use_signal(|| Option::<bool>::None);
-    let account_recovery_detection_key_seen = use_signal(|| Option::<String>::None);
+    let mut account_recovery_detection_key_seen = use_signal(|| Option::<String>::None);
     let account_recovery_retry_attempt = use_signal(|| 0_u8);
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
@@ -1600,7 +1600,13 @@ fn AppBootstrap() -> Element {
                     device_id,
                     open: recovery_key_setup_prompt,
                     account_primary_handle,
-                    on_server_configured: move |_| account_recovery_configured.set(Some(true)),
+                    on_server_configured: move |_| {
+                        account_recovery_configured.set(Some(true));
+                        // Invalidate any pre-publication policy read. Its
+                        // completion is generation-fenced in recovery_effects,
+                        // and this schedules a fresh authoritative read.
+                        account_recovery_detection_key_seen.set(None);
+                    },
                 }
                 if show_recovery_setup_prompt {
                     div {

@@ -78,26 +78,34 @@ pub(super) fn AccountRecoveryEffects(
         let remember_device = gate_device.clone();
         let session_coordinator = session_coordinator.clone();
         spawn(async move {
-            match crate::transport::auth::with_authed_api(&base, credential, |api| async move {
-                let policy = api.get_recovery_policy().await?;
-                let gate_verification = match recovery_material_evidence.as_ref() {
-                    Some(evidence)
-                        if evidence.principal_id == gate_actor
-                            && evidence.device_id.as_str() == gate_device =>
-                    {
-                        Some(
-                            crate::recovery_strand::verify_recovery_material_evidence(
-                                &api, evidence,
+            let result =
+                crate::transport::auth::with_authed_api(&base, credential, |api| async move {
+                    let policy = api.get_recovery_policy().await?;
+                    let gate_verification = match recovery_material_evidence.as_ref() {
+                        Some(evidence)
+                            if evidence.principal_id == gate_actor
+                                && evidence.device_id.as_str() == gate_device =>
+                        {
+                            Some(
+                                crate::recovery_strand::verify_recovery_material_evidence(
+                                    &api, evidence,
+                                )
+                                .await,
                             )
-                            .await,
-                        )
-                    }
-                    _ => None,
-                };
-                Ok::<_, anyhow::Error>((policy, gate_verification))
-            })
-            .await
-            {
+                        }
+                        _ => None,
+                    };
+                    Ok::<_, anyhow::Error>((policy, gate_verification))
+                })
+                .await;
+            // Recovery publication explicitly clears this key. Do not let an
+            // older in-flight read overwrite the accepted `Some(true)` result
+            // with the pre-publication policy snapshot; the cleared key also
+            // schedules an authoritative re-fetch of the new generation.
+            if account_recovery_detection_key_seen().as_deref() != Some(detection_key.as_str()) {
+                return;
+            }
+            match result {
                 Ok((policy, gate_verification)) => {
                     let mut retry_gate_verification = false;
                     if let Some(gate_verification) = gate_verification {

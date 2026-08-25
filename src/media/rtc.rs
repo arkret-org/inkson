@@ -1124,7 +1124,7 @@ mod tests {
             &test_authority(EXPORTER_ACTOR),
         )
         .unwrap();
-        let identity = ArkretMlsIdentity::new_test_identity(
+        let identity = ArkretMlsIdentity::new_test_human_device(
             crate::mls_api_helpers::principal_core_id(EXPORTER_ACTOR).unwrap(),
             DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         )
@@ -1283,24 +1283,29 @@ mod tests {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         // Build a REAL two-member MLS group: Alice creates, Bob joins via Welcome.
-        let alice_identity = ArkretMlsIdentity::new_test_identity(
+        let alice_identity = ArkretMlsIdentity::new_test_human_device(
             crate::mls_api_helpers::principal_core_id(ALICE_ACTOR).unwrap(),
             DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
-        let bob_identity = ArkretMlsIdentity::new_test_identity(
+        let bob_identity = ArkretMlsIdentity::new_test_human_device(
             crate::mls_api_helpers::principal_core_id(BOB_ACTOR).unwrap(),
             DeviceId::new(BOB_DEVICE.to_owned()).unwrap(),
         )
         .unwrap();
         let bob_key_package = bob_identity.key_package_record().unwrap();
+        let alice_endpoint = alice_identity.endpoint_identity();
+        let bob_endpoint = bob_identity.endpoint_identity();
 
         let mut alice_group = alice_identity
             .create_group(INTEROP_REALM.as_bytes())
             .unwrap();
         let add = alice_group.add_member(&bob_key_package).unwrap();
-        let bob_group =
+        let mut bob_group =
             arkret_sdk::ArkretMlsGroup::join_from_welcome(bob_identity, &add.welcome).unwrap();
+        bob_group
+            .install_test_leaf_bindings(vec![alice_endpoint, bob_endpoint])
+            .unwrap();
 
         // Both members are now on the same epoch with the same exporter secret.
         assert_eq!(alice_group.epoch(), bob_group.epoch());

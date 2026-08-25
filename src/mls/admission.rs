@@ -201,16 +201,16 @@ fn build_add_proposal_event(
     if proposal.proposal_type != "add" {
         return Err("MLS admission received a non-Add proposal envelope".to_owned());
     }
-    let target_device_id = match (
+    match (
         &claim.device_id,
         &claim.agent_id,
         &claim.agent_verification_method,
         &claim.agent_key_authorize_event_id,
     ) {
-        (Some(device_id), None, None, None) => Some(device_id.clone()),
-        (None, Some(agent_id), Some(_), Some(_)) if agent_id == &claim.principal_id => None,
+        (Some(_), None, None, None) => {}
+        (None, Some(agent_id), Some(_), Some(_)) if agent_id == &claim.principal_id => {}
         _ => return Err("MLS admission claim has an invalid Human/Native Agent branch".to_owned()),
-    };
+    }
     let payload = arkret_sdk::MlsProposalPayload {
         mls_group_id: arkret_sdk::MlsGroupId::new(proposal.group_id.clone())
             .map_err(|error| format!("invalid MLS proposal group id: {error}"))?,
@@ -219,7 +219,6 @@ fn build_add_proposal_event(
         proposal_bytes_b64: proposal.proposal.clone(),
         proposal_digest: proposal.proposal_digest.clone(),
         target_principal_id: Some(claim.principal_id.clone()),
-        target_device_id,
         target_authorization_incarnation: Some(target_authorization_incarnation),
         governance_binding,
     };
@@ -1102,7 +1101,7 @@ mod tests {
     #[test]
     fn human_and_native_agent_adds_bind_the_exact_authorization_incarnation() {
         let realm = "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx";
-        let bob = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+        let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
             crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1".to_owned())
                 .unwrap(),
@@ -1136,7 +1135,7 @@ mod tests {
             human.target_authorization_incarnation,
             Some(incarnation.clone())
         );
-        assert_eq!(human.target_device_id, claim.device_id);
+        assert_eq!(human.target_principal_id, Some(claim.principal_id.clone()));
 
         claim.device_id = None;
         claim.device_authorize_event_id = None;
@@ -1163,7 +1162,6 @@ mod tests {
         .unwrap();
         assert_eq!(native.target_authorization_incarnation, Some(incarnation));
         assert_eq!(native.target_principal_id, Some(claim.principal_id));
-        assert_eq!(native.target_device_id, None);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1288,7 +1286,7 @@ mod tests {
         let alice_device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let bob = "did:web:bob.example";
         let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b1";
-        let bob_identity = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+        let bob_identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
             crate::mls_api_helpers::principal_core_id(bob).unwrap(),
             arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
         )

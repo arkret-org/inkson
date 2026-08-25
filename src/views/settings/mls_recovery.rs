@@ -195,6 +195,8 @@ pub fn SettingsMlsRecoveryPanel(
     let mut generated_recovery_key_confirm = use_signal(String::new);
     let mut action_status = use_signal(String::new);
     let busy = use_signal(|| false);
+    let mut refill_busy = use_signal(|| false);
+    let mut refill_status = use_signal(String::new);
     let mut copied = use_signal(|| false);
 
     let has_session = !token().trim().is_empty();
@@ -301,6 +303,33 @@ pub fn SettingsMlsRecoveryPanel(
 
     let generated_now = generated_recovery_key();
     let generated_confirm_now = generated_recovery_key_confirm();
+    let account_for_refill = account.clone();
+    let on_refill = move |_| {
+        if refill_busy() {
+            return;
+        }
+        let base = account_for_refill.server_url.to_string();
+        let session = token();
+        let authority = account_for_refill.authority.clone();
+        let device = account_for_refill.device_id.clone();
+        refill_busy.set(true);
+        refill_status.set(crate::i18n::tr("settings.mls_keypackages.refill_busy"));
+        spawn(async move {
+            match crate::app::manual_refill_local_mls_key_packages(base, session, authority, device)
+                .await
+            {
+                Ok(count) => refill_status.set(format!(
+                    "{} {count}",
+                    crate::i18n::tr("settings.mls_keypackages.refill_done")
+                )),
+                Err(error) => refill_status.set(format!(
+                    "{} {error}",
+                    crate::i18n::tr("settings.mls_keypackages.refill_failed")
+                )),
+            }
+            refill_busy.set(false);
+        });
+    };
 
     rsx! {
         div { class: "event", "data-testid": "settings-mls-recovery",
@@ -439,6 +468,25 @@ pub fn SettingsMlsRecoveryPanel(
             if !action_status().is_empty() {
                 div { class: "muted", "data-testid": "settings-mls-recovery-action-status",
                     "{action_status}"
+                }
+            }
+            div { class: "workflow-form", "data-testid": "settings-mls-keypackages-refill",
+                div { class: "muted",
+                    {crate::i18n::tr("settings.mls_keypackages.refill_description")}
+                }
+                div { class: "actions",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "settings-mls-keypackages-refill-button",
+                        disabled: !has_session || refill_busy(),
+                        onclick: on_refill,
+                        {crate::i18n::tr("settings.mls_keypackages.refill_button")}
+                    }
+                }
+                if !refill_status().is_empty() {
+                    div { class: "muted", "data-testid": "settings-mls-keypackages-refill-status",
+                        "{refill_status}"
+                    }
                 }
             }
         }

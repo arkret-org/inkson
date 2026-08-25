@@ -48,6 +48,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     );
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_snapshot(
         &mut state,
         &secure,
@@ -110,6 +111,7 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
         }),
     );
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_snapshot(
         &mut state,
         &secure,

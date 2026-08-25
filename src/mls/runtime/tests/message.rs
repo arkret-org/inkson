@@ -73,6 +73,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     state.save_realm_tree_projection(
         realm,
         json!({
@@ -145,6 +146,7 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     let realm = "ak:realm:AekaXR7egHsJjC7lxnkHz8popOxRV27nKlKY8RDyuOBa";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
     ensure_creator_mls_snapshot(
         &mut state,
@@ -215,6 +217,7 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
     let realm = "ak:realm:Ae1aXR7egHsJjC7lxnkHz8popOxRV27nKlKY8RDyuOBb";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
     ensure_creator_mls_snapshot(
         &mut state,
@@ -272,6 +275,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
     let realm = "ak:realm:AcysOZi_v0RXNBYf47wJaNxuBSTq_WGE_xQtBPfwAWoj";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_snapshot(
         &mut state,
         &secure,
@@ -327,6 +331,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     let realm = "ak:realm:AS5FqwC40o7__sjiREHUnzw9YDYeOTIYVGSZyZasRuaN";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_snapshot(
         &mut state,
         &secure,
@@ -380,6 +385,7 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
     // exact scope/group pair, so this test uses a unique Realm.
     let realm = "ak:realm:Ae6wQDaXscJ6lZGbcWqFv_CW7o0_w5CGmtuB6TvlwNh2";
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_snapshot(
         &mut state,
         &secure,
@@ -466,21 +472,26 @@ fn two_member_group_with_bob_snapshot(
     bob_actor: &str,
     bob_device: &str,
 ) -> arkret_sdk::ArkretMlsGroup {
-    let alice = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+    let alice = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
-    let bob = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+    let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )
     .unwrap();
     let bob_key_package = bob.key_package_record().unwrap();
+    let alice_endpoint = alice.endpoint_identity();
+    let bob_endpoint = bob.endpoint_identity();
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
-    let bob_group = arkret_sdk::ArkretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
+    let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
+    bob_group
+        .install_test_leaf_bindings(vec![alice_endpoint, bob_endpoint])
+        .unwrap();
 
     let secret = load_or_create_account_mls_secret(secure, &test_authority(bob_actor)).unwrap();
     let post_state = bob_group.export_state_record().unwrap();
@@ -846,6 +857,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     let realm = "ak:realm:AbTY4xkfqhJ_gKIwE_mty8Xoat_WVCf7dqfoHV5C3ziC";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
     ensure_creator_mls_snapshot(
         &mut state,
@@ -990,7 +1002,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     let realm = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
     let store = MemorySecureKeyStore::new();
     let secret = load_or_create_account_mls_secret(&store, &test_authority(actor)).unwrap();
-    let identity = ArkretMlsIdentity::new_test_identity(
+    let identity = ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -1068,6 +1080,7 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
 
     // Genesis installs the epoch-0 snapshot.
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     ensure_creator_mls_snapshot(
         &mut state,
         &secure,
@@ -1162,13 +1175,13 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
     let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
-    let alice = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+    let alice = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
             .unwrap(),
     )
     .unwrap();
-    let bob = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+    let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         arkret_sdk::DeviceId::new(bob_device.to_owned()).unwrap(),
     )

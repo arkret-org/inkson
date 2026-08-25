@@ -49,6 +49,7 @@ fn build_mls_genesis_payload_has_required_fields() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     let summary = ensure_creator_mls_snapshot(
         &mut state,
         &secure,
@@ -127,6 +128,7 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
     super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(actor, device);
     let fresh = ensure_creator_mls_snapshot(
         &mut state,
         &secure,

@@ -1,11 +1,11 @@
 // ── Production-path wire guards ─────────────────────────────────
 //
-// `publish_mls_key_package` produces a real event-signer
+// `publish_key_packages` produces a real event-signer
 // `endpoint_signature` and fails-closed when no signer is installed
 // (asserted just below).
 
 #[tokio::test]
-async fn publish_mls_key_package_fails_closed_without_active_signer() {
+async fn publish_mls_key_packages_fails_closed_without_active_signer() {
     let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
     let record = arkret_sdk::MlsKeyPackageRecord {
         keypackage_id: "ak:mls:kp:01904100-0000-7000-8000-000000000001".to_owned(),
@@ -50,7 +50,7 @@ async fn publish_mls_key_package_fails_closed_without_active_signer() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn mls_key_package_upload_entry_carries_digest_and_ref() {
-    let identity = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+    let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001".to_owned())
             .unwrap(),

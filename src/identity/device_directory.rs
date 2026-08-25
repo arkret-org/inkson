@@ -55,7 +55,10 @@ pub enum CacheLookup {
 }
 
 fn cache_key(actor: &str, device: &str) -> CacheKey {
-    (actor.to_owned(), device.to_owned())
+    let actor = crate::mls_api_helpers::principal_core_id(actor)
+        .map(|actor| actor.to_string())
+        .unwrap_or_else(|_| actor.trim().to_owned());
+    (actor, device.trim().to_owned())
 }
 
 pub fn cached_device_signing_key(actor: &str, device: &str) -> CacheLookup {
@@ -231,6 +234,30 @@ async fn accepted_device_evidence(
     ))
 }
 
+pub(crate) async fn cache_accepted_device_evidence_from_outcome(
+    outcome: &arkret_models_crypto::KeysQueryOutcome,
+    anchor: &dyn DidAnchor,
+    actor: &str,
+    device: &str,
+) -> Option<PublicKeyMaterial> {
+    let resolved = accepted_device_evidence(outcome, anchor, actor, device).await;
+    let key = resolved.as_ref().map(|(key, ..)| key.clone());
+    let authorize_event_id = resolved.as_ref().map(|(_, event_id, ..)| event_id.clone());
+    let authority = resolved
+        .as_ref()
+        .map(|(_, _, authority, _)| authority.clone());
+    let attestation_expires_at_ms = resolved.map(|(_, _, _, expires_at_ms)| expires_at_ms);
+    store_entry(
+        actor,
+        device,
+        key.clone(),
+        authorize_event_id,
+        authority,
+        attestation_expires_at_ms,
+    );
+    key
+}
+
 pub async fn resolve_device_signing_key(
     api: &TransportClient,
     anchor: &dyn DidAnchor,
@@ -247,22 +274,7 @@ pub async fn resolve_device_signing_key_with_http(
     device: &str,
 ) -> anyhow::Result<Option<PublicKeyMaterial>> {
     let outcome = crate::transport::keys::query_keys(sdk_http, actor, device).await?;
-    let resolved = accepted_device_evidence(&outcome, anchor, actor, device).await;
-    let key = resolved.as_ref().map(|(key, ..)| key.clone());
-    let authorize_event_id = resolved.as_ref().map(|(_, event_id, ..)| event_id.clone());
-    let authority = resolved
-        .as_ref()
-        .map(|(_, _, authority, _)| authority.clone());
-    let attestation_expires_at_ms = resolved.map(|(_, _, _, expires_at_ms)| expires_at_ms);
-    store_entry(
-        actor,
-        device,
-        key.clone(),
-        authorize_event_id,
-        authority,
-        attestation_expires_at_ms,
-    );
-    Ok(key)
+    Ok(cache_accepted_device_evidence_from_outcome(&outcome, anchor, actor, device).await)
 }
 
 pub async fn refresh_device_keys(
@@ -449,15 +461,33 @@ pub fn invalidate_actor(actor: &str) -> usize {
     if actor.is_empty() {
         return 0;
     }
+    let canonical_actor = cache_key(actor, "").0;
     let mut guard = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
     let before = guard.len();
-    guard.retain(|(cached_actor, _), _| cached_actor != actor);
+    guard.retain(|(cached_actor, _), _| cached_actor != &canonical_actor);
     before - guard.len()
 }
 
 #[cfg(test)]
 pub(crate) fn seed_positive_for_test(actor: &str, device: &str, key: PublicKeyMaterial) {
     store_entry(actor, device, Some(key), None, None, None);
+}
+
+#[cfg(test)]
+pub(crate) fn seed_device_authorization_for_test(
+    actor: &str,
+    device: &str,
+    key: PublicKeyMaterial,
+    authorize_event_id: arkret_sdk::EventId,
+) {
+    store_entry(
+        actor,
+        device,
+        Some(key),
+        Some(authorize_event_id),
+        None,
+        None,
+    );
 }
 
 #[cfg(test)]
@@ -477,7 +507,10 @@ pub(crate) fn seed_negative_for_test(actor: &str, device: &str) {
 
 #[cfg(test)]
 mod verification_method_controller_tests {
-    use super::verification_method_controller_matches_signer;
+    use super::{
+        cached_device_authorize_event_id, seed_device_authorization_for_test,
+        verification_method_controller_matches_signer,
+    };
 
     #[test]
     fn accepts_the_same_principal_in_full_and_core_forms() {
@@ -490,6 +523,28 @@ mod verification_method_controller_tests {
             &method,
             core.as_str()
         ));
+    }
+
+    #[test]
+    fn device_authorization_cache_uses_the_projected_principal_identity() {
+        let full = "did:webvh:zfixture:alice.example";
+        let core = crate::mls_api_helpers::principal_core_id(full).expect("core id");
+        let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
+        let event_id = arkret_sdk::EventId::new(
+            "ak:event:AYvJpYtKqkEnnh-tjkBxu6DGwtce4dQAf8RyXfTIRLIj".to_owned(),
+        )
+        .expect("event id");
+        let key = super::public_key_from_directory_value(
+            "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+        )
+        .expect("key");
+
+        seed_device_authorization_for_test(full, device, key, event_id.clone());
+
+        assert_eq!(
+            cached_device_authorize_event_id(core.as_str(), device),
+            Some(event_id)
+        );
     }
 
     #[test]

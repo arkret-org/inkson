@@ -44,7 +44,6 @@ fn build_remove_proposal_event(
         proposal_bytes_b64: proposal.proposal.clone(),
         proposal_digest: proposal.proposal_digest.clone(),
         target_principal_id: Some(target_principal),
-        target_device_id: None,
         target_authorization_incarnation: None,
         governance_binding,
     };

@@ -1228,9 +1228,9 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
         return None;
     }
     let store = state_store?;
-    // This projection path has no pairwise endpoint carrier, so it cannot bind
-    // an Event actor to the accepted minimal-metadata leaf. Fail closed rather
-    // than substituting the account device identity.
+    // This persistent-envelope verifier proves an ordinary device author.
+    // Minimal-metadata pairwise sender domains are established by the active
+    // MLS leaf binding and are not inferred from an ordinary device proof.
     if store.realm_projection_is_minimal_metadata(realm_id) {
         return None;
     }

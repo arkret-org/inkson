@@ -147,42 +147,43 @@ impl MlsEndpoints<'_> {
         device_id: &str,
         records: &[arkret_sdk::MlsKeyPackageRecord],
     ) -> anyhow::Result<arkret_sdk::KeyPackagesUploadOutcome> {
-        if records.is_empty() {
-            anyhow::bail!("KeyPackage upload batch must not be empty");
-        }
-        let requested_device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
-        let principal_id = records
+        let first = records
             .first()
-            .and_then(|record| match &record.endpoint {
-                arkret_sdk::MlsEndpointIdentity::HumanDevice {
-                    principal_id,
-                    device_id,
-                } if device_id == &requested_device_id => Some(principal_id.clone()),
-                _ => None,
-            })
-            .ok_or_else(|| anyhow::anyhow!("KeyPackage batch has an invalid endpoint"))?;
-        let entries = records
+            .ok_or_else(|| anyhow::anyhow!("KeyPackage upload batch is empty"))?;
+        let requested_device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
+        let (principal_id, device_id) = match &first.endpoint {
+            arkret_sdk::MlsEndpointIdentity::HumanDevice {
+                principal_id,
+                device_id,
+            } if device_id == &requested_device_id => (principal_id.clone(), device_id.clone()),
+            arkret_sdk::MlsEndpointIdentity::HumanDevice { .. } => {
+                anyhow::bail!("KeyPackage endpoint device differs from upload signer device")
+            }
+            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
+                anyhow::bail!("Native Agent KeyPackage requires the agent-authorized upload flow")
+            }
+            arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => anyhow::bail!(
+                "minimal-metadata KeyPackage upload requires publish_pairwise_key_package"
+            ),
+        };
+        if records
             .iter()
-            .map(|record| match &record.endpoint {
-                arkret_sdk::MlsEndpointIdentity::HumanDevice {
-                    principal_id: entry_principal,
-                    device_id: entry_device,
-                } if entry_principal == &principal_id && entry_device == &requested_device_id => {
-                    crate::mls_api_helpers::mls_key_package_record_upload_entry(record)
-                }
-                _ => Err(anyhow::anyhow!(
-                    "KeyPackage batch entries must share the upload signer endpoint"
-                )),
-            })
+            .any(|record| record.endpoint != first.endpoint)
+        {
+            anyhow::bail!("KeyPackage upload batch mixes endpoint identities");
+        }
+        let keypackages = records
+            .iter()
+            .map(crate::mls_api_helpers::mls_key_package_record_upload_entry)
             .collect::<anyhow::Result<Vec<_>>>()?;
         let unsigned = arkret_sdk::KeyPackagesUploadUnsignedRequest {
             principal_id,
-            device_id: Some(requested_device_id),
+            device_id: Some(device_id),
             pairwise_verification_method: None,
             intended_realm_id: None,
             agent_verification_method: None,
             agent_key_authorize_event_id: None,
-            keypackages: entries,
+            keypackages,
             expires_at: None,
             strand_id: None,
             mls_group_id: None,

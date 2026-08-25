@@ -165,6 +165,7 @@ x25519-dalek = {workspace = true,features = ["static_secrets"]}
 zeroize = {workspace = true,features = ["derive"]}
 
 [dev-dependencies]
+arkret-sdk = {workspace = true,features = ["mls-test-utils"]}
 arkret-wire = {version = "0.3.0",path = "../arkret-rust-sdk/crates/wire",default-features = false,features = ["test-support"]}
 
 # Build-time only: stamps `INKSON_BUILD_ID` (local build time + git short hash)

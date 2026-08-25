@@ -417,6 +417,7 @@ pub(super) async fn probe_device_authorization(
     actor: &arkret_sdk::DidFullId,
     device: &str,
     principal_api: &TransportClient,
+    did_cache: arkret_sdk::identity::DidResolutionCache,
 ) -> anyhow::Result<(bool, bool)> {
     // The account-viewer helpers read `devices[]` leniently via `Value`
     // accessors; serialize the typed `AccountView` back to its wire JSON.
@@ -424,7 +425,7 @@ pub(super) async fn probe_device_authorization(
         &crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?,
     )?;
     let signer_matches_directory =
-        current_event_signer_matches_directory(principal_api, actor, device).await?;
+        current_event_signer_matches_directory(principal_api, actor, device, did_cache).await?;
     Ok(device_authorization_probe_from_account_viewer(
         &viewer,
         device,
@@ -441,6 +442,7 @@ async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
     actor: &arkret_sdk::DidFullId,
     device: &str,
+    did_cache: arkret_sdk::identity::DidResolutionCache,
 ) -> anyhow::Result<bool> {
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
@@ -479,6 +481,24 @@ async fn current_event_signer_matches_directory(
         })
         == Some(expected_key.as_str());
     if !signer_matches {
+        return Ok(false);
+    }
+    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+        did_cache,
+    );
+    let accepted_key =
+        crate::identity::device_directory::cache_accepted_device_evidence_from_outcome(
+            &outcome,
+            &anchor,
+            actor.as_str(),
+            device,
+        )
+        .await;
+    if accepted_key.as_ref()
+        != crate::identity::device_directory::public_key_from_directory_value(&expected_key)
+            .as_ref()
+    {
         return Ok(false);
     }
     crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
@@ -1123,7 +1143,12 @@ pub(super) fn connect(
                     "device authorization check",
                     &session,
                     bootstrap_session_generation,
-                    probe_device_authorization(accepted_account.full_id(), &device, &authed),
+                    probe_device_authorization(
+                        accepted_account.full_id(),
+                        &device,
+                        &authed,
+                        ctx.did_cache.peek().clone(),
+                    ),
                 )
                 .await
                 else {
@@ -1162,6 +1187,7 @@ pub(super) fn connect(
                                             accepted_account.full_id(),
                                             &device,
                                             &authed,
+                                            ctx.did_cache.peek().clone(),
                                         ),
                                     )
                                     .await

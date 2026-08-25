@@ -20,6 +20,23 @@ fn active_account_scope(
     crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&authority, &device)))
 }
 
+fn seed_device_authorization(actor: &str, device: &str) {
+    let actor = crate::mls_api_helpers::principal_core_id(actor).unwrap();
+    let key = ed25519_dalek::SigningKey::from_bytes(&[41; 32])
+        .verifying_key()
+        .to_bytes()
+        .to_vec();
+    crate::identity::device_directory::seed_device_authorization_for_test(
+        actor.as_str(),
+        device,
+        arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw { bytes: key },
+        arkret_sdk::EventId::new(
+            "ak:event:AdU2TJKBkRBC1Jk1dY8ExFkUgDvhnVG8jmKT5BdWMeYp".to_owned(),
+        )
+        .unwrap(),
+    );
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn seed_ready_creator_snapshot(
     state: &mut crate::state::LocalStateStore,
@@ -28,6 +45,7 @@ fn seed_ready_creator_snapshot(
     actor: &str,
     device: &str,
 ) -> arkret_sdk::EventId {
+    seed_device_authorization(actor, device);
     crate::mls::runtime::ensure_creator_mls_snapshot(
         state,
         secure,
@@ -345,12 +363,12 @@ fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let _account_scope = active_account_scope(bob_actor, bob_device);
-    let alice = ArkretMlsIdentity::new_test_identity(
+    let alice = ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
-    let bob = ArkretMlsIdentity::new_test_identity(
+    let bob = ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -421,12 +439,12 @@ fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     let bob_principal_id = crate::mls_api_helpers::principal_core_id(bob_actor).unwrap();
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let _account_scope = active_account_scope(bob_actor, bob_device);
-    let alice = ArkretMlsIdentity::new_test_identity(
+    let alice = ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
-    let bob = ArkretMlsIdentity::new_test_identity(
+    let bob = ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(bob_actor).unwrap(),
         DeviceId::new(bob_device.to_owned()).unwrap(),
     )
@@ -582,6 +600,7 @@ fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_reference
         0,
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    seed_device_authorization(actor, device);
     crate::mls::runtime::ensure_creator_mls_snapshot(
         &mut state,
         &secure,
@@ -634,7 +653,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let secret =
         crate::mls::runtime::load_or_create_account_mls_secret(&secure, &test_authority(actor))
             .unwrap();
-    let identity = ArkretMlsIdentity::new_test_identity(
+    let identity = ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -941,7 +960,7 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
         sidecar_id: sidecar_id.clone(),
     };
-    let identity = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+    let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )
@@ -968,7 +987,7 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         &secret,
         &salt,
     );
-    let realm_identity = arkret_sdk::ArkretMlsIdentity::new_test_identity(
+    let realm_identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
     )

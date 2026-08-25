@@ -178,6 +178,26 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
             .map_err(|error| WireError::Protocol(error.to_string()))?,
         })
     }
+
+    fn sign_notary_payload_with_digest_suite(
+        &self,
+        canonical_bytes: &[u8],
+        digest_suite: arkret_sdk::canonical::DigestSuite,
+    ) -> Result<PayloadSignature, WireError> {
+        let jws = self
+            .owner
+            .detached_jws_over_payload_with_kid(self.verification_method.as_str(), canonical_bytes)
+            .map_err(|error| WireError::Protocol(error.to_string()))?;
+        Ok(PayloadSignature {
+            verification_method: self.verification_method.clone(),
+            payload_digest: Hash::new(arkret_sdk::canonical::digest(
+                digest_suite,
+                canonical_bytes,
+            ))?,
+            created_at: crate::clock::now_utc(),
+            jws,
+        })
+    }
 }
 
 /// Seal-only adapter whose protected header binds the exact frozen notary
@@ -214,6 +234,17 @@ impl PayloadSigner for InksonSealSignerAdapter<'_> {
             created_at: crate::clock::now_utc(),
             jws,
         })
+    }
+
+    fn sign_notary_payload_with_digest_suite(
+        &self,
+        canonical_bytes: &[u8],
+        digest_suite: arkret_sdk::canonical::DigestSuite,
+    ) -> Result<PayloadSignature, WireError> {
+        let mut signature = self.sign_payload(canonical_bytes)?;
+        signature.payload_digest =
+            Hash::new(arkret_sdk::canonical::digest(digest_suite, canonical_bytes))?;
+        Ok(signature)
     }
 }
 
@@ -327,6 +358,12 @@ impl InksonEventSigner {
             *guard = Some(crate::clock::now_utc());
         }
         Ok(signature.to_bytes().to_vec())
+    }
+
+    pub(crate) fn clone_raw_signing_key(&self) -> Result<SigningKey, EventSignerError> {
+        self.raw_signing_key
+            .clone()
+            .ok_or(EventSignerError::RawSigningUnavailable)
     }
 
     /// Adapt the session device key as an authenticated principal signer.

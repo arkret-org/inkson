@@ -232,7 +232,7 @@ pub async fn verify_recovery_authority_evidence(
     let resolved = http
         .events_resolve(&arkret_sdk::EventsResolveRequestBody {
             event_ids: vec![create.event_id.clone(), authorize.event_id.clone()],
-            event_digests: vec![create_digest, authorize_digest],
+            event_digests: vec![create_digest.clone(), authorize_digest.clone()],
             include_payload: Some(true),
             history_traversal_access: None,
             max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
@@ -245,8 +245,14 @@ pub async fn verify_recovery_authority_evidence(
             history_traversal_access: None,
         })
         .await?;
-    if !resolved.events.iter().any(|event| event == create)
-        || !resolved.events.iter().any(|event| event == authorize)
+    if !resolved
+        .events
+        .iter()
+        .any(|event| accepted_event_matches_genesis_basis(event, create, &create_digest))
+        || !resolved
+            .events
+            .iter()
+            .any(|event| accepted_event_matches_genesis_basis(event, authorize, &authorize_digest))
         || !resolved_seals
             .seals
             .iter()
@@ -255,6 +261,41 @@ pub async fn verify_recovery_authority_evidence(
         anyhow::bail!("server no longer resolves the durable PCR bootstrap evidence exactly");
     }
     Ok(())
+}
+
+/// The frozen PCR genesis unit contains producer-authored Events. Resolution
+/// returns the accepted envelopes, which add exactly the Principal Server
+/// admission proof. Compare the producer-authored projection byte-for-byte and
+/// independently require a valid admission binding; whole-envelope equality
+/// would incorrectly reject every legitimately admitted Event.
+fn accepted_event_matches_genesis_basis(
+    accepted: &arkret_sdk::Event,
+    authored: &arkret_sdk::Event,
+    expected_digest: &arkret_sdk::Hash,
+) -> bool {
+    let digest_suite = arkret_sdk::DigestSuite::Sha256;
+    if accepted.event_id != authored.event_id
+        || accepted
+            .event_digest_with_digest_suite(digest_suite)
+            .ok()
+            .and_then(|digest| arkret_sdk::Hash::new(digest).ok())
+            .as_ref()
+            != Some(expected_digest)
+        || accepted
+            .validate_principal_server_admission_binding(digest_suite)
+            .is_err()
+    {
+        return false;
+    }
+    let mut accepted_authored_projection = accepted.clone();
+    accepted_authored_projection
+        .proofs
+        .retain(|proof| proof.as_principal_server_admission().is_none());
+    let mut expected_authored_projection = authored.clone();
+    expected_authored_projection
+        .proofs
+        .retain(|proof| proof.as_principal_server_admission().is_none());
+    accepted_authored_projection == expected_authored_projection
 }
 
 /// 6.1 — fetch + parse the active recovery policy.

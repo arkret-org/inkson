@@ -99,6 +99,8 @@ impl OptimisticRealmTreeProjection {
             collaboration_role,
             encryption_floor,
         } = input;
+        let durability_policy = (content_scheme == "mls_exporter_aead_v1")
+            .then_some(arkret_sdk::DurabilityPolicy::None);
         // Realm metadata is mirrored at the body top level *and* under
         // `summary` because the two have different readers, and neither set
         // covers the other:
@@ -124,6 +126,7 @@ impl OptimisticRealmTreeProjection {
             members: members.clone(),
             encryption_profile: encryption_profile.clone(),
             content_scheme: content_scheme.clone(),
+            durability_policy,
             history_access: history_access.clone(),
             plaintext_visible_services: plaintext_visible_services.clone(),
             collaboration_role,
@@ -137,6 +140,7 @@ impl OptimisticRealmTreeProjection {
                 discoverability,
                 encryption_profile,
                 content_scheme,
+                durability_policy,
                 history_access,
                 plaintext_visible_services,
                 owner,
@@ -184,6 +188,8 @@ pub(crate) struct RealmProjectionBody {
     members: Vec<String>,
     encryption_profile: String,
     content_scheme: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durability_policy: Option<arkret_sdk::DurabilityPolicy>,
     history_access: String,
     plaintext_visible_services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -206,6 +212,8 @@ struct RealmProjectionSummary {
     discoverability: String,
     encryption_profile: String,
     content_scheme: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    durability_policy: Option<arkret_sdk::DurabilityPolicy>,
     history_access: String,
     plaintext_visible_services: Vec<String>,
     owner: String,
@@ -1307,6 +1315,8 @@ mod tests {
         );
         assert_eq!(body["content_scheme"], "mls_exporter_aead_v1");
         assert_eq!(body["summary"]["content_scheme"], "mls_exporter_aead_v1");
+        assert_eq!(body["durability_policy"], "none");
+        assert_eq!(body["summary"]["durability_policy"], "none");
         assert_eq!(body["history_access"], "all_history_for_current_members");
         assert_eq!(
             body["summary"]["history_access"],
@@ -1338,6 +1348,8 @@ mod tests {
         assert!(body.get("metadata_encryption_floor").is_none());
         assert!(body["summary"].get("content_encryption_floor").is_none());
         assert!(body["summary"].get("metadata_encryption_floor").is_none());
+        assert!(body.get("durability_policy").is_none());
+        assert!(body["summary"].get("durability_policy").is_none());
     }
 
     #[test]

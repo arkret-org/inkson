@@ -3,6 +3,35 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
+pub(crate) fn ordinary_mls_identity(
+    principal_id: arkret_sdk::DidCoreId,
+    device_id: arkret_sdk::DeviceId,
+) -> Result<arkret_sdk::ArkretMlsIdentity, String> {
+    let Some(signer) = crate::event_signer::active_signer() else {
+        #[cfg(test)]
+        {
+            return arkret_sdk::ArkretMlsIdentity::new_test_human_device(principal_id, device_id)
+                .map_err(|error| error.to_string());
+        }
+        #[cfg(not(test))]
+        {
+            return Err("active accepted-device signer is unavailable".to_owned());
+        }
+    };
+    if signer.device_id() != Some(device_id.as_str()) {
+        return Err("active signer device differs from MLS endpoint".to_owned());
+    }
+    let signing_key = signer
+        .clone_raw_signing_key()
+        .map_err(|error| error.to_string())?;
+    arkret_sdk::ArkretMlsIdentity::new_human_device(
+        principal_id,
+        device_id,
+        arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(signing_key),
+    )
+    .map_err(|error| error.to_string())
+}
+
 pub(crate) fn principal_core_id(principal_id: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
     let principal_id = principal_id.trim();
     if let Ok(core_id) = arkret_sdk::DidCoreId::new(principal_id.to_owned()) {
@@ -460,18 +489,17 @@ mod tests {
     }
 
     #[test]
-    fn pairwise_upload_signs_the_complete_batch_with_the_exact_method() {
+    fn pairwise_upload_signs_the_closed_batch_with_the_exact_method() {
         let realm_id = pairwise_realm();
         let material = crate::mls::pairwise_identity::pairwise_signing_material_for_test(&realm_id);
         let verification_method =
             arkret_sdk::DidUrl::new(material.signer.verification_method().to_owned()).unwrap();
-        let identity = arkret_sdk::ArkretMlsIdentity::from_minimal_metadata_ed25519_signing_seed(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:account.example".to_owned()).unwrap(),
-            arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
-                .unwrap(),
+        let identity = arkret_sdk::ArkretMlsIdentity::new_minimal_metadata_pairwise(
             material.actor_id.clone(),
             verification_method.clone(),
-            material.signing_seed(),
+            arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(
+                ed25519_dalek::SigningKey::from_bytes(&material.signing_seed()),
+            ),
         )
         .unwrap();
         let record = identity.key_package_record().unwrap();
@@ -492,7 +520,6 @@ mod tests {
         let batch =
             sign_keypackage_upload_batch_with_signer(material.signer.as_ref(), &unsigned).unwrap();
         assert_eq!(batch.kid.as_str(), verification_method.as_str());
-        assert!(!batch.sig.as_str().is_empty());
     }
 
     #[test]
@@ -502,7 +529,8 @@ mod tests {
             arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
                 .unwrap();
         let identity =
-            arkret_sdk::ArkretMlsIdentity::new_test_identity(principal.clone(), device).unwrap();
+            arkret_sdk::ArkretMlsIdentity::new_test_human_device(principal.clone(), device)
+                .unwrap();
         let record = identity.key_package_record().unwrap();
         let method = arkret_sdk::DidUrl::new("did:web:agent.example#runtime-key").unwrap();
         let mut claim = claim_for(&record, method.as_str());

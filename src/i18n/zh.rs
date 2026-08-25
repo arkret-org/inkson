@@ -1065,6 +1065,26 @@ pub fn chinese_translations() -> TranslationDict {
         "未备份——请创建 24 词恢复密钥，以便新浏览器或新设备能够恢复你的加密历史。",
     );
     dict.set("settings.mls_recovery.submit", "创建 / 替换恢复词");
+    dict.set(
+        "settings.mls_keypackages.refill_description",
+        "若邀请无法送达此设备，可手动发布一批有界的新 MLS KeyPackage。",
+    );
+    dict.set(
+        "settings.mls_keypackages.refill_button",
+        "发布 8 个新 KeyPackage",
+    );
+    dict.set(
+        "settings.mls_keypackages.refill_busy",
+        "正在发布新的 MLS KeyPackage…",
+    );
+    dict.set(
+        "settings.mls_keypackages.refill_done",
+        "已发布新的 MLS KeyPackage：",
+    );
+    dict.set(
+        "settings.mls_keypackages.refill_failed",
+        "MLS KeyPackage 补充失败：",
+    );
 
     // Space-admin view
     dict.set("realm_admin.title", "Realm 设置");

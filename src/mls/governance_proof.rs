@@ -562,6 +562,312 @@ pub(crate) fn cached_verified_binding_for_transition(
     )
 }
 
+pub(crate) fn install_cached_transition_leaf_bindings(
+    state_store: &crate::state::LocalStateStore,
+    group: &mut arkret_sdk::ArkretMlsGroup,
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+) -> Result<(), String> {
+    let state = state_store.load();
+    let mut matches = state.mls_governance_proofs.values().filter(|entry| {
+        &entry.governance_binding == binding
+            && entry.request.effective_scope == *binding.effective_scope()
+            && entry.request.mls_group_id.as_str() == group.group_id()
+            && entry.request.next_epoch == group.epoch()
+    });
+    let entry = matches
+        .next()
+        .ok_or_else(|| "accepted MLS transition has no verified T3 leaf set".to_owned())?;
+    if matches.next().is_some() {
+        return Err("accepted MLS transition has multiple verified T3 leaf sets".to_owned());
+    }
+    let realm_id = binding
+        .effective_scope()
+        .realm_id_opt()
+        .ok_or_else(|| "accepted MLS transition has no Realm scope".to_owned())?;
+    let checkpoint = state
+        .mls_governance_checkpoints
+        .get(realm_id.as_str())
+        .ok_or_else(|| "accepted MLS transition has no pinned T3 checkpoint".to_owned())?;
+    if checkpoint.basis != entry.proof_target_basis {
+        return Err("accepted MLS transition leaf set is not pinned at T3".to_owned());
+    }
+
+    let author_leaves = group
+        .active_author_leaves()
+        .into_iter()
+        .map(|leaf| (leaf.leaf_index, leaf))
+        .collect::<BTreeMap<_, _>>();
+    if author_leaves.len() != entry.request.local_mls_leaves.len() {
+        return Err("verified T3 leaf set does not cover the post-transition MLS tree".to_owned());
+    }
+    let mut installed = Vec::with_capacity(author_leaves.len());
+    for frontier_leaf in &entry.request.local_mls_leaves {
+        let author_leaf = author_leaves
+            .get(&frontier_leaf.leaf_index)
+            .ok_or_else(|| "verified T3 leaf set names an empty MLS leaf".to_owned())?;
+        let arkret_sdk::AuthorLeafCredential::Basic { identity } = &author_leaf.credential else {
+            return Err("accepted Arkret MLS leaf does not use BasicCredential".to_owned());
+        };
+        if identity.as_slice() != frontier_leaf.credential_ref.as_bytes() {
+            return Err("verified T3 credential differs from the post-transition leaf".to_owned());
+        }
+        let signature_key: [u8; 32] = author_leaf
+            .signature_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| "accepted MLS leaf signature key is not Ed25519".to_owned())?;
+        let multibase = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&signature_key);
+        let signature_key_b64 =
+            arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(&signature_key))
+                .map_err(|error| format!("invalid accepted MLS leaf key: {error}"))?;
+        let credential = frontier_leaf.credential_ref.as_str();
+
+        let (endpoint, device_authorize_event_id) = if let Ok(device_id) =
+            arkret_sdk::DeviceId::new(credential.to_owned())
+        {
+            let expected_did_key = format!("did:key:{multibase}");
+            let mut authorities = checkpoint.accepted_events.iter().filter_map(|event| {
+                if event.kind != arkret_sdk::EventKind::DeviceAuthorize {
+                    return None;
+                }
+                let payload = serde_json::from_value::<arkret_sdk::DeviceAuthorizePayload>(
+                    serde_json::to_value(&event.payload).ok()?,
+                )
+                .ok()?;
+                (payload.principal_id == frontier_leaf.principal_id
+                    && payload.device_id == device_id
+                    && payload.device_public_key.as_str() == expected_did_key)
+                    .then(|| event.event_id.clone())
+            });
+            let authority = authorities.next().ok_or_else(|| {
+                "ordinary MLS leaf has no accepted matching device authority at T3".to_owned()
+            })?;
+            if authorities.next().is_some() {
+                return Err(
+                    "ordinary MLS leaf has multiple accepted matching device authorities at T3"
+                        .to_owned(),
+                );
+            }
+            (
+                arkret_sdk::MlsEndpointIdentity::human_device(
+                    frontier_leaf.principal_id.clone(),
+                    device_id,
+                ),
+                Some(authority),
+            )
+        } else if credential.starts_with("ak:did_core:key:") {
+            let expected_actor = format!("ak:did_core:key:{multibase}");
+            if credential != expected_actor || frontier_leaf.principal_id.as_str() != credential {
+                return Err(
+                    "minimal-metadata MLS credential does not name its exact leaf key".to_owned(),
+                );
+            }
+            let method = arkret_sdk::DidUrl::new(format!("did:key:{multibase}#{multibase}"))
+                .map_err(|error| format!("invalid pairwise MLS method: {error}"))?;
+            (
+                arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+                    frontier_leaf.principal_id.clone(),
+                    method,
+                )
+                .map_err(|error| format!("invalid pairwise MLS endpoint: {error}"))?,
+                None,
+            )
+        } else {
+            if frontier_leaf.principal_id.as_str() != credential {
+                return Err("Native Agent MLS credential differs from its principal".to_owned());
+            }
+            let public_key_digest =
+                arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&signature_key))
+                    .map_err(|error| format!("invalid Agent MLS key digest: {error}"))?;
+            let mut authorities = checkpoint.accepted_events.iter().filter_map(|event| {
+                let payload = arkret_sdk::AgentKeyAuthorizePayload::try_from(event).ok()?;
+                (payload.agent_id == frontier_leaf.principal_id
+                    && payload.public_key_digest == public_key_digest)
+                    .then(|| (event.event_id.clone(), payload.verification_method))
+            });
+            let (authority, method) = authorities.next().ok_or_else(|| {
+                "Native Agent MLS leaf has no accepted matching key authority at T3".to_owned()
+            })?;
+            if authorities.next().is_some() {
+                return Err(
+                    "Native Agent MLS leaf has multiple accepted matching key authorities at T3"
+                        .to_owned(),
+                );
+            }
+            (
+                arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+                    frontier_leaf.principal_id.clone(),
+                    method,
+                    authority,
+                )
+                .map_err(|error| format!("invalid Native Agent MLS endpoint: {error}"))?,
+                None,
+            )
+        };
+        installed.push(arkret_sdk::MlsVerifiedLeafBinding {
+            leaf_index: frontier_leaf.leaf_index,
+            principal_id: frontier_leaf.principal_id.clone(),
+            endpoint,
+            credential_ref: frontier_leaf.credential_ref.clone(),
+            signature_key: signature_key_b64,
+            device_authorize_event_id,
+        });
+    }
+    group
+        .install_verified_leaf_bindings(installed)
+        .map_err(|error| format!("install accepted T3 MLS leaf bindings: {error}"))
+}
+
+pub(crate) fn reconstruct_transition_security_frontier(
+    state_store: &crate::state::LocalStateStore,
+    group: &arkret_sdk::ArkretMlsGroup,
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
+    let state = state_store.load();
+    let realm_id = binding
+        .effective_scope()
+        .realm_id_opt()
+        .ok_or_else(|| "MLS transition has no Realm scope".to_owned())?;
+    let checkpoint = state
+        .mls_governance_checkpoints
+        .get(realm_id.as_str())
+        .ok_or_else(|| "MLS transition replay has no verified checkpoint".to_owned())?;
+
+    let mut genesis_matches = checkpoint.accepted_events.iter().filter(|event| {
+        event.kind == arkret_sdk::EventKind::MlsGenesis
+            && serde_json::from_value::<arkret_sdk::MlsGenesisPayload>(
+                serde_json::to_value(&event.payload).unwrap_or_default(),
+            )
+            .is_ok_and(|payload| payload.mls_group_id.as_str() == group.group_id())
+    });
+    let genesis = genesis_matches
+        .next()
+        .ok_or_else(|| "MLS transition replay has no accepted Genesis".to_owned())?;
+    if genesis_matches.next().is_some() {
+        return Err("MLS transition replay has multiple accepted Genesis Events".to_owned());
+    }
+    let mut principals = BTreeMap::from([(0_u32, genesis.actor_id.clone())]);
+
+    let mut commits = checkpoint
+        .accepted_events
+        .iter()
+        .filter_map(|event| {
+            if event.kind != arkret_sdk::EventKind::MlsCommit {
+                return None;
+            }
+            let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
+                serde_json::to_value(&event.payload).ok()?,
+            )
+            .ok()?;
+            (payload.mls_group_id() == group.group_id() && payload.next_epoch() <= group.epoch())
+                .then_some((payload.next_epoch(), payload))
+        })
+        .collect::<Vec<_>>();
+    commits.sort_by_key(|(epoch, _)| *epoch);
+    if commits.len() != usize::try_from(group.epoch()).unwrap_or(usize::MAX)
+        || commits
+            .iter()
+            .enumerate()
+            .any(|(index, (epoch, _))| *epoch != index as u64 + 1)
+    {
+        return Err(
+            "MLS transition replay does not contain one winning Commit per epoch".to_owned(),
+        );
+    }
+    for (_, commit) in commits {
+        for proposal_ref in commit.proposal_refs() {
+            let mut proposals = checkpoint
+                .accepted_events
+                .iter()
+                .filter(|event| &event.event_id == proposal_ref);
+            let event = proposals.next().ok_or_else(|| {
+                "winning MLS Commit references an unavailable accepted Proposal".to_owned()
+            })?;
+            if proposals.next().is_some() || event.kind != arkret_sdk::EventKind::MlsProposal {
+                return Err(
+                    "winning MLS Commit proposal reference is ambiguous or has the wrong kind"
+                        .to_owned(),
+                );
+            }
+            let proposal = serde_json::from_value::<arkret_sdk::MlsProposalPayload>(
+                serde_json::to_value(&event.payload)
+                    .map_err(|error| format!("encode accepted MLS Proposal: {error}"))?,
+            )
+            .map_err(|error| format!("decode accepted MLS Proposal: {error}"))?;
+            if proposal.mls_group_id.as_str() != group.group_id()
+                || proposal.base_epoch != commit.base_epoch()
+            {
+                return Err(
+                    "winning MLS Commit references a Proposal from another group or epoch"
+                        .to_owned(),
+                );
+            }
+            let target = proposal.target_principal_id.ok_or_else(|| {
+                "accepted MLS membership Proposal omits target_principal_id".to_owned()
+            })?;
+            match proposal.proposal_type {
+                arkret_sdk::MlsProposalType::Add => {
+                    let index = (0..=u32::MAX)
+                        .find(|index| !principals.contains_key(index))
+                        .ok_or_else(|| "MLS transition replay has no free leaf index".to_owned())?;
+                    principals.insert(index, target);
+                }
+                arkret_sdk::MlsProposalType::Remove => {
+                    let removed = principals
+                        .iter()
+                        .filter_map(|(index, principal)| (principal == &target).then_some(*index))
+                        .collect::<Vec<_>>();
+                    if removed.is_empty() {
+                        return Err(
+                            "accepted MLS Remove targets no replayed principal leaf".to_owned()
+                        );
+                    }
+                    for index in removed {
+                        principals.remove(&index);
+                    }
+                }
+                arkret_sdk::MlsProposalType::Update => {
+                    if !principals.values().any(|principal| principal == &target) {
+                        return Err(
+                            "accepted MLS Update targets no replayed principal leaf".to_owned()
+                        );
+                    }
+                }
+                _ => {
+                    return Err(
+                        "winning MLS Commit references a non-membership Proposal Event".to_owned(),
+                    );
+                }
+            }
+        }
+    }
+
+    let mut leaves = Vec::new();
+    for leaf in group.active_author_leaves() {
+        let principal_id = principals
+            .remove(&leaf.leaf_index)
+            .ok_or_else(|| "post-transition MLS tree has an unattributed leaf".to_owned())?;
+        let arkret_sdk::AuthorLeafCredential::Basic { identity } = leaf.credential else {
+            return Err("post-transition Arkret MLS leaf is not BasicCredential".to_owned());
+        };
+        let credential_ref = arkret_sdk::NonEmptyString::new(
+            String::from_utf8(identity)
+                .map_err(|_| "post-transition MLS credential is not UTF-8".to_owned())?,
+        )
+        .map_err(|error| format!("invalid post-transition MLS credential: {error}"))?;
+        leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
+            leaf_index: leaf.leaf_index,
+            principal_id,
+            credential_ref,
+        });
+    }
+    if !principals.is_empty() {
+        return Err("accepted MLS transition replay leaves phantom members".to_owned());
+    }
+    leaves.sort_by_key(|leaf| leaf.leaf_index);
+    Ok(leaves)
+}
+
 /// Seeds a post-verification state for tests that exercise later MLS runtime
 /// behavior. Verifier and acquisition tests must use real signed fixtures.
 #[cfg(test)]
@@ -781,129 +1087,9 @@ pub(crate) fn singleton_security_frontier_leaf(
         leaf_index: 0,
         principal_id: crate::mls_api_helpers::principal_core_id(principal_id)
             .map_err(|error| format!("MLS leaf principal is invalid: {error}"))?,
-        credential_ref: arkret_sdk::NonEmptyString::new(
-            arkret_sdk::DeviceId::new(device_id.to_owned())
-                .map_err(|error| format!("MLS leaf device id is invalid: {error}"))?
-                .to_string(),
-        )
-        .map_err(|error| format!("MLS leaf credential ref is invalid: {error}"))?,
+        credential_ref: arkret_sdk::NonEmptyString::new(device_id.to_owned())
+            .map_err(|error| format!("MLS leaf credential ref is invalid: {error}"))?,
     }])
-}
-
-/// Rebuild the group-local principal binding exclusively from the accepted
-/// MLS transition Events retained in the verified governance checkpoint.
-/// RFC 9420 credentials identify endpoints; they are never an ordinary
-/// principal directory and therefore cannot fill this mapping on their own.
-pub(crate) fn install_accepted_transition_leaf_bindings(
-    state_store: &crate::state::LocalStateStore,
-    realm_id: &str,
-    group: &mut arkret_sdk::ArkretMlsGroup,
-) -> Result<(), String> {
-    let checkpoint = state_store
-        .trusted_mls_governance_checkpoint(realm_id)
-        .ok_or_else(|| "MLS leaf binding requires a verified governance checkpoint".to_owned())?;
-    let group_id = group.group_id();
-    let mut genesis_principals = BTreeSet::new();
-    let mut add_principals_by_endpoint: BTreeMap<String, BTreeSet<arkret_sdk::DidCoreId>> =
-        BTreeMap::new();
-
-    for event in &checkpoint.accepted_events {
-        match event.kind {
-            arkret_sdk::EventKind::MlsGenesis => {
-                let payload: arkret_sdk::MlsGenesisPayload = serde_json::from_value(
-                    serde_json::to_value(&event.payload)
-                        .map_err(|error| format!("encode accepted MLS Genesis: {error}"))?,
-                )
-                .map_err(|error| format!("decode accepted MLS Genesis: {error}"))?;
-                if payload.mls_group_id.as_str() == group_id {
-                    genesis_principals.insert(event.actor_id.clone());
-                }
-            }
-            arkret_sdk::EventKind::MlsProposal => {
-                let payload: arkret_sdk::MlsProposalPayload = serde_json::from_value(
-                    serde_json::to_value(&event.payload)
-                        .map_err(|error| format!("encode accepted MLS Proposal: {error}"))?,
-                )
-                .map_err(|error| format!("decode accepted MLS Proposal: {error}"))?;
-                if payload.mls_group_id.as_str() != group_id
-                    || payload.proposal_type != arkret_sdk::MlsProposalType::Add
-                {
-                    continue;
-                }
-                let principal = payload
-                    .target_principal_id
-                    .ok_or_else(|| "accepted MLS Add Proposal omits target principal".to_owned())?;
-                let endpoint = payload
-                    .target_device_id
-                    .map_or_else(|| principal.to_string(), |device| device.to_string());
-                add_principals_by_endpoint
-                    .entry(endpoint)
-                    .or_default()
-                    .insert(principal);
-            }
-            _ => {}
-        }
-    }
-
-    if genesis_principals.len() != 1 {
-        return Err("MLS leaf binding requires exactly one accepted Genesis principal".to_owned());
-    }
-    let genesis_principal = genesis_principals
-        .into_iter()
-        .next()
-        .expect("length checked");
-    let mut bindings = Vec::new();
-    for leaf in group.active_author_leaves() {
-        let credential = match leaf.credential {
-            arkret_sdk::AuthorLeafCredential::Basic { identity } => identity,
-            arkret_sdk::AuthorLeafCredential::Other { .. } => {
-                return Err("MLS leaf binding requires BasicCredential".to_owned());
-            }
-        };
-        let (endpoint, credential_ref) = arkret_sdk::decode_leaf_endpoint_identity(&credential)
-            .map_err(|error| format!("decode accepted MLS leaf endpoint: {error}"))?;
-        let endpoint_ref = match &endpoint {
-            arkret_sdk::MlsLeafEndpointIdentity::HumanDevice(device_id) => device_id.to_string(),
-            arkret_sdk::MlsLeafEndpointIdentity::Actor(actor_id) => actor_id.to_string(),
-        };
-        let mut principals = add_principals_by_endpoint
-            .get(&endpoint_ref)
-            .cloned()
-            .unwrap_or_default();
-        if leaf.leaf_index == 0 && principals.is_empty() {
-            principals.insert(genesis_principal.clone());
-        }
-        if principals.len() != 1 {
-            return Err(format!(
-                "accepted MLS transition does not uniquely bind leaf {} endpoint {}",
-                leaf.leaf_index, endpoint_ref
-            ));
-        }
-        let principal_id = principals.into_iter().next().expect("length checked");
-        if let arkret_sdk::MlsLeafEndpointIdentity::Actor(actor_id) = endpoint
-            && actor_id != principal_id
-        {
-            return Err(format!(
-                "accepted MLS Actor leaf {} principal differs from its credential",
-                leaf.leaf_index
-            ));
-        }
-        bindings.push(arkret_sdk::VerifiedMlsLeafBinding {
-            principal_id,
-            credential_ref,
-            leaf_signature_key: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
-                &leaf.signature_key,
-            ))
-            .map_err(|error| format!("encode accepted MLS leaf signature key: {error}"))?,
-        });
-    }
-    group
-        .install_accepted_leaf_bindings(bindings)
-        .map_err(|error| format!("install accepted MLS leaf bindings: {error}"))?;
-    group
-        .security_frontier_leaves()
-        .map(|_| ())
-        .map_err(|error| format!("accepted MLS leaf binding is incomplete: {error}"))
 }
 
 pub(crate) fn current_security_frontier_leaves(
@@ -953,11 +1139,10 @@ pub(crate) fn security_frontier_with_added_claims(
     mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
     records: &[&arkret_sdk::KeyPackageClaimRecord],
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
-    let mut next_index = leaves
+    let mut occupied = leaves
         .iter()
         .map(|leaf| leaf.leaf_index)
-        .max()
-        .map_or(0, |index| index.saturating_add(1));
+        .collect::<BTreeSet<_>>();
     for record in records {
         let key_package = arkret_sdk::base64url_decode(record.keypackage.as_bytes())
             .map_err(|error| format!("claimed KeyPackage decode failed: {error}"))?;
@@ -967,6 +1152,9 @@ pub(crate) fn security_frontier_with_added_claims(
         if key_package_digest.as_str() != record.keypackage_ref {
             return Err("claimed KeyPackage bytes differ from keypackage_ref".to_owned());
         }
+        let next_index = (0..=u32::MAX)
+            .find(|index| !occupied.contains(index))
+            .ok_or_else(|| "MLS tree has no free leaf index".to_owned())?;
         let author_leaf = arkret_sdk::author_leaf_from_key_package_bytes(&key_package, next_index)
             .map_err(|error| format!("claimed KeyPackage validation failed: {error}"))?;
         let credential = match author_leaf.credential {
@@ -975,33 +1163,28 @@ pub(crate) fn security_frontier_with_added_claims(
                 return Err("claimed KeyPackage credential is not Basic".to_owned());
             }
         };
-        let (endpoint, credential_ref) = arkret_sdk::decode_leaf_endpoint_identity(&credential)
-            .map_err(|error| format!("claimed KeyPackage credential is invalid: {error}"))?;
-        let endpoint_matches_claim = match endpoint {
-            arkret_sdk::MlsLeafEndpointIdentity::HumanDevice(device_id) => {
-                record.device_id.as_ref() == Some(&device_id)
-                    && record.agent_id.is_none()
-                    && record.pairwise_verification_method.is_none()
-            }
-            arkret_sdk::MlsLeafEndpointIdentity::Actor(actor_id) => {
-                actor_id == record.principal_id
-                    && (record.agent_id.as_ref() == Some(&actor_id)
-                        || (record.agent_id.is_none()
-                            && record.device_id.is_none()
-                            && record.pairwise_verification_method.is_some()))
-            }
+        let credential = String::from_utf8(credential)
+            .map_err(|_| "claimed KeyPackage credential is not UTF-8".to_owned())?;
+        let expected_credential = match (
+            record.device_id.as_ref(),
+            record.agent_id.as_ref(),
+            record.pairwise_verification_method.as_ref(),
+        ) {
+            (Some(device_id), None, None) => device_id.as_str(),
+            (None, Some(agent_id), None) => agent_id.as_str(),
+            (None, None, Some(_)) => record.principal_id.as_str(),
+            _ => return Err("claimed KeyPackage endpoint branch is invalid".to_owned()),
         };
-        if !endpoint_matches_claim {
-            return Err(
-                "claimed KeyPackage credential differs from its endpoint binding".to_owned(),
-            );
+        if credential != expected_credential {
+            return Err("claimed KeyPackage credential differs from its endpoint".to_owned());
         }
         leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
             leaf_index: next_index,
             principal_id: record.principal_id.clone(),
-            credential_ref,
+            credential_ref: arkret_sdk::NonEmptyString::new(credential)
+                .map_err(|error| format!("claimed MLS credential ref is invalid: {error}"))?,
         });
-        next_index = next_index.saturating_add(1);
+        occupied.insert(next_index);
     }
     leaves.sort_by_key(|leaf| leaf.leaf_index);
     Ok(leaves)

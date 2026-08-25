@@ -331,6 +331,12 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     let add = group
         .add_member_with_governance_binding(member_key_package, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
+    crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+        state_store,
+        &mut group,
+        &governance_binding,
+    )
+    .map_err(MlsRuntimeError::Commit)?;
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -421,6 +427,12 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     let add = group
         .add_members_with_governance_binding(member_key_packages, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
+    crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+        state_store,
+        &mut group,
+        &governance_binding,
+    )
+    .map_err(MlsRuntimeError::Commit)?;
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
