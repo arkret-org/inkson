@@ -476,7 +476,14 @@ pub(crate) async fn ensure_local_mls_key_package_published(
             &device_id,
             &key_package_id,
         ) {
-            Ok(Some(_)) => return Ok(Some(key_package_id)),
+            // A local marker proves that the init private key is still usable;
+            // it does not prove that the current server inventory still holds
+            // the corresponding single-use package. The server can legitimately
+            // consume or expire it, and a restored server can lose inventory
+            // while this device keeps IndexedDB. Use the owner-visible
+            // `available_count` returned by a fresh upload below as the source
+            // of truth instead of treating this marker as a remote receipt.
+            Ok(Some(_)) => {}
             Ok(None) => {
                 crate::mls::runtime::delete_mls_key_package_publish_marker(
                     secure_store.as_ref(),
@@ -497,6 +504,38 @@ pub(crate) async fn ensure_local_mls_key_package_published(
         }
     }
 
+    // device-lifecycle.md §9 requires the device maintenance cycle to refill
+    // the ordinary single-use pool to `keypackage_min_available` (default 8).
+    // Upload one fresh package even when a local marker exists: that is the
+    // authenticated owner operation which returns the server's current
+    // `available_count`. Never replay an old id to "re-arm" consumed material.
+    const KEYPACKAGE_MIN_AVAILABLE: u64 = 8;
+    for _ in 0..KEYPACKAGE_MIN_AVAILABLE {
+        let (key_package_id, available_count) = publish_fresh_local_mls_key_package(
+            &base_url,
+            &session_credential,
+            &authority,
+            &device_id,
+            secure_store.as_ref(),
+        )
+        .await?;
+        match available_count {
+            Some(available) if available < KEYPACKAGE_MIN_AVAILABLE => continue,
+            Some(_) | None => return Ok(Some(key_package_id)),
+        }
+    }
+    Err(format!(
+        "MLS KeyPackage inventory remained below {KEYPACKAGE_MIN_AVAILABLE} after a bounded refill"
+    ))
+}
+
+async fn publish_fresh_local_mls_key_package(
+    base_url: &str,
+    session_credential: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> Result<(String, Option<u64>), String> {
     let identity =
         arkret_sdk::ArkretMlsIdentity::new_basic(authority.principal_id.clone(), device_id.clone())
             .map_err(|error| format!("create MLS identity: {error}"))?;
@@ -519,9 +558,9 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     // state"). Awaiting the durable write closes that gap: once the server holds
     // the KeyPackage, the local init key is guaranteed on disk.
     crate::mls::runtime::store_mls_key_package_identity_state_durable(
-        secure_store.as_ref(),
-        &authority,
-        &device_id,
+        secure_store,
+        authority,
+        device_id,
         &key_package_id,
         &private_state,
     )
@@ -529,9 +568,9 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     .map_err(|error| format!("store MLS KeyPackage identity state: {error}"))?;
     if key_package_ref != key_package_id {
         crate::mls::runtime::store_mls_key_package_identity_state_durable(
-            secure_store.as_ref(),
-            &authority,
-            &device_id,
+            secure_store,
+            authority,
+            device_id,
             &key_package_ref,
             &private_state,
         )
@@ -543,8 +582,8 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     let publish_key_package_id = key_package_id.clone();
     let publish_key_package_ref = key_package_ref.clone();
     let outcome = crate::transport::auth::with_endpoint_clients(
-        &base_url,
-        session_credential.clone(),
+        base_url,
+        session_credential.to_owned(),
         None,
         |clients| async move {
             clients
@@ -553,32 +592,38 @@ pub(crate) async fn ensure_local_mls_key_package_published(
                 .await
         },
     )
-    .await
-    .map_err(|error| error.display())?;
-    if outcome.accepted == 0 {
-        let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
-            secure_store.as_ref(),
-            &authority,
-            &device_id,
-            &publish_key_package_id,
-        );
-        if publish_key_package_ref != publish_key_package_id {
-            let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
-                secure_store.as_ref(),
-                &authority,
-                &device_id,
+    .await;
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            delete_unpublished_local_mls_key_package_state(
+                secure_store,
+                authority,
+                device_id,
+                &publish_key_package_id,
                 &publish_key_package_ref,
             );
+            return Err(error.display());
         }
+    };
+    if outcome.accepted == 0 {
+        delete_unpublished_local_mls_key_package_state(
+            secure_store,
+            authority,
+            device_id,
+            &publish_key_package_id,
+            &publish_key_package_ref,
+        );
         return Err(format!(
             "MLS KeyPackage upload rejected: {:?}",
             outcome.rejected
         ));
     }
+    let available_count = outcome.available_count;
     crate::mls::runtime::store_mls_key_package_publish_marker(
-        secure_store.as_ref(),
-        &authority,
-        &device_id,
+        secure_store,
+        authority,
+        device_id,
         &key_package_id,
     )
     .map_err(|error| format!("store MLS KeyPackage publish marker: {error}"))?;
@@ -586,13 +631,36 @@ pub(crate) async fn ensure_local_mls_key_package_published(
     // ordinary KeyPackage claim and Welcome admission use the same exact ref.
     // Direct Conversations do not have a separate repair dispatcher.
     crate::mls::runtime::store_mls_key_package_publish_ref(
-        secure_store.as_ref(),
-        &authority,
-        &device_id,
+        secure_store,
+        authority,
+        device_id,
         &key_package_ref,
     )
     .map_err(|error| format!("store MLS KeyPackage publish ref: {error}"))?;
-    Ok(Some(key_package_id))
+    Ok((key_package_id, available_count))
+}
+
+fn delete_unpublished_local_mls_key_package_state(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+    key_package_id: &str,
+    key_package_ref: &str,
+) {
+    let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
+        secure_store,
+        authority,
+        device_id,
+        key_package_id,
+    );
+    if key_package_ref != key_package_id {
+        let _ = crate::mls::runtime::delete_mls_key_package_identity_state(
+            secure_store,
+            authority,
+            device_id,
+            key_package_ref,
+        );
+    }
 }
 
 pub(crate) async fn ensure_pairwise_mls_key_package_published(

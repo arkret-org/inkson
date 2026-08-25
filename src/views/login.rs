@@ -275,16 +275,39 @@ fn recover_pending_handoff_for_sign_in(
     store.can_resume_pending_login(&pending_device_id)
 }
 
-// Process-global OIDC-callback completion guard. `callback_started` below is a
+// Process-global OIDC-callback completion claims. `callback_started` below is a
 // per-component signal, so a Dioxus double-mount (the 0.7.9 reactivity quirk
 // that occasionally renders the panel twice) gives each instance its own `false`
-// flag and BOTH run `finish_oidc_callback` — double-submitting the session-grant
-// and burning the single-use authorization_code (second POST → `invalid grant`
-// 400, which derails the whole login). This wasm-global latch ensures the OIDC
-// completion runs at most once per page load regardless of instance count. A new
-// sign-in navigates away and reloads (fresh wasm), resetting it.
+// flag and BOTH run `finish_oidc_callback` — double-submitting the handoff and
+// burning the single-use authorization_code (second POST → `invalid grant`).
+//
+// The claim must be keyed by the OAuth transaction state, not by the lifetime of
+// the wasm instance. Browsers may restore Inkson from BFCache after the external
+// authorization page, so a process-wide bool would incorrectly suppress every
+// later sign-in without reloading wasm. The callback receiver still validates
+// the returned state against its persisted scaffold before exchanging the code.
+#[derive(Default)]
+struct OidcCallbackCompletionClaims {
+    claimed_state: Option<String>,
+}
+
+impl OidcCallbackCompletionClaims {
+    fn claim(&mut self, returned_state: &str) -> bool {
+        if self.claimed_state.as_deref() == Some(returned_state) {
+            return false;
+        }
+        self.claimed_state = Some(returned_state.to_owned());
+        true
+    }
+}
+
 thread_local! {
-    static OIDC_CALLBACK_COMPLETION_STARTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static OIDC_CALLBACK_COMPLETION_CLAIMS: std::cell::RefCell<OidcCallbackCompletionClaims> =
+        std::cell::RefCell::new(OidcCallbackCompletionClaims::default());
+}
+
+fn claim_oidc_callback_completion(returned_state: &str) -> bool {
+    OIDC_CALLBACK_COMPLETION_CLAIMS.with(|claims| claims.borrow_mut().claim(returned_state))
 }
 
 #[component]
@@ -338,16 +361,38 @@ pub fn LoginPanel(
         if !auto_capture_callback || callback_started() {
             return;
         }
-        // Cross-instance latch: if another mount of this panel already began the
-        // OIDC completion, skip so the authorization_code is exchanged once.
-        if OIDC_CALLBACK_COMPLETION_STARTED.with(|started| started.replace(true)) {
+        let callback_url = match capture_current_browser_callback_url() {
+            Ok(url) => url,
+            Err(error) => {
+                auth_status.set(format!("Could not read callback URL: {error}"));
+                is_busy.set(false);
+                return;
+            }
+        };
+        let returned_state = match extract_state_from_callback(&callback_url) {
+            Ok(Some(state)) => state,
+            Ok(None) => {
+                auth_status.set("Callback did not include state.".to_owned());
+                is_busy.set(false);
+                return;
+            }
+            Err(error) => {
+                auth_status.set(format!("Could not read callback state: {error}"));
+                is_busy.set(false);
+                return;
+            }
+        };
+        // Cross-instance claim: the same authorization transaction is exchanged
+        // once, while a later transaction in a BFCache-restored wasm instance is
+        // allowed to complete under its distinct state.
+        if !claim_oidc_callback_completion(&returned_state) {
             return;
         }
         callback_started.set(true);
         is_busy.set(true);
 
         let callback_device = pending_device_id();
-        let result = finish_oidc_callback(callback_device, state_store_write).await;
+        let result = finish_oidc_callback(callback_url, callback_device, state_store_write).await;
         match result {
             Ok(OidcCallbackOutcome::Login(completed)) => {
                 let mut account = completed.account.clone();
@@ -648,43 +693,8 @@ pub fn LoginPanel(
                     }),
                 )
             };
-            // Stop every old-account poller before installing the anonymous
-            // pending namespace. Otherwise a delayed refresh can reinstall the
-            // previous account's signer while onboarding is preparing proofs.
-            session.invalidate("starting an account sign-in transaction");
-            token.set(String::new());
-            if resume_account_handoff {
-                // An unfinished identity-creation lease is fenced to this DPoP
-                // holder. Rotating the key here makes the same browser look like
-                // another device and leaves it stuck behind its own lease until
-                // expiry. Re-authentication for this one resumable flow is a
-                // soft continuation, so retain the holder key.
-                crate::secure_key_store::set_active_device_seed_scope(None);
-            } else {
-                reset_state_store
-                    .write()
-                    .begin_pending_login(&pending_device_id, None);
-                if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
-                    secure_store.as_ref(),
-                    &pending_device_id,
-                ) {
-                    tracing::warn!(%error, "reset device seed scope for sign-in failed");
-                }
-                // Drop the cached DPoP record so the grant-binding key is rebuilt from
-                // the freshly-rotated grant-binding seed.
-                reset_state_store.write().set_dpop_device_key(None);
-            }
-            // Pre-DID: record the sign-in device id as the pending login so the
-            // bootstrap wrap_seed / secrets land under the
-            // `pending.<device_id>` namespace until the principal DID resolves
-            // and `accepted-context promotion` re-homes them.
-            if resume_account_handoff {
-                let resumed = reset_state_store
-                    .write()
-                    .resume_pending_login(&pending_device_id);
-                debug_assert!(resumed, "validated handoff resume must remain valid");
-            }
-            let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id);
+            let pending_store =
+                crate::secure_key_store::PendingLocalStore::new(pending_device_id.clone());
             if !resume_account_handoff
                 && let Err(error) = pending_store.delete(secure_store.as_ref())
             {
@@ -692,7 +702,6 @@ pub fn LoginPanel(
                 auth_status.set(format!("Could not rotate the pending sign-in key: {error}"));
                 return;
             }
-            pending_store.activate();
             if let Err(error) = pending_store
                 .save_device_id_durable(secure_store.as_ref())
                 .await
@@ -703,7 +712,7 @@ pub fn LoginPanel(
                 ));
                 return;
             }
-            match start_oidc_strand(
+            let prepared_authorization = match prepare_oidc_authorization(
                 &principal,
                 device.trim(),
                 OidcEntryPoint::SignIn,
@@ -713,12 +722,46 @@ pub fn LoginPanel(
             )
             .await
             {
-                Ok(()) => {}
+                Ok(prepared) => prepared,
                 Err(error) => {
                     is_busy.set(false);
                     auth_status.set(error);
+                    return;
                 }
+            };
+
+            // Invalidation synchronously unmounts this route and pushes Login.
+            // Complete the pending-scope transition in one no-await JS turn;
+            // an URL-only detached task performs external navigation after it.
+            if resume_account_handoff {
+                // An unfinished identity-creation lease is fenced to this DPoP
+                // holder. Rotating the key here makes the same browser look like
+                // another device and leaves it stuck behind its own lease until
+                // expiry. Re-authentication for this one resumable flow is a
+                // soft continuation, so retain the holder key.
+                crate::secure_key_store::set_active_device_seed_scope(None);
+                let resumed = reset_state_store
+                    .write()
+                    .resume_pending_login(&pending_device_id);
+                debug_assert!(resumed, "validated handoff resume must remain valid");
+            } else {
+                // Pre-DID: keep all bootstrap material in the transaction's
+                // `pending.<device_id>` namespace until accepted-context
+                // promotion re-homes it under the resolved principal.
+                reset_state_store
+                    .write()
+                    .begin_pending_login(&pending_device_id, None);
+                if let Err(error) = crate::secure_key_store::reset_device_seed_scope_for_signin(
+                    secure_store.as_ref(),
+                    &pending_device_id,
+                ) {
+                    tracing::warn!(%error, "reset device seed scope for sign-in failed");
+                }
+                reset_state_store.write().set_dpop_device_key(None);
             }
+            pending_store.activate();
+            prepared_authorization.launch_detached();
+            session.invalidate("starting an account sign-in transaction");
         });
     };
 
@@ -1371,14 +1414,41 @@ fn discard_failed_oidc_callback(error: String) -> String {
     format!("{error} Start sign-in again.")
 }
 
-pub(crate) async fn start_oidc_strand(
+/// A fully discovered and durably scaffolded OIDC transaction that is ready
+/// for the browser navigation boundary. Keeping the authorize URL private
+/// prevents callers from confusing an unprepared external URL with a launch
+/// that already owns PKCE/state/nonce persistence.
+#[must_use = "a prepared OIDC authorization must be launched or explicitly discarded"]
+pub(crate) struct PreparedOidcAuthorization {
+    authorize_url: String,
+}
+
+impl PreparedOidcAuthorization {
+    fn launch(self) -> Result<(), String> {
+        open_oidc_authorize_url(&self.authorize_url)
+            .map_err(|error| format!("Could not open server sign-in: {error}"))
+    }
+
+    /// Schedule browser navigation outside the route-owned task that is about
+    /// to synchronously invalidate and unmount itself. The detached task owns
+    /// only an already-validated URL; it captures no component Signals.
+    pub(crate) fn launch_detached(self) {
+        dioxus::core::spawn_forever(async move {
+            if let Err(error) = self.launch() {
+                tracing::error!(%error, "launch prepared OIDC authorization failed");
+            }
+        });
+    }
+}
+
+pub(crate) async fn prepare_oidc_authorization(
     principal_server_url: &str,
     device_id: &str,
     entry_point: OidcEntryPoint,
     expected_principal_full_id: Option<&arkret_sdk::DidFullId>,
     expected_device_id: Option<&arkret_sdk::DeviceId>,
     ui_locale: &str,
-) -> Result<(), String> {
+) -> Result<PreparedOidcAuthorization, String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
     // Server's root `/_arkret/describe` (service-surface §2.5.1).
     let principal = TransportClient::unauthenticated(principal_server_url)
@@ -1422,8 +1492,9 @@ pub(crate) async fn start_oidc_strand(
     );
     persist_oidc_scaffold(&scaffold)
         .map_err(|error| format!("Could not save sign-in state: {error}"))?;
-    open_oidc_authorize_url(&bundle.authorize_url)
-        .map_err(|error| format!("Could not open server sign-in: {error}"))
+    Ok(PreparedOidcAuthorization {
+        authorize_url: bundle.authorize_url,
+    })
 }
 
 /// Standard OIDC discovery URL for an auth method: the explicit
@@ -1472,11 +1543,10 @@ fn format_sign_in_discovery_error(principal_server_url: &str, error: &anyhow::Er
 }
 
 async fn finish_oidc_callback(
+    callback_url: String,
     device_fallback: String,
     mut state_store: SyncSignal<LocalStateStore>,
 ) -> Result<OidcCallbackOutcome, String> {
-    let callback_url = capture_current_browser_callback_url()
-        .map_err(|error| format!("Could not read callback URL: {error}"))?;
     let returned_state = extract_state_from_callback(&callback_url)
         .map_err(|error| format!("Could not read callback state: {error}"))?
         .ok_or_else(|| "Callback did not include state.".to_owned())?;
@@ -2088,6 +2158,22 @@ mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     use super::*;
+
+    #[test]
+    fn oidc_callback_completion_claims_are_scoped_to_the_transaction_state() {
+        let mut claims = OidcCallbackCompletionClaims::default();
+
+        assert!(claims.claim("state-a"));
+        assert!(
+            !claims.claim("state-a"),
+            "a duplicate Dioxus mount must not exchange one authorization code twice"
+        );
+        assert!(
+            claims.claim("state-b"),
+            "a BFCache-restored wasm instance must accept a later authorization transaction"
+        );
+        assert!(!claims.claim("state-b"));
+    }
 
     fn dpop_record_for_seed(seed: [u8; 32]) -> crate::state::DpopDeviceKeyRecord {
         crate::identity::account_auth::grant_dpop::dpop_device_key_record_from_seed(

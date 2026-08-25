@@ -263,9 +263,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         }
                     },
                     Route::Register => rsx! {
-                        crate::views::register::RegistrationPanel {
-                            token,
-                        }
+                        crate::views::register::RegistrationPanel {}
                     },
                     Route::Dashboard => rsx! {
                         crate::views::dashboard::DashboardPanel {

@@ -94,10 +94,7 @@ pub(super) fn AccountRecoveryEffects(
                     }
                     _ => None,
                 };
-                Ok::<_, anyhow::Error>((
-                    policy,
-                    gate_verification,
-                ))
+                Ok::<_, anyhow::Error>((policy, gate_verification))
             })
             .await
             {
@@ -140,7 +137,8 @@ pub(super) fn AccountRecoveryEffects(
                         // bootstrap basis as well.
                         let attempt = account_recovery_retry_attempt().saturating_add(1);
                         account_recovery_retry_attempt.set(attempt);
-                        crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt)).await;
+                        crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt))
+                            .await;
                         if account_recovery_detection_key_seen().as_deref()
                             == Some(detection_key.as_str())
                         {

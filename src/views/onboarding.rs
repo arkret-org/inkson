@@ -330,9 +330,29 @@ impl CompletedIdentityCreation {
     }
 }
 
+/// Cross the accepted-account storage boundary before writing metadata keyed
+/// by that account. Keeping the switch and write in one typed operation makes
+/// it impossible for onboarding to leave Recovery Key metadata in the
+/// anonymous pre-account namespace.
+fn activate_account_and_save_recovery_metadata(
+    store: &mut crate::state::LocalStateStore,
+    account: &crate::config::ActiveAccountContext,
+    recovery_key: &str,
+) -> anyhow::Result<()> {
+    store.switch_active_account(account)?;
+    crate::views::recovery::save_generated_recovery_key_metadata_in_store(
+        store,
+        account.principal_id(),
+        recovery_key,
+    )
+    .context("save Recovery Key metadata in the accepted account scope")?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn commit_completed_account(
     completed: &CompletedIdentityCreation,
+    recovery_key: &str,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     config_store: Signal<crate::config::LocalConfigStore>,
     mut active_account: Signal<Option<crate::config::ActiveAccountContext>>,
@@ -395,10 +415,23 @@ async fn commit_completed_account(
         let barrier = {
             let mut store = state_store.write();
             store.set_session_grant(Some(completed.persisted_grant.clone()));
-            store.switch_active_account(&completed.account)?;
+            activate_account_and_save_recovery_metadata(
+                &mut store,
+                &completed.account,
+                recovery_key,
+            )?;
             store.begin_durable_flush()?
         };
         barrier.wait().await?;
+        crate::views::recovery::local_recovery_public_key_result(
+            &state_store.read(),
+            completed.account.principal_id(),
+        )
+        .context("verify Recovery Key metadata in the accepted account scope")?;
+        crate::event_submit::remember_verified_recovery_gate(
+            completed.account.principal_id().as_str(),
+            completed.account.device_id.as_str(),
+        );
 
         active_account.set(Some(completed.account.clone()));
         token.set(completed.session_credential().to_owned());
@@ -1099,6 +1132,7 @@ fn PcrPolicyDeviceRecovery(
                             Ok((recovery, completed)) => {
                                 match commit_completed_account(
                                     &completed,
+                                    &recovery_words,
                                     state_store,
                                     config_store,
                                     active_account,
@@ -2590,6 +2624,7 @@ fn PendingAccountIdentityCreation(
                                     Ok(IdentityCreationCommandOutcome::Completed(completed)) => {
                                         if let Err(error) = commit_completed_account(
                                             &completed,
+                                            &supplied_key,
                                             state_store,
                                             config_store,
                                             active_account,
@@ -3523,25 +3558,9 @@ fn validate_completed_recovery_material(
     Ok(())
 }
 
-async fn finish_local_recovery_metadata(
+fn finish_pre_account_recovery_checkpoint(
     registration: &crate::state::PendingPrincipalRegistration,
-    recovery_key: &str,
-    account: &crate::config::ActiveAccountContext,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<()> {
-    let actor = account.principal_id();
-    let device = account.device_id.as_str();
-    crate::event_submit::remember_verified_recovery_gate(actor.as_str(), device);
-    crate::views::recovery::save_generated_recovery_key_metadata(
-        &mut state_store,
-        actor,
-        recovery_key,
-    )
-    .ok_or_else(|| anyhow::anyhow!("save public recovery metadata failed"))?;
-    crate::views::recovery::local_recovery_public_key_result(&state_store.read(), actor)
-        .map_err(|error| anyhow::anyhow!("verify public recovery metadata: {error}"))?;
-    let recovery_metadata_barrier = state_store.read().begin_durable_flush()?;
-    recovery_metadata_barrier.wait().await?;
     crate::identity::account_auth::clear_prepared_identity_creation_request_for_checkpoint(
         registration,
     )?;
@@ -3572,8 +3591,8 @@ async fn finish_principal_setup(
             .recovery_material_evidence()
             .context("completed recovery checkpoint has no durable evidence")?;
         validate_completed_recovery_material(&registration, account, &evidence)?;
-        return finish_local_recovery_metadata(&registration, recovery_key, account, state_store)
-            .await;
+        finish_pre_account_recovery_checkpoint(&registration)?;
+        return Ok(());
     }
     let bootstrap_seal: arkret_sdk::Seal = match registration.pcr_bootstrap_seal.clone() {
         Some(seal) => seal,
@@ -3682,8 +3701,7 @@ async fn finish_principal_setup(
         };
         barrier.wait().await?;
     }
-    finish_local_recovery_metadata(&completed_registration, recovery_key, account, state_store)
-        .await
+    finish_pre_account_recovery_checkpoint(&completed_registration)
 }
 
 fn hosting_label(url: &str) -> String {
@@ -3988,6 +4006,23 @@ mod tests {
         assert!(!store.switch_active_account(&account).unwrap());
         assert_eq!(store.pending_account_handoff(), Some(handoff));
         assert_eq!(store.pending_principal_registration(), Some(checkpoint));
+    }
+
+    #[test]
+    fn recovery_metadata_is_written_after_the_account_namespace_switch() {
+        let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
+        let account = test_active_account();
+        let mut store = crate::state::isolated_store_for_tests("account-recovery-metadata");
+
+        activate_account_and_save_recovery_metadata(&mut store, &account, &recovery_key).unwrap();
+
+        assert!(store.active_account_matches(account.principal_id()));
+        assert!(crate::views::recovery::recovery_options_configured(
+            &store,
+            account.principal_id(),
+        ));
+        crate::views::recovery::local_recovery_public_key_result(&store, account.principal_id())
+            .unwrap();
     }
 
     #[test]

@@ -17,7 +17,7 @@ use crate::event_builders::{
     build_plaintext_visible_services_event, build_realm_alias_event,
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
     build_realm_authority_basis_update_control_intent, build_realm_authority_reset_control_intent,
-    build_realm_bootstrap_steps, build_realm_destroy_event,
+    build_realm_bootstrap_steps_for_principal_server, build_realm_destroy_event,
     build_realm_owner_transfer_control_intent, build_realm_state_event, build_space_create_event,
     build_space_lifecycle_event, parse_realm_bootstrap_members, parse_wire_enum,
     recommended_realm_policy_bundle_value,
@@ -74,7 +74,15 @@ pub async fn create_realm(
     }
 
     let join_rule = validate_join_rule_v1(join_rule)?;
+    let principal_server_id = submitter.authority()?.principal_server_id.clone();
     let notary_did = submitter.service_full_id().await?;
+    let described_server_id =
+        arkret_sdk::project_full_id_to_core_id(&arkret_sdk::DidFullId::new(notary_did.clone())?)?;
+    if described_server_id != principal_server_id {
+        anyhow::bail!(
+            "authenticated Principal Server authority does not match the current service description"
+        );
+    }
     let notary = submitter.current_service_notary().await?;
     let notary_service_origin = submitter.http().base_url().origin().ascii_serialization();
     let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
@@ -92,7 +100,8 @@ pub async fn create_realm(
     let genesis_salt = arkret_sdk::GenesisSalt::generate()?;
     // The Realm id is not minted here: it is derived from the genesis Event
     // the builder produces (spec realm-and-space.md section 2.5.0).
-    let steps = build_realm_bootstrap_steps(
+    let steps = build_realm_bootstrap_steps_for_principal_server(
+        principal_server_id,
         genesis_salt,
         actor_id,
         &notary_did,

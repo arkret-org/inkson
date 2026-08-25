@@ -34,7 +34,7 @@ enum RegistrationFailureKind {
 }
 
 #[component]
-pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
+pub fn RegistrationPanel() -> Element {
     let mut principal_server = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
     let session = use_context::<crate::runtime::services::RuntimeServices>().session;
@@ -96,16 +96,11 @@ pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
                     onclick: move |_| {
                         let server = principal_server();
                         let ui_locale = i18n.read().0.code().to_owned();
+                        let session = session.clone();
                         // This route is the explicit new-identity intent.  A
                         // device identity belongs to one principal, so it must
                         // never inherit the active/previous account's id.
                         let device = crate::config::new_device_id();
-                        // Explicit registration starts a transaction-scoped
-                        // anonymous namespace. Stop the live session, but keep
-                        // last-known account/device configuration unchanged
-                        // until the new identity commits successfully.
-                        session.invalidate("starting a new-account registration transaction");
-                        token.set(String::new());
                         busy.set(true);
                         feedback.set(RegistrationFeedback::Progress);
                         spawn(async move {
@@ -131,26 +126,9 @@ pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
                                 };
                                 #[cfg(not(target_arch = "wasm32"))]
                                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                                state_store.write().begin_pending_login(&device, None);
-                                crate::secure_key_store::reset_device_seed_scope_for_signin(
-                                    secure_store.as_ref(),
-                                    &device,
-                                )?;
-                                tracing::info!(
-                                    target: "account_onboarding",
-                                    device_id = %device,
-                                    "create identity: bootstrap key scope reset"
-                                );
-                                state_store.write().set_dpop_device_key(None);
-                                tracing::info!(
-                                    target: "account_onboarding",
-                                    device_id = %device,
-                                    "create identity: pending login established"
-                                );
                                 let pending_store = crate::secure_key_store::PendingLocalStore::new(
                                     device.clone(),
                                 );
-                                pending_store.activate();
                                 pending_store
                                     .save_device_id_durable(secure_store.as_ref())
                                     .await?;
@@ -159,7 +137,8 @@ pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
                                     device_id = %device,
                                     "create identity: bootstrap device persisted; opening authority"
                                 );
-                                crate::views::login::start_oidc_strand(
+                                let prepared_authorization =
+                                    crate::views::login::prepare_oidc_authorization(
                                     &server,
                                     device.as_str(),
                                     crate::identity::account_auth::OidcEntryPoint::CreateIdentity,
@@ -168,7 +147,29 @@ pub fn RegistrationPanel(mut token: Signal<String>) -> Element {
                                     &ui_locale,
                                 )
                                 .await
-                                .map_err(anyhow::Error::msg)
+                                .map_err(anyhow::Error::msg)?;
+
+                                // `session.invalidate` synchronously unmounts this
+                                // route and routes to Login. Install the pending
+                                // namespace in one no-await boundary, then let an
+                                // URL-only detached task navigate after invalidation.
+                                state_store.write().begin_pending_login(&device, None);
+                                crate::secure_key_store::reset_device_seed_scope_for_signin(
+                                    secure_store.as_ref(),
+                                    &device,
+                                )?;
+                                state_store.write().set_dpop_device_key(None);
+                                pending_store.activate();
+                                tracing::info!(
+                                    target: "account_onboarding",
+                                    device_id = %device,
+                                    "create identity: pending login established; opening authority"
+                                );
+                                prepared_authorization.launch_detached();
+                                session.invalidate(
+                                    "starting a new-account registration transaction",
+                                );
+                                Ok(())
                             }
                             .await;
                             if let Err(error) = result {

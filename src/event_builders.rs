@@ -142,6 +142,57 @@ pub fn build_realm_bootstrap_steps(
     alias: Option<&str>,
     content_scheme: Option<&str>,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
+    build_realm_bootstrap_steps_for_principal_server(
+        crate::operation::authoring_principal_server_id()?,
+        genesis_salt,
+        actor_id,
+        notary_did,
+        notary,
+        notary_service_origin,
+        title,
+        summary,
+        discoverability,
+        join_rule,
+        history_access,
+        encryption_profile,
+        security_class,
+        federation_policy,
+        digest_algorithm,
+        trust_domain,
+        invitees,
+        plaintext_visible_services,
+        alias,
+        content_scheme,
+    )
+}
+
+/// Build a Realm bootstrap against the exact Principal Server captured by the
+/// authenticated submitter. Production create flows use this entry point so a
+/// transient reconnect cannot clear a process-global selection between UI
+/// readiness and Event construction.
+#[allow(clippy::too_many_arguments)]
+pub fn build_realm_bootstrap_steps_for_principal_server(
+    principal_server_id: arkret_sdk::DidCoreId,
+    genesis_salt: arkret_sdk::GenesisSalt,
+    actor_id: &str,
+    notary_did: &str,
+    notary: arkret_sdk::NotaryValue,
+    notary_service_origin: &str,
+    title: &str,
+    summary: Option<&str>,
+    discoverability: &str,
+    join_rule: &str,
+    history_access: &str,
+    encryption_profile: &str,
+    security_class: &str,
+    federation_policy: &str,
+    digest_algorithm: &str,
+    trust_domain: &str,
+    invitees: &[String],
+    plaintext_visible_services: &[String],
+    alias: Option<&str>,
+    content_scheme: Option<&str>,
+) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     validate_realm_history_content_scheme_for_profile(
         encryption_profile,
         history_access,
@@ -152,7 +203,8 @@ pub fn build_realm_bootstrap_steps(
     // entered through an ordinary `ak.invite.create` Control Move after the
     // creator's bootstrap has been accepted.
     let _invitees = parse_realm_bootstrap_members(invitees)?;
-    let create_event = build_realm_create_event(
+    let create_event = build_realm_create_event_for_principal_server(
+        principal_server_id.clone(),
         genesis_salt,
         actor_id,
         notary,
@@ -170,6 +222,7 @@ pub fn build_realm_bootstrap_steps(
     )?;
 
     let facets = RealmBootstrapFacets {
+        principal_server_id,
         actor_id: actor_id.to_owned(),
         notary_did: notary_did.to_owned(),
         notary_service_origin: notary_service_origin.to_owned(),
@@ -223,6 +276,7 @@ pub fn build_realm_bootstrap_steps(
 /// authoring chain, once the create Event has named the Realm.
 #[derive(Clone)]
 pub struct RealmBootstrapFacets {
+    pub principal_server_id: arkret_sdk::DidCoreId,
     pub actor_id: String,
     pub notary_did: String,
     pub notary_service_origin: String,
@@ -260,7 +314,8 @@ pub fn build_realm_bootstrap_facet_intents(
         .filter(|summary| !summary.is_empty())
         .map(ToOwned::to_owned);
     events.push(
-        build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+        build_realm_state_event_for_principal_server::<arkret_sdk::event_spec::RealmProfile>(
+            facets.principal_server_id.clone(),
             realm_id,
             actor_id,
             digest_suite,
@@ -283,7 +338,8 @@ pub fn build_realm_bootstrap_facet_intents(
         &facets.federation_policy,
     )?);
     events.push(
-        build_realm_state_event::<arkret_sdk::event_spec::RealmPolicyBundle>(
+        build_realm_state_event_for_principal_server::<arkret_sdk::event_spec::RealmPolicyBundle>(
+            facets.principal_server_id.clone(),
             realm_id,
             actor_id,
             digest_suite,
@@ -292,7 +348,8 @@ pub fn build_realm_bootstrap_facet_intents(
         .into_intent(),
     );
     events.push(
-        build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
+        build_realm_state_event_for_principal_server::<arkret_sdk::event_spec::RealmJoinRule>(
+            facets.principal_server_id.clone(),
             realm_id,
             actor_id,
             digest_suite,
@@ -303,7 +360,8 @@ pub fn build_realm_bootstrap_facet_intents(
         .into_intent(),
     );
     events.push(
-        build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryAccess>(
+        build_realm_state_event_for_principal_server::<arkret_sdk::event_spec::RealmHistoryAccess>(
+            facets.principal_server_id.clone(),
             realm_id,
             actor_id,
             digest_suite,
@@ -312,7 +370,8 @@ pub fn build_realm_bootstrap_facet_intents(
         .into_intent(),
     );
     events.push(
-        build_realm_state_event::<arkret_sdk::event_spec::RealmDiscovery>(
+        build_realm_state_event_for_principal_server::<arkret_sdk::event_spec::RealmDiscovery>(
+            facets.principal_server_id.clone(),
             realm_id,
             actor_id,
             digest_suite,
@@ -339,11 +398,19 @@ pub fn build_realm_bootstrap_facet_intents(
         .filter(|alias| !alias.is_empty())
     {
         events.push(
-            build_realm_alias_event(realm_id, actor_id, &facets.notary_did, alias)?.into_intent(),
+            build_realm_alias_event_for_principal_server(
+                facets.principal_server_id.clone(),
+                realm_id,
+                actor_id,
+                &facets.notary_did,
+                alias,
+            )?
+            .into_intent(),
         );
     }
 
-    if let Some(event) = build_plaintext_visible_services_event(
+    if let Some(event) = build_plaintext_visible_services_event_for_principal_server(
+        facets.principal_server_id.clone(),
         realm_id,
         actor_id,
         &facets.plaintext_visible_services,
@@ -356,7 +423,10 @@ pub fn build_realm_bootstrap_facet_intents(
     let delivery_binding_policy =
         build_realm_delivery_binding_policy(realm_id, &facets.notary_did)?;
     events.push(
-        build_realm_state_event::<arkret_sdk::event_spec::RealmDeliveryBindingPolicy>(
+        build_realm_state_event_for_principal_server::<
+            arkret_sdk::event_spec::RealmDeliveryBindingPolicy,
+        >(
+            facets.principal_server_id.clone(),
             realm_id,
             actor_id,
             digest_suite,
@@ -439,6 +509,7 @@ fn build_realm_bootstrap_membership_intent(
         expires_at: None,
     };
     Ok(build_member_state_transition_event_with_binding(
+        Some(&facets.principal_server_id),
         realm_id,
         actor_id,
         actor_id,
@@ -570,6 +641,29 @@ fn build_realm_create_event_from_object(
     .build_sdk_event("inkson")
 }
 
+fn build_realm_create_event_from_object_for_principal_server(
+    principal_server_id: arkret_sdk::DidCoreId,
+    actor_id: &str,
+    object: arkret_sdk::RealmGenesis,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    let created_at = event_timestamp();
+    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
+    let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
+    let realm_body = arkret_sdk::RealmCreatePayload::new(object);
+    TypedOperationBuilder::new_for_principal_server::<arkret_sdk::event_spec::RealmCreate>(
+        arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")
+            .expect("placeholder realm id is canonical")
+            .into_string(),
+        actor_id,
+        principal_server_id,
+        realm_body,
+    )
+    .preconditions(preconditions)
+    .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
+    .created_at(created_at)
+    .build_sdk_event("inkson")
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_realm_create_event(
     genesis_salt: arkret_sdk::GenesisSalt,
@@ -604,6 +698,43 @@ pub fn build_realm_create_event(
         content_scheme,
     )?;
     build_realm_create_event_from_object(actor_id, object)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_realm_create_event_for_principal_server(
+    principal_server_id: arkret_sdk::DidCoreId,
+    genesis_salt: arkret_sdk::GenesisSalt,
+    actor_id: &str,
+    notary: arkret_sdk::NotaryValue,
+    title: &str,
+    summary: Option<&str>,
+    discoverability: &str,
+    join_rule: &str,
+    history_access: &str,
+    encryption_profile: &str,
+    security_class: &str,
+    federation_policy: &str,
+    digest_algorithm: &str,
+    trust_domain: &str,
+    content_scheme: Option<&str>,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    let object = build_realm_genesis_object(
+        genesis_salt,
+        actor_id,
+        notary,
+        title,
+        summary,
+        discoverability,
+        join_rule,
+        history_access,
+        encryption_profile,
+        security_class,
+        federation_policy,
+        digest_algorithm,
+        trust_domain,
+        content_scheme,
+    )?;
+    build_realm_create_event_from_object_for_principal_server(principal_server_id, actor_id, object)
 }
 
 /// Build the create-locked Principal Control Realm genesis for a managed
@@ -1095,9 +1226,30 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
     digest_suite: arkret_sdk::DigestSuite,
     payload: K::Payload,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
+    build_realm_state_event_for_principal_server::<K>(
+        crate::operation::authoring_principal_server_id()?,
+        realm_id,
+        actor_id,
+        digest_suite,
+        payload,
+    )
+}
+
+fn build_realm_state_event_for_principal_server<K: arkret_sdk::EventSpec>(
+    principal_server_id: arkret_sdk::DidCoreId,
+    realm_id: &str,
+    actor_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
+    payload: K::Payload,
+) -> anyhow::Result<crate::operation::LocalOperation> {
     let realm_id = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?;
-    let builder = TypedOperationBuilder::new::<K>(realm_id.as_str(), actor_id, payload)
-        .created_at(event_timestamp());
+    let builder = TypedOperationBuilder::new_for_principal_server::<K>(
+        realm_id.as_str(),
+        actor_id,
+        principal_server_id,
+        payload,
+    )
+    .created_at(event_timestamp());
 
     // event-kind-registry.json declares that `cell_writes[]` is the sole
     // authority for reducer targets; the old flattened descriptor fields are
@@ -1287,6 +1439,30 @@ pub fn build_realm_alias_event(
     )
 }
 
+fn build_realm_alias_event_for_principal_server(
+    principal_server_id: arkret_sdk::DidCoreId,
+    realm_id: &str,
+    actor_id: &str,
+    authority_service_id: &str,
+    alias: &str,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_id)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "cannot derive realm alias authority from {authority_service_id}: {error}"
+            )
+        })?;
+    let canonical = arkret_sdk::RealmAlias::prepare_under_authority(alias, &authority)
+        .map_err(|error| anyhow::anyhow!("invalid realm alias {alias:?}: {error}"))?;
+    build_realm_alias_payload_event_for_principal_server(
+        principal_server_id,
+        realm_id,
+        actor_id,
+        arkret_sdk::RealmAliasPayload::declaration(canonical),
+        Value::Null,
+    )
+}
+
 /// Rename an already-claimed alias. `settled_payload` is the whole current cell
 /// value; the `cas_register` head_eq precondition is what makes a concurrent
 /// rename lose instead of silently overwriting a live address.
@@ -1343,10 +1519,44 @@ fn build_realm_alias_payload_event(
         .build_sdk_event("inkson")
 }
 
+fn build_realm_alias_payload_event_for_principal_server(
+    principal_server_id: arkret_sdk::DidCoreId,
+    realm_id: &str,
+    actor_id: &str,
+    payload: arkret_sdk::RealmAliasPayload,
+    expected_head: Value,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    let cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_ALIAS_V1);
+    let created_at = event_timestamp();
+    TypedOperationBuilder::new_for_principal_server::<arkret_sdk::event_spec::RealmAlias>(
+        realm_id,
+        actor_id,
+        principal_server_id,
+        payload,
+    )
+    .preconditions(vec![head_eq_precondition(&cell, expected_head)?])
+    .created_at(created_at)
+    .build_sdk_event("inkson")
+}
+
 /// Build a `ak.realm.plaintext_visible_services` event when the caller
 /// supplies at least one service DID. Returns `None` when the input
 /// list is empty so the bootstrap chain can skip emission entirely.
 pub fn build_plaintext_visible_services_event(
+    realm_id: &str,
+    actor_id: &str,
+    service_ids: &[String],
+) -> anyhow::Result<Option<crate::operation::LocalOperation>> {
+    build_plaintext_visible_services_event_for_principal_server(
+        crate::operation::authoring_principal_server_id()?,
+        realm_id,
+        actor_id,
+        service_ids,
+    )
+}
+
+fn build_plaintext_visible_services_event_for_principal_server(
+    principal_server_id: arkret_sdk::DidCoreId,
     realm_id: &str,
     actor_id: &str,
     service_ids: &[String],
@@ -1395,13 +1605,12 @@ pub fn build_plaintext_visible_services_event(
     );
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let body_value = arkret_sdk::PlaintextVisibleServicesPayload::new(services);
-    let event =
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmPlaintextVisibleServices>(
-            realm_id, actor_id, body_value,
-        )
-        .preconditions(preconditions)
-        .created_at(created_at)
-        .build_sdk_event("inkson")?;
+    let event = TypedOperationBuilder::new_for_principal_server::<
+        arkret_sdk::event_spec::RealmPlaintextVisibleServices,
+    >(realm_id, actor_id, principal_server_id, body_value)
+    .preconditions(preconditions)
+    .created_at(created_at)
+    .build_sdk_event("inkson")?;
     Ok(Some(event))
 }
 
@@ -1418,6 +1627,7 @@ pub fn build_member_state_transition_event(
     reason: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     build_member_state_transition_event_with_binding(
+        None,
         realm_id,
         actor_id,
         member_actor_id,
@@ -1429,6 +1639,7 @@ pub fn build_member_state_transition_event(
 }
 
 fn build_member_state_transition_event_with_binding(
+    principal_server_id: Option<&arkret_sdk::DidCoreId>,
     realm_id: &str,
     actor_id: &str,
     member_actor_id: &str,
@@ -1489,14 +1700,25 @@ fn build_member_state_transition_event_with_binding(
     } else {
         vec![head_eq_precondition(&cell, Value::Null)?]
     };
-    TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
-        realm_id,
-        actor_id,
-        membership_payload,
-    )
-    .target_ref(member_cell_subject)
-    .preconditions(preconditions)
-    .build_sdk_event("inkson")
+    let builder = match principal_server_id {
+        Some(principal_server_id) => {
+            TypedOperationBuilder::new_for_principal_server::<arkret_sdk::event_spec::MemberState>(
+                realm_id,
+                actor_id,
+                principal_server_id.clone(),
+                membership_payload,
+            )
+        }
+        None => TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
+            realm_id,
+            actor_id,
+            membership_payload,
+        ),
+    };
+    builder
+        .target_ref(member_cell_subject)
+        .preconditions(preconditions)
+        .build_sdk_event("inkson")
 }
 
 fn space_cell(cell_family: &str, space_id: &str) -> String {
@@ -1838,6 +2060,46 @@ mod notary_derivation_tests {
             arkret_sdk::PredicateOp::HeadEq
         );
         assert_eq!(bundle.preconditions[0].predicate.value, Some(Value::Null));
+    }
+
+    #[test]
+    fn realm_bootstrap_uses_the_explicit_authenticated_principal_server() {
+        let principal_server_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:explicit-principal.example").unwrap();
+        let events = crate::event_submit::author_event_unit_for_test(
+            build_realm_bootstrap_steps_for_principal_server(
+                principal_server_id.clone(),
+                arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+                    .unwrap(),
+                "did:web:alice.example",
+                "did:web:alice.example",
+                test_single_signer_notary("did:web:alice.example").unwrap(),
+                "https://alice.example",
+                "Explicit Principal Server Realm",
+                None,
+                "invite_only",
+                "invite",
+                "since_join",
+                "mls_rfc9420",
+                "standard",
+                "closed",
+                "sha256",
+                "ak:trust_domain:did.web.example",
+                &[],
+                &[],
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .expect("the Realm bootstrap unit authors");
+
+        assert!(!events.is_empty());
+        assert!(
+            events
+                .iter()
+                .all(|event| { event.principal_server_id == principal_server_id })
+        );
     }
 
     #[test]

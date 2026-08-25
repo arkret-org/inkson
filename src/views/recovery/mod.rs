@@ -39,5 +39,6 @@ pub use panel::RecoveryPanel;
 pub(crate) use state::{
     local_recovery_key_fingerprint, local_recovery_public_key, local_recovery_public_key_result,
     recovery_options_configured, save_generated_recovery_key_metadata,
+    save_generated_recovery_key_metadata_in_store,
 };
 pub(crate) use upload::{RecoveryKeyBackupOutcome, upload_recovery_key_account_backup};

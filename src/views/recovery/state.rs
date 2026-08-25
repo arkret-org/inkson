@@ -21,27 +21,33 @@ pub(crate) fn load_state(
     }
 }
 
-pub(crate) fn save_state(
-    state_store: &mut SyncSignal<LocalStateStore>,
-    account_key: &DidCoreId,
-    state: &RecoveryState,
-) {
-    if let Ok(payload) = serde_json::to_string(state) {
-        state_store
-            .write()
-            .save_private_data(account_key.as_str(), RECOVERY_STATE_KEY, payload);
-    }
-}
-
 pub(crate) fn save_generated_recovery_key_metadata(
     state_store: &mut SyncSignal<LocalStateStore>,
+    account_key: &DidCoreId,
+    recovery_key: &str,
+) -> Option<(String, String)> {
+    save_generated_recovery_key_metadata_in_store(
+        &mut state_store.write(),
+        account_key,
+        recovery_key,
+    )
+}
+
+/// Persist public Recovery Key metadata into the caller-selected account
+/// namespace. Account onboarding uses this while holding the same transaction
+/// that switches from the anonymous setup scope to the accepted account scope.
+pub(crate) fn save_generated_recovery_key_metadata_in_store(
+    state_store: &mut LocalStateStore,
     account_key: &DidCoreId,
     recovery_key: &str,
 ) -> Option<(String, String)> {
     if recovery_key.trim().is_empty() {
         return None;
     }
-    let mut state = load_state(state_store, account_key);
+    let mut state = state_store
+        .load_private_data(account_key.as_str(), RECOVERY_STATE_KEY)
+        .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
+        .unwrap_or_default();
     let fingerprint = fingerprint_recovery_key(recovery_key);
     let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
         recovery_key,
@@ -53,7 +59,8 @@ pub(crate) fn save_generated_recovery_key_metadata(
     state.recovery_key_fingerprint = fingerprint.clone();
     state.backup_hpke_public_key_multibase = key_material.backup_hpke_public_key_multikey.clone();
     state.recovery_key_rotated_at = rotated_at.clone();
-    save_state(state_store, account_key, &state);
+    let payload = serde_json::to_string(&state).ok()?;
+    state_store.save_private_data(account_key.as_str(), RECOVERY_STATE_KEY, payload);
     Some((fingerprint, rotated_at))
 }
 

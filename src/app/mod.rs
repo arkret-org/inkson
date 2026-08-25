@@ -1115,9 +1115,7 @@ fn AppBootstrap() -> Element {
                             }
                         },
                         AuthSurface::Register => rsx! {
-                            crate::views::register::RegistrationPanel {
-                                token,
-                            }
+                            crate::views::register::RegistrationPanel {}
                         },
                         AuthSurface::Restoring => rsx! {
                             section {
