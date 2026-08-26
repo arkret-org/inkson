@@ -243,8 +243,6 @@ fn build_formal_applet_install_events(
         ScopeRef::Realm { realm_id } | ScopeRef::Circle { realm_id, .. } => realm_id.clone(),
         _ => unreachable!("validated Applet effective scope"),
     };
-    let registry_digest = arkret_sdk::current_capability_action_registry_digest()
-        .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
     let mut grant_events = Vec::with_capacity(actions.len());
     for action in actions {
         let grant = arkret_sdk::CapabilityGrantCreateBody {
@@ -255,7 +253,6 @@ fn build_formal_applet_install_events(
             subject_principal_server_id: Some(target_principal_server_id.clone()),
             actions: vec![action.to_owned()],
             resources: vec![resource.clone()],
-            capability_action_registry_digest: Some(registry_digest.clone()),
             constraints: vec![constraint.clone()],
             // The installing owner issues these under the Realm authority
             // root, which is what `issuer_authority_refs` now records.

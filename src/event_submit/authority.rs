@@ -5,11 +5,7 @@ use super::*;
 /// Authority facts pinned by a Realm's accepted `ak.realm.create`.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum RealmCreateAuthority {
-    /// The create carries the create-locked action-registry digest, so the
-    /// registered reducer contract materialized the authority-root cell.
     Root { controller_id: String },
-    /// The accepted create predates the authority-root contract.
-    NoAuthorityRoot,
 }
 
 pub(super) fn realm_create_authority_cache()
@@ -30,21 +26,12 @@ pub(super) fn realm_create_authority_from_events(
         if event.realm_id.as_str() != realm_id || event.kind != arkret_sdk::EventKind::RealmCreate {
             return None;
         }
-        let object = event.payload.get("object")?;
         let controller_id = event.actor_id.as_str().trim();
         if controller_id.is_empty() {
             return None;
         }
-        let has_authority_root_contract = object
-            .get("capability_action_registry_digest")
-            .and_then(Value::as_str)
-            .is_some_and(|digest| !digest.trim().is_empty());
-        Some(if has_authority_root_contract {
-            RealmCreateAuthority::Root {
-                controller_id: controller_id.to_owned(),
-            }
-        } else {
-            RealmCreateAuthority::NoAuthorityRoot
+        Some(RealmCreateAuthority::Root {
+            controller_id: controller_id.to_owned(),
         })
     })
 }

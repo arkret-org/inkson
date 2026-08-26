@@ -125,15 +125,6 @@ pub fn capability_grant_actions_with_resources(
     let realm_typed = arkret_sdk::RealmId::new(realm.clone())?;
     let actor_typed = crate::mls_api_helpers::principal_core_id(actor)?;
     let subject_typed = crate::mls_api_helpers::principal_core_id(subject)?;
-    let carries_aggregate_admin = actions.iter().any(|action| {
-        arkret_sdk::schema::embedded_capability_action(action)
-            .ok()
-            .flatten()
-            .is_some_and(|descriptor| descriptor.event_mapping_kind == "aggregate_admin")
-    });
-    let registry_digest = carries_aggregate_admin
-        .then(arkret_sdk::current_capability_action_registry_digest)
-        .transpose()?;
     let expires_at = expires_at
         .map(str::parse)
         .transpose()
@@ -159,7 +150,6 @@ pub fn capability_grant_actions_with_resources(
         subject_principal_server_id: Some(crate::operation::authoring_principal_server_id()?),
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
         resources,
-        capability_action_registry_digest: registry_digest,
         constraints: constraints_typed,
         // The root coordinates come from the caller-resolved authority root
         // (`IssuerRootBasis::from_resolved_root`): a Realm that never ran
@@ -216,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_admin_grant_authorship_binds_the_registry_snapshot() {
+    fn aggregate_admin_grant_projects_the_registered_cell_write() {
         let operation = capability_grant_actions(
             "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
             "did:web:issuer.example",
@@ -230,11 +220,6 @@ mod tests {
         .build_sdk_event("inkson")
         .unwrap();
 
-        assert_eq!(
-            operation.payload()["grant"]["capability_action_registry_digest"],
-            serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
-                .unwrap()
-        );
         assert_eq!(
             operation.payload()["grant"]["issuer_authority_refs"],
             json!([{

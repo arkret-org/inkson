@@ -59,8 +59,8 @@ pub fn RealmAdminPanel(
     // confirmation step before the membership event is submitted).
     let mut leave_confirm_open = use_signal(|| false);
     // Realm governance (authority root) inputs — owner transfer target +
-    // pasted successor acceptance proof, plus the three security_barrier
-    // confirmation dialogs (transfer / authority reset / basis update).
+    // pasted successor acceptance proof, plus the two security_barrier
+    // confirmation dialogs (transfer / authority reset).
     let mut gov_transfer_target = use_signal(String::new);
     let gov_transfer_target_selected = use_memo(move || Some(gov_transfer_target()));
     let mut gov_transfer_acceptance = use_signal(String::new);
@@ -70,7 +70,6 @@ pub fn RealmAdminPanel(
     // event-kind string as `destructive_confirmation`; the operator types it
     // here, and the typed text is what the payload ships.
     let mut gov_reset_confirm_text = use_signal(String::new);
-    let mut gov_basis_confirm_open = use_signal(|| false);
     // Realm-admin grant inputs (see realm-admin-grant-card). The subject is
     // the DID being made / removed as admin; the grant id is minted
     // client-side on grant and re-entered on revoke (the soland reducer
@@ -552,9 +551,8 @@ pub fn RealmAdminPanel(
                         "state_root: {seal_state_root_label}"
                     }
                 }
-                // Realm governance — the three authority-root transitions
-                // (`ak.realm.owner.transfer` / `ak.realm.authority.reset` /
-                // `ak.realm.authority.basis_update`). All three are sealed
+                // Realm governance — the two authority-root transitions
+                // (`ak.realm.owner.transfer` / `ak.realm.authority.reset`). Both are sealed
                 // control events with concurrency_class=security_barrier:
                 // the payload pins `expected_state_digest` to the replayed
                 // root value, so a concurrent transition rejects with
@@ -568,9 +566,6 @@ pub fn RealmAdminPanel(
                         {
                             let controller_full = root.controller_id.as_str().to_owned();
                             let controller_label = short_protocol_id(&controller_full);
-                            let registry_full =
-                                root.capability_action_registry_digest.as_str().to_owned();
-                            let registry_label = short_protocol_id(&registry_full);
                             rsx! {
                                 div { class: "metric-grid",
                                     div { class: "metric",
@@ -589,15 +584,6 @@ pub fn RealmAdminPanel(
                                     div { class: "metric",
                                         strong { "Authority generation" }
                                         span { "data-testid": "governance-generation", "{root.authority_generation}" }
-                                    }
-                                    div { class: "metric",
-                                        strong { "Registry basis" }
-                                        span {
-                                            class: "mono",
-                                            title: "{registry_full}",
-                                            "data-testid": "governance-registry-basis",
-                                            "{registry_label}"
-                                        }
                                     }
                                 }
                             }
@@ -659,22 +645,19 @@ pub fn RealmAdminPanel(
                                         disabled: gov_transfer_target().trim().is_empty(),
                                         onclick: move |_| {
                                             gov_reset_confirm_open.set(false);
-                                            gov_basis_confirm_open.set(false);
                                             gov_transfer_confirm_open.set(true);
                                         },
                                         "Transfer ownership…"
                                     }
                                 }
-                                // Authority reset / basis update — guarded
-                                // destructive entries.
+                                // Authority reset — guarded destructive entry.
                                 div { class: "event-head",
-                                    span { "Authority generation & registry basis" }
-                                    span { "destructive / advanced" }
+                                    span { "Authority generation" }
+                                    span { "destructive" }
                                 }
                                 div { class: "muted",
                                     "Resetting the authority generation invalidates every capability issued "
-                                    "under the current generation across the whole Realm. A basis update only "
-                                    "adopts a new capability-action registry snapshot for future grants."
+                                    "under the current generation across the whole Realm."
                                 }
                                 div { class: "actions",
                                     Button {
@@ -682,36 +665,24 @@ pub fn RealmAdminPanel(
                                         "data-testid": "authority-reset-button",
                                         onclick: move |_| {
                                             gov_transfer_confirm_open.set(false);
-                                            gov_basis_confirm_open.set(false);
                                             gov_reset_confirm_text.set(String::new());
                                             gov_reset_confirm_open.set(true);
                                         },
                                         "Reset authority generation…"
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "authority-basis-update-button",
-                                        onclick: move |_| {
-                                            gov_transfer_confirm_open.set(false);
-                                            gov_reset_confirm_open.set(false);
-                                            gov_basis_confirm_open.set(true);
-                                        },
-                                        "Adopt current registry basis…"
                                     }
                                 }
                             }
                         } else {
                             div { class: "muted", "data-testid": "governance-not-controller",
                                 "Only the current authority-root controller (Realm owner) can transfer "
-                                "ownership, reset the authority generation, or adopt a new registry basis."
+                                "ownership or reset the authority generation."
                             }
                         }
                     } else {
                         div { class: "muted", "data-testid": "governance-root-missing",
                             "The authority root is not resolved in the local projection — either sync has "
-                            "not surfaced the accepted `ak.realm.create` yet, or this Realm predates the "
-                            "authority-root contract. Governance transitions stay unavailable until a root "
-                            "value is projected."
+                            "not surfaced the accepted `ak.realm.create` yet. Governance transitions stay "
+                            "unavailable until a root value is projected."
                         }
                     }
                 }
@@ -970,129 +941,6 @@ pub fn RealmAdminPanel(
                     }
                 }
 
-                // Basis-update confirmation — adopts this build's embedded
-                // capability-action registry snapshot.
-                if gov_basis_confirm_open() {
-                    {
-                        let current_basis = authority_root
-                            .as_ref()
-                            .map(|root| root.capability_action_registry_digest.as_str().to_owned())
-                            .unwrap_or_default();
-                        let embedded_basis = arkret_sdk::current_capability_action_registry_digest()
-                            .map(|digest| digest.as_str().to_owned())
-                            .unwrap_or_default();
-                        let basis_unchanged = !embedded_basis.is_empty() && embedded_basis == current_basis;
-                        rsx! {
-                            crate::components::DismissiblePopup {
-                                overlay_class: "modal-backdrop",
-                                surface_class: "modal danger-confirm-modal",
-                                overlay_test_id: Some("authority-basis-confirm-modal".to_owned()),
-                                surface_test_id: Some("authority-basis-confirm-dialog".to_owned()),
-                                aria_label: "Adopt registry basis".to_owned(),
-                                on_dismiss: move |_| gov_basis_confirm_open.set(false),
-                                div { class: "modal-head",
-                                    h3 { "Adopt current registry basis" }
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        class: "icon-button close",
-                                        "aria-label": "Close",
-                                        "data-testid": "authority-basis-confirm-close",
-                                        onclick: move |_| gov_basis_confirm_open.set(false),
-                                        "\u{2715}"
-                                    }
-                                }
-                                div { class: "modal-body workflow-form",
-                                    div { class: "callout danger", "data-testid": "authority-basis-impact",
-                                        strong { "Changes the capability-action vocabulary" }
-                                        p {
-                                            "This binds the Realm's authority root to the capability-action "
-                                            "registry snapshot embedded in this client build. Future grants are "
-                                            "interpreted against the new snapshot; the receiving server must be "
-                                            "able to resolve it or the event is rejected."
-                                        }
-                                    }
-                                    div { class: "metric",
-                                        strong { "Current basis" }
-                                        span { class: "mono", "data-testid": "authority-basis-current", title: "{current_basis}", "{short_protocol_id(&current_basis)}" }
-                                    }
-                                    div { class: "metric",
-                                        strong { "New basis (this build)" }
-                                        span { class: "mono", "data-testid": "authority-basis-next", title: "{embedded_basis}", "{short_protocol_id(&embedded_basis)}" }
-                                    }
-                                    if basis_unchanged {
-                                        div { class: "muted", "data-testid": "authority-basis-unchanged",
-                                            "The Realm already uses this snapshot — submitting again is a no-op."
-                                        }
-                                    }
-                                }
-                                div { class: "modal-foot",
-                                    Button {
-                                        variant: ButtonVariant::Secondary,
-                                        "data-testid": "authority-basis-cancel-button",
-                                        onclick: move |_| gov_basis_confirm_open.set(false),
-                                        "Cancel"
-                                    }
-                                    Button {
-                                        variant: ButtonVariant::Destructive,
-                                        "data-testid": "authority-basis-confirm-button",
-                                        onclick: {
-                                            let base = base_url.clone();
-                                            let realm = selected_realm_id.clone();
-                                            let actor_principal_id = principal_id.clone();
-                                            let root = authority_root.clone();
-                                            move |_| {
-                                                let base = base.clone();
-                                                let realm = realm.clone();
-                                                let api_token = token();
-                                                let actor_id = actor_principal_id.trim().to_owned();
-                                                if actor_id.is_empty() {
-                                                    status_msg.set("basis update failed: account is not connected".to_owned());
-                                                    return;
-                                                }
-                                                let Some(root) = root.clone() else {
-                                                    status_msg.set("basis update failed: authority root is not resolved locally".to_owned());
-                                                    return;
-                                                };
-                                                let payload = match build_basis_update_payload(&realm, &root) {
-                                                    Ok(payload) => payload,
-                                                    Err(err) => {
-                                                        status_msg.set(format!("basis update build failed: {err}"));
-                                                        return;
-                                                    }
-                                                };
-                                                gov_basis_confirm_open.set(false);
-                                                spawn(async move {
-                                                    match crate::transport::auth::with_event_submitter(
-                                                        &base,
-                                                        api_token,
-                                                        |sub| async move {
-                                                            crate::transport::realm_write::update_realm_authority_basis(&sub, &actor_id, payload).await
-                                                        },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(resp) => status_msg.set(format!(
-                                                            "registry basis update submitted: event_id={}",
-                                                            short_protocol_id(&resp.event_id),
-                                                        )),
-                                                        Err(err) => {
-                                                            let text = err.display();
-                                                            let hint = governance_failure_hint(&text)
-                                                                .map(|hint| format!(" — {hint}"))
-                                                                .unwrap_or_default();
-                                                            status_msg.set(format!("basis update failed: {text}{hint}"));
-                                                        }
-                                                    }
-                                                });
-                                            }
-                                        },
-                                        "Adopt registry basis"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             }
             if active_section == RealmAdminSection::Profile {
                 // Realm / Space profile editor. Spec fields are `title`,
@@ -2456,7 +2304,7 @@ pub fn RealmAdminPanel(
 
 // ── Realm governance (authority root) helpers ─────────────────────────
 
-/// `expected_state_digest` for the three authority-root transition payloads:
+/// `expected_state_digest` for the two authority-root transition payloads:
 /// the canonical SHA-256 of the replayed root value, exactly what the soland
 /// reducer recomputes before applying a `security_barrier` transition.
 fn expected_authority_root_digest(
@@ -2504,22 +2352,6 @@ fn build_authority_reset_payload(
     })
 }
 
-/// Build the `ak.realm.authority.basis_update` payload adopting this build's
-/// embedded capability-action registry snapshot.
-fn build_basis_update_payload(
-    realm_id: &str,
-    root: &arkret_policy::realm_bootstrap::RealmAuthorityRootValue,
-) -> anyhow::Result<arkret_sdk::RealmAuthorityBasisUpdatePayload> {
-    Ok(arkret_sdk::RealmAuthorityBasisUpdatePayload {
-        realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
-        expected_state_digest: expected_authority_root_digest(root)?,
-        patch: arkret_sdk::RealmAuthorityBasisUpdatePatch {
-            capability_action_registry_digest:
-                arkret_sdk::current_capability_action_registry_digest()?,
-        },
-    })
-}
-
 /// Operator guidance for the known authority-root rejection reasons, appended
 /// to the raw error in the status line. `None` for anything unrecognized.
 fn governance_failure_hint(error_text: &str) -> Option<&'static str> {
@@ -2538,11 +2370,6 @@ fn governance_failure_hint(error_text: &str) -> Option<&'static str> {
             "this Realm has no projected authority-root cell (it predates the contract); \
              governance transitions are unavailable",
         )
-    } else if error_text.contains("capability_registry_basis_unavailable") {
-        Some(
-            "the server cannot resolve the requested capability-action registry snapshot — the \
-             deployment must ship that registry version before the basis can be adopted",
-        )
     } else {
         None
     }
@@ -2558,11 +2385,6 @@ mod governance_tests {
                 .unwrap(),
             controller_epoch: 3,
             authority_generation: 1,
-            capability_action_registry_digest: arkret_sdk::Hash::new(format!(
-                "sha256:{}",
-                "a".repeat(64)
-            ))
-            .unwrap(),
         }
     }
 
@@ -2622,20 +2444,10 @@ mod governance_tests {
     }
 
     #[test]
-    fn basis_update_payload_adopts_the_embedded_registry_snapshot() {
-        let payload = build_basis_update_payload(REALM, &root()).unwrap();
-        assert_eq!(
-            payload.patch.capability_action_registry_digest,
-            arkret_sdk::current_capability_action_registry_digest().unwrap()
-        );
-    }
-
-    #[test]
     fn governance_failure_hints_cover_the_reducer_rejection_reasons() {
         assert!(governance_failure_hint("submit failed: realm_authority_root_conflict").is_some());
         assert!(governance_failure_hint("rejected: realm_authority_controller_mismatch").is_some());
         assert!(governance_failure_hint("realm_authority_root_missing").is_some());
-        assert!(governance_failure_hint("capability_registry_basis_unavailable").is_some());
         assert_eq!(governance_failure_hint("network timeout"), None);
     }
 }

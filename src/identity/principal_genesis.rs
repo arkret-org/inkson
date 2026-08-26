@@ -131,8 +131,6 @@ pub fn build_genesis_unit(
             ))?,
         });
     founding_notary.validate()?;
-    let registry_digest = arkret_sdk::current_capability_action_registry_digest()
-        .map_err(|error| anyhow::anyhow!("load capability action registry digest: {error}"))?;
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(
         arkret_bootstrap::SelfPrincipalPcrCreateInput {
             principal_id: principal_core_id.clone(),
@@ -151,7 +149,6 @@ pub fn build_genesis_unit(
                 version_id: did_inception_version_id,
             },
             founding_device_descriptor: descriptor,
-            capability_action_registry_digest: registry_digest,
             created_at,
             hlc: create_hlc,
         },

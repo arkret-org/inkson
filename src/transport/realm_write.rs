@@ -16,11 +16,11 @@ use crate::event_builders::{
     build_capability_relinquish_control_intent, build_member_state_transition_event,
     build_plaintext_visible_services_event, build_realm_alias_event,
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
-    build_realm_authority_basis_update_control_intent, build_realm_authority_reset_control_intent,
-    build_realm_bootstrap_steps_for_principal_server, build_realm_destroy_event,
-    build_realm_owner_transfer_control_intent, build_realm_profile_replacement_event,
-    build_realm_state_event, build_space_create_event, build_space_lifecycle_event,
-    parse_realm_bootstrap_members, parse_wire_enum, recommended_realm_policy_bundle_value,
+    build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_principal_server,
+    build_realm_destroy_event, build_realm_owner_transfer_control_intent,
+    build_realm_profile_replacement_event, build_realm_state_event, build_space_create_event,
+    build_space_lifecycle_event, parse_realm_bootstrap_members, parse_wire_enum,
+    recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
@@ -670,18 +670,6 @@ pub async fn reset_realm_authority(
     payload: arkret_sdk::RealmAuthorityResetPayload,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = LocalOperation::new(build_realm_authority_reset_control_intent(
-        actor_id, payload,
-    )?);
-    submitter.submit_sdk_event(&event).await
-}
-
-/// Submit an explicit capability registry basis adoption.
-pub async fn update_realm_authority_basis(
-    submitter: &EventSubmitter,
-    actor_id: &str,
-    payload: arkret_sdk::RealmAuthorityBasisUpdatePayload,
-) -> anyhow::Result<SubmitEventResult> {
-    let event = LocalOperation::new(build_realm_authority_basis_update_control_intent(
         actor_id, payload,
     )?);
     submitter.submit_sdk_event(&event).await

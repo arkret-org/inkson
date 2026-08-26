@@ -153,6 +153,26 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
         "error.not_found",
         "服务器找不到你要查看的内容。它可能已被移动或删除。请刷新后重试。",
     );
+    dict.set(
+        "error.permission_denied",
+        "你没有执行此操作的权限。请让 Realm 所有者或管理员检查你的权限。",
+    );
+    dict.set(
+        "error.unsupported_profile",
+        "此 Realm 使用了当前应用或服务器不支持的 profile。请更新不支持该 profile 的组件后重试。",
+    );
+    dict.set(
+        "error.unsupported_protocol_data",
+        "此操作使用了当前应用或服务器不支持的协议数据类型。请更新不支持该类型的组件后重试。",
+    );
+    dict.set(
+        "error.invalid_protocol_data",
+        "服务器拒绝了不符合当前协议的数据。请刷新后重试；如果问题持续，请报告此问题。",
+    );
+    dict.set(
+        "error.realm_state_conflict",
+        "此 Realm 存在影响该操作的未解决状态冲突。请先解决或修复冲突的 Realm 状态。",
+    );
 }
 
 /// Build Chinese translation dictionary.

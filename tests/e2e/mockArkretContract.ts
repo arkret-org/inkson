@@ -3,6 +3,8 @@
 // `cotest/tests/fixtures/inkson_mock_parity.json` and gets compared
 // against a real soland process. When adding a branch, also add the
 // matching fixture case — unmatched branches are silently dead code.
+import { currentHttpDescribeBindings } from "./currentOperationBindings";
+
 const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
 
 export function mockArkretContract(req) {
@@ -13,7 +15,12 @@ export function mockArkretContract(req) {
 
   if (method === "GET" && path === "/_arkret/describe") {
     return json({
-      service_id: "did:web:server.local",
+      service_id: "ak:did_core:web:server.local",
+      service_resolution: {
+        full_id: "did:web:server.local",
+        method_history_head: "development-unverified",
+        version_id: "development-unverified",
+      },
       trust_domain: "ak:trust_domain:server.local",
       service_kind: "principal_server",
       protocol_version: "1.0",
@@ -25,15 +32,24 @@ export function mockArkretContract(req) {
         "ak.profile.principal_server_events_api.v1",
       ],
       supported_features: ["sync.client_sync", "directory.search_realms", "events.submit"],
-      supported_operations: [
+      ...currentHttpDescribeBindings([
         "ak.server.read.describe",
         "ak.self.events.command.submit",
         "ak.self.events.read.scan",
         "ak.find.directory.read.search_realms",
         "ak.self.keys.backups.read.list",
         "ak.self.signal.command.send",
-      ],
+      ]),
       limits: {},
+      auth_metadata: { mode: "development" },
+      plaintext_visibility: { max_visibility: "none" },
+      rate_limit_policy: { policy_version: "1", entries: [] },
+      implemented_features: [],
+      claimed_profiles: [],
+      verified_profiles: [],
+      experimental_features: [],
+      interop_surfaces: [],
+      development_mode: true,
     });
   }
 
@@ -89,13 +105,17 @@ export function mockArkretContract(req) {
 
   if (method === "GET" && path === "/_arkret/find/directory/describe") {
     return json({
-      service_id: "did:web:server.local",
+      service_id: "ak:did_core:web:server.local",
+      service_resolution: {
+        full_id: "did:web:server.local",
+        method_history_head: "development-unverified",
+        version_id: "development-unverified",
+      },
       trust_domain: "ak:trust_domain:server.local",
       service_kind: "directory_service",
       protocol_version: "1.0",
       supported_profiles: ["ak.profile.directory_service.v1"],
-      supported_operations: ["ak.find.directory.read.describe"],
-      supported_bindings: [{ kind: "http_json" }],
+      ...currentHttpDescribeBindings(["ak.find.directory.read.describe"]),
       supported_features: [],
       auth_metadata: { mode: "public_no_auth" },
       limits: {},

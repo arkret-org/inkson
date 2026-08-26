@@ -142,10 +142,15 @@ pub fn service_supports_profile(description: &ServiceDescribe, profile: &str) ->
 }
 
 pub fn service_supports_operation(description: &ServiceDescribe, operation_id: &str) -> bool {
+    let Some(operation_id) = arkret_sdk::ServiceOperationId::from_wire(operation_id) else {
+        return false;
+    };
+    let Ok(local) = arkret_sdk::OperationBinding::current_http_json(operation_id) else {
+        return false;
+    };
     description
-        .supported_operations
-        .iter()
-        .any(|value| value == operation_id)
+        .select_operation_binding(operation_id, &[local])
+        .is_some()
 }
 
 pub fn missing_event_envelope_write_requirements(
@@ -484,7 +489,36 @@ mod tests {
     use arkret_sdk::contact_operations::ContactScope;
     use arkret_wire::SchemaId;
 
-    use super::projection_realm_id_for_known_node;
+    use super::{projection_realm_id_for_known_node, service_supports_operation};
+
+    #[test]
+    fn operation_support_requires_the_exact_current_http_carrier() {
+        let operation = arkret_sdk::ServiceOperationId::SelfEventsReadScan;
+        let mut description = arkret_sdk::ServiceDescribe::development(
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:service.example").unwrap(),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
+            arkret_sdk::ServiceKind::PrincipalServer,
+        );
+        let exact = arkret_sdk::OperationBinding::current_http_json(operation).unwrap();
+        description.operation_bindings.push(exact.clone());
+        assert!(service_supports_operation(
+            &description,
+            arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_SCAN,
+        ));
+
+        description.operation_bindings[0].response_schema_ref =
+            Some("schemas/unknown.schema.json".to_owned());
+        assert!(!service_supports_operation(
+            &description,
+            arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_SCAN,
+        ));
+
+        description.operation_bindings[0] = exact;
+        assert!(!service_supports_operation(
+            &description,
+            "ak.self.events.read.not_registered",
+        ));
+    }
 
     #[test]
     fn submit_event_outcome_decodes_new_events_submit_wire() {

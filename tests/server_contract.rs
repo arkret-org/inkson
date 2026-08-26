@@ -23,6 +23,22 @@ fn parse_server_description(
     Ok(serde_json::from_value(value)?)
 }
 
+fn http_operation_bindings(operation_ids: &[&str]) -> serde_json::Value {
+    serde_json::Value::Array(
+        operation_ids
+            .iter()
+            .map(|operation_id| {
+                let operation_id = arkret_sdk::ServiceOperationId::from_wire(operation_id)
+                    .expect("fixture operation must be registered");
+                serde_json::to_value(
+                    arkret_sdk::OperationBinding::current_http_json(operation_id).unwrap(),
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+}
+
 fn snapshot_contract_event_id(suffix: &str) -> arkret_sdk::EventId {
     let seed = u8::from_str_radix(&suffix[suffix.len() - 2..], 16).unwrap();
     arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [seed; 32])
@@ -123,7 +139,7 @@ fn inkson_accepts_server_contract_payloads() {
             "push.register_device",
             "moderation.report"
         ],
-        "supported_operations": [
+        "operation_bindings": http_operation_bindings(&[
             "ak.self.account.stream.subscribe",
             "ak.self.events.read.scan",
             "ak.self.events.stream.subscribe",
@@ -131,15 +147,13 @@ fn inkson_accepts_server_contract_payloads() {
             "ak.find.directory.read.describe",
             "ak.find.directory.read.search_realms",
             "ak.find.directory.read.resolve_realm",
-            "ak.index.describe",
-            "ak.index.query",
             "ak.self.authz.read.check",
             "ak.self.authz.grants.read.effective",
             "ak.self.authz.invites.read.list",
             "ak.edge.push.command.register_device",
             "ak.edge.push.command.unregister_device",
             "ak.self.moderation.command.report"
-        ],
+        ]),
         "supported_bindings": [{"kind": "http_json", "base_url": "/_arkret"}],
         "supported_reducer_profiles": ["ak.reducer.core.v1"],
         "auth_metadata": {"mode": "development"},
@@ -158,9 +172,7 @@ fn inkson_accepts_server_contract_payloads() {
         arkret_sdk::ServiceKind::PrincipalServer
     );
     assert!(
-        describe
-            .supported_operations
-            .contains(&"ak.index.query".to_owned())
+        describe.supports_operation(arkret_sdk::ServiceOperationId::SelfAuthzReadCheck)
     );
     assert_eq!(
         describe.supported_bindings[0].base_url.as_deref(),
@@ -199,7 +211,7 @@ fn inkson_accepts_server_contract_payloads() {
         "protocol_version": "1.0",
         "supported_profiles": ["ak.profile.minimal_client.v1"],
         "supported_features": [],
-        "supported_operations": ["ak.self.account.read.describe"],
+        "operation_bindings": http_operation_bindings(&["ak.self.account.read.describe"]),
         "supported_bindings": [],
         "auth_metadata": {"mode": "development"},
         "limits": {},
@@ -245,7 +257,7 @@ fn inkson_accepts_server_contract_payloads() {
         "service_kind": "directory_service",
         "protocol_version": "1.0",
         "supported_profiles": ["ak.profile.directory_service.v1"],
-        "supported_operations": ["ak.find.directory.read.describe"],
+        "operation_bindings": http_operation_bindings(&["ak.find.directory.read.describe"]),
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": [],
         "auth_metadata": {"mode": "public_no_auth"},
@@ -531,11 +543,11 @@ fn server_description_gates_event_envelope_write_plane() {
             "ak.profile.core_event_store.v1",
             "ak.profile.principal_server_events_api.v1"
         ],
-        "supported_operations": [
+        "operation_bindings": http_operation_bindings(&[
             "ak.self.events.read.describe",
             "ak.self.events.command.submit",
             "ak.self.account.stream.subscribe"
-        ],
+        ]),
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["events.submit", "account.subscribe"],
         "auth_metadata": {"mode": "development"},
@@ -573,10 +585,10 @@ fn server_description_gates_event_envelope_write_plane() {
             "ak.profile.core_event_store.v1",
             "ak.profile.principal_server_events_api.v1"
         ],
-        "supported_operations": [
+        "operation_bindings": http_operation_bindings(&[
             "ak.self.events.read.describe",
             "ak.self.events.command.submit"
-        ],
+        ]),
         "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
         "supported_features": ["ak.feature.soland.events.describe"],
         "auth_metadata": {"mode": "development"},
@@ -620,7 +632,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "service_kind": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
-            "supported_operations": ["ak.self.account.stream.subscribe"],
+            "operation_bindings": http_operation_bindings(&["ak.self.account.stream.subscribe"]),
             "supported_features": ["account.subscribe"]
         }))
         .is_err()
@@ -635,7 +647,7 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
-        "supported_operations": ["ak.self.account.stream.subscribe"],
+        "operation_bindings": http_operation_bindings(&["ak.self.account.stream.subscribe"]),
         "supported_bindings": [{"kind": "http_json"}],
         "supported_features": ["account.subscribe"],
         "auth_metadata": {"mode": "development"},

@@ -135,12 +135,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             .any(|write| write.cell.as_str() == arkret_bootstrap::REALM_AUTHORITY_ROOT_CELL),
         "genesis MUST materialize the Realm authority-root cell"
     );
-    assert_eq!(
-        create.payload["object"]["capability_action_registry_digest"],
-        serde_json::to_value(arkret_sdk::current_capability_action_registry_digest().unwrap())
-            .unwrap(),
-        "the create-locked registry digest is the authority-root cell's basis"
-    );
     for event in &events {
         // `OrdinaryRealmBootstrap` is the one context in which a control write
         // may carry no CBA basis: the genesis transaction predates any accepted

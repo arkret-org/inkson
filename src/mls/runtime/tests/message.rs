@@ -471,7 +471,10 @@ fn two_member_group_with_bob_snapshot(
     realm: &str,
     bob_actor: &str,
     bob_device: &str,
-) -> arkret_sdk::ArkretMlsGroup {
+) -> (
+    arkret_sdk::ArkretMlsGroup,
+    Vec<arkret_sdk::MlsEndpointIdentity>,
+) {
     let alice = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
         arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned())
@@ -486,11 +489,12 @@ fn two_member_group_with_bob_snapshot(
     let bob_key_package = bob.key_package_record().unwrap();
     let alice_endpoint = alice.endpoint_identity();
     let bob_endpoint = bob.endpoint_identity();
+    let endpoints = vec![alice_endpoint, bob_endpoint];
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
     let mut bob_group = arkret_sdk::ArkretMlsGroup::join_from_welcome(bob, &add.welcome).unwrap();
     bob_group
-        .install_test_leaf_bindings(vec![alice_endpoint, bob_endpoint])
+        .install_test_leaf_bindings(endpoints.clone())
         .unwrap();
 
     let secret = load_or_create_account_mls_secret(secure, &test_authority(bob_actor)).unwrap();
@@ -507,7 +511,7 @@ fn two_member_group_with_bob_snapshot(
         &salt,
     );
     state.save_mls_snapshot(realm.to_owned(), envelope).unwrap();
-    alice_group
+    (alice_group, endpoints)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -518,7 +522,7 @@ fn historical_author_view_survives_epoch_rotation() {
     let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
-    let mut alice_group =
+    let (mut alice_group, leaf_endpoints) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let epoch_one_snapshot = state.mls_snapshot_for(realm).unwrap();
     let epoch_one_ref =
@@ -554,6 +558,9 @@ fn historical_author_view_survives_epoch_rotation() {
         crate::mls::persistence::restore_envelope(&epoch_one_snapshot, &secret, 0).unwrap();
     let commit = alice_group.self_update_commit().unwrap();
     bob_group.apply_commit(&commit).unwrap();
+    bob_group
+        .install_test_leaf_bindings(leaf_endpoints)
+        .unwrap();
     let post_state = bob_group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let mut salt = [0u8; 16];
@@ -629,7 +636,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
 
-    let mut alice_group =
+    let (mut alice_group, _) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let base_envelope = state.mls_snapshot_for(realm).unwrap();
 
@@ -732,7 +739,7 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b5";
 
-    let mut alice_group =
+    let (mut alice_group, _) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let circle_snapshot = state.mls_snapshot_for(realm).unwrap();
     state.drop_mls_snapshot_for_test(realm);
@@ -799,7 +806,7 @@ fn out_of_order_skipped_keys_survive_restart() {
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
 
-    let mut alice_group =
+    let (mut alice_group, _) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let m1_header = test_message_header(&alice_group, realm);
     let m1 = alice_group.encrypt_payload(m1_header, br#""one""#).unwrap();
@@ -917,7 +924,7 @@ fn plaintext_cache_outlives_group_state() {
     let bob_actor = "did:web:bob.example";
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000e2";
 
-    let mut alice_group =
+    let (mut alice_group, _) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
     let header = test_message_header(&alice_group, realm);
     let m1 = alice_group.encrypt_payload(header, br#""cached""#).unwrap();

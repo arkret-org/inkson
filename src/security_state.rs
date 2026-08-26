@@ -192,21 +192,17 @@ pub fn realm_authority_root_controller_from_events(events: &[Value]) -> Option<S
 
 /// Fully replayed current value of the Realm authority-root cell.
 ///
-/// Genesis comes from the accepted `ak.realm.create` (envelope `actor_id` +
-/// the create-locked `capability_action_registry_digest`); the three
-/// registered CAS transitions (`ak.realm.owner.transfer`,
-/// `ak.realm.authority.reset`, `ak.realm.authority.basis_update`) are then
-/// applied in log order, mirroring the soland reducer's
-/// `apply_realm_authority_transition` effects. `None` when no create is
-/// projected or the create predates the authority-root contract (no registry
-/// digest) — those Realms have no root cell, matching the reducer's
-/// `realm_authority_root_missing` fail-closed path.
+/// Genesis comes from the accepted `ak.realm.create` envelope `actor_id`; the
+/// registered CAS transitions (`ak.realm.owner.transfer` and
+/// `ak.realm.authority.reset`) are then applied in log order, mirroring the
+/// soland reducer's `apply_realm_authority_transition` effects. `None` when no
+/// valid create is projected.
 ///
 /// The `canonical_sha256` of the returned value is exactly the
 /// `expected_state_digest` the security-barrier governance payloads must
-/// carry, so callers building `ak.realm.owner.transfer` /
-/// `ak.realm.authority.{reset,basis_update}` MUST source it from here rather
-/// than re-deriving fragments.
+/// carry, so callers building `ak.realm.owner.transfer` or
+/// `ak.realm.authority.reset` MUST source it from here rather than re-deriving
+/// fragments.
 pub fn realm_authority_root_value_from_events(
     events: &[Value],
 ) -> Option<arkret_policy::realm_bootstrap::RealmAuthorityRootValue> {
@@ -227,14 +223,8 @@ pub fn realm_authority_root_value_from_events(
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|actor_id| !actor_id.is_empty())?;
-                let digest = event
-                    .pointer("/payload/object/capability_action_registry_digest")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|digest| !digest.is_empty())?;
                 let controller_id = arkret_sdk::DidCoreId::new(controller.to_owned()).ok()?;
-                let digest = arkret_sdk::Hash::new(digest.to_owned()).ok()?;
-                Some(RealmAuthorityRootValue::genesis(controller_id, digest))
+                Some(RealmAuthorityRootValue::genesis(controller_id))
             })();
             continue;
         }
@@ -257,15 +247,6 @@ pub fn realm_authority_root_value_from_events(
             }
             arkret_wire::event_kind_str::REALM_AUTHORITY_RESET => {
                 current.authority_generation = current.authority_generation.checked_add(1)?;
-            }
-            arkret_wire::event_kind_str::REALM_AUTHORITY_BASIS_UPDATE => {
-                if let Some(digest) = event
-                    .pointer("/payload/patch/capability_action_registry_digest")
-                    .and_then(Value::as_str)
-                    .and_then(|digest| arkret_sdk::Hash::new(digest.to_owned()).ok())
-                {
-                    current.capability_action_registry_digest = digest;
-                }
             }
             _ => {}
         }
@@ -409,8 +390,6 @@ mod tests {
 
     #[test]
     fn realm_authority_root_replay_follows_owner_transfer_and_reset() {
-        let registry_digest = format!("sha256:{}", "a".repeat(64));
-        let next_digest = format!("sha256:{}", "b".repeat(64));
         let events = json!([
             {
                 "kind": "ak.realm.create",
@@ -418,8 +397,7 @@ mod tests {
                 "payload": {
                     "object": {
                         "schema": "ak.schema.realm_genesis.v1",
-                        "purpose": "collaboration",
-                        "capability_action_registry_digest": registry_digest
+                        "purpose": "collaboration"
                     }
                 }
             },
@@ -438,13 +416,6 @@ mod tests {
                 "payload": {
                     "destructive_confirmation": "ak.realm.authority.reset"
                 }
-            },
-            {
-                "kind": "ak.realm.authority.basis_update",
-                "actor_id": "ak:did_core:web:successor.example",
-                "payload": {
-                    "patch": { "capability_action_registry_digest": next_digest }
-                }
             }
         ]);
         let events = events.as_array().unwrap();
@@ -455,10 +426,6 @@ mod tests {
         );
         assert_eq!(root.controller_epoch, 1);
         assert_eq!(root.authority_generation, 1);
-        assert_eq!(
-            root.capability_action_registry_digest.as_str(),
-            format!("sha256:{}", "b".repeat(64))
-        );
         // The presentation-grade controller helper follows the same transfer.
         assert_eq!(
             realm_authority_root_controller_from_events(events).as_deref(),
@@ -467,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn realm_authority_root_replay_requires_the_create_locked_registry_digest() {
+    fn realm_authority_root_replay_accepts_the_current_create_shape() {
         let events = json!([
             {
                 "kind": "ak.realm.create",
@@ -483,11 +450,13 @@ mod tests {
                 }
             }
         ]);
-        // Pre-contract Realm: no root cell, so no value and no transfer effect
-        // on the replayed root — but the create-actor controller survives for
-        // presentation.
         let events = events.as_array().unwrap();
-        assert_eq!(realm_authority_root_value_from_events(events), None);
+        let root = realm_authority_root_value_from_events(events).unwrap();
+        assert_eq!(
+            root.controller_id.as_str(),
+            "ak:did_core:web:successor.example"
+        );
+        assert_eq!(root.controller_epoch, 1);
         assert_eq!(
             realm_authority_root_controller_from_events(events).as_deref(),
             Some("ak:did_core:web:successor.example")

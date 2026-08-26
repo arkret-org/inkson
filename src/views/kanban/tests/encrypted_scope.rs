@@ -11,13 +11,29 @@ fn test_device_id(value: &str) -> arkret_sdk::DeviceId {
     arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
 }
 
-fn active_account_scope(
-    actor: &str,
-    device: &str,
-) -> crate::secure_key_store::DeviceSeedScopeTestGuard {
+struct ActiveAccountScopeTestGuard {
+    // Drop the signer guard before the account-scope guard so restoration follows
+    // the inverse of the documented scope-then-signer lock order.
+    _signer: crate::event_signer::ActiveSignerTestGuard,
+    _scope: crate::secure_key_store::DeviceSeedScopeTestGuard,
+}
+
+fn active_account_scope(actor: &str, device: &str) -> ActiveAccountScopeTestGuard {
     let authority = test_authority(actor);
     let device = test_device_id(device);
-    crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&authority, &device)))
+    let scope =
+        crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&authority, &device)));
+    let signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
+        crate::event_signer::build_ed25519_device_signer(
+            [41; 32],
+            authority.principal_id.as_str(),
+            device.as_str(),
+        ),
+    )));
+    ActiveAccountScopeTestGuard {
+        _signer: signer,
+        _scope: scope,
+    }
 }
 
 fn seed_device_authorization(actor: &str, device: &str) {

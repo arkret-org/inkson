@@ -3347,7 +3347,6 @@ mod tests {
         let mut managed = realm_create_sdk_event(
             "ak:event:Af2HCFbsrVezIXsZGcgB3mjkpqGK-C4DmteWaG3H0Xbh",
             "did:web:agent.example",
-            None,
         );
         managed.executed_by =
             Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap());
@@ -3363,7 +3362,6 @@ mod tests {
         let ordinary = realm_create_sdk_event(
             "ak:event:Ab0jbIKlPZ-M3WbarZlCPLYtkCWggYwWZeRDlW-ShdQ9",
             "did:web:alice.example",
-            None,
         );
         assert!(uses_bare_online_anchor_submission(true, &ordinary));
     }
@@ -3806,11 +3804,7 @@ mod tests {
     /// A genesis `ak.realm.create` carries no `realm_id` and no
     /// `payload.object.id`: both are derived from `event_id`, so the caller
     /// picks the Event id and reads the Realm id back off the envelope.
-    fn realm_create_sdk_event(
-        event_id: &str,
-        created_by: &str,
-        registry_digest: Option<&str>,
-    ) -> arkret_sdk::Event {
+    fn realm_create_sdk_event(event_id: &str, created_by: &str) -> arkret_sdk::Event {
         let created_by = crate::mls_api_helpers::principal_core_id(created_by).unwrap();
         let mut event: arkret_sdk::Event = serde_json::from_value(json!({
             "event_id": event_id,
@@ -3826,11 +3820,7 @@ mod tests {
             "proofs": []
         }))
         .unwrap();
-        let mut object = json!({});
-        if let Some(digest) = registry_digest {
-            object["capability_action_registry_digest"] = json!(digest);
-        }
-        event.payload.insert("object".to_owned(), object);
+        event.payload.insert("object".to_owned(), json!({}));
         event
     }
 
@@ -3840,15 +3830,11 @@ mod tests {
     const AUTHORITY_REALM: &str = "ak:realm:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
     const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
     const AUTHORITY_CONTROLLER_CORE: &str = "ak:did_core:web:alice.example";
-    const AUTHORITY_DIGEST: &str =
-        "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-
     #[test]
     fn realm_create_authority_resolves_the_root_controller() {
         let events = [realm_create_sdk_event(
             AUTHORITY_GENESIS_EVENT,
             AUTHORITY_CONTROLLER,
-            Some(AUTHORITY_DIGEST),
         )];
         let realm_id = events[0].realm_id.to_string();
         assert_eq!(
@@ -3860,37 +3846,16 @@ mod tests {
     }
 
     #[test]
-    fn realm_create_without_registry_digest_has_no_authority_root() {
-        // Pre-authority-root creates never carried the create-locked digest;
-        // such a Realm has no root cell and must not be claimed.
-        let events = [realm_create_sdk_event(
-            AUTHORITY_GENESIS_EVENT,
-            AUTHORITY_CONTROLLER,
-            None,
-        )];
-        let realm_id = events[0].realm_id.to_string();
-        assert_eq!(
-            realm_create_authority_from_events(&events, &realm_id),
-            Some(RealmCreateAuthority::NoAuthorityRoot)
-        );
-    }
-
-    #[test]
     fn realm_create_authority_ignores_other_realms_and_kinds() {
         // A create for a *different* Realm: a different genesis Event id, so a
         // different derived Realm id.
         let other_realm = realm_create_sdk_event(
             "ak:event:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK",
             "did:web:mallory.example",
-            Some(AUTHORITY_DIGEST),
         );
-        let authority_realm = realm_create_sdk_event(
-            AUTHORITY_GENESIS_EVENT,
-            AUTHORITY_CONTROLLER,
-            Some(AUTHORITY_DIGEST),
-        )
-        .realm_id
-        .to_string();
+        let authority_realm = realm_create_sdk_event(AUTHORITY_GENESIS_EVENT, AUTHORITY_CONTROLLER)
+            .realm_id
+            .to_string();
         let other_kind = sdk_event_with_kind(
             "ak:event:AZpUEIyW7TNKR7LXG3WwW7XhlXVKyRQXiuhWXSw19pzj",
             &authority_realm,
@@ -3931,13 +3896,6 @@ mod tests {
         );
         assert_eq!(
             realm_authority_root_claim(&event("did:web:bob.example"), Some(&root)),
-            None
-        );
-        assert_eq!(
-            realm_authority_root_claim(
-                &event(AUTHORITY_CONTROLLER),
-                Some(&RealmCreateAuthority::NoAuthorityRoot)
-            ),
             None
         );
         assert_eq!(

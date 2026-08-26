@@ -581,16 +581,6 @@ fn build_realm_genesis_object(
     notary
         .validate()
         .map_err(|error| anyhow::anyhow!("invalid frozen Realm notary configuration: {error}"))?;
-    // realm-and-space.md §2.5: the create-locked registry digest is the basis
-    // the Realm's authority-root cell is seeded with, so the owner ceiling is
-    // pinned to the snapshot this client actually authored against.
-    let capability_action_registry_digest = arkret_sdk::current_capability_action_registry_digest()
-        .map_err(|err| {
-            anyhow::anyhow!(
-                "embedded capability-action registry unavailable for realm.create: {err}"
-            )
-        })?;
-
     let digest_algorithm = arkret_sdk::canonical::digest_suite(digest_algorithm.trim())
         .map_err(|err| anyhow::anyhow!("invalid digest_algorithm {digest_algorithm:?}: {err}"))?;
     arkret_sdk::RealmGenesis::event_derived(
@@ -603,7 +593,6 @@ fn build_realm_genesis_object(
         parse_wire_enum("security_class", security_class)?,
         parse_wire_enum("encryption_profile", encryption_profile)?,
         notary,
-        capability_action_registry_digest,
     )
     .map_err(anyhow::Error::from)
 }
@@ -783,8 +772,6 @@ pub fn build_managed_agent_pcr_create_event(
             notary,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
             trust_domain: arkret_sdk::TrustDomainId::new(trust_domain.to_owned())?,
-            capability_action_registry_digest:
-                arkret_sdk::current_capability_action_registry_digest()?,
             created_at,
         },
     )?;
@@ -852,7 +839,6 @@ pub fn build_direct_conversation_founding_steps(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
         notary,
-        arkret_sdk::current_capability_action_registry_digest()?,
         created_at,
     )?;
     let create_cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
@@ -1413,21 +1399,6 @@ pub fn build_realm_authority_reset_control_intent(
 ) -> anyhow::Result<crate::operation::EventIntent> {
     let (scope_ref, actor_id) = realm_authority_builder_context(&payload.realm_id, actor_id)?;
     arkret_policy::realm_bootstrap::build_realm_authority_reset_intent(
-        scope_ref,
-        actor_id,
-        event_timestamp(),
-        payload,
-    )
-    .map_err(Into::into)
-}
-
-/// Build an explicit capability-registry basis adoption Event.
-pub fn build_realm_authority_basis_update_control_intent(
-    actor_id: &str,
-    payload: arkret_sdk::RealmAuthorityBasisUpdatePayload,
-) -> anyhow::Result<crate::operation::EventIntent> {
-    let (scope_ref, actor_id) = realm_authority_builder_context(&payload.realm_id, actor_id)?;
-    arkret_policy::realm_bootstrap::build_realm_authority_basis_update_intent(
         scope_ref,
         actor_id,
         event_timestamp(),

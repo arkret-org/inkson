@@ -132,6 +132,12 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
         .or_else(|| envelope.details().get("reason_code"))
         .and_then(Value::as_str);
     if let Some(reason) = reason {
+        if reason == ReasonCode::CELL_IN_BOTTOM_STATE {
+            return Some("error.realm_state_conflict");
+        }
+        if reason == ReasonCode::UNSUPPORTED_PROFILE {
+            return Some("error.unsupported_profile");
+        }
         if reason == ReasonCode::MLS_GOVERNANCE_BINDING_STALE {
             return Some("error.call.mls_governance_binding_stale");
         }
@@ -202,6 +208,30 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
     }
     if code == ErrorCode::NOT_FOUND {
         return Some("error.not_found");
+    }
+    if code == ErrorCode::CAPABILITY_DENIED {
+        return Some("error.permission_denied");
+    }
+    if code == ErrorCode::UNSUPPORTED_PROFILE {
+        return Some("error.unsupported_profile");
+    }
+    if matches!(
+        code,
+        c if c == ErrorCode::UNSUPPORTED_EVENT_KIND
+            || c == ErrorCode::UNSUPPORTED_FEATURE
+            || c == ErrorCode::UNSUPPORTED_OPERATION_BINDING
+            || c == ErrorCode::UNSUPPORTED_PROTOCOL_VERSION
+    ) {
+        return Some("error.unsupported_protocol_data");
+    }
+    if matches!(
+        code,
+        c if c == ErrorCode::SCHEMA_VIOLATION || c == ErrorCode::JSON_INVALID
+    ) {
+        return Some("error.invalid_protocol_data");
+    }
+    if code == ErrorCode::STATE_MISMATCH {
+        return Some("error.realm_state_conflict");
     }
     if matches!(
         code,
@@ -429,6 +459,40 @@ mod tests {
             display_user_facing(&error),
             english("error.call.mls_governance_binding_stale")
         );
+    }
+
+    #[test]
+    fn user_facing_keys_distinguish_permission_protocol_and_realm_state_failures() {
+        use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
+
+        let permission = sdk_api_error(403, ErrorCode::CAPABILITY_DENIED);
+        let profile = sdk_api_error(422, ErrorCode::UNSUPPORTED_PROFILE);
+        let unsupported_data = sdk_api_error(422, ErrorCode::UNSUPPORTED_EVENT_KIND);
+        let unsupported_binding = sdk_api_error(422, ErrorCode::UNSUPPORTED_OPERATION_BINDING);
+        let invalid_data = sdk_api_error(422, ErrorCode::SCHEMA_VIOLATION);
+        let bottom = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 409,
+            error: Box::new(
+                ErrorEnvelope::new(ErrorCode::STATE_MISMATCH, "realm cell is in Bottom state")
+                    .with_detail(
+                        "reason_code",
+                        Value::String(ReasonCode::CELL_IN_BOTTOM_STATE.to_owned()),
+                    ),
+            ),
+        });
+
+        let cases = [
+            (&permission, "error.permission_denied"),
+            (&profile, "error.unsupported_profile"),
+            (&unsupported_data, "error.unsupported_protocol_data"),
+            (&unsupported_binding, "error.unsupported_protocol_data"),
+            (&invalid_data, "error.invalid_protocol_data"),
+            (&bottom, "error.realm_state_conflict"),
+        ];
+        for (error, expected_key) in cases {
+            assert_eq!(user_facing_error_key(error), Some(expected_key));
+            assert_eq!(display_user_facing(error), english(expected_key));
+        }
     }
 
     #[test]

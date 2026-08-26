@@ -2293,6 +2293,26 @@ fn add_generic_error_keys(dict: &mut TranslationDict) {
         "error.not_found",
         "The server couldn't find what you were looking for. It may have been moved or deleted. Refresh and try again.",
     );
+    dict.set(
+        "error.permission_denied",
+        "You don't have permission to perform this action. Ask a Realm owner or administrator to review your access.",
+    );
+    dict.set(
+        "error.unsupported_profile",
+        "This Realm uses a profile this app or server does not support. Update the unsupported component, then try again.",
+    );
+    dict.set(
+        "error.unsupported_protocol_data",
+        "This operation uses a protocol data type this app or server does not support. Update the unsupported component, then try again.",
+    );
+    dict.set(
+        "error.invalid_protocol_data",
+        "The server rejected data that does not match the current protocol. Refresh and try again; if it continues, report the problem.",
+    );
+    dict.set(
+        "error.realm_state_conflict",
+        "This Realm has an unresolved state conflict affecting this operation. Resolve or repair the conflicting Realm state before trying again.",
+    );
 }
 
 /// English i18n strings for the 6 AKP-0007 reason / error codes

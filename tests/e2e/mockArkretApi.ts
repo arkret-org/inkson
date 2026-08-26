@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mockArkretContract } from "./mockArkretContract";
+import { currentHttpDescribeBindings } from "./currentOperationBindings";
 
 const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
 const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
@@ -1114,7 +1115,7 @@ export async function mockArkretApi(
           "mimi_provider_facade",
           "events.submit",
         ],
-        supported_operations: [
+        ...currentHttpDescribeBindings([
           "ak.server.read.describe",
           "ak.self.account.stream.subscribe",
           "ak.self.account.read.describe",
@@ -1188,9 +1189,8 @@ export async function mockArkretApi(
           "ak.open.mimi.command.proxy_download",
           "ak.open.invite_locator.read.resolve",
           "ak.self.signal.command.send",
-        ],
+        ]),
         supported_reducer_profiles: ["ak.reducer.core.v1"],
-        supported_bindings: [{ kind: "http_json" }],
         auth_metadata: {
           mode: "development",
           account_authority: {
@@ -1729,11 +1729,10 @@ export async function mockArkretApi(
         service_kind: "principal_server",
         protocol_version: "1.0",
         supported_profiles: ["ak.profile.core_event_store.v1"],
-        supported_operations: [
+        ...currentHttpDescribeBindings([
           "ak.self.events.command.submit",
           "ak.self.events.read.describe",
-        ],
-        supported_bindings: [{ kind: "http_json" }],
+        ]),
         supported_features: ["events_query_range_completeness"],
         auth_metadata: {
           mode: "development",
@@ -2750,8 +2749,7 @@ export async function mockArkretApi(
         service_kind: "directory_service",
         protocol_version: "1.0",
         supported_profiles: ["ak.profile.directory_service.v1"],
-        supported_operations: ["ak.find.directory.read.describe"],
-        supported_bindings: [{ kind: "http_json" }],
+        ...currentHttpDescribeBindings(["ak.find.directory.read.describe"]),
         supported_features: [],
         auth_metadata: { mode: "public_no_auth" },
         limits: {},
