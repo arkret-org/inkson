@@ -2,6 +2,45 @@ use super::*;
 
 const MAX_HISTORICAL_MLS_AUTHOR_STATES: usize = 32;
 
+/// Whether two records retain the same epoch secret under the same accepted
+/// MLS transition. `local_state_ref` is deliberately excluded: application
+/// messages advance the within-epoch ratchet and therefore change the durable
+/// snapshot digest without changing the epoch's exporter secret or its
+/// Genesis/Commit winner tuple.
+fn same_local_authoritative_history_secret(
+    left: &arkret_sdk::LocalAuthoritativeHistorySecret,
+    right: &arkret_sdk::LocalAuthoritativeHistorySecret,
+) -> bool {
+    left.effective_scope == right.effective_scope
+        && left.mls_group_id == right.mls_group_id
+        && left.epoch == right.epoch
+        && left.mls_ciphersuite == right.mls_ciphersuite
+        && left.transition_ref == right.transition_ref
+        && left.transition_event_digest == right.transition_event_digest
+        && left.mls_transition_digest == right.mls_transition_digest
+        && left.secret_b64u == right.secret_b64u
+}
+
+fn merge_local_authoritative_history_secret(
+    by_epoch: &mut BTreeMap<u64, arkret_sdk::LocalAuthoritativeHistorySecret>,
+    epoch: u64,
+    record: arkret_sdk::LocalAuthoritativeHistorySecret,
+) -> Result<bool, crate::secure_key_store::SecureKeyStoreError> {
+    if let Some(existing) = by_epoch.get(&epoch) {
+        if same_local_authoritative_history_secret(existing, &record) {
+            // Keep the first durable evidence handle. It already proves this
+            // exact epoch secret and transition; a later within-epoch snapshot
+            // is another valid handle, not a competing history secret.
+            return Ok(false);
+        }
+        return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+            format!("conflicting local-authoritative history records for epoch {epoch}"),
+        ));
+    }
+    by_epoch.insert(epoch, record);
+    Ok(true)
+}
+
 fn historical_mls_state_key(effective_scope_key: &str, group_id: &str, epoch: u64) -> String {
     format!("{epoch:020}\u{1f}{effective_scope_key}\u{1f}{group_id}")
 }
@@ -160,14 +199,7 @@ impl PendingHistorySecrets {
             .map(crate::secure_key_store::decode_history_secrets_json)
             .unwrap_or_default();
         for (epoch, record) in &self.by_epoch {
-            if let Some(existing) = merged.get(epoch)
-                && existing != record
-            {
-                return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
-                    format!("conflicting local-authoritative history records for epoch {epoch}"),
-                ));
-            }
-            merged.insert(*epoch, record.clone());
+            merge_local_authoritative_history_secret(&mut merged, *epoch, record.clone())?;
         }
         crate::secure_key_store::persist_history_secrets(
             secure_store,
@@ -532,14 +564,16 @@ impl LocalStateStore {
             .as_deref()
             .map(crate::secure_key_store::decode_history_secrets_json)
             .unwrap_or_default();
+        let mut durable_update_needed = false;
         if let Some(inline) = self.cached.history_secrets.get(&scope_group_key) {
-            by_epoch.extend(
-                inline
-                    .iter()
-                    .map(|(epoch, secret)| (*epoch, secret.clone())),
-            );
+            for (epoch, secret) in inline {
+                durable_update_needed |= merge_local_authoritative_history_secret(
+                    &mut by_epoch,
+                    *epoch,
+                    secret.clone(),
+                )?;
+            }
         }
-        let mut new_secret_count = 0;
         for record in records {
             record.validate().map_err(|error| {
                 crate::secure_key_store::SecureKeyStoreError::Backend(error.to_string())
@@ -550,21 +584,11 @@ impl LocalStateStore {
                         .to_owned(),
                 ));
             }
-            if let Some(existing) = by_epoch.get(&record.epoch) {
-                if existing != &record {
-                    return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
-                        format!(
-                            "conflicting local-authoritative history records for epoch {}",
-                            record.epoch
-                        ),
-                    ));
-                }
-            } else {
-                by_epoch.insert(record.epoch, record);
-                new_secret_count += 1;
-            }
+            let epoch = record.epoch;
+            durable_update_needed |=
+                merge_local_authoritative_history_secret(&mut by_epoch, epoch, record)?;
         }
-        Ok((new_secret_count > 0).then_some(PendingHistorySecrets {
+        Ok(durable_update_needed.then_some(PendingHistorySecrets {
             scope_group_key,
             by_epoch,
         }))
@@ -1567,6 +1591,131 @@ mod tests {
     use serde_json::json;
 
     use super::LocalStateStore;
+
+    fn history_secret_fixture(
+        local_state_ref: &str,
+        secret: &[u8],
+    ) -> (
+        arkret_sdk::ScopeRef,
+        arkret_sdk::LocalAuthoritativeHistorySecret,
+    ) {
+        let realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:AXT4J1l4F3ziDJgbW0eaFtcLosoRKMG4tLzy3ImP2xL6".to_owned(),
+        )
+        .unwrap();
+        let effective_scope = arkret_sdk::HistoryEffectiveScope::Realm {
+            realm_id: realm_id.clone(),
+        };
+        let record = arkret_sdk::LocalAuthoritativeHistorySecret {
+            mls_group_id: effective_scope.canonical_mls_group_id().unwrap(),
+            effective_scope,
+            epoch: 0,
+            mls_ciphersuite: arkret_sdk::ARKRET_MLS_CIPHERSUITE_CANONICAL_ID.to_owned(),
+            local_state_ref: local_state_ref.to_owned(),
+            transition_ref: arkret_sdk::EventId::new(
+                "ak:event:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            )
+            .unwrap(),
+            transition_event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64)))
+                .unwrap(),
+            mls_transition_digest: arkret_sdk::Hash::new(format!("sha256:{}", "2".repeat(64)))
+                .unwrap(),
+            secret_b64u: arkret_sdk::base64url_encode(secret),
+        };
+        (arkret_sdk::ScopeRef::Realm { realm_id }, record)
+    }
+
+    #[tokio::test]
+    async fn same_epoch_secret_with_new_snapshot_ref_is_idempotent() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-history-secret-snapshot-refresh-{}-{}.json",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let mut state = LocalStateStore::with_path(&path);
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let (scope, first) =
+            history_secret_fixture("inkson.mls_snapshot.v1:first", b"same-epoch-secret");
+        let group_id = first.mls_group_id.clone();
+        let pending = state
+            .prepare_history_secrets(&secure, &scope, &group_id, [first])
+            .unwrap()
+            .expect("first retain must be persisted");
+        pending.persist(&secure).await.unwrap();
+        state.publish_history_secrets(pending);
+
+        let (_, refreshed) = history_secret_fixture(
+            "inkson.mls_snapshot.v1:after-description",
+            b"same-epoch-secret",
+        );
+        assert!(
+            state
+                .prepare_history_secrets(&secure, &scope, &group_id, [refreshed])
+                .unwrap()
+                .is_none(),
+            "a within-epoch ratchet snapshot must not compete with the already-retained epoch secret"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn concurrent_same_epoch_retains_with_distinct_snapshot_refs_converge() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-history-secret-concurrent-refresh-{}-{}.json",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let state = LocalStateStore::with_path(&path);
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let (scope, first) =
+            history_secret_fixture("inkson.mls_snapshot.v1:first", b"same-epoch-secret");
+        let (_, second) =
+            history_secret_fixture("inkson.mls_snapshot.v1:second", b"same-epoch-secret");
+        let group_id = first.mls_group_id.clone();
+        let first = state
+            .prepare_history_secrets(&secure, &scope, &group_id, [first])
+            .unwrap()
+            .unwrap();
+        let second = state
+            .prepare_history_secrets(&secure, &scope, &group_id, [second])
+            .unwrap()
+            .unwrap();
+
+        first.persist(&secure).await.unwrap();
+        second.persist(&secure).await.unwrap();
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn same_epoch_retain_still_rejects_different_secret_material() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-history-secret-real-conflict-{}-{}.json",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let mut state = LocalStateStore::with_path(&path);
+        let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+        let (scope, first) =
+            history_secret_fixture("inkson.mls_snapshot.v1:first", b"first-secret");
+        let group_id = first.mls_group_id.clone();
+        let pending = state
+            .prepare_history_secrets(&secure, &scope, &group_id, [first])
+            .unwrap()
+            .unwrap();
+        state.publish_history_secrets(pending);
+        let (_, conflicting) =
+            history_secret_fixture("inkson.mls_snapshot.v1:second", b"different-secret");
+
+        let error = state
+            .prepare_history_secrets(&secure, &scope, &group_id, [conflicting])
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting local-authoritative history records for epoch 0")
+        );
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn persisted_snapshot_recovers_exact_group_state_reference_without_side_index() {

@@ -863,7 +863,7 @@ fn prepare_local_authoritative_history_secret(
         .map_err(|error| MlsRuntimeError::Encrypt(error.to_string()))?;
     state_store
         .prepare_history_secrets(secure_store, effective_scope, &group.group_id(), [record])
-        .map_err(MlsRuntimeError::DeviceSecret)
+        .map_err(|error| MlsRuntimeError::Encrypt(format!("retain MLS history secret: {error}")))
 }
 
 pub(crate) fn derive_and_retain_realm_history_secret(
