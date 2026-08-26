@@ -124,7 +124,8 @@ use recovery_effects::AccountRecoveryEffects;
 use recovery_reminder_effects::{RecoveryReminderEffectState, RecoveryReminderEffects};
 use route_surface::{RouteSurface, RouteSurfaceState};
 use secure_store_effects::{SecureStoreEffectState, SecureStoreEffects};
-use session_boot::*;
+pub(crate) use session_boot::*;
+use session_context::AppStateStore;
 pub(crate) use session_context::SessionContext;
 use session_shell::{MobileNavDrawer, SessionShell, SessionSurface};
 use shell_effects::{ShellEffectState, ShellEffects};
@@ -219,6 +220,11 @@ const DXC_BUTTON_STYLE: &str = yoface::ui::button::BUTTON_CSS;
 pub fn App() -> Element {
     ensure_default_push_token_provider();
     use_hook(crate::notification_sound::initialize_notification_audio);
+    // Runtime adapters can be invoked by long-lived tasks while Dioxus has the
+    // root app scope on its stack. Own the shared store at that common ancestor
+    // so those reads/writes cannot outlive an `AppBootstrap` route scope.
+    let state_store = use_signal_sync(LocalStateStore::default);
+    use_context_provider(|| AppStateStore(state_store));
     rsx! {
         web_leader::WebLeaderGate {}
     }
@@ -303,7 +309,7 @@ fn AppBootstrap() -> Element {
         .primary_handle_for_did(crate::app::principal_id_text(&initial_principal_id))
         .unwrap_or_default();
     let config_store = use_signal(LocalConfigStore::default);
-    let mut state_store = use_signal_sync(LocalStateStore::default);
+    let mut state_store = use_context::<AppStateStore>().0;
     // Move-into-signal initialisers. Each `use_signal(...)` runs once on
     // first render, so we pre-extract the fields and hand each closure a
     // ready-to-move `String` instead of repeatedly cloning the whole
@@ -332,7 +338,7 @@ fn AppBootstrap() -> Element {
     let mut principal_id = use_signal(move || initial_principal_id);
     let device_id = use_signal(move || initial_device_id);
     let mut token = use_signal(move || initial_session_credential);
-    let mut session_boot_state = use_signal(move || initial_session_boot_state);
+    let session_boot_state = use_signal(move || initial_session_boot_state);
     let mut session_generation = use_signal(|| 0_u64);
     // Bumped by Settings → My Agents on every owned-agent mutation so the
     // Contacts sidebar can re-pull `agent_list`. See `SessionContext`.
@@ -346,6 +352,7 @@ fn AppBootstrap() -> Element {
         active_account,
         state_store,
         base_url,
+        session_generation,
         owned_agents_rev,
     });
     let sidecar_session = use_signal(|| None::<crate::sidecar::HostedSidecarState>);
@@ -691,45 +698,12 @@ fn AppBootstrap() -> Element {
                 )
             });
     let has_session = !token().trim().is_empty();
-    let boot_state = session_boot_state();
-    let auth_surface = auth_surface_for_route(&route, has_session, boot_state);
-    let authenticated_login_navigator = navigator;
-    let authenticated_login_token = token;
-    let route_is_login = matches!(&route, Route::Login);
-    use_effect(move || {
-        if route_is_login && !authenticated_login_token().trim().is_empty() {
-            // Session restoration can flip the auth surface while this route
-            // is being reconciled. Defer canonicalisation by one task turn so
-            // the router sees the settled authenticated tree; a synchronous
-            // replace here can be lost and leave a live dashboard at /login,
-            // making the next hard refresh paint the login entry route again.
-            spawn(async move {
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-                if let Some(failure) = authenticated_login_navigator.replace(Route::Dashboard) {
-                    tracing::warn!(
-                        ?failure,
-                        "authenticated entry-route canonicalisation failed"
-                    );
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    // Dioxus can reconcile the authenticated shell before its
-                    // history provider accepts the replace above. Do not leave
-                    // a live dashboard addressed as `/login`: a later hard
-                    // refresh would re-enter the auth route. Re-check the real
-                    // browser location after the router turn and use one
-                    // replace-navigation only when it is still stale.
-                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(5)).await;
-                    if let Some(window) = web_sys::window()
-                        && window.location().pathname().ok().as_deref() == Some("/login")
-                        && let Err(error) = window.location().replace("/")
-                    {
-                        tracing::warn!(?error, "browser entry-route canonicalisation failed");
-                    }
-                }
-            });
-        }
-    });
+    let auth_surface = auth_surface_for_route(
+        &route,
+        has_session,
+        session_boot_state(),
+        secure_store_bootstrap_ready(),
+    );
     let active_server_label = normalize_server_url(&base_url());
     let principal_id_value = crate::app::principal_id_owned(principal_id());
     let device_id_value = device_id();
@@ -1097,16 +1071,12 @@ fn AppBootstrap() -> Element {
             ""
         }
     );
-    let login_navigator = navigator;
-    let callback_navigator = navigator;
     let login_onboarding_navigator = navigator;
     let callback_onboarding_navigator = navigator;
     let mut login_bootstrap_pending = bootstrap_pending;
     let mut callback_bootstrap_pending = bootstrap_pending;
-    let mut login_session_boot_state = session_boot_state;
-    let mut callback_session_boot_state = session_boot_state;
-    let login_redirect_to_dashboard = should_redirect_to_dashboard_after_login(&route);
-    let callback_redirect_to_dashboard = login_redirect_to_dashboard;
+    let login_session_boot_state = session_boot_state;
+    let callback_session_boot_state = session_boot_state;
     let auth_shell_node = rsx! {
             main {
                 class: auth_class,
@@ -1128,15 +1098,11 @@ fn AppBootstrap() -> Element {
                                 auto_capture_callback: true,
                                 on_login: move |_| {
                                     callback_bootstrap_pending.set(true);
-                                    callback_session_boot_state.set(SessionBootState::Checking);
-                                    if callback_redirect_to_dashboard {
-                                        // Session-only login never promotes a
-                                        // local checkpoint into onboarding.
-                                        // OIDC account handoffs use the
-                                        // `on_onboarding` branch below and
-                                        // refresh the server snapshot first.
-                                        let _ = callback_navigator.push(Route::Dashboard);
-                                    }
+                                    transition_session_boot_state(
+                                        callback_session_boot_state,
+                                        SessionBootState::Checking,
+                                        "OIDC callback accepted; bootstrap requested",
+                                    );
                                 },
                                 on_onboarding: move |_| {
                                     let _ = callback_onboarding_navigator.push(Route::Onboarding);
@@ -1155,7 +1121,7 @@ fn AppBootstrap() -> Element {
                                 div { class: "auth-brand",
                                     div { class: "auth-logo", "C" }
                                     div {
-                                        h1 { "Restoring session" }
+                                        h1 { "Opening secure storage" }
                                         p { "Arkret" }
                                     }
                                 }
@@ -1163,7 +1129,7 @@ fn AppBootstrap() -> Element {
                                 div {
                                     class: "auth-status",
                                     "data-testid": "session-restore-status",
-                                    "{connection_status()}"
+                                    "Loading encrypted account and device keys…"
                                 }
                             }
                         },
@@ -1177,10 +1143,11 @@ fn AppBootstrap() -> Element {
                                 auto_capture_callback: false,
                                 on_login: move |_| {
                                     login_bootstrap_pending.set(true);
-                                    login_session_boot_state.set(SessionBootState::Checking);
-                                    if login_redirect_to_dashboard {
-                                        let _ = login_navigator.push(Route::Dashboard);
-                                    }
+                                    transition_session_boot_state(
+                                        login_session_boot_state,
+                                        SessionBootState::Checking,
+                                        "interactive session accepted; bootstrap requested",
+                                    );
                                 },
                                 on_onboarding: move |_| {
                                     let _ = login_onboarding_navigator.push(Route::Onboarding);
@@ -1193,11 +1160,7 @@ fn AppBootstrap() -> Element {
             }
     };
 
-    let content_route = if matches!(&route, Route::Login) && has_session {
-        Route::Dashboard
-    } else {
-        route.clone()
-    };
+    let content_route = authenticated_content_route(&route, has_session);
     // Single source of truth for the post-boot account-health prompt chain.
     // Each prompt below renders iff it is the resolved highest-priority one,
     // replacing the per-prompt inline suppression that used to drift apart.
@@ -1271,7 +1234,6 @@ fn AppBootstrap() -> Element {
                             sync_cursor,
                             token,
                             principal_id,
-                            device_id,
                             selected_realm_id,
                             realm_tree_nodes,
                             projection_events,
@@ -1294,6 +1256,7 @@ fn AppBootstrap() -> Element {
                             account_has_other_devices,
                             sync_bootstrap_complete,
                             session_boot_state,
+                            bootstrap_pending,
                             did_cache,
                             did_resolution_health,
                         },
@@ -1363,9 +1326,7 @@ fn AppBootstrap() -> Element {
                 base_url,
                 token,
                 state_store,
-                connection_status,
                 last_error,
-                session_boot_state,
                 secure_store_bootstrap_ready,
                 is_server_admin,
                 theme,
@@ -1906,7 +1867,6 @@ fn AppBootstrap() -> Element {
                                                             sync_cursor,
                                                             token,
                                                             principal_id,
-                                                            device_id,
                                                             selected_realm_id,
                                                             realm_tree_nodes,
                                                             projection_events,
@@ -1929,6 +1889,7 @@ fn AppBootstrap() -> Element {
                                                             account_has_other_devices,
                                                             sync_bootstrap_complete,
                                                             session_boot_state,
+                                                            bootstrap_pending,
                                                                                 did_cache,
                                                             did_resolution_health,
                                                         },
@@ -3913,7 +3874,11 @@ fn AppBootstrap() -> Element {
                                                         device.clone(),
                                                         String::new(),
                                                     );
-                                                    session_boot_state.set(SessionBootState::Unauthenticated);
+                                                    transition_session_boot_state(
+                                                        session_boot_state,
+                                                        SessionBootState::Unauthenticated,
+                                                        "user logged out",
+                                                    );
                                                     // Bump the SyncEngine generation so any
                                                     // in-flight long-poll exits on its next
                                                     // iteration check instead of applying a

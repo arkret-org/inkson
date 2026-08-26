@@ -2010,7 +2010,10 @@ impl EventSubmitter {
         // hence part of the immutable semantic intent.
         validate_capability_grant_payload(&intent)?;
         let local_operation_id = operation.local_operation_id().to_string();
-        tracing::warn!(
+        // Freezing and enqueueing is the normal durable-submit path; keep its
+        // correlation fields available without presenting success as a browser
+        // warning.
+        tracing::debug!(
             local_operation_id = %local_operation_id,
             kind = %intent.kind().as_str(),
             realm = ?intent.realm_id_opt().map(arkret_sdk::RealmId::as_str),
@@ -2658,7 +2661,11 @@ impl EventSubmitter {
                 )
                 .with_auth_context(auth_context)
         };
-        tracing::warn!(
+        // This is routine authoring telemetry. Data Events intentionally carry
+        // `seal_ref + auth_context` and no `seal_basis`, so warning on the
+        // expected `has_seal_basis = false` shape only creates false alarms in
+        // the browser console.
+        tracing::debug!(
             kind = %intent.kind().as_str(),
             seal_ref = ?intent.seal_ref().map(arkret_sdk::SealId::as_str),
             has_seal_basis = intent.seal_basis().is_some(),

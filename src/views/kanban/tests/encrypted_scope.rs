@@ -804,6 +804,54 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
 }
 
 #[test]
+fn encrypted_write_accepts_resolvable_full_did_for_active_core_identity() {
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let _account_scope = active_account_scope("ak:did_core:web:alice.example", device);
+    let mut state = isolated_store_for_tests("full-did-active-account-match");
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let patch = json!({
+        "summary": {"$op": "set", "value": "metadata summary"},
+    });
+
+    let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
+        patch.clone(),
+        "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
+        "did:web:alice.example",
+        device,
+        &mut state,
+        &secure,
+    )
+    .expect("the active Core DID must match its resolvable Full DID");
+
+    assert_eq!(seal_against_accepted_epoch(patched, &mls_events), patch);
+}
+
+#[test]
+fn encrypted_write_rejects_full_did_for_a_different_active_identity() {
+    let device = "ak:device:01904100-0000-7000-8000-000000000001";
+    let _account_scope = active_account_scope("ak:did_core:web:alice.example", device);
+    let mut state = isolated_store_for_tests("different-full-did-active-account");
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+
+    let error = encrypt_private_card_detail_patch_values_with_store(
+        json!({"summary": {"$op": "set", "value": "metadata summary"}}),
+        "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
+        "did:web:bob.example",
+        device,
+        &mut state,
+        &secure,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        "encrypted write identity does not match the active account"
+    );
+}
+
+#[test]
 fn encrypted_scope_allows_structural_strand_position_update() {
     let event = crate::operation::ak_ops::strand_position_update(
         TEST_REALM_ID,

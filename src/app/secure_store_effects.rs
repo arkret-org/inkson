@@ -379,13 +379,6 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         }
                         let _ = user_store;
                     }
-                    if !token_for_secure_upgrade.peek().trim().is_empty()
-                        && let Some(window) = web_sys::window()
-                        && window.location().pathname().ok().as_deref() == Some("/login")
-                        && let Err(error) = window.location().replace("/")
-                    {
-                        tracing::warn!(?error, "browser entry-route canonicalisation failed");
-                    }
                 }
                 Ok(None) => {
                     tracing::warn!(

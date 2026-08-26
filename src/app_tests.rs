@@ -818,16 +818,47 @@ fn rehydrated_session_credential_only_matches_active_config() {
 #[test]
 fn auth_surface_hides_login_while_session_is_restoring() {
     assert_eq!(
-        auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Restoring),
+        auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Restoring, false),
         AuthSurface::Restoring
     );
     assert_eq!(
-        auth_surface_for_route(&Route::Login, false, SessionBootState::Restoring),
+        auth_surface_for_route(&Route::Login, false, SessionBootState::Restoring, false),
         AuthSurface::Restoring
     );
     assert_eq!(
-        auth_surface_for_route(&Route::Login, false, SessionBootState::Unauthenticated),
+        auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Restoring, true),
+        AuthSurface::Restoring
+    );
+    assert_eq!(
+        auth_surface_for_route(
+            &Route::Login,
+            false,
+            SessionBootState::Unauthenticated,
+            true,
+        ),
         AuthSurface::Login
+    );
+}
+
+#[test]
+fn oidc_callback_waits_for_secure_store_before_mounting() {
+    assert_eq!(
+        auth_surface_for_route(
+            &Route::AuthCallback,
+            false,
+            SessionBootState::Restoring,
+            false,
+        ),
+        AuthSurface::Restoring
+    );
+    assert_eq!(
+        auth_surface_for_route(
+            &Route::AuthCallback,
+            false,
+            SessionBootState::Unauthenticated,
+            true,
+        ),
+        AuthSurface::Callback
     );
 }
 
@@ -847,7 +878,12 @@ fn session_boot_state_leaves_restoring_when_secure_store_is_ready_without_materi
         SessionBootState::Unauthenticated
     );
     assert_eq!(
-        auth_surface_for_route(&Route::Dashboard, false, SessionBootState::Unauthenticated),
+        auth_surface_for_route(
+            &Route::Dashboard,
+            false,
+            SessionBootState::Unauthenticated,
+            true,
+        ),
         AuthSurface::Login
     );
 }
@@ -855,28 +891,33 @@ fn session_boot_state_leaves_restoring_when_secure_store_is_ready_without_materi
 #[test]
 fn auth_surface_shows_shell_while_live_session_is_checking() {
     assert_eq!(
-        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking),
+        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking, true),
         AuthSurface::AppShell
     );
 }
 
 #[test]
-fn auth_surface_shows_shell_when_restoring_has_live_session() {
+fn auth_surface_waits_for_secure_store_even_when_memory_has_a_token() {
     assert_eq!(
-        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Restoring),
-        AuthSurface::AppShell
+        auth_surface_for_route(&Route::Dashboard, true, SessionBootState::Checking, false),
+        AuthSurface::Restoring
     );
 }
 
 #[test]
 fn auth_surface_routes_authenticated_login_to_app_shell() {
     assert_eq!(
-        auth_surface_for_route(&Route::Login, true, SessionBootState::Authenticated),
+        auth_surface_for_route(&Route::Login, true, SessionBootState::Authenticated, true),
         AuthSurface::AppShell
     );
     assert_eq!(
-        auth_surface_for_route(&Route::AuthCallback, true, SessionBootState::Authenticated),
-        AuthSurface::Callback
+        auth_surface_for_route(
+            &Route::AuthCallback,
+            true,
+            SessionBootState::Authenticated,
+            true,
+        ),
+        AuthSurface::AppShell
     );
 }
 
@@ -894,6 +935,17 @@ fn post_login_navigation_preserves_authenticated_deep_links() {
             section: "realms".to_owned(),
         }
     ));
+}
+
+#[test]
+fn authenticated_auth_routes_render_dashboard_without_a_second_login_panel() {
+    for route in [Route::Login, Route::Register, Route::AuthCallback] {
+        assert_eq!(authenticated_content_route(&route, true), Route::Dashboard);
+    }
+    assert_eq!(
+        authenticated_content_route(&Route::Settings, true),
+        Route::Settings
+    );
 }
 
 #[test]

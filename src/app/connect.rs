@@ -71,6 +71,50 @@ where
     (session.generation() == generation).then_some(result)
 }
 
+#[derive(Clone)]
+struct BootstrapSessionLease {
+    session: crate::runtime::session::SessionCoordinator,
+    generation: u64,
+}
+
+impl BootstrapSessionLease {
+    fn new(session: crate::runtime::session::SessionCoordinator, generation: u64) -> Self {
+        Self {
+            session,
+            generation,
+        }
+    }
+
+    fn invalidate(&self, reason: impl Into<String>) -> bool {
+        let reason = reason.into();
+        let invalidated = self
+            .session
+            .invalidate_if_generation(self.generation, reason.clone());
+        if !invalidated {
+            tracing::debug!(
+                target: "session_boot",
+                lease_generation = self.generation,
+                active_generation = self.session.generation(),
+                %reason,
+                "ignored stale bootstrap session invalidation"
+            );
+        }
+        invalidated
+    }
+
+    fn is_current(&self) -> bool {
+        self.session.generation() == self.generation
+    }
+}
+
+impl std::ops::Deref for BootstrapSessionLease {
+    type Target = crate::runtime::session::SessionCoordinator;
+
+    fn deref(&self) -> &Self::Target {
+        &self.session
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SessionRefreshWritePlan {
     pub(super) grant: bool,
@@ -95,50 +139,54 @@ pub(super) fn session_refresh_write_plan(
 async fn accepted_account_context(
     authed: &crate::transport::TransportClient,
     principal_id: arkret_sdk::DidCoreId,
-    description: &arkret_sdk::ServiceDescribe,
-    did_cache: &arkret_sdk::identity::DidResolutionCache,
+    description: Option<&arkret_sdk::ServiceDescribe>,
     current: Option<&crate::identity::active_account::ActiveAccountContext>,
     device_id: &str,
     server_url: &str,
 ) -> anyhow::Result<crate::identity::active_account::ActiveAccountContext> {
-    let public = authed
-        .sdk_http_client()?
-        .open_principal_resolution(&principal_id, &description.service_id)
-        .await?;
-    public.method_history_evidence.validate_shape()?;
-    let boundary = public.method_history_evidence.boundary();
-    if boundary.to_method_history_head != public.resolution_projection.method_history_head
-        || boundary.to_version_id != public.resolution_projection.version_id
-    {
-        return Err(anyhow::anyhow!(
-            "principal resolution projection does not match method-history boundary"
-        ));
+    let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
+    let server_url = url::Url::parse(server_url)?;
+
+    // Login/onboarding only publish ActiveAccountContext after verifying the
+    // complete principal + Principal Server resolution histories. Connect must
+    // reuse that accepted state instead of making an empty, session-scoped DID
+    // cache a second authentication authority. The cache is an optimization for
+    // later resolutions and is intentionally cleared across account changes.
+    if let Some(current) = current.filter(|account| {
+        account.authority.principal_id == principal_id
+            && description.is_none_or(|description| {
+                account.authority.principal_server_id == description.service_id
+            })
+            && account.device_id == device_id
+            && account.server_url == server_url
+    }) {
+        return Ok(current.clone());
     }
-    let now = chrono::Utc::now();
-    let resolved_service = did_cache
-        .get(&description.service_resolution.full_id, now)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Principal Server DID document is not present in the accepted resolution cache"
-            )
-        })?;
-    arkret_sdk::signatures::service_resolution::verify_public_principal_resolution(
-        &public,
-        &resolved_service.document,
-        now,
-    )?;
-    let authority = public.authority();
+
+    let description = description.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Principal Server describe is temporarily unavailable and no accepted account context can be reused"
+        )
+    })?;
+    let authority =
+        arkret_sdk::PrincipalAuthorityKey::new(principal_id, description.service_id.clone());
     let profile_id = current
         .filter(|account| account.authority == authority)
         .map(|account| account.profile_id.clone())
         .unwrap_or_else(|| format!("ak:profile:{}", crate::operation::uuid_v7()));
-    crate::identity::active_account::ActiveAccountContext::new(
+
+    // A missing/mismatched accepted context is repaired through the canonical
+    // full-history verifier. This path fetches and authenticates the Principal
+    // Server resolution itself; it never treats a cache miss as proof that the
+    // user's session is invalid.
+    crate::transport::account::resolve_active_account_context(
+        &authed.sdk_http_client()?,
         profile_id,
         authority,
-        public.resolution_projection,
-        arkret_sdk::DeviceId::new(device_id.trim().to_owned())?,
-        url::Url::parse(server_url)?,
+        device_id,
+        server_url,
     )
+    .await
 }
 
 async fn client_core_events_describe(
@@ -261,14 +309,50 @@ pub(super) async fn refresh_session_credential_for_active_context(
 }
 
 fn invalidate_bootstrap_session(
-    session: &crate::runtime::session::SessionCoordinator,
+    session: &BootstrapSessionLease,
     reason: impl Into<String>,
-    mut session_boot_state: Signal<SessionBootState>,
+    session_boot_state: Signal<SessionBootState>,
     mut sync_bootstrap_complete: Signal<bool>,
 ) {
-    session.invalidate(reason);
-    session_boot_state.set(SessionBootState::Unauthenticated);
+    if session.invalidate(reason) {
+        transition_session_boot_state(
+            session_boot_state,
+            SessionBootState::Unauthenticated,
+            "bootstrap invalidated the active session",
+        );
+        sync_bootstrap_complete.set(true);
+    }
+}
+
+/// Keep an accepted credential alive when bootstrap is temporarily unable to
+/// finish. The single bootstrap effect is re-armed after a short delay; only a
+/// terminal session result is allowed to call `invalidate_bootstrap_session`.
+fn defer_bootstrap_retry(
+    session: BootstrapSessionLease,
+    reason: String,
+    mut connection_status: Signal<String>,
+    mut network_state: Signal<String>,
+    mut last_error: Signal<Option<String>>,
+    mut sync_bootstrap_complete: Signal<bool>,
+    mut bootstrap_pending: Signal<bool>,
+) {
+    let retry_marker = reason.clone();
+    connection_status.set(format!(
+        "{}: {reason}",
+        ConnectionState::Reconnecting.label()
+    ));
+    network_state.set("reconnecting".to_owned());
+    last_error.set(Some(reason));
     sync_bootstrap_complete.set(true);
+    spawn(async move {
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(2)).await;
+        if session.is_current()
+            && *sync_bootstrap_complete.peek()
+            && last_error.peek().as_deref() == Some(retry_marker.as_str())
+        {
+            bootstrap_pending.set(true);
+        }
+    });
 }
 
 #[derive(Clone)]
@@ -279,7 +363,6 @@ pub(super) struct ConnectContext {
     pub(super) sync_cursor: Signal<String>,
     pub(super) token: Signal<String>,
     pub(super) principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    pub(super) device_id: Signal<String>,
     pub(super) selected_realm_id: Signal<String>,
     pub(super) realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub(super) projection_events: Signal<Vec<ProjectionEvent>>,
@@ -312,9 +395,12 @@ pub(super) struct ConnectContext {
     /// first full account-subscribe snapshot on the same render.
     pub(super) sync_bootstrap_complete: Signal<bool>,
     pub(super) session_boot_state: Signal<SessionBootState>,
+    /// Re-arms the single bootstrap effect after a retryable failure without
+    /// converting that failure into a logout.
+    pub(super) bootstrap_pending: Signal<bool>,
     /// Session DID-resolution cache handle. Root identity verification uses a
-    /// resolver backed by a snapshot of this cache; back-fills are written back. Shared with the
-    /// SyncEngine's `did_cache` so both receive paths reuse resolved documents.
+    /// complete retained history instead of depending on this cache. Downstream
+    /// resolver back-fills are shared with SyncEngine for reuse.
     pub(super) did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     /// App-shell DID resolution health banner state. The root identity
     /// describe probe updates this on every connect/manual refresh; authority
@@ -514,10 +600,15 @@ pub(super) fn connect(
     device: String,
     ctx: ConnectContext,
 ) {
-    let mut device = crate::config::normalize_device_id(&device);
+    let device = crate::config::normalize_device_id(&device);
     let mut active_account = SessionContext::get().active_account;
     spawn(async move {
         let session = ctx.session.clone();
+        // Capture the owner before the first network await. A login can finish
+        // while the unauthenticated describe probes below are still running;
+        // that older task must never adopt the replacement credential and
+        // continue as though it were the new login's bootstrap.
+        let bootstrap_session_generation = session.generation();
         let mut sync_bootstrap_complete = ctx.sync_bootstrap_complete;
         // Connection-lifecycle status only; operation feedback goes through
         // `crate::components::feedback` toasts.
@@ -525,7 +616,6 @@ pub(super) fn connect(
         let mut sync_cursor = ctx.sync_cursor;
         let token = ctx.token;
         let mut principal_id = ctx.principal_id;
-        let mut device_id_signal = ctx.device_id;
         let mut selected_realm_id = ctx.selected_realm_id;
         let mut realm_tree_nodes = ctx.realm_tree_nodes;
         let mut projection_events = ctx.projection_events;
@@ -542,11 +632,12 @@ pub(super) fn connect(
         let mut personal_handles = ctx.personal_handles;
         let mut personal_handles_status = ctx.personal_handles_status;
         let mut theme = ctx.theme;
-        let mut session_boot_state = ctx.session_boot_state;
+        let session_boot_state = ctx.session_boot_state;
         let mut needs_device_authorization = ctx.needs_device_authorization;
         let mut device_authorization_check_complete = ctx.device_authorization_check_complete;
         let mut account_has_other_devices = ctx.account_has_other_devices;
         let mut did_resolution_health = ctx.did_resolution_health;
+        let bootstrap_pending = ctx.bootstrap_pending;
 
         // A (re)connect may point at a different / re-provisioned Account
         // Authority, so drop the cached authority resolution and let the first
@@ -558,11 +649,15 @@ pub(super) fn connect(
         device_authorization_check_complete.set(false);
         account_has_other_devices.set(false);
         tracing::debug!(target: "session_boot", token_empty = token().trim().is_empty(), "connect: starting bootstrap connect (sets Checking/Restoring; only reaches Authenticated at end)");
-        session_boot_state.set(if token().trim().is_empty() {
-            SessionBootState::Restoring
-        } else {
-            SessionBootState::Checking
-        });
+        transition_session_boot_state(
+            session_boot_state,
+            if token().trim().is_empty() {
+                SessionBootState::Restoring
+            } else {
+                SessionBootState::Checking
+            },
+            "bootstrap connect started",
+        );
         status.set(ConnectionState::Loading.label().to_owned());
         network_state.set("reconnecting".to_owned());
         last_error.set(None);
@@ -589,11 +684,15 @@ pub(super) fn connect(
                             did_resolution_health.set(
                                 crate::components::DidResolutionHealth::unsupported_principal_server(),
                             );
-                            session_boot_state.set(if token().trim().is_empty() {
-                                SessionBootState::Unauthenticated
-                            } else {
-                                SessionBootState::Authenticated
-                            });
+                            transition_session_boot_state(
+                                session_boot_state,
+                                if token().trim().is_empty() {
+                                    SessionBootState::Unauthenticated
+                                } else {
+                                    SessionBootState::Authenticated
+                                },
+                                "server does not satisfy bootstrap requirements",
+                            );
                             sync_bootstrap_complete.set(true);
                             return;
                         }
@@ -663,14 +762,24 @@ pub(super) fn connect(
                 };
                 did_resolution_health.set(identity_health);
 
+                if session.generation() != bootstrap_session_generation {
+                    return;
+                }
+                let session_refresh = bootstrap_session_refresh(&session).await;
+                if session.generation() != bootstrap_session_generation {
+                    return;
+                }
                 let mut session_credential;
-                match bootstrap_session_refresh(&session).await {
+                match session_refresh {
                     crate::runtime::session::CurrentSessionRefresh::Credential(refreshed) => {
                         session_credential = refreshed;
-                        session_boot_state.set(SessionBootState::Checking);
+                        transition_session_boot_state(
+                            session_boot_state,
+                            SessionBootState::Checking,
+                            "session credential restored for bootstrap",
+                        );
                     }
-                    crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason }
-                    | crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
+                    crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
                         let probe_label = description
                             .as_ref()
                             .map(|d| format!("{} / {}", d.service_kind, d.protocol_version))
@@ -678,32 +787,49 @@ pub(super) fn connect(
                         status.set(format!("Refreshed: {probe_label}; sign-in required"));
                         network_state.set("online".to_owned());
                         crypto_state.set("No authenticated session".to_owned());
-                        last_error.set(Some(reason));
+                        last_error.set(Some(reason.clone()));
                         needs_device_authorization.set(false);
                         device_authorization_check_complete.set(true);
-                        session_boot_state.set(SessionBootState::Unauthenticated);
+                        session.invalidate(reason);
                         sync_bootstrap_complete.set(true);
+                        return;
+                    }
+                    // SessionCoordinator invalidates before returning this
+                    // variant, so the generation guard above has already
+                    // returned. Keep this arm exhaustive and side-effect free.
+                    crate::runtime::session::CurrentSessionRefresh::LoginRequired { .. } => {
                         return;
                     }
                     crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
-                        status.set("Session could not be restored; sign in again".to_owned());
-                        network_state.set("reconnecting".to_owned());
-                        last_error
-                            .set(Some(format!("session credential restore failed: {reason}")));
-                        session_boot_state.set(SessionBootState::Unauthenticated);
-                        sync_bootstrap_complete.set(true);
+                        let reason = format!("session credential restore deferred: {reason}");
+                        defer_bootstrap_retry(
+                            BootstrapSessionLease::new(
+                                session.clone(),
+                                bootstrap_session_generation,
+                            ),
+                            reason,
+                            status,
+                            network_state,
+                            last_error,
+                            sync_bootstrap_complete,
+                            bootstrap_pending,
+                        );
                         return;
                     }
                 }
-                let bootstrap_session_generation = session.generation();
+                let session =
+                    BootstrapSessionLease::new(session.clone(), bootstrap_session_generation);
 
                 let Ok(mut authed) = current_authed_api(&base, &session_credential, state_store)
                 else {
-                    invalidate_bootstrap_session(
-                        &session,
-                        "authenticated session provider did not yield a client",
-                        session_boot_state,
+                    defer_bootstrap_retry(
+                        session.clone(),
+                        "authenticated session transport is not initialized yet".to_owned(),
+                        status,
+                        network_state,
+                        last_error,
                         sync_bootstrap_complete,
+                        bootstrap_pending,
                     );
                     return;
                 };
@@ -763,11 +889,15 @@ pub(super) fn connect(
                                 let Ok(rebound) =
                                     current_authed_api(&base, &session_credential, state_store)
                                 else {
-                                    invalidate_bootstrap_session(
-                                        &session,
-                                        "refreshed session provider did not yield a client",
-                                        session_boot_state,
+                                    defer_bootstrap_retry(
+                                        session.clone(),
+                                        "refreshed session transport is not initialized yet"
+                                            .to_owned(),
+                                        status,
+                                        network_state,
+                                        last_error,
                                         sync_bootstrap_complete,
+                                        bootstrap_pending,
                                     );
                                     return;
                                 };
@@ -813,7 +943,9 @@ pub(super) fn connect(
                                         last_error.set(Some(format!("account_me: {retry_error}")));
                                         crate::app::principal_id_owned(actor.clone())
                                     }
-                                    Err(retry_error) if is_auth_expired_error(&retry_error) => {
+                                    Err(retry_error)
+                                        if is_terminal_session_grant_error(&retry_error) =>
+                                    {
                                         invalidate_bootstrap_session(
                                             &session,
                                             format!(
@@ -821,6 +953,20 @@ pub(super) fn connect(
                                             ),
                                             session_boot_state,
                                             sync_bootstrap_complete,
+                                        );
+                                        return;
+                                    }
+                                    Err(retry_error) if is_auth_expired_error(&retry_error) => {
+                                        defer_bootstrap_retry(
+                                            session.clone(),
+                                            format!(
+                                                "account_me temporarily rejected refreshed session: {retry_error}"
+                                            ),
+                                            status,
+                                            network_state,
+                                            last_error,
+                                            sync_bootstrap_complete,
+                                            bootstrap_pending,
                                         );
                                         return;
                                     }
@@ -832,9 +978,6 @@ pub(super) fn connect(
                             }
                             crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                                 reason,
-                            }
-                            | crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                                reason,
                             } => {
                                 invalidate_bootstrap_session(
                                     &session,
@@ -844,16 +987,22 @@ pub(super) fn connect(
                                 );
                                 return;
                             }
+                            crate::runtime::session::CurrentSessionRefresh::LoginRequired {
+                                ..
+                            } => return,
                             crate::runtime::session::CurrentSessionRefresh::RetryLater {
                                 reason,
                             } => {
-                                invalidate_bootstrap_session(
-                                    &session,
+                                defer_bootstrap_retry(
+                                    session.clone(),
                                     format!(
                                         "account_me rejected current session and refresh could not complete: {reason}; account_me: {error}"
                                     ),
-                                    session_boot_state,
+                                    status,
+                                    network_state,
+                                    last_error,
                                     sync_bootstrap_complete,
+                                    bootstrap_pending,
                                 );
                                 return;
                             }
@@ -880,22 +1029,11 @@ pub(super) fn connect(
                     );
                     return;
                 };
-                let Some(description) = description.as_ref() else {
-                    invalidate_bootstrap_session(
-                        &session,
-                        "Principal Server identity was not accepted; account context cannot be created",
-                        session_boot_state,
-                        sync_bootstrap_complete,
-                    );
-                    return;
-                };
                 let current_account = active_account.peek().clone();
-                let did_cache_snapshot = ctx.did_cache.peek().clone();
                 let mut accepted_account = match accepted_account_context(
                     &authed,
                     canonical_principal_id.clone(),
-                    description,
-                    &did_cache_snapshot,
+                    description.as_ref(),
                     current_account.as_ref(),
                     &device,
                     &base,
@@ -904,15 +1042,23 @@ pub(super) fn connect(
                 {
                     Ok(account) => account,
                     Err(error) => {
-                        invalidate_bootstrap_session(
-                            &session,
-                            format!("current principal resolution was not accepted: {error}"),
-                            session_boot_state,
+                        defer_bootstrap_retry(
+                            session.clone(),
+                            format!(
+                                "current principal resolution could not be accepted yet: {error}"
+                            ),
+                            status,
+                            network_state,
+                            last_error,
                             sync_bootstrap_complete,
+                            bootstrap_pending,
                         );
                         return;
                     }
                 };
+                if !session.is_current() {
+                    return;
+                }
                 if accepted_account.principal_id() != &canonical_principal_id {
                     invalidate_bootstrap_session(
                         &session,
@@ -949,20 +1095,26 @@ pub(super) fn connect(
                         session_credential.clone(),
                     ));
                     if let Some(error) = store.persist_error() {
-                        invalidate_bootstrap_session(
-                            &session,
+                        defer_bootstrap_retry(
+                            session.clone(),
                             format!("accepted account config persist failed: {error}"),
-                            session_boot_state,
+                            status,
+                            network_state,
+                            last_error,
                             sync_bootstrap_complete,
+                            bootstrap_pending,
                         );
                         return;
                     }
                     if let Err(error) = store.save_profiles(&profiles) {
-                        invalidate_bootstrap_session(
-                            &session,
+                        defer_bootstrap_retry(
+                            session.clone(),
                             format!("accepted account profile persist failed: {error}"),
-                            session_boot_state,
+                            status,
+                            network_state,
+                            last_error,
                             sync_bootstrap_complete,
+                            bootstrap_pending,
                         );
                         return;
                     }
@@ -971,11 +1123,14 @@ pub(super) fn connect(
                     match state_store.write().switch_active_account(&accepted_account) {
                         Ok(changed) => changed,
                         Err(error) => {
-                            invalidate_bootstrap_session(
-                                &session,
+                            defer_bootstrap_retry(
+                                session.clone(),
                                 format!("accepted account namespace activation failed: {error}"),
-                                session_boot_state,
+                                status,
+                                network_state,
+                                last_error,
                                 sync_bootstrap_complete,
+                                bootstrap_pending,
                             );
                             return;
                         }
@@ -1094,8 +1249,7 @@ pub(super) fn connect(
                         session_boot_state,
                         sync_bootstrap_complete,
                     );
-                    device = grant_device.to_string();
-                    device_id_signal.set(grant_device.to_string());
+                    return;
                 }
                 {
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -1169,11 +1323,15 @@ pub(super) fn connect(
                                 let Ok(rebound) =
                                     current_authed_api(&base, &session_credential, state_store)
                                 else {
-                                    invalidate_bootstrap_session(
-                                        &session,
-                                        "refreshed session provider did not yield a client",
-                                        session_boot_state,
+                                    defer_bootstrap_retry(
+                                        session.clone(),
+                                        "refreshed session transport is not initialized yet"
+                                            .to_owned(),
+                                        status,
+                                        network_state,
+                                        last_error,
                                         sync_bootstrap_complete,
+                                        bootstrap_pending,
                                     );
                                     return;
                                 };
@@ -1199,7 +1357,9 @@ pub(super) fn connect(
                                         account_has_other_devices.set(has_other);
                                         needs_device_authorization.set(needs_authorization);
                                     }
-                                    Err(retry_error) if is_auth_expired_error(&retry_error) => {
+                                    Err(retry_error)
+                                        if is_terminal_session_grant_error(&retry_error) =>
+                                    {
                                         invalidate_bootstrap_session(
                                             &session,
                                             format!(
@@ -1207,6 +1367,20 @@ pub(super) fn connect(
                                             ),
                                             session_boot_state,
                                             sync_bootstrap_complete,
+                                        );
+                                        return;
+                                    }
+                                    Err(retry_error) if is_auth_expired_error(&retry_error) => {
+                                        defer_bootstrap_retry(
+                                            session.clone(),
+                                            format!(
+                                                "device authorization temporarily rejected refreshed session: {retry_error}"
+                                            ),
+                                            status,
+                                            network_state,
+                                            last_error,
+                                            sync_bootstrap_complete,
+                                            bootstrap_pending,
                                         );
                                         return;
                                     }
@@ -1221,9 +1395,6 @@ pub(super) fn connect(
                             }
                             crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                                 reason,
-                            }
-                            | crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                                reason,
                             } => {
                                 invalidate_bootstrap_session(
                                     &session,
@@ -1233,16 +1404,22 @@ pub(super) fn connect(
                                 );
                                 return;
                             }
+                            crate::runtime::session::CurrentSessionRefresh::LoginRequired {
+                                ..
+                            } => return,
                             crate::runtime::session::CurrentSessionRefresh::RetryLater {
                                 reason,
                             } => {
-                                invalidate_bootstrap_session(
-                                    &session,
+                                defer_bootstrap_retry(
+                                    session.clone(),
                                     format!(
                                         "device authorization rejected current session and refresh could not complete: {reason}"
                                     ),
-                                    session_boot_state,
+                                    status,
+                                    network_state,
+                                    last_error,
                                     sync_bootstrap_complete,
+                                    bootstrap_pending,
                                 );
                                 return;
                             }
@@ -1298,11 +1475,15 @@ pub(super) fn connect(
                                 let Ok(rebound) =
                                     current_authed_api(&base, &session_credential, state_store)
                                 else {
-                                    invalidate_bootstrap_session(
-                                        &session,
-                                        "refreshed session provider did not yield a client",
-                                        session_boot_state,
+                                    defer_bootstrap_retry(
+                                        session.clone(),
+                                        "refreshed session transport is not initialized yet"
+                                            .to_owned(),
+                                        status,
+                                        network_state,
+                                        last_error,
                                         sync_bootstrap_complete,
+                                        bootstrap_pending,
                                     );
                                     return;
                                 };
@@ -1334,28 +1515,21 @@ pub(super) fn connect(
                                 return;
                             }
                             crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                                reason,
-                            } => {
-                                invalidate_bootstrap_session(
-                                    &session,
-                                    format!(
-                                        "session refresh requires login: {reason}; sync: {error}"
-                                    ),
-                                    session_boot_state,
-                                    sync_bootstrap_complete,
-                                );
-                                return;
-                            }
+                                ..
+                            } => return,
                             crate::runtime::session::CurrentSessionRefresh::RetryLater {
                                 reason,
                             } => {
-                                invalidate_bootstrap_session(
-                                    &session,
+                                defer_bootstrap_retry(
+                                    session.clone(),
                                     format!(
                                         "sync rejected current session and refresh could not complete: {reason}; sync: {error}"
                                     ),
-                                    session_boot_state,
+                                    status,
+                                    network_state,
+                                    last_error,
                                     sync_bootstrap_complete,
+                                    bootstrap_pending,
                                 );
                                 return;
                             }
@@ -1397,11 +1571,15 @@ pub(super) fn connect(
                                                 &session_credential,
                                                 state_store,
                                             ) else {
-                                                invalidate_bootstrap_session(
-                                                    &session,
-                                                    "refreshed session provider did not yield a client",
-                                                    session_boot_state,
+                                                defer_bootstrap_retry(
+                                                    session.clone(),
+                                                    "refreshed session transport is not initialized yet"
+                                                        .to_owned(),
+                                                    status,
+                                                    network_state,
+                                                    last_error,
                                                     sync_bootstrap_complete,
+                                                    bootstrap_pending,
                                                 );
                                                 return;
                                             };
@@ -1933,6 +2111,9 @@ pub(super) fn connect(
                             },
                         )
                         .await;
+                        if !session.is_current() {
+                            return;
+                        }
                         let synced_projection_events = {
                             // Merge encrypted bodies on read (author sidecar →
                             // remote decrypt-on-read). The `store` write guard
@@ -1980,17 +2161,23 @@ pub(super) fn connect(
                     }
                     Err(error) if is_terminal_session_grant_error(&error) => {
                         tracing::warn!(target: "session_boot", ?error, "connect: sync returned terminal session-grant error; invalidating current session");
-                        session.invalidate("session grant is no longer active");
-                        session_boot_state.set(SessionBootState::Unauthenticated);
-                        sync_bootstrap_complete.set(true);
+                        invalidate_bootstrap_session(
+                            &session,
+                            "session grant is no longer active",
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
                         return;
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        invalidate_bootstrap_session(
-                            &session,
-                            format!("sync rejected refreshed session: {error}"),
-                            session_boot_state,
+                        defer_bootstrap_retry(
+                            session.clone(),
+                            format!("sync temporarily rejected refreshed session: {error}"),
+                            status,
+                            network_state,
+                            last_error,
                             sync_bootstrap_complete,
+                            bootstrap_pending,
                         );
                         return;
                     }
@@ -2067,11 +2254,15 @@ pub(super) fn connect(
                                 let Ok(rebound) =
                                     current_authed_api(&base, &session_credential, state_store)
                                 else {
-                                    invalidate_bootstrap_session(
-                                        &session,
-                                        "refreshed session provider did not yield a client",
-                                        session_boot_state,
+                                    defer_bootstrap_retry(
+                                        session.clone(),
+                                        "refreshed session transport is not initialized yet"
+                                            .to_owned(),
+                                        status,
+                                        network_state,
+                                        last_error,
                                         sync_bootstrap_complete,
+                                        bootstrap_pending,
                                     );
                                     return;
                                 };
@@ -2102,28 +2293,21 @@ pub(super) fn connect(
                                 return;
                             }
                             crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                                reason,
-                            } => {
-                                invalidate_bootstrap_session(
-                                    &session,
-                                    format!(
-                                        "session refresh requires login: {reason}; events_describe: {error}"
-                                    ),
-                                    session_boot_state,
-                                    sync_bootstrap_complete,
-                                );
-                                return;
-                            }
+                                ..
+                            } => return,
                             crate::runtime::session::CurrentSessionRefresh::RetryLater {
                                 reason,
                             } => {
-                                invalidate_bootstrap_session(
-                                    &session,
+                                defer_bootstrap_retry(
+                                    session.clone(),
                                     format!(
                                         "events_describe rejected current session and refresh could not complete: {reason}; events_describe: {error}"
                                     ),
-                                    session_boot_state,
+                                    status,
+                                    network_state,
+                                    last_error,
                                     sync_bootstrap_complete,
+                                    bootstrap_pending,
                                 );
                                 return;
                             }
@@ -2141,17 +2325,25 @@ pub(super) fn connect(
                     }
                     Err(error) if is_terminal_session_grant_error(&error) => {
                         tracing::warn!(target: "session_boot", ?error, "connect: events_describe returned terminal session-grant error; invalidating current session");
-                        session.invalidate("session grant is no longer active");
-                        session_boot_state.set(SessionBootState::Unauthenticated);
-                        sync_bootstrap_complete.set(true);
+                        invalidate_bootstrap_session(
+                            &session,
+                            "session grant is no longer active",
+                            session_boot_state,
+                            sync_bootstrap_complete,
+                        );
                         return;
                     }
                     Err(error) if is_auth_expired_error(&error) => {
-                        invalidate_bootstrap_session(
-                            &session,
-                            format!("events_describe rejected refreshed session: {error}"),
-                            session_boot_state,
+                        defer_bootstrap_retry(
+                            session.clone(),
+                            format!(
+                                "events_describe temporarily rejected refreshed session: {error}"
+                            ),
+                            status,
+                            network_state,
+                            last_error,
                             sync_bootstrap_complete,
+                            bootstrap_pending,
                         );
                         return;
                     }
@@ -2179,12 +2371,19 @@ pub(super) fn connect(
                 );
             }
         }
+        if session.generation() != bootstrap_session_generation {
+            return;
+        }
         tracing::debug!(target: "session_boot", token_empty = token().trim().is_empty(), "connect: reached END of bootstrap — setting boot_state = Authenticated (token present) / Unauthenticated (empty)");
-        session_boot_state.set(if token().trim().is_empty() {
-            SessionBootState::Unauthenticated
-        } else {
-            SessionBootState::Authenticated
-        });
+        transition_session_boot_state(
+            session_boot_state,
+            if token().trim().is_empty() {
+                SessionBootState::Unauthenticated
+            } else {
+                SessionBootState::Authenticated
+            },
+            "bootstrap connect completed",
+        );
         sync_bootstrap_complete.set(true);
     });
 }
@@ -2192,6 +2391,30 @@ pub(super) fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_bootstrap_lease_cannot_invalidate_replacement_session() {
+        let coordinator = crate::runtime::session::SessionCoordinator::new(|| {
+            Box::pin(async {
+                crate::runtime::session::CurrentSessionRefresh::retry_later("unused")
+            })
+        });
+        let invalidated = std::rc::Rc::new(std::cell::RefCell::new(false));
+        coordinator.set_invalidator({
+            let invalidated = invalidated.clone();
+            move |_| *invalidated.borrow_mut() = true
+        });
+        let lease = BootstrapSessionLease::new(coordinator.clone(), coordinator.generation());
+
+        coordinator.replace("new-login-credential");
+
+        assert!(!lease.invalidate("late connect failure"));
+        assert!(!*invalidated.borrow());
+        assert_eq!(
+            coordinator.credential().as_deref(),
+            Some("new-login-credential")
+        );
+    }
 
     #[test]
     fn authorized_device_requires_exact_directory_signer_match() {

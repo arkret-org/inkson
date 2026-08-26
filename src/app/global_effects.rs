@@ -1,5 +1,9 @@
 use super::*;
 
+fn should_run_proactive_session_refresh(secure_store_ready: bool, credential: &str) -> bool {
+    secure_store_ready && !credential.trim().is_empty()
+}
+
 /// Application-wide effects whose lifecycle is the mounted session shell.
 /// Route surfaces only consume their projections and never depend on the
 /// order in which these effects were registered.
@@ -10,9 +14,7 @@ pub(super) fn GlobalEffects(
     base_url: Signal<String>,
     token: Signal<String>,
     state_store: SyncSignal<LocalStateStore>,
-    mut connection_status: Signal<String>,
     mut last_error: Signal<Option<String>>,
-    mut session_boot_state: Signal<SessionBootState>,
     secure_store_bootstrap_ready: Signal<bool>,
     mut is_server_admin: Signal<bool>,
     theme: Signal<String>,
@@ -82,8 +84,10 @@ pub(super) fn GlobalEffects(
         apply_document_root_theme(resolved_night);
     });
 
-    // Proactive rotation shares the root session coordinator with reactive
-    // request retries, so only one refresh can be in flight for a generation.
+    // Proactive rotation is steady-state maintenance only. Cold-boot restore
+    // is owned by SecureStoreEffects + ConnectionEffects. In particular, an
+    // empty token is a stable signed-out state after secure storage settles;
+    // it must never be rewritten to Restoring on every poll tick.
     use_future({
         let session = runtime_services.session.clone();
         move || {
@@ -91,69 +95,36 @@ pub(super) fn GlobalEffects(
             async move {
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
                 loop {
-                    // The wasm account context, grant and DPoP material are
-                    // hydrated from encrypted IndexedDB. Refreshing before
-                    // that tier settles turns an expected "not loaded yet"
-                    // into SignInRequired and briefly publishes the login
-                    // surface on every hard refresh.
-                    if !secure_store_bootstrap_ready() {
-                        connection_status.set("Restoring session...".to_owned());
-                        session_boot_state.set(SessionBootState::Restoring);
-                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(25))
-                            .await;
+                    if !should_run_proactive_session_refresh(
+                        secure_store_bootstrap_ready(),
+                        &token(),
+                    ) {
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
+                            crate::identity::session_refresh::POLL_INTERVAL_SECS,
+                        ))
+                        .await;
                         continue;
-                    }
-                    if token().trim().is_empty() {
-                        connection_status.set("Restoring session...".to_owned());
-                        session_boot_state.set(SessionBootState::Restoring);
                     }
                     match session.refresh().await {
                         crate::runtime::session::CurrentSessionRefresh::Credential(_) => {
-                            connection_status.set("Online".to_owned());
-                            session_boot_state.set(SessionBootState::Authenticated);
-                            last_error.set(None);
-                            #[cfg(target_arch = "wasm32")]
-                            if let Some(window) = web_sys::window()
-                                && window.location().pathname().ok().as_deref() == Some("/login")
-                                && let Err(error) = window.location().replace("/")
-                            {
-                                tracing::warn!(
-                                    ?error,
-                                    "restored session browser-route canonicalisation failed"
-                                );
-                            }
+                            // connect() owns Checking -> Authenticated. A
+                            // maintenance refresh must not declare bootstrap
+                            // complete or navigate while connect is in flight.
                         }
                         crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                             reason,
                         } => {
                             last_error.set(Some(reason));
-                            if token().trim().is_empty() {
-                                // Secure storage has settled above. At this
-                                // point SignInRequired means the accepted
-                                // account or its local grant is genuinely
-                                // absent, rather than merely still hydrating.
-                                connection_status
-                                    .set("Session could not be restored; sign in again".to_owned());
-                                session_boot_state.set(SessionBootState::Unauthenticated);
-                            }
                         }
                         crate::runtime::session::CurrentSessionRefresh::LoginRequired {
                             reason,
                         } => {
                             last_error.set(Some(reason));
-                            if token().trim().is_empty() {
-                                connection_status.set("Session expired; sign in again".to_owned());
-                                session_boot_state.set(SessionBootState::Unauthenticated);
-                            }
                         }
                         crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
                             last_error.set(Some(format!(
                                 "background session refresh pending: {reason}"
                             )));
-                            if token().trim().is_empty() {
-                                connection_status.set("Restoring session...".to_owned());
-                                session_boot_state.set(SessionBootState::Restoring);
-                            }
                         }
                     }
                     crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
@@ -207,4 +178,17 @@ pub(super) fn GlobalEffects(
     });
 
     rsx! {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_run_proactive_session_refresh;
+
+    #[test]
+    fn proactive_refresh_never_turns_a_signed_out_browser_into_restore() {
+        assert!(!should_run_proactive_session_refresh(false, ""));
+        assert!(!should_run_proactive_session_refresh(true, ""));
+        assert!(!should_run_proactive_session_refresh(true, "   "));
+        assert!(should_run_proactive_session_refresh(true, "sx:live"));
+    }
 }

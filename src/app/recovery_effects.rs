@@ -128,6 +128,7 @@ pub(super) fn AccountRecoveryEffects(
         active_account,
         state_store,
         base_url,
+        session_generation,
         ..
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
@@ -159,6 +160,8 @@ pub(super) fn AccountRecoveryEffects(
             return;
         };
         let generation = sync_generation();
+        let ui_session_generation = session_generation();
+        let coordinator_generation = session_coordinator.generation();
         if !matches!(session_boot_state(), SessionBootState::Authenticated)
             || base.trim().is_empty()
             || credential.trim().is_empty()
@@ -168,7 +171,7 @@ pub(super) fn AccountRecoveryEffects(
             account_recovery_retry_attempt.set(0);
             return;
         }
-        let detection_key = format!("{generation}|{base}|{actor_id}");
+        let detection_key = format!("{ui_session_generation}|{generation}|{base}|{actor_id}");
         if account_recovery_detection_key_seen().as_deref() == Some(detection_key.as_str()) {
             return;
         }
@@ -273,7 +276,8 @@ pub(super) fn AccountRecoveryEffects(
                             );
                         }
                         RecoveryCompletionAction::InvalidateSession => {
-                            session_coordinator.invalidate(
+                            session_coordinator.invalidate_if_generation(
+                                coordinator_generation,
                                 "session expired while verifying recovery material evidence",
                             );
                         }
@@ -287,8 +291,10 @@ pub(super) fn AccountRecoveryEffects(
                         RecoveryRequestCompletion::AuthFailure,
                     ) == RecoveryCompletionAction::InvalidateSession
                     {
-                        session_coordinator
-                            .invalidate("session expired while loading account recovery state");
+                        session_coordinator.invalidate_if_generation(
+                            coordinator_generation,
+                            "session expired while loading account recovery state",
+                        );
                     }
                 }
                 Err(error) => {

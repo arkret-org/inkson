@@ -62,7 +62,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         mut device_authorization_check_complete,
         mut account_has_other_devices,
         mut sync_bootstrap_complete,
-        mut session_boot_state,
+        session_boot_state,
         secure_store_bootstrap_ready,
         mut session_generation,
         did_resolution_health,
@@ -112,7 +112,11 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 device_authorization_check_complete.set(false);
                 account_has_other_devices.set(false);
                 sync_generation.set(sync_generation() + 1);
-                session_boot_state.set(SessionBootState::Unauthenticated);
+                transition_session_boot_state(
+                    session_boot_state,
+                    SessionBootState::Unauthenticated,
+                    "session coordinator invalidated the active session",
+                );
                 let _ = navigator.push(Route::Login);
             });
         });
@@ -239,7 +243,11 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 });
             if stale_for_selected_server {
                 token.set(String::new());
-                session_boot_state.set(SessionBootState::Unauthenticated);
+                transition_session_boot_state(
+                    session_boot_state,
+                    SessionBootState::Unauthenticated,
+                    "persisted grant belongs to another principal server",
+                );
                 persist_config(
                     config_store,
                     base.clone(),
@@ -270,7 +278,11 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 crate::app::principal_id_text(&principal_id()),
                 secure_store_ready,
             );
-            session_boot_state.set(bootstrap_state);
+            transition_session_boot_state(
+                session_boot_state,
+                bootstrap_state,
+                "bootstrap material is ready for connect",
+            );
             connect(
                 base,
                 principal_id(),
@@ -281,7 +293,6 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                     sync_cursor,
                     token,
                     principal_id,
-                    device_id,
                     selected_realm_id,
                     realm_tree_nodes,
                     projection_events,
@@ -304,6 +315,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                     account_has_other_devices,
                     sync_bootstrap_complete,
                     session_boot_state,
+                    bootstrap_pending,
                     did_cache,
                     did_resolution_health,
                 },
@@ -316,7 +328,11 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 secure_store_ready,
             );
             if *session_boot_state.peek() != bootstrap_state {
-                session_boot_state.set(bootstrap_state);
+                transition_session_boot_state(
+                    session_boot_state,
+                    bootstrap_state,
+                    "secure-store bootstrap material classified",
+                );
             }
         }
     }

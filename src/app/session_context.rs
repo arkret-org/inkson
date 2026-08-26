@@ -11,6 +11,13 @@ use dioxus::prelude::*;
 
 use crate::state::LocalStateStore;
 
+/// Root-owned store handle used by runtime callbacks that may be polled from
+/// Dioxus' root task scope. Keeping this signal in `App` makes that scope a
+/// valid owner while `SessionContext` still exposes the same handle below the
+/// router.
+#[derive(Clone, Copy)]
+pub(super) struct AppStateStore(pub SyncSignal<LocalStateStore>);
+
 /// Shared per-login-session handles. Provided in `RouterView` via
 /// `use_context_provider`; consumed anywhere below via
 /// `use_context::<SessionContext>()`.
@@ -26,6 +33,11 @@ pub struct SessionContext {
     /// re-render when the user switches servers, matching the old prop chain
     /// where the parent re-passed the value on change.
     pub base_url: Signal<String>,
+    /// Monotonic fence for asynchronous session restore/rotation work. A newly
+    /// accepted login increments this before publishing its credential so a
+    /// refresh that started for the previous session cannot overwrite or
+    /// invalidate the replacement session when it completes later.
+    pub session_generation: Signal<u64>,
     /// Monotonic revision bumped whenever the signed-in account's owned-agent
     /// set changes in Settings → My Agents (provision/pair, pause, resume,
     /// deactivate). The Contacts sidebar subscribes to it and re-pulls

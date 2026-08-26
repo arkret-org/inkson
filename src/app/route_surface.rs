@@ -127,7 +127,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         mut selected_realm_id,
         new_space_context_node,
     } = navigation;
-    let navigator = use_navigator();
     let routed_circle_id = match &content_route {
         Route::CircleDetail { circle_id, .. } => Some(circle_id.clone()),
         _ => None,
@@ -238,32 +237,8 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
     rsx! {
                 div { class: "realm-body",
                 match content_route {
-                    Route::Login => rsx! {
-                        crate::views::login::LoginPanel {
-                            principal_id,
-                            device_id,
-                            token,
-                            config_store,
-                            locale,
-                            auto_capture_callback: false,
-                            on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
-                            on_onboarding: move |_| { let _ = navigator.push(Route::Onboarding); },
-                        }
-                    },
-                    Route::AuthCallback => rsx! {
-                        crate::views::login::LoginPanel {
-                            principal_id,
-                            device_id,
-                            token,
-                            config_store,
-                            locale,
-                            auto_capture_callback: true,
-                            on_login: move |_| { let _ = navigator.push(Route::Dashboard); },
-                            on_onboarding: move |_| { let _ = navigator.push(Route::Onboarding); },
-                        }
-                    },
-                    Route::Register => rsx! {
-                        crate::views::register::RegistrationPanel {}
+                    Route::Login | Route::AuthCallback | Route::Register => {
+                        unreachable!("auth routes are owned exclusively by SessionSurface")
                     },
                     Route::Dashboard => rsx! {
                         crate::views::dashboard::DashboardPanel {

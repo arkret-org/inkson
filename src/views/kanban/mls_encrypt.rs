@@ -137,6 +137,16 @@ pub(super) struct SidecarTrackWriteContext {
     pub ready: bool,
 }
 
+fn active_scope_matches_write_identity(
+    scope: &crate::secure_key_store::ActiveDeviceSeedScope,
+    actor_id: &str,
+    device_id: &str,
+) -> bool {
+    crate::mls_api_helpers::principal_core_id(actor_id).is_ok_and(|actor_core| {
+        scope.authority.principal_id == actor_core && scope.device_id.as_str() == device_id
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn encrypt_private_card_detail_patch_values_for_effective_scope(
     patch: Value,
@@ -196,9 +206,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
 ) -> Result<(EncryptedPatchPlan, EncryptedWriteMlsEvents), String> {
     let account_scope = crate::secure_key_store::active_device_seed_scope()
         .ok_or_else(|| "active account authority is unavailable".to_owned())?;
-    if account_scope.authority.principal_id.as_str() != actor_id
-        || account_scope.device_id.as_str() != device_id
-    {
+    if !active_scope_matches_write_identity(&account_scope, actor_id, device_id) {
         return Err("encrypted write identity does not match the active account".to_owned());
     }
     let authority = &account_scope.authority;
@@ -550,10 +558,7 @@ pub(super) fn dispatch_card_detail_update(
     let actor_for_backup_trigger = actor_id.clone();
     let backup_account_scope = if effective_security_encrypted {
         match crate::secure_key_store::active_device_seed_scope() {
-            Some(scope)
-                if scope.authority.principal_id.as_str() == actor_id
-                    && scope.device_id.as_str() == device_id =>
-            {
+            Some(scope) if active_scope_matches_write_identity(&scope, &actor_id, &device_id) => {
                 Some(scope)
             }
             Some(_) => {

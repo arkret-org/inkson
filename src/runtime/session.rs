@@ -108,6 +108,12 @@ impl SessionCoordinator {
         let mut state = self.state.borrow_mut();
         state.credential = Some(credential.into());
         state.generation = state.generation.wrapping_add(1);
+        #[cfg(all(target_arch = "wasm32", debug_assertions))]
+        tracing::warn!(
+            target: "session_state",
+            generation = state.generation,
+            "session coordinator accepted replacement credential"
+        );
         state.generation
     }
 
@@ -120,8 +126,22 @@ impl SessionCoordinator {
     }
 
     pub async fn refresh(&self) -> CurrentSessionRefresh {
-        let refresher = self.state.borrow().refresher.clone();
+        let (refresher, refresh_generation) = {
+            let state = self.state.borrow();
+            (state.refresher.clone(), state.generation)
+        };
         let result = refresher().await;
+        {
+            let state = self.state.borrow();
+            if state.generation != refresh_generation {
+                // A login, logout, account switch, or another accepted refresh
+                // replaced this attempt while it was awaiting I/O. Never let
+                // its late terminal result invalidate the newer session.
+                return CurrentSessionRefresh::retry_later(
+                    "session changed while refresh was in flight",
+                );
+            }
+        }
         match &result {
             CurrentSessionRefresh::Credential(credential) => {
                 self.state.borrow_mut().credential = Some(credential.clone());
@@ -142,12 +162,37 @@ impl SessionCoordinator {
             let mut state = self.state.borrow_mut();
             state.credential = None;
             state.generation = state.generation.wrapping_add(1);
+            #[cfg(all(target_arch = "wasm32", debug_assertions))]
+            tracing::warn!(
+                target: "session_state",
+                generation = state.generation,
+                %reason,
+                "session coordinator invalidated credential"
+            );
             state.invalidator.clone()
         };
         if let Some(invalidator) = invalidator {
             invalidator.borrow_mut()(reason);
         }
         self.generation()
+    }
+
+    /// Invalidate only when the caller still belongs to the active session.
+    ///
+    /// Async bootstrap and projection tasks capture a generation before they
+    /// await I/O. A completed login replaces the credential and advances the
+    /// generation, so a late denial from the older task must not log out the
+    /// replacement session.
+    pub fn invalidate_if_generation(
+        &self,
+        expected_generation: u64,
+        reason: impl Into<String>,
+    ) -> bool {
+        if self.generation() != expected_generation {
+            return false;
+        }
+        self.invalidate(reason);
+        true
     }
 }
 
@@ -172,12 +217,92 @@ mod tests {
         let coordinator = SessionCoordinator::new(|| {
             Box::pin(async { CurrentSessionRefresh::retry_later("account authority unavailable") })
         });
+        let invalidated = Rc::new(RefCell::new(false));
+        coordinator.set_invalidator({
+            let invalidated = invalidated.clone();
+            move |_| *invalidated.borrow_mut() = true
+        });
+        coordinator.replace("still-accepted-credential");
 
         assert_eq!(
             coordinator.refresh().await,
             CurrentSessionRefresh::RetryLater {
                 reason: "account authority unavailable".to_owned(),
             }
+        );
+        assert!(!*invalidated.borrow());
+        assert_eq!(
+            coordinator.credential().as_deref(),
+            Some("still-accepted-credential")
+        );
+    }
+
+    #[tokio::test]
+    async fn late_refresh_cannot_invalidate_a_replacement_session() {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let receiver = Rc::new(RefCell::new(Some(receiver)));
+        let coordinator = SessionCoordinator::new({
+            let receiver = receiver.clone();
+            move || {
+                let receiver = receiver
+                    .borrow_mut()
+                    .take()
+                    .expect("refresh is invoked once");
+                Box::pin(async move { receiver.await.expect("test refresh result") })
+            }
+        });
+        let invalidated = Rc::new(RefCell::new(false));
+        coordinator.set_invalidator({
+            let invalidated = invalidated.clone();
+            move |_| *invalidated.borrow_mut() = true
+        });
+
+        let mut pending_refresh = Box::pin(coordinator.refresh());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(1), &mut pending_refresh)
+                .await
+                .is_err(),
+            "the old refresh must be waiting when the replacement is installed"
+        );
+        coordinator.replace("replacement-credential");
+        sender
+            .send(CurrentSessionRefresh::LoginRequired {
+                reason: "old grant was revoked".to_owned(),
+            })
+            .expect("deliver stale refresh result");
+
+        assert_eq!(
+            pending_refresh.await,
+            CurrentSessionRefresh::RetryLater {
+                reason: "session changed while refresh was in flight".to_owned(),
+            }
+        );
+        assert!(!*invalidated.borrow());
+        assert_eq!(
+            coordinator.credential().as_deref(),
+            Some("replacement-credential")
+        );
+    }
+
+    #[test]
+    fn stale_task_cannot_invalidate_a_replacement_session() {
+        let coordinator = SessionCoordinator::new(|| {
+            Box::pin(async { CurrentSessionRefresh::retry_later("unused") })
+        });
+        let invalidated = Rc::new(RefCell::new(false));
+        coordinator.set_invalidator({
+            let invalidated = invalidated.clone();
+            move |_| *invalidated.borrow_mut() = true
+        });
+
+        let stale_generation = coordinator.generation();
+        coordinator.replace("replacement-credential");
+
+        assert!(!coordinator.invalidate_if_generation(stale_generation, "late bootstrap denial"));
+        assert!(!*invalidated.borrow());
+        assert_eq!(
+            coordinator.credential().as_deref(),
+            Some("replacement-credential")
         );
     }
 

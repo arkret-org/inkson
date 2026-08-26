@@ -268,6 +268,23 @@ pub fn record_login_transition(
         );
         return;
     }
+    #[cfg(all(target_arch = "wasm32", debug_assertions))]
+    tracing::warn!(
+        from_state = record.from_state,
+        authoritative_input = record.authoritative_input,
+        next_state = record.next_state,
+        reason = record.reason,
+        outcome = record.outcome,
+        oidc_state_digest = correlation.oidc_state_digest.as_deref(),
+        handoff_request_id = correlation.handoff_request_id.as_deref(),
+        session_grant_request_id = correlation.session_grant_request_id.as_deref(),
+        session_grant_id = correlation.session_grant_id.as_deref(),
+        session_intent_digest = correlation.session_intent_digest.as_deref(),
+        principal_id = correlation.principal_id.as_deref(),
+        device_id = correlation.device_id.as_deref(),
+        "login transition"
+    );
+    #[cfg(not(all(target_arch = "wasm32", debug_assertions)))]
     tracing::info!(
         from_state = record.from_state,
         authoritative_input = record.authoritative_input,

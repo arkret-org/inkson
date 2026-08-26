@@ -40,10 +40,54 @@ impl SessionBootState {
             Self::Unauthenticated
         }
     }
+}
 
-    fn is_pending(self) -> bool {
-        matches!(self, Self::Checking | Self::Restoring)
+pub(super) fn transition_session_boot_state(
+    mut state: Signal<SessionBootState>,
+    next: SessionBootState,
+    reason: &'static str,
+) {
+    let previous = *state.peek();
+    if previous == next {
+        return;
     }
+    // Debug wasm promotes this audit trail to WARN because its console layer
+    // intentionally filters normal INFO traffic; release builds keep INFO.
+    #[cfg(all(target_arch = "wasm32", debug_assertions))]
+    tracing::warn!(
+        target: "session_state",
+        from = ?previous,
+        to = ?next,
+        reason,
+        "session boot state transition"
+    );
+    #[cfg(not(all(target_arch = "wasm32", debug_assertions)))]
+    tracing::info!(
+        target: "session_state",
+        from = ?previous,
+        to = ?next,
+        reason,
+        "session boot state transition"
+    );
+    state.set(next);
+}
+
+/// Publish a newly accepted session as one generation change.
+///
+/// Durable account, grant, and key writes must complete before this boundary.
+/// Incrementing both fences before exposing the token prevents an older
+/// background refresh from clearing the replacement session after login.
+pub(crate) fn accept_authenticated_session(
+    session: &crate::runtime::session::SessionCoordinator,
+    mut session_generation: Signal<u64>,
+    mut token: Signal<String>,
+    credential: String,
+) {
+    debug_assert!(!credential.trim().is_empty());
+    let next_generation = (*session_generation.peek()).wrapping_add(1);
+    session_generation.set(next_generation);
+    session.replace(credential.clone());
+    token.set(credential);
 }
 
 pub(super) fn should_wait_for_secure_store_session_restore(
@@ -121,19 +165,25 @@ pub(super) fn auth_surface_for_route(
     route: &Route,
     has_session: bool,
     boot_state: SessionBootState,
+    secure_store_ready: bool,
 ) -> AuthSurface {
-    if matches!(route, Route::AuthCallback) {
-        AuthSurface::Callback
+    // Browser secure storage is a one-shot startup barrier, not a recurring
+    // session status. Every auth flow depends on the account-scoped grant and
+    // signing keys hydrated behind this barrier, including OIDC callback
+    // completion. Mounting the callback before it settles lets a late hydrate
+    // overwrite or discard the newly accepted session.
+    if !secure_store_ready || (!has_session && boot_state == SessionBootState::Restoring) {
+        AuthSurface::Restoring
     } else if matches!(route, Route::Onboarding) {
         // Account-first onboarding intentionally runs before a session grant
         // exists; the short-lived handoff credential is held separately.
         AuthSurface::AppShell
     } else if has_session {
         AuthSurface::AppShell
+    } else if matches!(route, Route::AuthCallback) {
+        AuthSurface::Callback
     } else if matches!(route, Route::Register) {
         AuthSurface::Register
-    } else if boot_state.is_pending() {
-        AuthSurface::Restoring
     } else {
         AuthSurface::Login
     }
@@ -157,6 +207,14 @@ pub(super) fn account_projections_visible(
 
 pub(super) fn should_redirect_to_dashboard_after_login(route: &Route) -> bool {
     matches!(route, Route::Login | Route::Register | Route::AuthCallback)
+}
+
+pub(super) fn authenticated_content_route(route: &Route, has_session: bool) -> Route {
+    if has_session && should_redirect_to_dashboard_after_login(route) {
+        Route::Dashboard
+    } else {
+        route.clone()
+    }
 }
 
 pub(super) fn initial_session_credential_from_state(

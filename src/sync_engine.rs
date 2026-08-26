@@ -316,14 +316,21 @@ impl TransportProvider for AccountTransportProvider {
     }
 
     async fn recover_unauthorized(&self) -> garth::Result<bool> {
-        match crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
-            self.ctx.account.server_url.as_str(),
-        )
-        .await
-        {
+        let session_generation = self.ctx.session.generation();
+        let result =
+            crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
+                self.ctx.account.server_url.as_str(),
+            )
+            .await;
+        if self.ctx.session.generation() != session_generation || !self.is_active() {
+            return Ok(false);
+        }
+        match result {
             Ok(_) => Ok(true),
             Err(error) if is_terminal_session_grant_error(&error) => {
-                self.ctx.session.invalidate(error.to_string());
+                self.ctx
+                    .session
+                    .invalidate_if_generation(session_generation, error.to_string());
                 Ok(false)
             }
             Err(error) => Err(garth::Error::Http(error.to_string())),
@@ -2001,6 +2008,24 @@ pub fn apply_response(
     let mut synced_theme = None;
     let mut realm_projection_changed = false;
 
+    // Reject an old account engine before it performs *any* side effect. This
+    // check previously lived inside the later projection write, after device
+    // revocation handling; a late response for the signed-out account could
+    // therefore clear the newly signed-in account first.
+    let response_principal = sync_principal_core_id(&principal_id);
+    if !state_store.read(|store| {
+        response_principal
+            .as_ref()
+            .is_some_and(|principal_id| store.active_account_matches(principal_id))
+    }) {
+        tracing::warn!(
+            response_principal = %principal_id,
+            active_principal = ?state_store.read(|store| store.active_principal_id()),
+            "discarded account sync response after the active principal changed"
+        );
+        return;
+    }
+
     // The core-keyed device-signing-key cache is separate from exact authority
     // resolution, and its 5-minute positive TTL is not sufficient on its own:
     // `signal.md` §1 forbids reusing an older positive entry once a device-list
@@ -2029,18 +2054,6 @@ pub fn apply_response(
     }
 
     state_store.write(|store| {
-        let response_principal = sync_principal_core_id(&principal_id);
-        if !response_principal
-            .as_ref()
-            .is_some_and(|principal_id| store.active_account_matches(principal_id))
-        {
-            tracing::warn!(
-                response_principal = %principal_id,
-                active_principal = ?store.active_principal_id(),
-                "discarded account sync response after the active principal changed"
-            );
-            return;
-        }
         // Perf (P0): a single sync response can touch the cursor, dozens of
         // realm-tree projections, seal views, member identity events and account
         // data — each setter used to flush the *entire* `ClientLocalState` to

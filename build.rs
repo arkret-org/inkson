@@ -27,6 +27,16 @@ fn main() {
     let manifest_dir = PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
     );
+
+    // Emitting any `rerun-if-changed` instruction disables Cargo's default
+    // package-wide build-script invalidation. We also track Git metadata below,
+    // so explicitly retain the inputs that can change this crate's wasm. Without
+    // these entries Cargo recompiles `src`, but reuses an old INKSON_BUILD_ID,
+    // making a fresh browser bundle look stale in the console.
+    for package_input in ["src", "Cargo.toml", "build.rs"] {
+        println!("cargo:rerun-if-changed={package_input}");
+    }
+
     if let Some(git_dir) = git_output(&manifest_dir, &["rev-parse", "--absolute-git-dir"]) {
         let git_dir = PathBuf::from(git_dir);
         let head_path = git_dir.join("HEAD");

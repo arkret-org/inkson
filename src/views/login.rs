@@ -326,6 +326,7 @@ pub fn LoginPanel(
     let mut base_url = session_context.base_url;
     let mut active_account = session_context.active_account;
     let state_store = session_context.state_store;
+    let session_generation = session_context.session_generation;
     let i18n = use_context::<crate::i18n::I18nSignal>();
     let session = use_context::<crate::runtime::services::RuntimeServices>()
         .session
@@ -357,6 +358,7 @@ pub fn LoginPanel(
     let principal_server_options =
         principal_server_options_for(&base_url(), &config_store.read().load().principal_servers);
 
+    let callback_session = use_signal(|| session.clone());
     use_future(move || async move {
         if !auto_capture_callback || callback_started() {
             return;
@@ -513,7 +515,12 @@ pub fn LoginPanel(
                 base_url.set(principal_server_url.clone());
                 principal_id.set(Some(account.principal_id().clone()));
                 device_id.set(account.device_id.to_string());
-                token.set(completed.session_credential.clone());
+                crate::app::accept_authenticated_session(
+                    &callback_session.peek(),
+                    session_generation,
+                    token,
+                    completed.session_credential.clone(),
+                );
                 auth_status.set("Signed in on this authorized device.".to_owned());
                 on_login.call(());
             }

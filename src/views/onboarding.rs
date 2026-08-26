@@ -356,7 +356,9 @@ async fn commit_completed_account(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     config_store: Signal<crate::config::LocalConfigStore>,
     mut active_account: Signal<Option<crate::config::ActiveAccountContext>>,
-    mut token: Signal<String>,
+    token: Signal<String>,
+    session: &crate::runtime::session::SessionCoordinator,
+    session_generation: Signal<u64>,
     mut principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     mut device_id: Signal<String>,
     mut needs_device_authorization: Signal<bool>,
@@ -434,9 +436,14 @@ async fn commit_completed_account(
         );
 
         active_account.set(Some(completed.account.clone()));
-        token.set(completed.session_credential().to_owned());
         principal_id.set(Some(completed.account.principal_id().clone()));
         device_id.set(completed.account.device_id.to_string());
+        crate::app::accept_authenticated_session(
+            session,
+            session_generation,
+            token,
+            completed.session_credential().to_owned(),
+        );
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(true);
         Ok(())
@@ -1084,6 +1091,10 @@ fn PcrPolicyDeviceRecovery(
 ) -> Element {
     let session_context = crate::app::SessionContext::get();
     let active_account = session_context.active_account;
+    let session_generation = session_context.session_generation;
+    let completion_session = use_context::<crate::runtime::services::RuntimeServices>()
+        .session
+        .clone();
     let mut words = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -1115,6 +1126,7 @@ fn PcrPolicyDeviceRecovery(
                     };
                     let recovery_words = words();
                     let replacement_device_id = replacement_device_id.clone();
+                    let session = completion_session.clone();
                     busy.set(true);
                     status.set("Verifying Recovery Key and preparing a PCR-policy device recovery…".to_owned());
                     spawn(async move {
@@ -1137,6 +1149,8 @@ fn PcrPolicyDeviceRecovery(
                                     config_store,
                                     active_account,
                                     token,
+                                    &session,
+                                    session_generation,
                                     principal_id,
                                     device_id,
                                     needs_device_authorization,
@@ -2079,6 +2093,10 @@ fn PendingAccountIdentityCreation(
     let session_context = crate::app::SessionContext::get();
     let active_account = session_context.active_account;
     let mut state_store = session_context.state_store;
+    let session_generation = session_context.session_generation;
+    let completion_session = use_context::<crate::runtime::services::RuntimeServices>()
+        .session
+        .clone();
     let initial_handoff = state_store.peek().pending_account_handoff();
     let initial_checkpoint = state_store.peek().pending_principal_registration();
     let initial_recovery_key = initial_handoff
@@ -2585,6 +2603,7 @@ fn PendingAccountIdentityCreation(
                                 recovery_key()
                             };
                             let device = handoff.device_id.clone();
+                            let session = completion_session.clone();
                             busy.set(true);
                             status.set("Finishing setup…".to_owned());
                             spawn(async move {
@@ -2629,6 +2648,8 @@ fn PendingAccountIdentityCreation(
                                             config_store,
                                             active_account,
                                             token,
+                                            &session,
+                                            session_generation,
                                             principal_id,
                                             device_id,
                                             needs_device_authorization,
