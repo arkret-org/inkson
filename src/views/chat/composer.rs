@@ -2297,6 +2297,49 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &content_for_sidecar,
                                         );
                                     }
+                                    // The optimistic row is allowed to settle
+                                    // only after both durable stores contain
+                                    // the accepted message identity and the
+                                    // author-owned plaintext. A hard reload
+                                    // immediately after the UI reports success
+                                    // must not race either IndexedDB write.
+                                    let durable_result: anyhow::Result<()> = async {
+                                        let account_barrier =
+                                            state_store.read().begin_durable_flush()?;
+                                        let e2ee_write = state_store
+                                            .read()
+                                            .e2ee_plaintext_cache_secure_write()?;
+                                        account_barrier.wait().await?;
+                                        if let Some((key, Some(json))) = e2ee_write {
+                                            crate::secure_key_store::default_secure_key_store(
+                                                "inkson",
+                                            )
+                                            .store_secret_durable(&key, &json)
+                                            .await?;
+                                        }
+                                        Ok(())
+                                    }
+                                    .await;
+                                    if let Err(error) = durable_result {
+                                        let message = format!(
+                                            "Encrypted message was accepted, but local recovery state could not be persisted: {error}"
+                                        );
+                                        if let Some(found) = messages
+                                            .write()
+                                            .iter_mut()
+                                            .find(|candidate| {
+                                                candidate.matches_id_or_protocol(
+                                                    &message_id_for_lookup,
+                                                )
+                                            })
+                                        {
+                                            found.pending = false;
+                                            found.failed = true;
+                                            found.error = Some(message.clone());
+                                        }
+                                        status_msg.set(message);
+                                        return;
+                                    }
                                     // BUG A (X9): clear the optimistic bubble's
                                     // `pending` spinner now that the server accepted
                                     // the encrypted message (mirrors the plaintext

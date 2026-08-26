@@ -322,12 +322,20 @@ struct CompletedIdentityCreation {
     persisted_grant: crate::state::PersistedSessionGrant,
     dpop_device_key: crate::state::DpopDeviceKeyRecord,
     origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin,
+    initial_mls_backup_id: Option<String>,
 }
 
 impl CompletedIdentityCreation {
     fn session_credential(&self) -> &str {
         &self.persisted_grant.grant_jwt
     }
+}
+
+fn onboarding_may_create_account_mls_root(
+    origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin,
+) -> bool {
+    origin
+        != crate::identity::account_auth::transition::OnboardingCompletionOrigin::RecoveryCompletion
 }
 
 /// Cross the accepted-account storage boundary before writing metadata keyed
@@ -422,6 +430,13 @@ async fn commit_completed_account(
                 &completed.account,
                 recovery_key,
             )?;
+            if let Some(backup_id) = completed.initial_mls_backup_id.as_deref() {
+                crate::components::mark_mls_recovery_backup_configured(
+                    &mut store,
+                    completed.account.principal_id(),
+                    backup_id,
+                );
+            }
             store.begin_durable_flush()?
         };
         barrier.wait().await?;
@@ -1487,6 +1502,7 @@ async fn issue_recovery_completion_grant(
         persisted_grant: persisted,
         dpop_device_key: dpop_record,
         origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin::RecoveryCompletion,
+        initial_mls_backup_id: None,
     })
 }
 
@@ -1984,6 +2000,7 @@ async fn reissue_accepted_onboarding_session(
         dpop_device_key: issued.dpop_device_key,
         origin:
             crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeReissue,
+        initial_mls_backup_id: None,
     })
 }
 
@@ -3188,6 +3205,7 @@ async fn create_and_bind_identity(
                 dpop_device_key,
                 origin:
                     crate::identity::account_auth::transition::OnboardingCompletionOrigin::FreshBind,
+                initial_mls_backup_id: None,
             },
         )
     } else {
@@ -3249,6 +3267,7 @@ async fn create_and_bind_identity(
                         persisted_grant: restored.persisted_grant,
                         dpop_device_key: restored.dpop_device_key,
                         origin: crate::identity::account_auth::transition::OnboardingCompletionOrigin::ResumeRestore,
+                        initial_mls_backup_id: None,
                     },
                 )
             }
@@ -3385,7 +3404,8 @@ async fn create_and_bind_identity(
         }
     };
 
-    finish_principal_setup(
+    let mut completed = completed;
+    completed.initial_mls_backup_id = finish_principal_setup(
         &registration,
         recovery_key,
         &completed,
@@ -3594,7 +3614,7 @@ async fn finish_principal_setup(
     completed: &CompletedIdentityCreation,
     expected_holder_jkt: &str,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     crate::identity::principal_registration::validate_checkpoint_recovery_key(
         registration,
         recovery_key,
@@ -3613,7 +3633,7 @@ async fn finish_principal_setup(
             .context("completed recovery checkpoint has no durable evidence")?;
         validate_completed_recovery_material(&registration, account, &evidence)?;
         finish_pre_account_recovery_checkpoint(&registration)?;
-        return Ok(());
+        return Ok(None);
     }
     let bootstrap_seal: arkret_sdk::Seal = match registration.pcr_bootstrap_seal.clone() {
         Some(seal) => seal,
@@ -3664,6 +3684,14 @@ async fn finish_principal_setup(
         &completed.persisted_grant,
         secure_store.as_ref(),
     )?;
+    if onboarding_may_create_account_mls_root(completed.origin) {
+        crate::mls::runtime::ensure_account_mls_secret_durable(
+            secure_store.as_ref(),
+            &account.authority,
+        )
+        .await
+        .context("durably create the first-enrollment account MLS root")?;
+    }
     crate::recovery_strand::submit_principal_bootstrap_seal(&api, &bootstrap_seal_for_submit)
         .await?;
     crate::recovery_strand::ensure_principal_bootstrap_governance_checkpoint(
@@ -3685,6 +3713,22 @@ async fn finish_principal_setup(
         &recovery_key_value,
     )
     .await?;
+    let initial_mls_backup_id = if onboarding_may_create_account_mls_root(completed.origin) {
+        let backup_id =
+            crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
+                &api,
+                secure_store.as_ref(),
+                &account.authority,
+                account.full_id().as_str(),
+                account.device_id.as_str(),
+                &recovery_key_value,
+            )
+            .await
+            .context("upload the first-enrollment account MLS recovery backup")?;
+        Some(backup_id)
+    } else {
+        None
+    };
     registration
         .advance_registration_stage(
             crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
@@ -3722,7 +3766,8 @@ async fn finish_principal_setup(
         };
         barrier.wait().await?;
     }
-    finish_pre_account_recovery_checkpoint(&completed_registration)
+    finish_pre_account_recovery_checkpoint(&completed_registration)?;
+    Ok(initial_mls_backup_id)
 }
 
 fn hosting_label(url: &str) -> String {
@@ -3771,6 +3816,24 @@ mod tests {
             "identity.example"
         );
         assert_eq!(hosting_label("not a url"), "your selected service");
+    }
+
+    #[test]
+    fn only_first_enrollment_continuations_may_create_the_account_mls_root() {
+        use crate::identity::account_auth::transition::OnboardingCompletionOrigin;
+
+        assert!(onboarding_may_create_account_mls_root(
+            OnboardingCompletionOrigin::FreshBind
+        ));
+        assert!(onboarding_may_create_account_mls_root(
+            OnboardingCompletionOrigin::ResumeRestore
+        ));
+        assert!(onboarding_may_create_account_mls_root(
+            OnboardingCompletionOrigin::ResumeReissue
+        ));
+        assert!(!onboarding_may_create_account_mls_root(
+            OnboardingCompletionOrigin::RecoveryCompletion
+        ));
     }
 
     #[test]

@@ -112,6 +112,27 @@ enum EncryptedRealmRecoveryGateState {
     Missing,
 }
 
+async fn create_initial_default_discussion(
+    api: &crate::transport::TransportClient,
+    realm_id: &str,
+    actor: &str,
+) -> anyhow::Result<String> {
+    let create =
+        crate::operation::ak_ops::initial_default_discussion_strand_create(realm_id, actor)?
+            .build_sdk_event("inkson")?;
+    let accepted = api.event_submitter()?.submit_sdk_event(&create).await?;
+    let event_id = arkret_sdk::EventId::new(accepted.event_id)
+        .map_err(|error| anyhow::anyhow!("accepted default Strand id is invalid: {error}"))?;
+    let strand_id = arkret_sdk::StrandId::from_event_id(&event_id).into_string();
+    let set_default =
+        crate::operation::ak_ops::realm_set_default_strand(realm_id, actor, &strand_id)?
+            .build_sdk_event("inkson")?;
+    api.event_submitter()?
+        .submit_sdk_event(&set_default)
+        .await?;
+    Ok(strand_id)
+}
+
 /// Accepted server policy is the account-level authority for Recovery setup.
 /// Local metadata and the MLS backup marker remain useful offline fallbacks,
 /// but a missing local cache must not contradict an already accepted policy.
@@ -1055,6 +1076,29 @@ pub(super) fn RealmsSection(
                                                                 &[
                                                                     ("id", realm_id.clone()),
                                                                     ("error", err),
+                                                                ],
+                                                            );
+                                                            realm_create_busy.set(false);
+                                                            realm_state.set(message.clone());
+                                                            crate::components::feedback::toast_error(
+                                                                "feedback.realm_create_failed",
+                                                                vec![],
+                                                                Some(message),
+                                                            );
+                                                            return;
+                                                        }
+                                                        if let Err(err) = create_initial_default_discussion(
+                                                            &api,
+                                                            &realm_id,
+                                                            &actor,
+                                                        )
+                                                        .await
+                                                        {
+                                                            let message = BootstrapProgressStrings::fill(
+                                                                &strings.created_then_failed,
+                                                                &[
+                                                                    ("id", realm_id.clone()),
+                                                                    ("error", err.to_string()),
                                                                 ],
                                                             );
                                                             realm_create_busy.set(false);

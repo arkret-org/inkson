@@ -68,6 +68,42 @@ pub fn discussion_strand_create(
     >(realm_id, actor, strand_create_payload(strand)?))
 }
 
+/// Build the metadata-free discussion Strand used as a newly-created Realm's
+/// default entry point. Omitting plaintext metadata keeps this valid when the
+/// Realm's metadata encryption floor is already `e2ee_required`.
+pub fn initial_default_discussion_strand_create(
+    realm_id: &str,
+    actor: &str,
+) -> anyhow::Result<TypedOperationBuilder> {
+    let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
+        .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
+    let did = crate::mls_api_helpers::principal_core_id(actor)
+        .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
+    let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
+        .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::StrandCreate,
+    >(realm_id, actor, strand_create_payload(strand)?))
+}
+
+pub fn realm_set_default_strand(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+) -> anyhow::Result<TypedOperationBuilder> {
+    let realm_id_value = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
+        .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
+    let strand_id_value = arkret_sdk::StrandId::new(strand_id.to_owned())
+        .map_err(|e| anyhow::anyhow!("invalid strand_id: {e:?}"))?;
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::RealmSetDefaultStrand,
+    >(
+        realm_id,
+        actor,
+        arkret_sdk::RealmSetDefaultStrandPayload::new(realm_id_value, strand_id_value),
+    ))
+}
+
 /// Build a canonical `ak.circle.create` operation for a private
 /// discussion scope inside `realm_id`.
 pub fn discussion_circle_create(

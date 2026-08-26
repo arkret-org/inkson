@@ -330,7 +330,8 @@ pub(super) fn inject_test_session_credential(
 /// both derive from the same seed, and (2) persists a `PersistedSessionGrant`
 /// whose
 /// `principal_server_url` is the active server so the bootstrap does not treat
-/// it as stale.
+/// it as stale, and (3) creates the account MLS root that a completed first-device
+/// enrollment would already have established.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
 pub(super) async fn inject_test_session_grant(
     state_store: &mut SyncSignal<LocalStateStore>,
@@ -616,6 +617,16 @@ pub(super) async fn inject_test_session_grant(
             return None;
         }
     };
+    if let Err(error) =
+        crate::mls::runtime::ensure_account_mls_secret_durable(secure_store, user_store.authority())
+            .await
+    {
+        tracing::warn!(
+            ?error,
+            "test session injection: account MLS root persist failed"
+        );
+        return None;
+    }
     if let Err(error) = crate::state::store_session_grant_in_user_secure_store_durable(
         &user_store,
         secure_store,

@@ -1360,6 +1360,7 @@ fn AppBootstrap() -> Element {
                         session_generation,
                         did_resolution_health,
                         bootstrap_pending,
+                        on_onboarding_route: matches!(&content_route, Route::Onboarding),
                     }
                 }
                 AccountRecoveryEffects {

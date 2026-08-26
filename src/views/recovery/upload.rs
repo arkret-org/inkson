@@ -34,8 +34,8 @@ impl Drop for RecoveryKeyPublicationGuard {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecoveryKeyBackupOutcome {
     /// Server accepted the recovery policy and account-secret backup. The
-    /// caller may now persist public-only local
-    /// metadata and clear the already-confirmed plaintext from memory.
+    /// caller may now persist public-only local metadata and clear the
+    /// already-confirmed plaintext from memory.
     Established,
     /// The server refused because this session device is not an authorized,
     /// verified key-management device (`device_unauthorized`). The generated

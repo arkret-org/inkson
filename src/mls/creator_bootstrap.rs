@@ -170,15 +170,15 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         })?;
 
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    // `ensure_creator_mls_snapshot` mints the account MLS secret through the
-    // sync store surface, whose wasm IndexedDB commit is a detached background
-    // write, while the snapshot it encrypts rides the durable-awaiting account
-    // state writer. Land the secret durably first: a page unload between the
-    // two orphans the snapshot and dead-locks every later encrypted write on
-    // this device behind "no account MLS secret".
-    crate::mls::runtime::ensure_account_mls_secret_durable(secure_store.as_ref(), authority)
-        .await
-        .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
+    // The verified first-enrollment flow creates the account MLS root. Realm
+    // creation may only re-commit that existing root before writing the first
+    // dependent snapshot; it must never mint a replacement from a feature API.
+    crate::mls::runtime::ensure_existing_account_mls_secret_durable(
+        secure_store.as_ref(),
+        authority,
+    )
+    .await
+    .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
     let fresh_summary = {
         let mut store = state_store.write();
         crate::mls::runtime::ensure_creator_mls_snapshot(

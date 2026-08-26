@@ -600,7 +600,7 @@ pub(crate) async fn submit_secure_send(
         commit_event,
         message_plan,
         message_local_operation_id: _,
-        new_mls_snapshot: _new_mls_snapshot,
+        new_mls_snapshot,
         seal_ref,
         pending_history_secrets,
         effective_scope,
@@ -651,6 +651,41 @@ pub(crate) async fn submit_secure_send(
                         Some(seal_ref.clone()),
                     );
                 }
+
+                // The encrypt step deliberately keeps a post-commit snapshot
+                // out of the live store until the matching commit is accepted.
+                // Once accepted, both the ratchet state and its canonical
+                // group-state Event reference must land together before the
+                // dependent encrypted message can be submitted. Dropping this
+                // snapshot leaves the browser at the previous epoch after a
+                // reload even though the server has already advanced it.
+                if let Some(snapshot) = new_mls_snapshot.as_ref() {
+                    let Some(event_id) = accepted_commit_event_id.as_ref() else {
+                        return SecureSendOutcome::MessageFailed {
+                            message: "accepted MLS commit has no typed Event id".to_owned(),
+                        };
+                    };
+                    let persist_result = {
+                        let mut store = state_store.write();
+                        store
+                            .save_mls_snapshot_for_scope(&effective_scope, snapshot.clone())
+                            .and_then(|()| {
+                                store.record_mls_group_state_ref_for_scope(
+                                    &effective_scope,
+                                    &snapshot.group_id,
+                                    snapshot.epoch,
+                                    event_id.clone(),
+                                )
+                            })
+                    };
+                    if let Err(error) = persist_result {
+                        return SecureSendOutcome::MessageFailed {
+                            message: format!(
+                                "persist accepted MLS commit state before message send: {error}"
+                            ),
+                        };
+                    }
+                }
             }
             Err(err) => {
                 return SecureSendOutcome::CommitFailed {
@@ -658,6 +693,24 @@ pub(crate) async fn submit_secure_send(
                 };
             }
         }
+    }
+
+    // `run_local_mls_encrypt` also advances the same-epoch send ratchet when
+    // no commit is required. Freeze either path into the account-state writer
+    // and await its IndexedDB barrier before the server can accept ciphertext
+    // that a reload of this device would no longer be able to account for.
+    let durable_state = match state_store.read().begin_durable_flush() {
+        Ok(barrier) => barrier,
+        Err(error) => {
+            return SecureSendOutcome::MessageFailed {
+                message: format!("begin durable MLS send-state persist: {error}"),
+            };
+        }
+    };
+    if let Err(error) = durable_state.wait().await {
+        return SecureSendOutcome::MessageFailed {
+            message: format!("durably persist MLS send state: {error}"),
+        };
     }
 
     let message_event = match message_plan(accepted_commit_event_id.as_ref()) {

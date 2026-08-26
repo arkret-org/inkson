@@ -160,6 +160,14 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             if !secure_store_ready_for_publish() {
                 return;
             }
+            // Subscribe to the accepted account before consulting the
+            // process-local signer. The signer registry is not reactive; on
+            // first enrollment it is activated immediately before this
+            // signal is committed, so the account transition is what wakes
+            // this effect after its unauthenticated first render.
+            let Some(account) = active_account() else {
+                return;
+            };
             if crate::event_signer::active_signer().is_none() {
                 return;
             }
@@ -178,9 +186,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             if !device_authorization_check_complete() || needs_device_authorization() {
                 return;
             }
-            let Some(account) = active_account() else {
-                return;
-            };
             let base = account.server_url.to_string();
             let session = token();
             let device = account.device_id.clone();

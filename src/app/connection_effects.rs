@@ -1,5 +1,9 @@
 use super::*;
 
+fn should_run_connection_bootstrap(bootstrap_pending: bool, on_onboarding_route: bool) -> bool {
+    bootstrap_pending && !on_onboarding_route
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct ConnectionEffectState {
     pub connection_status: Signal<String>,
@@ -32,6 +36,7 @@ pub(super) struct ConnectionEffectState {
     pub session_generation: Signal<u64>,
     pub did_resolution_health: Signal<crate::components::DidResolutionHealth>,
     pub bootstrap_pending: Signal<bool>,
+    pub on_onboarding_route: bool,
 }
 
 #[component]
@@ -67,6 +72,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         mut session_generation,
         did_resolution_health,
         mut bootstrap_pending,
+        on_onboarding_route,
     } = state;
     let SessionContext {
         mut state_store,
@@ -217,7 +223,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
     }
 
     let secure_store_ready = secure_store_bootstrap_ready();
-    if bootstrap_pending() {
+    if should_run_connection_bootstrap(bootstrap_pending(), on_onboarding_route) {
         let active = active_account();
         let base = active
             .as_ref()
@@ -334,4 +340,21 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
     }
 
     rsx! {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_run_connection_bootstrap;
+
+    #[test]
+    fn pauses_normal_session_bootstrap_during_onboarding() {
+        assert!(!should_run_connection_bootstrap(true, true));
+    }
+
+    #[test]
+    fn runs_only_pending_bootstrap_outside_onboarding() {
+        assert!(should_run_connection_bootstrap(true, false));
+        assert!(!should_run_connection_bootstrap(false, false));
+        assert!(!should_run_connection_bootstrap(false, true));
+    }
 }

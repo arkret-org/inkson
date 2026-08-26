@@ -1051,11 +1051,10 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await?;
     }
     if has_welcome {
-        // Applying a first Welcome mints the account MLS secret through the
-        // sync store surface (detached background persistence on wasm), while
-        // the joined group snapshot rides the durable account-state writer.
-        // Land the secret durably before joining so a page unload cannot leave
-        // a snapshot no local secret can open.
+        // Enrollment or recovery must already have installed the account MLS
+        // root. Re-commit it durably before joining so a page unload cannot
+        // leave a snapshot no local secret can open; a Welcome must never mint
+        // a replacement root.
         crate::mls::runtime::ensure_existing_account_mls_secret_durable(
             secure_store.as_ref(),
             &authority,

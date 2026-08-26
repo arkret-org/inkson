@@ -163,25 +163,37 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         let mut state_store = SessionContext::get().state_store;
         let mut projection_epoch = realm_live_epoch;
         spawn(async move {
-            let result = crate::transport::auth::with_authed_sdk_client(&base, api_token, |http| {
-                let realm_id = realm_id.clone();
-                async move {
-                    http.realm_strands(&realm_id)
-                        .await
-                        .map_err(anyhow::Error::from)
-                }
-            })
-            .await;
-            match result {
-                Ok(strands) => {
-                    let Some(default_strand_id) = strands
+            for attempt in 0..20u32 {
+                let result = crate::transport::auth::with_authed_sdk_client(
+                    &base,
+                    api_token.clone(),
+                    |http| {
+                        let realm_id = realm_id.clone();
+                        async move {
+                            http.realm_strands(&realm_id)
+                                .await
+                                .map_err(anyhow::Error::from)
+                        }
+                    },
+                )
+                .await;
+                let default_strand_id = match result {
+                    Ok(strands) => strands
                         .strands
                         .iter()
                         .find(|strand| strand.is_default)
-                        .map(|strand| strand.strand_id.to_string())
-                    else {
-                        return;
-                    };
+                        .map(|strand| strand.strand_id.to_string()),
+                    Err(error) => {
+                        tracing::warn!(
+                            realm_id,
+                            attempt,
+                            error = %error.display_diagnostic(),
+                            "default Strand projection hydration failed"
+                        );
+                        None
+                    }
+                };
+                if let Some(default_strand_id) = default_strand_id {
                     let changed = {
                         let mut store = state_store.write();
                         // A Realm created after this browser session booted can
@@ -217,15 +229,18 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     if changed {
                         projection_epoch.set(projection_epoch().wrapping_add(1));
                     }
+                    return;
                 }
-                Err(error) => {
-                    tracing::warn!(
-                        realm_id,
-                        error = %error.display_diagnostic(),
-                        "default Strand projection hydration failed"
-                    );
+                if attempt < 19 {
+                    let backoff_ms = 250u64.saturating_mul(1u64 << attempt.min(3));
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(backoff_ms))
+                        .await;
                 }
             }
+            tracing::warn!(
+                realm_id,
+                "default Strand projection hydration exhausted retries"
+            );
         });
     }
 
