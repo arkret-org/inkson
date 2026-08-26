@@ -49,13 +49,16 @@ impl SessionBootState {
 pub(super) fn should_wait_for_secure_store_session_restore(
     credential: &str,
     can_restore_session: bool,
-    principal_id: &str,
+    _principal_id: &str,
     secure_store_ready: bool,
 ) -> bool {
-    credential.trim().is_empty()
-        && !can_restore_session
-        && !principal_id.trim().is_empty()
-        && !secure_store_ready
+    // On wasm the accepted account context and session grant both live in the
+    // encrypted IndexedDB tier.  The synchronous bootstrap intentionally
+    // cannot see either of them, so an empty principal here does not prove
+    // that this is a signed-out browser.  Keep the auth surface in Restoring
+    // until IndexedDB has settled; the ready-state pass below will classify a
+    // genuinely fresh browser as Unauthenticated immediately afterwards.
+    credential.trim().is_empty() && !can_restore_session && !secure_store_ready
 }
 
 pub(super) fn session_boot_state_from_bootstrap_material(

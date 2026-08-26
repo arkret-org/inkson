@@ -239,7 +239,15 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     let route = use_route::<Route>();
     use_effect(move || {
         if matches!(route, Route::Login) && !token().trim().is_empty() {
-            let _ = navigator.replace(Route::Dashboard);
+            spawn(async move {
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
+                if let Some(failure) = navigator.replace(Route::Dashboard) {
+                    tracing::warn!(
+                        ?failure,
+                        "session shell entry-route canonicalisation failed"
+                    );
+                }
+            });
         } else if matches!(route, Route::Recovery) {
             let _ = navigator.replace(Route::SettingsRecovery);
         }

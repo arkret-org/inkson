@@ -698,7 +698,36 @@ fn AppBootstrap() -> Element {
     let route_is_login = matches!(&route, Route::Login);
     use_effect(move || {
         if route_is_login && !authenticated_login_token().trim().is_empty() {
-            let _ = authenticated_login_navigator.replace(Route::Dashboard);
+            // Session restoration can flip the auth surface while this route
+            // is being reconciled. Defer canonicalisation by one task turn so
+            // the router sees the settled authenticated tree; a synchronous
+            // replace here can be lost and leave a live dashboard at /login,
+            // making the next hard refresh paint the login entry route again.
+            spawn(async move {
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
+                if let Some(failure) = authenticated_login_navigator.replace(Route::Dashboard) {
+                    tracing::warn!(
+                        ?failure,
+                        "authenticated entry-route canonicalisation failed"
+                    );
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // Dioxus can reconcile the authenticated shell before its
+                    // history provider accepts the replace above. Do not leave
+                    // a live dashboard addressed as `/login`: a later hard
+                    // refresh would re-enter the auth route. Re-check the real
+                    // browser location after the router turn and use one
+                    // replace-navigation only when it is still stale.
+                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(5)).await;
+                    if let Some(window) = web_sys::window()
+                        && window.location().pathname().ok().as_deref() == Some("/login")
+                        && let Err(error) = window.location().replace("/")
+                    {
+                        tracing::warn!(?error, "browser entry-route canonicalisation failed");
+                    }
+                }
+            });
         }
     });
     let active_server_label = normalize_server_url(&base_url());
@@ -1337,6 +1366,7 @@ fn AppBootstrap() -> Element {
                 connection_status,
                 last_error,
                 session_boot_state,
+                secure_store_bootstrap_ready,
                 is_server_admin,
                 theme,
                 system_theme_is_night,

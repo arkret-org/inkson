@@ -702,7 +702,7 @@ fn boot_state_restores_when_refresh_material_exists_without_token() {
 }
 
 #[test]
-fn boot_state_waits_for_secure_store_before_known_account_is_signed_out() {
+fn boot_state_waits_for_secure_store_before_auth_state_is_known() {
     let account = test_active_account(
         "did:web:alice.example",
         "https://local.host",
@@ -714,7 +714,7 @@ fn boot_state_waits_for_secure_store_before_known_account_is_signed_out() {
     );
     assert_eq!(
         session_boot_state_from_bootstrap_material("", false, "", false),
-        SessionBootState::Unauthenticated
+        SessionBootState::Restoring
     );
     assert_eq!(
         session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), true),

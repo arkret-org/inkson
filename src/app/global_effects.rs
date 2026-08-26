@@ -13,6 +13,7 @@ pub(super) fn GlobalEffects(
     mut connection_status: Signal<String>,
     mut last_error: Signal<Option<String>>,
     mut session_boot_state: Signal<SessionBootState>,
+    secure_store_bootstrap_ready: Signal<bool>,
     mut is_server_admin: Signal<bool>,
     theme: Signal<String>,
     mut system_theme_is_night: Signal<bool>,
@@ -90,6 +91,18 @@ pub(super) fn GlobalEffects(
             async move {
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
                 loop {
+                    // The wasm account context, grant and DPoP material are
+                    // hydrated from encrypted IndexedDB. Refreshing before
+                    // that tier settles turns an expected "not loaded yet"
+                    // into SignInRequired and briefly publishes the login
+                    // surface on every hard refresh.
+                    if !secure_store_bootstrap_ready() {
+                        connection_status.set("Restoring session...".to_owned());
+                        session_boot_state.set(SessionBootState::Restoring);
+                        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(25))
+                            .await;
+                        continue;
+                    }
                     if token().trim().is_empty() {
                         connection_status.set("Restoring session...".to_owned());
                         session_boot_state.set(SessionBootState::Restoring);
@@ -99,12 +112,26 @@ pub(super) fn GlobalEffects(
                             connection_status.set("Online".to_owned());
                             session_boot_state.set(SessionBootState::Authenticated);
                             last_error.set(None);
+                            #[cfg(target_arch = "wasm32")]
+                            if let Some(window) = web_sys::window()
+                                && window.location().pathname().ok().as_deref() == Some("/login")
+                                && let Err(error) = window.location().replace("/")
+                            {
+                                tracing::warn!(
+                                    ?error,
+                                    "restored session browser-route canonicalisation failed"
+                                );
+                            }
                         }
                         crate::runtime::session::CurrentSessionRefresh::SignInRequired {
                             reason,
                         } => {
                             last_error.set(Some(reason));
                             if token().trim().is_empty() {
+                                // Secure storage has settled above. At this
+                                // point SignInRequired means the accepted
+                                // account or its local grant is genuinely
+                                // absent, rather than merely still hydrating.
                                 connection_status
                                     .set("Session could not be restored; sign in again".to_owned());
                                 session_boot_state.set(SessionBootState::Unauthenticated);
@@ -124,10 +151,8 @@ pub(super) fn GlobalEffects(
                                 "background session refresh pending: {reason}"
                             )));
                             if token().trim().is_empty() {
-                                connection_status.set(
-                                    "Session restore is unavailable; sign in again".to_owned(),
-                                );
-                                session_boot_state.set(SessionBootState::Unauthenticated);
+                                connection_status.set("Restoring session...".to_owned());
+                                session_boot_state.set(SessionBootState::Restoring);
                             }
                         }
                     }
