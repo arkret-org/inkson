@@ -265,11 +265,8 @@ fn AppBootstrap() -> Element {
         .as_ref()
         .map(|account| account.device_id.to_string())
         .unwrap_or_else(crate::config::new_device_id);
-    let initial_can_restore_session = has_bootstrap_refresh_material(
-        &initial_state_store,
-        &initial_server_url,
-        crate::app::principal_id_text(&initial_principal_id),
-    );
+    let initial_can_restore_session =
+        has_bootstrap_refresh_material(&initial_state_store, initial_active_account.as_ref());
     let initial_secure_store_bootstrap_ready = !cfg!(target_arch = "wasm32");
     let initial_session_boot_state = session_boot_state_from_bootstrap_material(
         &initial_session_credential,

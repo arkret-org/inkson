@@ -253,12 +253,13 @@ fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
     let actor = "did:web:alice.example";
     let mut store = crate::state::isolated_store_for_tests("account-scope-no-restore");
     store.switch_test_account(actor);
-
-    assert!(!has_bootstrap_refresh_material(
-        &store,
+    let account = test_active_account(
+        actor,
         "https://local.host",
-        actor
-    ));
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    );
+
+    assert!(!has_bootstrap_refresh_material(&store, Some(&account)));
 }
 
 #[test]
@@ -661,13 +662,39 @@ fn boot_session_credential_ignores_session_grant_for_other_server() {
 #[test]
 fn bootstrap_can_start_with_session_grant_without_live_credential() {
     let mut store = isolated_store("bootstrap-grant");
+    let mut grant = session_grant(3600);
+    let account = test_active_account(
+        grant.principal_id.as_str(),
+        grant.principal_server_url.as_str(),
+        grant.device_id.as_str(),
+    );
+    grant.audience = account.authority.principal_server_id.to_string();
+    store.set_session_grant(Some(grant));
+
+    assert!(has_bootstrap_refresh_material(&store, Some(&account)));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn onboarding_grant_cannot_start_bootstrap_before_account_commit() {
+    let mut store = isolated_store("bootstrap-onboarding-transaction");
     store.set_session_grant(Some(session_grant(3600)));
 
-    assert!(has_bootstrap_refresh_material(
-        &store,
+    assert!(!has_bootstrap_refresh_material(&store, None));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn bootstrap_rejects_grant_for_a_different_active_account() {
+    let mut store = isolated_store("bootstrap-account-mismatch");
+    store.set_session_grant(Some(session_grant(3600)));
+    let other = test_active_account(
+        "did:web:bob.example",
         "https://local.host",
-        "did:web:alice.example"
-    ));
+        "ak:device:01964137-0000-7000-8000-000000000002",
+    );
+
+    assert!(!has_bootstrap_refresh_material(&store, Some(&other)));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -677,12 +704,13 @@ fn bootstrap_ignores_session_grant_for_other_server() {
     let mut grant = session_grant(3600);
     grant.principal_server_url = url::Url::parse("https://other.local.host").unwrap();
     store.set_session_grant(Some(grant));
-
-    assert!(!has_bootstrap_refresh_material(
-        &store,
+    let account = test_active_account(
+        "did:web:alice.example",
         "https://local.host",
-        "did:web:alice.example"
-    ));
+        "ak:device:01964137-0000-7000-8000-000000000001",
+    );
+
+    assert!(!has_bootstrap_refresh_material(&store, Some(&account)));
 }
 
 #[test]

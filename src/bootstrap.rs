@@ -36,15 +36,22 @@ pub(crate) const ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY: &str =
 
 pub(crate) fn has_bootstrap_refresh_material(
     store: &LocalStateStore,
-    principal_server_url: &str,
-    _actor_id: &str,
+    active_account: Option<&crate::config::ActiveAccountContext>,
 ) -> bool {
+    let Some(account) = active_account else {
+        return false;
+    };
     let state = store.load();
     state.session_grant.as_ref().is_some_and(|grant| {
         crate::identity::session_refresh::grant_matches_principal_server(
             grant,
-            principal_server_url,
-        ) && !crate::identity::session_refresh::grant_is_dead(grant)
+            account.server_url.as_str(),
+        ) && crate::identity::session_refresh::grant_matches_principal_id(
+            grant,
+            account.principal_id(),
+        ) && grant.device_id == account.device_id
+            && grant.audience == account.authority.principal_server_id.as_str()
+            && !crate::identity::session_refresh::grant_is_dead(grant)
     })
 }
 

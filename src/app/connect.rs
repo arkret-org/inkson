@@ -228,7 +228,11 @@ pub(super) async fn refresh_session_credential_for_active_context(
     let generation = session_generation();
     let active_account = SessionContext::get().active_account;
     let Some(account) = active_account.peek().clone() else {
-        return crate::runtime::session::CurrentSessionRefresh::SignInRequired {
+        // A newly registered account writes its accepted grant durably before
+        // publishing the matching ActiveAccountContext. That short commit
+        // window is not an authentication failure and must never drive the
+        // app-wide invalidator (which navigates to /login).
+        return crate::runtime::session::CurrentSessionRefresh::RetryLater {
             reason: "active account context is unavailable".to_owned(),
         };
     };

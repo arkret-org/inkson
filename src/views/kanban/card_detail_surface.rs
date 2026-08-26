@@ -1989,10 +1989,46 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                         }
                                                                                     }
                                                                                     if due_open {
-                                                                                        div {
-                                                                                            class: "due-popover",
-                                                                                            "data-testid": "card-detail-due-picker",
-                                                                                            div { class: "due-popover-field",
+                                                                                        crate::components::DismissiblePopup {
+                                                                                            overlay_class: "due-date-modal-backdrop",
+                                                                                            surface_class: "due-date-modal",
+                                                                                            overlay_test_id: Some("card-detail-due-picker-backdrop".to_owned()),
+                                                                                            surface_test_id: Some("card-detail-due-picker".to_owned()),
+                                                                                            aria_label: "Set due date",
+                                                                                            on_dismiss: {
+                                                                                                let cancel_due = due_editor_value.clone();
+                                                                                                move |_| {
+                                                                                                    due_picker_open.set(false);
+                                                                                                    due_edit_value.set(cancel_due.clone());
+                                                                                                    due_calendar_month.set(due_calendar_month_for_value(&cancel_due));
+                                                                                                    due_edit_status.set(String::new());
+                                                                                                }
+                                                                                            },
+                                                                                            div { class: "due-date-modal-head",
+                                                                                                div { class: "due-date-modal-title",
+                                                                                                    h3 { "Set due date" }
+                                                                                                    p { "Choose a date for this card." }
+                                                                                                }
+                                                                                                Button {
+                                                                                                    variant: ButtonVariant::Secondary,
+                                                                                                    r#type: "button",
+                                                                                                    class: "due-date-modal-close",
+                                                                                                    "aria-label": "Close due date dialog",
+                                                                                                    title: "Close",
+                                                                                                    onclick: {
+                                                                                                        let cancel_due = due_editor_value.clone();
+                                                                                                        move |_| {
+                                                                                                            due_picker_open.set(false);
+                                                                                                            due_edit_value.set(cancel_due.clone());
+                                                                                                            due_calendar_month.set(due_calendar_month_for_value(&cancel_due));
+                                                                                                            due_edit_status.set(String::new());
+                                                                                                        }
+                                                                                                    },
+                                                                                                    UiIcon { name: "x" }
+                                                                                                }
+                                                                                            }
+                                                                                            div { class: "due-date-modal-body",
+                                                                                            div { class: "due-date-modal-field",
                                                                                                 Label { html_for: "card-detail-due-inline-input-input", "Due date" }
                                                                                                 Input {
                                                                                                     id: "card-detail-due-inline-input-input",
@@ -2093,10 +2129,12 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     "{due_status}"
                                                                                                 }
                                                                                             }
-                                                                                            div { class: "due-popover-actions",
+                                                                                            }
+                                                                                            div { class: "due-date-modal-actions",
                                                                                                 Button {
                                                                                                     variant: ButtonVariant::Secondary,
                                                                                                     r#type: "button",
+                                                                                                    class: "due-date-clear-action",
                                                                                                     onclick: move |_| {
                                                                                                         due_edit_value.set(String::new());
                                                                                                         due_calendar_month.set(default_due_calendar_month());

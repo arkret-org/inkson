@@ -89,9 +89,14 @@ the arkret-work specs for the active cross-project task plan.
 
 The `just` recipes wrap the underlying Dioxus commands:
 
-- Web: `dx serve --platform web`
-- Desktop Windows/Linux: `dx serve --platform desktop`
-- iOS/mobile: `dx serve --platform mobile`
+- Web: `python scripts/dev_dioxus.py --platform web --port 8080`
+- Desktop Windows/Linux: `python scripts/dev_dioxus.py --platform desktop`
+- iOS/mobile: `python scripts/dev_dioxus.py --platform mobile`
+
+The wrapper fails fast when the generated Arkret SDK registry does not match
+the canonical spec artifact. It also bridges changes from sibling Cargo path
+dependencies into Inkson's workspace so Dioxus performs a full Rust rebuild;
+running bare `dx serve` can miss those changes with Dioxus 0.7.
 
 Platform notes:
 

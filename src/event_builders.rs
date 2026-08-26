@@ -1235,12 +1235,54 @@ pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
     )
 }
 
+/// Build a replacement for the singleton Realm profile CAS register.
+///
+/// Unlike the bootstrap profile write, a replacement must name the complete
+/// currently settled profile value in `head_eq`. Merely attaching the latest
+/// Seal basis does not create a CAS supersession edge: omitting this guard
+/// would make the replacement a second chain head and resolve the profile cell
+/// to Bottom.
+pub fn build_realm_profile_replacement_event(
+    realm_id: &str,
+    actor_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
+    payload: arkret_sdk::RealmProfile,
+    expected_head: Value,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    build_realm_state_event_for_principal_server_with_set_head::<arkret_sdk::event_spec::RealmProfile>(
+        crate::operation::authoring_principal_server_id()?,
+        realm_id,
+        actor_id,
+        digest_suite,
+        payload,
+        Some(expected_head),
+    )
+}
+
 fn build_realm_state_event_for_principal_server<K: arkret_sdk::EventSpec>(
     principal_server_id: arkret_sdk::DidCoreId,
     realm_id: &str,
     actor_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     payload: K::Payload,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    build_realm_state_event_for_principal_server_with_set_head::<K>(
+        principal_server_id,
+        realm_id,
+        actor_id,
+        digest_suite,
+        payload,
+        None,
+    )
+}
+
+fn build_realm_state_event_for_principal_server_with_set_head<K: arkret_sdk::EventSpec>(
+    principal_server_id: arkret_sdk::DidCoreId,
+    realm_id: &str,
+    actor_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
+    payload: K::Payload,
+    set_expected_head: Option<Value>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let realm_id = arkret_sdk::RealmId::new(crate::operation::trim_realm_id(realm_id))?;
     let builder = TypedOperationBuilder::new_for_principal_server::<K>(
@@ -1277,7 +1319,7 @@ fn build_realm_state_event_for_principal_server<K: arkret_sdk::EventSpec>(
             anyhow::bail!("Realm state event kind {kind} does not have a direct state write");
         };
         let expected_head = match op.op_type {
-            arkret_sdk::LatticeOpType::Set => Value::Null,
+            arkret_sdk::LatticeOpType::Set => set_expected_head.unwrap_or(Value::Null),
             arkret_sdk::LatticeOpType::Transition => op.from.clone().ok_or_else(|| {
                 anyhow::anyhow!(
                     "Realm state event kind {kind} transition does not project an exact from state"

@@ -11,15 +11,15 @@ default:
 
 # Start the Dioxus web dev server.
 web:
-    dx serve --platform web --port 8080
+    python scripts/dev_dioxus.py --platform web --port 8080
 
 # Start the Dioxus desktop dev server.
 desktop:
-    dx serve --platform desktop
+    python scripts/dev_dioxus.py --platform desktop
 
 # Start the Dioxus mobile dev server.
 mobile:
-    dx serve --platform mobile
+    python scripts/dev_dioxus.py --platform mobile
 
 # Build the Dioxus web artifact.
 web-build:

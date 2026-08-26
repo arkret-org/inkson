@@ -183,25 +183,89 @@
   color: var(--text, var(--ak-ink));
   outline: none;
 }
-.due-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: var(--layer-local-popover);
-  width: min(300px, calc(100vw - 32px));
+.due-date-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--layer-modal) + 10);
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--border, var(--ak-line));
-  border-radius: 8px;
-  background: var(--surface, var(--ak-surface));
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--scrim, rgba(8, 13, 20, 0.68)) 88%, transparent);
+  backdrop-filter: blur(4px);
 }
-.due-popover-field {
+.due-date-modal {
+  width: min(400px, 100%);
+  max-height: calc(100dvh - 32px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--border, var(--ak-line));
+  border-radius: 12px;
+  background: var(--surface-solid, var(--surface, var(--ak-surface)));
+  color: var(--text, var(--ak-ink));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+.due-date-modal-head {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border, var(--ak-line));
+}
+.due-date-modal-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.due-date-modal-title h3,
+.due-date-modal-title p {
+  margin: 0;
+}
+.due-date-modal-title h3 {
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 800;
+}
+.due-date-modal-title p {
+  color: var(--text-3, var(--ak-muted));
+  font-size: 12px;
+  line-height: 1.45;
+}
+.due-date-modal .due-date-modal-close {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2, var(--ak-muted));
+}
+.due-date-modal .due-date-modal-close:hover,
+.due-date-modal .due-date-modal-close:focus-visible {
+  border-color: var(--border, var(--ak-line));
+  background: var(--surface-2, var(--ak-panel));
+  color: var(--text, var(--ak-ink));
+  outline: none;
+}
+.due-date-modal-body {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 18px;
+}
+.due-date-modal-field {
   display: grid;
   gap: 5px;
 }
-.due-popover-field label {
+.due-date-modal-field label {
   color: var(--text-3, var(--ak-muted));
   font-size: 12px;
   font-weight: 800;
@@ -230,7 +294,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.due-calendar-nav {
+.due-calendar .due-calendar-nav {
   width: 30px;
   height: 30px;
   display: inline-grid;
@@ -241,8 +305,8 @@
   color: var(--text-2, var(--ak-muted));
   cursor: pointer;
 }
-.due-calendar-nav:hover,
-.due-calendar-nav:focus-visible {
+.due-calendar .due-calendar-nav:hover,
+.due-calendar .due-calendar-nav:focus-visible {
   border-color: var(--accent, var(--ak-brand));
   color: var(--text, var(--ak-ink));
   outline: none;
@@ -260,7 +324,7 @@
   font-weight: 800;
   text-align: center;
 }
-.due-calendar-day {
+.due-calendar .due-calendar-day {
   width: 100%;
   aspect-ratio: 1;
   display: inline-grid;
@@ -275,19 +339,19 @@
   line-height: 1;
   cursor: pointer;
 }
-.due-calendar-day.outside {
+.due-calendar .due-calendar-day.outside {
   color: color-mix(in srgb, var(--text-3, var(--ak-muted)) 62%, transparent);
 }
-.due-calendar-day.today {
+.due-calendar .due-calendar-day.today {
   border-color: color-mix(in srgb, var(--accent, var(--ak-brand)) 54%, transparent);
 }
-.due-calendar-day:hover,
-.due-calendar-day:focus-visible {
+.due-calendar .due-calendar-day:hover,
+.due-calendar .due-calendar-day:focus-visible {
   border-color: var(--accent, var(--ak-brand));
   background: color-mix(in srgb, var(--accent, var(--ak-brand)) 12%, transparent);
   outline: none;
 }
-.due-calendar-day.selected {
+.due-calendar .due-calendar-day.selected {
   border-color: var(--accent, var(--ak-brand));
   background: var(--accent, var(--ak-brand));
   color: var(--surface);
@@ -296,15 +360,41 @@
   color: var(--text-3, var(--ak-muted));
   font-size: 12px;
 }
-.due-popover-actions {
+.due-date-modal-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border, var(--ak-line));
 }
-.due-popover-actions .primary,
-.due-popover-actions .secondary {
-  min-height: 30px;
-  padding: 0 10px;
+.due-date-modal-actions .primary,
+.due-date-modal-actions .secondary {
+  min-height: 34px;
+  padding: 0 12px;
+}
+.due-date-modal-actions .due-date-clear-action {
+  margin-right: auto;
+  color: var(--text-2, var(--ak-muted));
+}
+@media (max-width: 480px) {
+  .due-date-modal-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+  .due-date-modal {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 14px 14px 0 0;
+  }
+  .due-date-modal-head,
+  .due-date-modal-body,
+  .due-date-modal-actions {
+    padding-inline: 16px;
+  }
 }
 .card-detail-field-code {
   font-family: var(--font-mono);

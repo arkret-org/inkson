@@ -4,7 +4,7 @@ use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
 use serde_json::{Value, json};
 
-use super::metadata::{metadata_subject_for, projected_members_for_realm};
+use super::metadata::{metadata_subject_for, projected_members_for_realm, reconcile_editor_value};
 use super::policy::build_principal_admission_join_policy;
 use super::section::{REALM_ADMIN_NAV_GROUPS, RealmAdminSection};
 use crate::components::encryption_floor_prompt::projection_has_recommended_encryption_floor;
@@ -36,6 +36,8 @@ pub fn RealmAdminPanel(
     let mut metadata_avatar_blob_ref = use_signal(String::new);
     let mut metadata_alias = use_signal(String::new);
     let mut metadata_loaded_for = use_signal(String::new);
+    let mut metadata_loaded_subject =
+        use_signal(|| Option::<super::metadata::MetadataSubject>::None);
     let mut join_rule = use_signal(|| "public".to_owned());
     let mut principal_admission_enabled = use_signal(|| false);
     let mut principal_admission_methods = use_signal(|| "did:webvh".to_owned());
@@ -159,12 +161,46 @@ pub fn RealmAdminPanel(
         )
     };
     let active_section = RealmAdminSection::from_slug(active_section.as_deref());
+    // The account-sync writer can update the shared store outside this
+    // component's reactive scope. Subscribe to its canonical cursor so a
+    // deep-linked editor reconciles again when that projection lands.
+    let _projection_sync_cursor = sync_cursor();
     let metadata_subject = metadata_subject_for(&state_store.read(), &selected_realm_id);
     if metadata_loaded_for() != selected_realm_id {
         metadata_title.set(metadata_subject.title.clone());
         metadata_summary.set(metadata_subject.summary.clone());
         metadata_avatar_blob_ref.set(metadata_subject.avatar_blob_ref.clone());
         metadata_loaded_for.set(selected_realm_id.clone());
+        metadata_loaded_subject.set(Some(metadata_subject.clone()));
+    } else if metadata_loaded_subject().as_ref() != Some(&metadata_subject) {
+        // A deep-linked Profile page can render before the account projection
+        // arrives. Reconcile each untouched editor field against the previous
+        // canonical snapshot so the delayed value fills automatically without
+        // overwriting input the operator has already changed.
+        if let Some(previous) = metadata_loaded_subject() {
+            let reconciled_title =
+                reconcile_editor_value(&metadata_title(), &previous.title, &metadata_subject.title);
+            if reconciled_title != metadata_title() {
+                metadata_title.set(reconciled_title);
+            }
+            let reconciled_summary = reconcile_editor_value(
+                &metadata_summary(),
+                &previous.summary,
+                &metadata_subject.summary,
+            );
+            if reconciled_summary != metadata_summary() {
+                metadata_summary.set(reconciled_summary);
+            }
+            let reconciled_avatar = reconcile_editor_value(
+                &metadata_avatar_blob_ref(),
+                &previous.avatar_blob_ref,
+                &metadata_subject.avatar_blob_ref,
+            );
+            if reconciled_avatar != metadata_avatar_blob_ref() {
+                metadata_avatar_blob_ref.set(reconciled_avatar);
+            }
+        }
+        metadata_loaded_subject.set(Some(metadata_subject.clone()));
     }
     let metadata_subject_label = match metadata_subject.kind {
         RealmTreeNodeKind::Realm => "Realm",

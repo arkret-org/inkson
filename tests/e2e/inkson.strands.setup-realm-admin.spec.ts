@@ -169,6 +169,21 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await expect(page.getByTestId("account-menu-display-name")).toHaveText("inkson");
 });
 
+test("realm profile fills the current canonical metadata values", async ({ page }) => {
+  await refreshServer(page);
+  await expect(page.getByTestId("sync-cursor")).toContainText("ak:cursor:e2e-2");
+  await gotoAndDismissRecovery(
+    page,
+    "/realms/ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j/settings/profile",
+  );
+
+  await expect(page.getByTestId("realm-profile")).toBeVisible();
+  await expect(page.getByTestId("realm-name-input")).toHaveValue("Arkret Demo Realm");
+  await expect(page.getByTestId("realm-summary-input")).toHaveValue(
+    "Shared demo Realm served by mocked server",
+  );
+});
+
 test("realm admin page handles metadata, modal member invite, epoch rotation and archive", async ({ page }) => {
   await gotoAndDismissRecovery(page, "/realms/ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j/settings");
   await expect(latestTestId(page, "realm-admin-panel")).toBeVisible();

@@ -18,9 +18,9 @@ use crate::event_builders::{
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
     build_realm_authority_basis_update_control_intent, build_realm_authority_reset_control_intent,
     build_realm_bootstrap_steps_for_principal_server, build_realm_destroy_event,
-    build_realm_owner_transfer_control_intent, build_realm_state_event, build_space_create_event,
-    build_space_lifecycle_event, parse_realm_bootstrap_members, parse_wire_enum,
-    recommended_realm_policy_bundle_value,
+    build_realm_owner_transfer_control_intent, build_realm_profile_replacement_event,
+    build_realm_state_event, build_space_create_event, build_space_lifecycle_event,
+    parse_realm_bootstrap_members, parse_wire_enum, recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
@@ -289,17 +289,86 @@ pub async fn update_realm_metadata(
         optional_profile_string(fields.get("avatar_blob_ref"), "avatar_blob_ref")?
             .map(arkret_sdk::BlobRef::new)
             .transpose()?;
-    let event = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+    let rows = submitter
+        .http()
+        .events_read_all_pages(realm_id)
+        .await?
+        .events;
+    let expected_head = settled_realm_profile_payload(&rows)?;
+    let event = build_realm_profile_replacement_event(
         realm_id,
         actor_id,
         digest_suite,
         profile,
-    )?
-    // The bootstrap builder uses a null-head guard. A later replacement is
-    // authorized against the current Realm Seal frontier instead, which the
-    // authoring boundary resolves.
-    .without_preconditions();
+        expected_head,
+    )?;
     submitter.submit_sdk_event(&event).await
+}
+
+fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::Result<Value> {
+    let cell = arkret_wire::REALM_PROFILE_CELL;
+    let mut current = Value::Null;
+    let mut found = false;
+
+    for row in rows {
+        let event = match row {
+            arkret_sdk::EventReadRow::Event(event) => event,
+            arkret_sdk::EventReadRow::Redacted(view)
+                if view.kind == arkret_sdk::EventKind::RealmProfile =>
+            {
+                anyhow::bail!(
+                    "Realm profile Event {} is redacted; an exact CAS head cannot be authored",
+                    view.event_id
+                );
+            }
+            arkret_sdk::EventReadRow::ReferenceLocked(stub)
+                if stub.kind == Some(arkret_sdk::EventKind::RealmProfile) =>
+            {
+                anyhow::bail!(
+                    "a Realm profile Event is reference-locked; an exact CAS head cannot be authored"
+                );
+            }
+            arkret_sdk::EventReadRow::Redacted(_)
+            | arkret_sdk::EventReadRow::ReferenceLocked(_) => continue,
+        };
+        if event.kind != arkret_sdk::EventKind::RealmProfile {
+            continue;
+        }
+        let payload = serde_json::to_value(&event.payload)?;
+        let typed = serde_json::from_value::<arkret_sdk::RealmProfile>(payload.clone())?;
+        if typed.schema != arkret_wire::SchemaId::REALM_PROFILE_V1 || typed.title.is_empty() {
+            anyhow::bail!(
+                "accepted Realm profile Event {} has an invalid payload",
+                event.event_id
+            );
+        }
+        let matching: Vec<_> = event
+            .preconditions
+            .iter()
+            .filter(|guard| guard.cell.as_str() == cell)
+            .collect();
+        let [guard] = matching.as_slice() else {
+            anyhow::bail!(
+                "Realm profile Event {} must carry exactly one head_eq guard for {cell}",
+                event.event_id
+            );
+        };
+        if guard.predicate.op != arkret_sdk::PredicateOp::HeadEq
+            || guard.predicate.value.as_ref() != Some(&current)
+        {
+            anyhow::bail!(
+                "Realm profile history is not a single CAS chain at Event {}; conflict recovery is required",
+                event.event_id
+            );
+        }
+        current = payload;
+        found = true;
+    }
+
+    if !found {
+        anyhow::bail!("Realm profile is missing from the accepted Realm history");
+    }
+    Ok(current)
 }
 
 fn latest_realm_alias_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::Result<Option<Value>> {
@@ -988,6 +1057,82 @@ mod tests {
         assert_eq!(
             payload.alias().map(arkret_sdk::RealmAlias::canonical),
             Some("engineering:server.example")
+        );
+    }
+
+    #[test]
+    fn realm_profile_replacement_chains_from_the_complete_current_value() {
+        let initial = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+            REALM_ID,
+            ACTOR_ID,
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::RealmProfile::new("Engineering").unwrap(),
+        )
+        .unwrap();
+        let initial_row = arkret_sdk::EventReadRow::Event(
+            crate::operation::author_for_test(&initial).into_event(),
+        );
+        let expected = settled_realm_profile_payload(std::slice::from_ref(&initial_row)).unwrap();
+
+        let replacement = build_realm_profile_replacement_event(
+            REALM_ID,
+            ACTOR_ID,
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::RealmProfile::new("Platform").unwrap(),
+            expected.clone(),
+        )
+        .unwrap();
+
+        let [guard] = replacement.intent().preconditions() else {
+            panic!("profile replacement must carry one exact CAS guard");
+        };
+        assert_eq!(guard.cell.as_str(), arkret_wire::REALM_PROFILE_CELL);
+        assert_eq!(guard.predicate.op, arkret_sdk::PredicateOp::HeadEq);
+        assert_eq!(guard.predicate.value.as_ref(), Some(&expected));
+
+        let rows = vec![
+            initial_row,
+            arkret_sdk::EventReadRow::Event(
+                crate::operation::author_for_test(&replacement).into_event(),
+            ),
+        ];
+        assert_eq!(
+            settled_realm_profile_payload(&rows).unwrap()["title"],
+            serde_json::json!("Platform")
+        );
+    }
+
+    #[test]
+    fn realm_profile_history_rejects_a_replacement_without_a_cas_guard() {
+        let initial = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+            REALM_ID,
+            ACTOR_ID,
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::RealmProfile::new("Engineering").unwrap(),
+        )
+        .unwrap();
+        let unguarded = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+            REALM_ID,
+            ACTOR_ID,
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::RealmProfile::new("Platform").unwrap(),
+        )
+        .unwrap();
+        let mut unguarded_event = crate::operation::author_for_test(&unguarded).into_event();
+        unguarded_event.preconditions.clear();
+        let rows = vec![
+            arkret_sdk::EventReadRow::Event(
+                crate::operation::author_for_test(&initial).into_event(),
+            ),
+            arkret_sdk::EventReadRow::Event(unguarded_event),
+        ];
+
+        let error = settled_realm_profile_payload(&rows).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must carry exactly one head_eq guard"),
+            "{error:#}"
         );
     }
 }

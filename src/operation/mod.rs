@@ -344,16 +344,6 @@ impl LocalOperation {
         self
     }
 
-    /// Drop the producer preconditions this write was drafted with.
-    ///
-    /// A facet builder guards a genesis write with a null-head precondition; a
-    /// later replacement of the same facet is authorized against the accepted
-    /// Seal frontier instead and must not re-assert the empty head.
-    pub fn without_preconditions(mut self) -> Self {
-        self.intent = self.intent.with_preconditions(Vec::new());
-        self
-    }
-
     pub fn kind(&self) -> &EventKind {
         self.intent.kind()
     }

@@ -260,11 +260,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         }
         let can_restore_session = {
             let store = state_store.read();
-            has_bootstrap_refresh_material(
-                &store,
-                &base,
-                crate::app::principal_id_text(&principal_id()),
-            )
+            has_bootstrap_refresh_material(&store, active.as_ref())
         };
         if !base.trim().is_empty()
             && secure_store_ready
