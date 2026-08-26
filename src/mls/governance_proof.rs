@@ -1135,59 +1135,28 @@ pub(crate) fn current_security_frontier_leaves_for_scope(
         .map_err(|error| format!("derive MLS security frontier leaves: {error}"))
 }
 
-pub(crate) fn security_frontier_with_added_claims(
-    mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-    records: &[&arkret_sdk::KeyPackageClaimRecord],
+pub(crate) fn preview_security_frontier_with_added_keypackages(
+    state_store: &crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+    records: &[arkret_sdk::MlsKeyPackageRecord],
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
-    let mut occupied = leaves
-        .iter()
-        .map(|leaf| leaf.leaf_index)
-        .collect::<BTreeSet<_>>();
-    for record in records {
-        let key_package = arkret_sdk::base64url_decode(record.keypackage.as_bytes())
-            .map_err(|error| format!("claimed KeyPackage decode failed: {error}"))?;
-        let key_package_digest =
-            arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&key_package))
-                .map_err(|error| format!("claimed KeyPackage digest is invalid: {error}"))?;
-        if key_package_digest.as_str() != record.keypackage_ref {
-            return Err("claimed KeyPackage bytes differ from keypackage_ref".to_owned());
-        }
-        let next_index = (0..=u32::MAX)
-            .find(|index| !occupied.contains(index))
-            .ok_or_else(|| "MLS tree has no free leaf index".to_owned())?;
-        let author_leaf = arkret_sdk::author_leaf_from_key_package_bytes(&key_package, next_index)
-            .map_err(|error| format!("claimed KeyPackage validation failed: {error}"))?;
-        let credential = match author_leaf.credential {
-            arkret_sdk::AuthorLeafCredential::Basic { identity } => identity,
-            arkret_sdk::AuthorLeafCredential::Other { .. } => {
-                return Err("claimed KeyPackage credential is not Basic".to_owned());
-            }
-        };
-        let credential = String::from_utf8(credential)
-            .map_err(|_| "claimed KeyPackage credential is not UTF-8".to_owned())?;
-        let expected_credential = match (
-            record.device_id.as_ref(),
-            record.agent_id.as_ref(),
-            record.pairwise_verification_method.as_ref(),
-        ) {
-            (Some(device_id), None, None) => device_id.as_str(),
-            (None, Some(agent_id), None) => agent_id.as_str(),
-            (None, None, Some(_)) => record.principal_id.as_str(),
-            _ => return Err("claimed KeyPackage endpoint branch is invalid".to_owned()),
-        };
-        if credential != expected_credential {
-            return Err("claimed KeyPackage credential differs from its endpoint".to_owned());
-        }
-        leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
-            leaf_index: next_index,
-            principal_id: record.principal_id.clone(),
-            credential_ref: arkret_sdk::NonEmptyString::new(credential)
-                .map_err(|error| format!("claimed MLS credential ref is invalid: {error}"))?,
-        });
-        occupied.insert(next_index);
-    }
-    leaves.sort_by_key(|leaf| leaf.leaf_index);
-    Ok(leaves)
+    let snapshot = state_store
+        .mls_snapshot_for_scope(effective_scope)
+        .ok_or_else(|| "MLS security frontier requires a local group snapshot".to_owned())?;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let secret = crate::mls::runtime::load_device_snapshot_secret(
+        secure_store.as_ref(),
+        authority,
+        device_id,
+    )
+    .map_err(|error| format!("load MLS snapshot secret for Add preview: {error}"))?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
+        .map_err(|error| format!("restore MLS group for Add preview: {error}"))?;
+    group
+        .preview_add_members_security_frontier(records)
+        .map_err(|error| format!("stage exact MLS Add frontier: {error}"))
 }
 
 pub(crate) fn security_frontier_without_principals(

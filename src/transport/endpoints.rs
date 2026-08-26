@@ -306,11 +306,25 @@ impl MlsEndpoints<'_> {
             || receipt.source_service_id != expected_service_binding.source_service_id
             || receipt.destination_service_id != expected_service_binding.destination_service_id
             || receipt.request_digest != expected_request_digest
+            || receipt.expires_at <= chrono::Utc::now()
         {
             anyhow::bail!(
                 "KeyPackage claim receipt does not bind the exact authorized request and service route"
             );
         }
+        let destination_resolution = self
+            .transport
+            .http()
+            .open_service_resolution(&receipt.destination_service_id)
+            .await
+            .map_err(anyhow::Error::from)?;
+        arkret_sdk::verify_peer_keypackage_claim_receipt_signature(
+            receipt,
+            &destination_resolution,
+        )
+        .map_err(|error| {
+            anyhow::anyhow!("KeyPackage claim receipt signature is invalid: {error}")
+        })?;
         Ok(outcome)
     }
 
@@ -362,11 +376,25 @@ impl MlsEndpoints<'_> {
             || receipt.source_service_id != expected_service_binding.source_service_id
             || receipt.destination_service_id != expected_service_binding.destination_service_id
             || receipt.request_digest != expected_request_digest
+            || receipt.expires_at <= chrono::Utc::now()
         {
             anyhow::bail!(
                 "KeyPackage claim receipt does not bind the exact authorized request and service route"
             );
         }
+        let destination_resolution = self
+            .transport
+            .http()
+            .open_service_resolution(&receipt.destination_service_id)
+            .await
+            .map_err(anyhow::Error::from)?;
+        arkret_sdk::verify_peer_keypackage_claim_receipt_signature(
+            receipt,
+            &destination_resolution,
+        )
+        .map_err(|error| {
+            anyhow::anyhow!("KeyPackage claim receipt signature is invalid: {error}")
+        })?;
         Ok(outcome)
     }
 }

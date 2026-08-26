@@ -2534,19 +2534,35 @@ async fn ensure_mls_governance_proof_for_next_commit(
         account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS governance proof identity does not match the active account"
     );
-    let current_leaves = crate::mls::governance_proof::current_security_frontier_leaves(
-        &state_store.read(),
-        realm_id,
-        None,
-        &account.authority,
-        &account.device_id,
-    )
-    .map_err(anyhow::Error::msg)?;
-    let leaves = crate::mls::governance_proof::security_frontier_with_added_claims(
-        current_leaves,
-        added_claims,
-    )
-    .map_err(anyhow::Error::msg)?;
+    let leaves = if added_claims.is_empty() {
+        crate::mls::governance_proof::current_security_frontier_leaves(
+            &state_store.read(),
+            realm_id,
+            None,
+            &account.authority,
+            &account.device_id,
+        )
+        .map_err(anyhow::Error::msg)?
+    } else {
+        let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
+            .map_err(|error| anyhow::anyhow!("invalid MLS Realm id: {error}"))?;
+        let effective_scope = arkret_sdk::ScopeRef::Realm { realm_id };
+        let key_packages = added_claims
+            .iter()
+            .map(|claim| {
+                crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
+                    .map_err(anyhow::Error::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        crate::mls::governance_proof::preview_security_frontier_with_added_keypackages(
+            &state_store.read(),
+            &effective_scope,
+            &account.authority,
+            &account.device_id,
+            &key_packages,
+        )
+        .map_err(anyhow::Error::msg)?
+    };
     let request = {
         let store = state_store.read();
         let snapshot = store.mls_snapshot_for(realm_id).ok_or_else(|| {
