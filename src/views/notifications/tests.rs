@@ -53,6 +53,8 @@ fn hydrate_notifications_applies_push_rules_and_dnd() {
     let rules = crate::notification_rules::parse_push_rules(&json!({
         "rules": [{
             "rule_id": "override.quiet",
+            "kind": "override",
+            "evaluation_locus": "client",
             "conditions": [
                 {"kind": "field_match", "field": "realm_id", "pattern": "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"}
             ],

@@ -489,12 +489,15 @@ impl TransportProvider for RealmTransportProvider {
     }
 
     async fn recover_unauthorized(&self) -> garth::Result<bool> {
-        crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
+        match crate::identity::session_refresh::refresh_authenticated_session_after_unauthorized(
             &self.ctx.base_url.get(),
         )
         .await
-        .map(|_| true)
-        .map_err(|error| garth::Error::Http(error.to_string()))
+        {
+            Ok(_) => Ok(true),
+            Err(error) if crate::api_error::is_terminal_session_grant_error(&error) => Ok(false),
+            Err(error) => Err(garth::Error::Http(error.to_string())),
+        }
     }
 
     fn is_active(&self) -> bool {

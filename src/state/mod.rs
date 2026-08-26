@@ -164,6 +164,7 @@ pub struct LocalStateStore {
     /// store is held behind `Arc<Mutex<_>>` in `InMemoryKeyStore` (`KeyStore:
     /// Send + Sync`).
     persist_health: Arc<Mutex<Option<String>>>,
+    corrupt_account_scopes: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// YOU-02-004 — shared receive-chain write-back overlay (see
     /// [`MlsReceiveOverlay`]). Shared across clones like `persist_health` so
     /// a decrypt recorded through any handle is visible to every reader.
@@ -292,6 +293,7 @@ impl Default for LocalStateStore {
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),
             persist_health: Arc::new(Mutex::new(None)),
+            corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: garth::projection::SidecarProjectionFold::default(),
@@ -472,8 +474,11 @@ impl LocalStateStore {
             self.flush_pending.store(true, Ordering::Relaxed);
             return Ok(());
         }
-        let account_key = self.cached_account_key_for_persist()?;
-        let result = self.write_account_state(&account_key, &self.effective_state_for_persist());
+        let result = self
+            .cached_account_key_for_persist()
+            .and_then(|account_key| {
+                self.write_account_state(&account_key, &self.effective_state_for_persist())
+            });
         self.record_persist_result(&result);
         result
     }
@@ -606,6 +611,7 @@ impl LocalStateStore {
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),
             persist_health: Arc::new(Mutex::new(None)),
+            corrupt_account_scopes: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
             mls_receive_overlay: Arc::new(Mutex::new(MlsReceiveOverlay::default())),
             mls_decrypt_serial: Arc::new(Mutex::new(())),
             sidecar_projection_fold: garth::projection::SidecarProjectionFold::default(),
@@ -822,6 +828,10 @@ impl LocalStateStore {
                     corrupt_path.display()
                 );
                 tracing::error!(%error, "corrupt account state preserved, not silently reset");
+                self.corrupt_account_scopes
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(storage_scope.to_owned());
                 *self.lock_persist_health() = Some(message);
                 None
             }
@@ -859,6 +869,10 @@ impl LocalStateStore {
                     "account state entry was unreadable ({error}); preserved a copy and started from defaults"
                 );
                 tracing::error!(%error, "corrupt account state preserved, not silently reset");
+                self.corrupt_account_scopes
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(did.to_owned());
                 *self.lock_persist_health() = Some(message);
                 None
             }
@@ -936,6 +950,16 @@ impl LocalStateStore {
     /// newly-active account.
     fn cached_account_key_for_persist(&self) -> anyhow::Result<String> {
         let active = self.effective_account_key();
+        if self
+            .corrupt_account_scopes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(&active)
+        {
+            anyhow::bail!(
+                "refusing to persist account state after its durable blob was quarantined as corrupt: {active}"
+            );
+        }
         match self.cached_account_key.as_deref() {
             Some(cached_scope) if cached_scope == active => Ok(active),
             Some(cached_scope) => anyhow::bail!(

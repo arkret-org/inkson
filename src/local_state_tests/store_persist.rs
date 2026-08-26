@@ -591,6 +591,27 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
 }
 
 #[test]
+fn corrupt_account_blob_is_quarantined_without_being_replaced_by_defaults() {
+    let root_path = temp_state_path("corrupt-account-quarantine");
+    let mut store = LocalStateStore::with_path(root_path);
+    let account_path = store.account_state_path(ANONYMOUS_ACCOUNT_NAMESPACE);
+    std::fs::create_dir_all(account_path.parent().unwrap()).unwrap();
+    std::fs::write(&account_path, b"{truncated").unwrap();
+
+    assert_eq!(store.load(), ClientLocalState::default());
+    store.save(ClientLocalState::default());
+
+    assert!(!account_path.exists());
+    assert!(account_path.with_extension("corrupt").exists());
+    let error = store.persist_error().expect("corruption remains visible");
+    assert!(
+        error.contains("refusing to persist account state")
+            && error.contains(ANONYMOUS_ACCOUNT_NAMESPACE),
+        "unexpected persistence error: {error}"
+    );
+}
+
+#[test]
 fn local_state_store_keeps_thread_read_cursors_separate() {
     let path = temp_state_path("thread-read-cursor");
     let mut store = LocalStateStore::with_path(path);
