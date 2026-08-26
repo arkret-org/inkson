@@ -1146,7 +1146,7 @@ fn malformed_welcome_is_counted_not_swallowed() {
         "snapshot-secret",
     )
     .unwrap();
-    // A welcome entry whose content is not a valid MlsWelcomeEnvelope.
+    // A welcome entry whose content is not a valid durable MlsWelcomePayload.
     let messages = json!({
         "messages": [
             { "kind": "ak.mls.welcome", "content": { "not": "a welcome" } }
@@ -1169,7 +1169,7 @@ fn malformed_welcome_is_counted_not_swallowed() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
+fn retired_direct_welcome_envelope_does_not_persist_snapshot_or_consume_keypackage_state() {
     let mut state = temp_state_store("welcome-keypackage-state");
     let store = MemorySecureKeyStore::new();
     let realm = "ak:realm:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN";
@@ -1228,11 +1228,11 @@ fn welcome_without_verified_seal_proof_does_not_persist_snapshot() {
         outcome
             .first_error
             .as_deref()
-            .is_some_and(|reason| reason.contains("decryption_pending"))
+            .is_some_and(|reason| reason.contains("mls_group_id"))
     );
     assert!(
         state.mls_snapshot_for(realm).is_none(),
-        "an unverified Welcome must never persist joined MLS state"
+        "a retired direct Welcome envelope must never persist joined MLS state"
     );
     // The KeyPackage identity state (init private key) is RETAINED after a
     // Welcome applies — NOT consumed. Invitees publish reusable `last_resort`
@@ -1348,6 +1348,66 @@ fn durable_welcome_projection_context_is_removed_without_hiding_unknown_payload_
     assert!(reason.contains("unknown field `unexpected_business_field`"));
 }
 
+fn embedded_pairwise_welcome_value() -> serde_json::Value {
+    arkret_schema::embedded_json_artifact("fixtures/keypackage-pairwise-welcome-fixture.json")
+        .unwrap()["schema_validation_cases"][0]["instance"]
+        .clone()
+}
+
+#[test]
+fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_target() {
+    let valid = embedded_pairwise_welcome_value();
+    let typed: arkret_sdk::MlsWelcomePayload = serde_json::from_value(valid.clone()).unwrap();
+    assert!(validate_welcome_claim_receipt_context(&typed).is_ok());
+
+    for (name, path, replacement) in [
+        (
+            "requester",
+            vec!["claim_receipt", "request", "requester"],
+            json!("ak:did_core:webvh:z6mkfixturebobexample"),
+        ),
+        (
+            "realm",
+            vec!["claim_receipt", "request", "intended_realm_id"],
+            json!("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"),
+        ),
+        (
+            "group",
+            vec!["claim_receipt", "request", "mls_group_id"],
+            json!("different-fixture-group"),
+        ),
+        (
+            "target",
+            vec!["claim_receipt", "request", "target_principal_id"],
+            json!("ak:did_core:webvh:z6mkfixture"),
+        ),
+    ] {
+        let mut mismatched = valid.clone();
+        let mut cursor = &mut mismatched;
+        for segment in &path[..path.len() - 1] {
+            cursor = cursor.get_mut(*segment).unwrap();
+        }
+        cursor[path[path.len() - 1]] = replacement;
+        let typed: arkret_sdk::MlsWelcomePayload = serde_json::from_value(mismatched).unwrap();
+        assert!(
+            validate_welcome_claim_receipt_context(&typed).is_err(),
+            "mismatched {name} context was accepted"
+        );
+    }
+}
+
+#[test]
+fn legacy_direct_welcome_envelope_is_not_a_durable_payload() {
+    let legacy = json!({
+        "group_id": "fixture-group",
+        "epoch": 1,
+        "welcome": "AQID",
+        "welcome_hash": "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81"
+    });
+    assert!(durable_welcome_payload_reject_reason(&legacy).is_some());
+    assert!(decode_welcome_envelope(&legacy).is_err());
+}
+
 #[test]
 fn local_welcome_hint_filters_by_realm_group_id() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
@@ -1356,8 +1416,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
         json!({
             "kind": "ak.mls.welcome",
             "content": {
-                "group_id": mls_group_id_for_realm(realm).unwrap(),
-                "welcome_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "mls_group_id": mls_group_id_for_realm(realm).unwrap(),
             },
             "unsigned": {
                 "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000aa",
@@ -1366,14 +1425,23 @@ fn local_welcome_hint_filters_by_realm_group_id() {
         json!({
             "kind": "ak.mls.welcome",
             "content": {
-                "group_id": mls_group_id_for_realm(other_realm).unwrap(),
-                "welcome_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "mls_group_id": mls_group_id_for_realm(other_realm).unwrap(),
+                "claim_envelope": {
+                    "welcome_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                },
+            },
+        }),
+        json!({
+            "kind": "ak.mls.welcome",
+            "content": {
+                "group_id": mls_group_id_for_realm(realm).unwrap(),
+                "welcome_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             },
         }),
         json!({
             "kind": "ak.key.verification.request",
             "content": {
-                "group_id": mls_group_id_for_realm(realm).unwrap(),
+                "mls_group_id": mls_group_id_for_realm(realm).unwrap(),
             },
         }),
     ];
@@ -1382,6 +1450,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
         collect_mls_welcome_messages_for_realm(&messages, realm).len(),
         1
     );
+    assert!(!mls_welcome_message_matches_realm(&messages[2], realm));
     assert_eq!(
         local_mls_welcome_hint_for_realm(&messages, realm),
         "1:ak:mls_welcome:01904100-0000-7000-8000-0000000000aa"

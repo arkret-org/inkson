@@ -1200,8 +1200,7 @@ pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: 
         return false;
     };
     content
-        .get("group_id")
-        .or_else(|| content.get("mls_group_id"))
+        .get("mls_group_id")
         .and_then(serde_json::Value::as_str)
         == Some(expected_group_id.as_str())
 }
@@ -1268,7 +1267,8 @@ pub fn local_mls_welcome_hint_for_realm(messages: &[serde_json::Value], realm_id
                 .or_else(|| {
                     message
                         .get("content")
-                        .and_then(|content| content.get("welcome_hash"))
+                        .and_then(|content| content.get("claim_envelope"))
+                        .and_then(|envelope| envelope.get("welcome_digest"))
                 })
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("")
@@ -1282,12 +1282,6 @@ pub fn local_mls_welcome_hint_for_realm(messages: &[serde_json::Value], realm_id
 
 #[cfg(test)]
 pub(super) fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -> Option<String> {
-    let looks_like_durable_payload = value.get("claim_ref").is_some()
-        || value.get("claim_id").is_some()
-        || value.get("keypackage_ref").is_some();
-    if !looks_like_durable_payload {
-        return None;
-    }
     serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(value.clone())
         .err()
         .map(|error| {
@@ -1322,27 +1316,20 @@ pub(super) fn durable_welcome_wire_payload(value: &serde_json::Value) -> serde_j
 pub(super) fn decode_welcome_envelope(
     value: &serde_json::Value,
 ) -> Result<arkret_sdk::MlsWelcomeEnvelope, String> {
-    if value.get("mls_group_id").is_none() {
-        return serde_json::from_value(value.clone())
-            .map_err(|error| format!("welcome envelope parse: {error}"));
-    }
     let durable: arkret_sdk::MlsWelcomePayload = serde_json::from_value(value.clone())
         .map_err(|error| format!("durable Welcome payload parse: {error}"))?;
-    let ciphertext = durable
-        .carrier
-        .ciphertext()
-        .ok_or_else(|| "durable Welcome payload has no inline ciphertext".to_owned())?
-        .to_owned();
-    let welcome_bytes = arkret_sdk::base64url_decode(ciphertext.as_bytes())
-        .map_err(|error| format!("durable Welcome ciphertext decode: {error}"))?;
-    let welcome_hash = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&welcome_bytes))
-        .map_err(|error| format!("durable Welcome digest: {error}"))?;
+    let ciphertext = durable.carrier.ciphertext();
+    let welcome_hash = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+        durable.carrier.welcome_bytes(),
+    ))
+    .map_err(|error| format!("durable Welcome digest: {error}"))?;
     if welcome_hash != durable.claim_envelope.welcome_digest {
         return Err(
             "durable Welcome ciphertext differs from claim_envelope.welcome_digest".to_owned(),
         );
     }
-    let recipient = welcome_recipient_endpoint(&durable.recipient_principal_id, durable.recipient)?;
+    let recipient =
+        welcome_recipient_endpoint(&durable.recipient_principal_id, durable.recipient.clone())?;
     Ok(arkret_sdk::MlsWelcomeEnvelope {
         group_id: durable.mls_group_id.as_str().to_owned(),
         epoch: durable.epoch,
@@ -1351,6 +1338,40 @@ pub(super) fn decode_welcome_envelope(
         welcome_hash,
         ratchet_tree: None,
     })
+}
+
+pub(super) fn validate_welcome_claim_receipt_context(
+    welcome: &arkret_sdk::MlsWelcomePayload,
+) -> Result<(), String> {
+    let receipt = &welcome.claim_receipt;
+    let request = &receipt.request;
+    let target_principal_id =
+        match &welcome.recipient {
+            arkret_sdk::MlsWelcomeRecipient::Device { .. } => welcome
+                .recipient_principal_id
+                .as_ref()
+                .ok_or_else(|| "device Welcome omits recipient_principal_id".to_owned())?,
+            arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+                recipient_agent_id, ..
+            } => recipient_agent_id,
+            arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+                recipient_pairwise_actor_id,
+                ..
+            } => recipient_pairwise_actor_id,
+        };
+    if receipt.claim_request_id != request.claim_request_id
+        || request.requester != welcome.claim_envelope.requester_actor_id
+        || request.intended_realm_id != welcome.claim_envelope.intended_realm_id
+        || request.intended_realm_id.as_str() != welcome.governance_binding.realm_id().as_str()
+        || request.mls_group_id.as_str() != welcome.mls_group_id.as_str()
+        || &request.target_principal_id != target_principal_id
+    {
+        return Err(
+            "claim_receipt does not match the exact Welcome requester, Realm, MLS group, target, and claim request id"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 pub(super) fn welcome_recipient_endpoint(
@@ -1432,15 +1453,13 @@ pub(super) fn welcome_recipient_endpoint(
 /// Returns `Ok(())` only when the required claim envelope is present and its
 /// directory-resolved device signature verifies.
 pub(super) fn verify_welcome_claim_envelope_signer(
-    welcome_value: &serde_json::Value,
+    welcome: &arkret_sdk::MlsWelcomePayload,
 ) -> Result<(), String> {
     use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 
-    let Some(claim_value) = welcome_value.get("claim_envelope") else {
-        return Err("claim_envelope missing; Welcome remains decryption_pending".to_owned());
-    };
-    let envelope: arkret_sdk::MlsWelcomeClaimEnvelope = serde_json::from_value(claim_value.clone())
-        .map_err(|err| format!("claim_envelope decode: {err}"))?;
+    let envelope = &welcome.claim_envelope;
+    let claim_receipt = &welcome.claim_receipt;
+    validate_welcome_claim_receipt_context(welcome)?;
     // Shape validation: non-empty kid/sig and alg in {Ed25519, Ed25519}.
     envelope
         .validate_signature_shape()
@@ -1479,7 +1498,7 @@ pub(super) fn verify_welcome_claim_envelope_signer(
         let verifying_key = VerifyingKey::from_bytes(&key_bytes)
             .map_err(|error| format!("claim_envelope pairwise key is invalid: {error}"))?;
         let signing_bytes = envelope
-            .canonical_signing_bytes()
+            .canonical_signing_bytes(claim_receipt)
             .map_err(|error| format!("claim_envelope canonical bytes: {error}"))?;
         let signature_bytes = arkret_sdk::base64url_decode(envelope.signature.sig.as_bytes())
             .map_err(|error| format!("claim_envelope signature decode: {error}"))?;
@@ -1573,7 +1592,7 @@ pub(super) fn verify_welcome_claim_envelope_signer(
     };
 
     let signing_bytes = envelope
-        .canonical_signing_bytes()
+        .canonical_signing_bytes(claim_receipt)
         .map_err(|err| format!("claim_envelope canonical bytes: {err}"))?;
     let sig_bytes = arkret_sdk::base64url_decode(envelope.signature.sig.as_bytes())
         .map_err(|err| format!("claim_envelope signature decode: {err}"))?;
@@ -1753,7 +1772,15 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
         // verify the claim_envelope sender signature with a device_directory key
         // and fail closed. This runs before join because signature verification
         // does not depend on MLS-layer decryption.
-        if let Err(reason) = verify_welcome_claim_envelope_signer(&welcome_value) {
+        let typed_welcome =
+            match serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(welcome_value.clone()) {
+                Ok(welcome) => welcome,
+                Err(error) => {
+                    outcome.record_failure(format!("welcome claim envelope: {error}"));
+                    continue;
+                }
+            };
+        if let Err(reason) = verify_welcome_claim_envelope_signer(&typed_welcome) {
             outcome.record_failure(format!("welcome claim envelope authz: {reason}"));
             continue;
         }

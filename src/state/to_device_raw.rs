@@ -859,7 +859,6 @@ mod durable_inbox_tests {
                 "ak:notification:01964137-0000-7000-8000-000000000012",
             )
             .unwrap(),
-            notification_kind: arkret_sdk::NotificationKind::Agent,
             action: NotificationDeltaAction::Remove,
             data: None,
         });

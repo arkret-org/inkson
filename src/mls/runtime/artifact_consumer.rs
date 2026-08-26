@@ -201,8 +201,8 @@ impl HostArtifactApplicator {
             arkret_sdk::EventKind::MlsWelcome => {
                 let payload = event_payload::<arkret_sdk::MlsWelcomePayload>(event)?;
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+                super::message::verify_welcome_claim_envelope_signer(&payload).map_err(protocol)?;
                 let value = serde_json::to_value(&payload)?;
-                super::message::verify_welcome_claim_envelope_signer(&value).map_err(protocol)?;
                 let welcome = super::message::decode_welcome_envelope(&value).map_err(protocol)?;
                 let private_state = super::load_mls_key_package_identity_state(
                     secure_store.as_ref(),
