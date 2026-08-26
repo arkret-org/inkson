@@ -60,7 +60,7 @@ impl TranscriptionState {
 
 /// Roster entry for the participant grid.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CallParticipant {
+pub struct CallParticipantView {
     pub actor_id: String,
     pub device_id: Option<String>,
     pub display_name: String,
@@ -75,7 +75,7 @@ pub struct CallParticipant {
 pub(super) type SharedTransport = Rc<RefCell<Box<dyn MediaTransport>>>;
 
 #[derive(Clone, Copy, PartialEq)]
-pub(super) enum CallMode {
+pub(super) enum CallStartMode {
     P2p,
     Sfu,
 }

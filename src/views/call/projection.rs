@@ -4,7 +4,7 @@ use arkret_wire::event_kind_str;
 use dioxus::prelude::*;
 use serde_json::Value;
 
-use super::types::CallParticipant;
+use super::types::CallParticipantView;
 use crate::media::rtc::MediaGovernanceEvidence;
 use crate::views::helpers::short_protocol_id;
 
@@ -422,7 +422,7 @@ pub(super) fn build_roster(
     actor: &str,
     peers: &[String],
     actor_devices: &BTreeMap<String, String>,
-) -> anyhow::Result<Vec<CallParticipant>> {
+) -> anyhow::Result<Vec<CallParticipantView>> {
     let mut ids = BTreeSet::new();
     let mut roster = Vec::new();
     for full_id in std::iter::once(actor).chain(peers.iter().map(String::as_str)) {
@@ -433,7 +433,7 @@ pub(super) fn build_roster(
         if !ids.insert(actor_id.clone()) {
             continue;
         }
-        roster.push(CallParticipant {
+        roster.push(CallParticipantView {
             device_id: actor_devices.get(&actor_id).cloned(),
             display_name: short_protocol_id(&actor_id),
             actor_id,
@@ -446,7 +446,7 @@ pub(super) fn build_roster(
 }
 
 pub(super) fn set_local_state(
-    participants: &mut Signal<Vec<CallParticipant>>,
+    participants: &mut Signal<Vec<CallParticipantView>>,
     actor: &str,
     muted: bool,
     sharing: bool,

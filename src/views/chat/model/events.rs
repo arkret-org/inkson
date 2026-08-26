@@ -895,48 +895,6 @@ pub(crate) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<C
     chat_message_from_event_with_sidecar(realm_id, event, None, None)
 }
 
-/// P0 decrypt-on-read: turn a remote member's canonical `encrypted_content`
-/// envelope into a plaintext chat body.
-///
-/// Parses the canonical `ak.schema.encrypted_envelope.v1` shape, unwraps it
-/// to the typed [`arkret_sdk::EncryptedPayload`], and hands it to the shared
-/// MLS decrypt core. The decrypted bytes are the canonical Content Block JSON
-/// (see the secure send path), so we parse them and extract the display text.
-/// Returns `None` on any soft failure (no local MLS snapshot, wrong/absent
-/// device secret, payload that doesn't decrypt) so the caller leaves the
-/// message in the `Decrypting`/`KeyMissing` state instead of presenting an
-/// undecrypted body.
-///
-/// Fixture-only: the render path now decrypts through the shared sync engine,
-/// so the only remaining consumer is the chat decrypt contract test.
-#[cfg(test)]
-pub(crate) fn decrypt_chat_encrypted_content(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
-    device_id: &arkret_sdk::DeviceId,
-    circle_id: Option<&str>,
-    encrypted_content: &Value,
-) -> Option<String> {
-    let effective_scope = match circle_id {
-        Some(circle_id) => Some(arkret_sdk::ScopeRef::Circle {
-            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
-            circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).ok()?,
-        }),
-        None => None,
-    };
-    decrypt_chat_encrypted_content_value(
-        state_store,
-        realm_id,
-        authority,
-        device_id,
-        effective_scope.as_ref(),
-        encrypted_content,
-        None,
-    )
-    .and_then(|content_value| display_body_from_value(&content_value))
-}
-
 fn decrypt_chat_encrypted_content_value(
     state_store: &LocalStateStore,
     realm_id: &str,

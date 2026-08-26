@@ -15,7 +15,8 @@ use super::signaling::{
     apply_inbox_items, emit_async, emit_signal, end_call, relay_local_signals, spawn_reject,
 };
 use super::types::{
-    CallMode, CallParticipant, CallStage, RecordingState, SharedTransport, TranscriptionState,
+    CallParticipantView, CallStage, CallStartMode, RecordingState, SharedTransport,
+    TranscriptionState,
 };
 use crate::media::rtc::{DesiredMedia, MediaJoinRequest};
 use crate::transport::auth::with_event_submitter;
@@ -71,7 +72,7 @@ pub fn CallPanel(
     let mut recording = use_signal(|| RecordingState::Off);
     let mut transcription = use_signal(|| TranscriptionState::Off);
     let mut pending_capture = use_signal(|| Option::<String>::None);
-    let mut participants = use_signal(Vec::<CallParticipant>::new);
+    let mut participants = use_signal(Vec::<CallParticipantView>::new);
     let mut active_call_id = use_signal(|| call_id.clone());
     let mut call_seq = use_signal(|| 0_u64);
     let mut active_realm = use_signal(|| selected_realm_id.clone());
@@ -194,7 +195,7 @@ pub fn CallPanel(
         let actor = principal_id.clone();
         let device = device_id.clone();
         let signal_store = signal_store.clone();
-        move |mode: CallMode| {
+        move |mode: CallStartMode| {
             let base = base.clone();
             let actor = actor.clone();
             let device = device.clone();
@@ -207,11 +208,11 @@ pub fn CallPanel(
             };
 
             let peers: Vec<String> = match mode {
-                CallMode::P2p => vec![peer_input().trim().to_owned()]
+                CallStartMode::P2p => vec![peer_input().trim().to_owned()]
                     .into_iter()
                     .filter(|p| !p.is_empty())
                     .collect(),
-                CallMode::Sfu => participant_list_from_input(&group_input()),
+                CallStartMode::Sfu => participant_list_from_input(&group_input()),
             };
 
             let existing_call = active_call_id();
@@ -373,7 +374,7 @@ pub fn CallPanel(
                             return;
                         }
                         match mode {
-                            CallMode::Sfu => {
+                            CallStartMode::Sfu => {
                                 if let Err(err) = submit_call_state_participant(
                                     &base,
                                     &api_token,
@@ -445,7 +446,7 @@ pub fn CallPanel(
                                 stage.set(CallStage::Active);
                                 status.set(format!("joined SFU room ({})", session.backend_kind));
                             }
-                            CallMode::P2p => {
+                            CallStartMode::P2p => {
                                 if let Err(err) = shared.borrow_mut().begin_offer() {
                                     last_error.set(media_error_label(err));
                                     stage.set(CallStage::Ended);
@@ -641,7 +642,7 @@ pub fn CallPanel(
                                     || (media_plaintext_confirmation_required && !media_plaintext_confirmed()),
                                 onclick: {
                                     let mut start = start_call.clone();
-                                    move |_| start(CallMode::P2p)
+                                    move |_| start(CallStartMode::P2p)
                                 },
                                 "Start 1:1 call"
                             }
@@ -652,7 +653,7 @@ pub fn CallPanel(
                                     || (media_plaintext_confirmation_required && !media_plaintext_confirmed()),
                                 onclick: {
                                     let mut start = start_call.clone();
-                                    move |_| start(CallMode::Sfu)
+                                    move |_| start(CallStartMode::Sfu)
                                 },
                                 "Start group call"
                             }

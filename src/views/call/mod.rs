@@ -37,4 +37,4 @@ pub const fn media_route_adapter_available() -> bool {
 }
 
 pub use panel::CallPanel;
-pub use types::{CallParticipant, CallStage, RecordingState};
+pub use types::{CallParticipantView, CallStage, RecordingState};

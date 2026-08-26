@@ -4489,39 +4489,6 @@ fn secure_content_block_round_trips_back_to_text() {
 }
 
 #[test]
-fn decrypt_chat_encrypted_content_soft_fails_without_snapshot() {
-    // No local MLS snapshot for this realm -> decrypt-on-read returns None
-    // so the caller leaves the message in Decrypting/KeyMissing rather than
-    // surfacing garbage.
-    let temp = std::env::temp_dir().join(format!(
-        "inkson-chat-decrypt-{}.json",
-        crate::operation::uuid_v7()
-    ));
-    let store = LocalStateStore::with_path(temp);
-    let envelope = json!({
-        "scheme": "mls_rfc9420",
-        "group_id": "group-x",
-        "epoch": 1,
-        "content_type": "application/vnd.arkret.message+json",
-        "ciphertext": "AAAA",
-        "payload_digest": "sha256:0",
-    });
-    let authority = test_authority("did:web:alice.example");
-    let device_id = test_device_id("ak:device:01964137-0000-7000-8000-000000000001");
-    assert!(
-        decrypt_chat_encrypted_content(
-            &store,
-            "ak:realm:AacL7ZYuTtiI1Wvq5aTmbQo8CihIcuFhJ4WKAZZMxlxY",
-            &authority,
-            &device_id,
-            None,
-            &envelope,
-        )
-        .is_none()
-    );
-}
-
-#[test]
 fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
     let event = json!({
         "event_id": "evt:1",

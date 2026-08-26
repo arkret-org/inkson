@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use super::signaling::emit_async;
-use super::types::CallParticipant;
+use super::types::CallParticipantView;
 use crate::ui::button::{Button, ButtonVariant};
 
 fn moderator_mute_signal(
@@ -56,7 +56,7 @@ pub(super) fn ModeratorControls(
     call_id: String,
     actor: String,
     device: String,
-    participants: Signal<Vec<CallParticipant>>,
+    participants: Signal<Vec<CallParticipantView>>,
     call_seq: Signal<u64>,
 ) -> Element {
     // A4 — base_url from session context instead of a prop.

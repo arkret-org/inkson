@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use super::media::media_error_label;
-use super::types::{CallParticipant, CallStage, SharedTransport};
+use super::types::{CallParticipantView, CallStage, SharedTransport};
 use crate::rtc_transport::LocalSignal;
 use crate::transport::auth::with_event_submitter;
 use crate::views::call_signals::CallSignalInboxItem;
@@ -115,7 +115,7 @@ pub(super) fn apply_inbox_items(
     mut stage: Signal<CallStage>,
     mut status: Signal<String>,
     mut last_error: Signal<String>,
-    mut participants: Signal<Vec<CallParticipant>>,
+    mut participants: Signal<Vec<CallParticipantView>>,
     mut mic_muted: Signal<bool>,
     relay_store: crate::runtime::input::StateStoreHandle,
 ) {
@@ -259,7 +259,10 @@ pub(super) fn apply_inbox_items(
 
 /// Apply an inbound `mute_state` / `media_state` / `speaking` signal to the
 /// sender's roster tile. The sender's actor id is `item.sender_actor`.
-fn apply_peer_state(participants: &mut Signal<Vec<CallParticipant>>, item: &CallSignalInboxItem) {
+fn apply_peer_state(
+    participants: &mut Signal<Vec<CallParticipantView>>,
+    item: &CallSignalInboxItem,
+) {
     let target = match &item.signal {
         arkret_sdk::CallSignalData::MuteState(data) => data
             .target_actor_id
