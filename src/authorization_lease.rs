@@ -322,7 +322,7 @@ pub async fn standard_initial_submission(
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
     let managed_genesis = is_managed_agent_pcr_genesis(event);
-    if event.seal_basis.is_some() || managed_genesis {
+    if event.kind.is_control_plane() {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal => None,
             ProposalAuthorityRoute::LocalPrincipal(local) => {
@@ -370,7 +370,7 @@ pub async fn delayed_initial_submission(
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
     let managed_genesis = is_managed_agent_pcr_genesis(event);
-    if event.seal_basis.is_some() || managed_genesis {
+    if event.kind.is_control_plane() {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal => None,
             ProposalAuthorityRoute::LocalPrincipal(local) => {

@@ -201,13 +201,10 @@ pub(super) fn submit_kanban_operation_event(
                 return;
             }
         };
-        store.enqueue_local_projection_command(operation_id.clone(), Some(realm_id), record);
-        // Land the op-log row inside this same write: the op-log-derived
-        // pending Board surface (and the seed suppression reading it) must
-        // observe the create before the options-sync effect re-runs, which
-        // happens as soon as this store write marks subscribers dirty. The
-        // deferred drain in `KanbanEffects` then simply no-ops.
-        store.project_pending_local_commands();
+        // The holder-local operation id is the durable retry key. Upsert it
+        // instead of appending a second optimistic row so a failed create can
+        // return to `queued` and be driven again without duplicating a Board.
+        store.upsert_raw_operation(operation_id.clone(), Some(realm_id), record);
     }
     board_status.set(format!(
         "submitting {kind} operation {}",
@@ -216,6 +213,12 @@ pub(super) fn submit_kanban_operation_event(
     let api_token = token();
     let operation_id_for_status = operation_id.clone();
     let operation_id_for_reconcile = operation_id.clone();
+    // `spawn_forever` executes at the Dioxus root and therefore has no current
+    // component scope from which `EventSubmitter::from_current_session` can
+    // consume SessionContext. Carry the governance store explicitly across
+    // that lifetime boundary; otherwise a perfectly pinned checkpoint is
+    // reported as absent before the Event ever reaches the durable queue.
+    let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
     // X13: use `spawn_forever`, NOT `spawn`. The "New board" handler calls
     // `navigator.replace(...)` to route to the new board IMMEDIATELY after
     // calling this — a `spawn`-ed task is tied to the current component scope
@@ -238,7 +241,10 @@ pub(super) fn submit_kanban_operation_event(
     // reach it via the re-exported core crate.
     dioxus::core::spawn_forever(async move {
         let result = with_authed_api(&base_url, api_token, |api| async move {
-            api.event_submitter()?.submit_sdk_event(&operation).await
+            api.event_submitter()?
+                .with_state_store(submit_state_store)
+                .submit_sdk_event(&operation)
+                .await
         })
         .await;
         match result {
@@ -264,10 +270,17 @@ pub(super) fn submit_kanban_operation_event(
                 );
             }
             Err(err) => {
+                let error = err.display().to_string();
+                state_store.write().update_raw_operation_write_state(
+                    &operation_id_for_reconcile,
+                    "failed",
+                    None,
+                    Some(error.clone()),
+                );
                 tracing::warn!(
                     operation_id = %short_protocol_id(&operation_id_for_status),
                     kind = %kind,
-                    error = %err.display(),
+                    error,
                     "detached kanban operation failed"
                 );
             }

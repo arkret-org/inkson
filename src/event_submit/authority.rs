@@ -84,17 +84,14 @@ pub(super) fn realm_authority_root_claim(
 pub(super) fn cba_effect_plane_for_intent(
     kind: &arkret_sdk::events::kinds::EventKind,
 ) -> anyhow::Result<Option<CbaEffectPlane>> {
-    let Some(descriptor) = kind.descriptor().filter(|row| row.reducer_input) else {
-        return Ok(None);
-    };
-    Ok(Some(match descriptor.plane {
-        Some("control") => CbaEffectPlane::Control,
-        Some("data") => CbaEffectPlane::Data,
-        other => anyhow::bail!(
-            "reducer-input kind {} declares no known CBA plane ({other:?})",
+    let plane = kind.cba_plane();
+    if kind.is_reducer_input() && plane.is_none() {
+        anyhow::bail!(
+            "reducer-input kind {} declares no known CBA plane",
             kind.as_str()
-        ),
-    }))
+        );
+    }
+    Ok(plane)
 }
 
 /// Prove the authored event's projected cells all sit on its declared plane.

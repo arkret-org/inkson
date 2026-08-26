@@ -808,6 +808,7 @@ pub(crate) fn pending_board_creates_from_ops(
                 ),
                 title,
                 state: raw_operation_card_state(&record.payload),
+                error: json_path_string(Some(&record.payload), &["error"]),
             },
         );
     }

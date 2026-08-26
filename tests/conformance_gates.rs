@@ -319,29 +319,24 @@ fn authored_realm_bootstrap(
 /// authored envelope instead of mutating one.
 fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_sdk::AuthoredEvent {
     let mut intent = intent;
-    match reducer_input_plane_for_kind(intent.kind()) {
-        // Control Move: `seal_basis` and nothing from the data-plane pair.
-        Some("control") if !cba_exempt_reducer_kind(intent.kind()) => {
-            if intent.seal_basis().is_none() {
-                intent = intent.with_seal_basis(test_seal_basis());
-            }
+    // Control Move: `seal_basis` and nothing from the data-plane pair.
+    if intent.kind().is_control_plane() && !cba_exempt_reducer_kind(intent.kind()) {
+        if intent.seal_basis().is_none() {
+            intent = intent.with_seal_basis(test_seal_basis());
         }
-        // DataEvent: the schema requires `seal_ref` AND `auth_context`
-        // together, and forbids `seal_basis` alongside them. Both are attached
-        // by the submit pipeline, not by the typed builder, so the gate has to
-        // stamp them before the identity is derived from what goes on the wire.
-        Some("data") => {
-            if intent.seal_ref().is_none() {
-                intent = intent.with_seal_ref(
-                    arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
-                        .expect("test seal id is canonical"),
-                );
-            }
-            if intent.auth_context().is_none() {
-                intent = intent.with_auth_context(test_auth_context());
-            }
+    // DataEvent: the schema requires `seal_ref` AND `auth_context` together,
+    // and forbids `seal_basis` alongside them. Both are attached by the submit
+    // pipeline before identity is derived from what goes on the wire.
+    } else if intent.kind().is_data_plane() {
+        if intent.seal_ref().is_none() {
+            intent = intent.with_seal_ref(
+                arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
+                    .expect("test seal id is canonical"),
+            );
         }
-        _ => {}
+        if intent.auth_context().is_none() {
+            intent = intent.with_auth_context(test_auth_context());
+        }
     }
     let mut envelope = common::author_intent_at_seq(intent, 1);
     let signer_did = TEST_ACTOR_ID;
@@ -350,19 +345,6 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
         .sign_ed25519(signer_did, key_id, test_signing_key())
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
     envelope
-}
-
-/// Whether a real submitter would attach `seal_basis` to this envelope.
-///
-/// The pre-v1 test read the producer-written `effects[]`. That channel is gone:
-/// what an Event writes — and on which CBA plane — comes from the registered
-/// contract, so the plane is read from the registry here exactly as
-/// `arkret_schema::validate_registered_cell_writes_in_context` reads it at
-/// admission. Guessing from the kind name would fork the rule.
-fn reducer_input_plane_for_kind(kind: &EventKind) -> Option<&'static str> {
-    kind.descriptor()
-        .filter(|descriptor| descriptor.reducer_input)
-        .and_then(|descriptor| descriptor.plane)
 }
 
 /// Kinds a real submitter builds WITHOUT `seal_basis` because they sit in the

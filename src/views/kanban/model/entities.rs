@@ -244,6 +244,7 @@ pub(crate) struct PendingBoardCreate {
     pub(crate) operation_id: crate::operation::LocalOperationId,
     pub(crate) title: String,
     pub(crate) state: CardState,
+    pub(crate) error: Option<String>,
 }
 
 impl PendingBoardCreate {
@@ -255,6 +256,13 @@ impl PendingBoardCreate {
             CardState::SoftFailed | CardState::Quarantined | CardState::Conflict => "create failed",
             _ => "creating",
         }
+    }
+
+    pub(crate) fn is_retryable(&self) -> bool {
+        matches!(
+            self.state,
+            CardState::SoftFailed | CardState::Quarantined | CardState::Conflict
+        )
     }
 }
 

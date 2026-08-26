@@ -2642,38 +2642,36 @@ impl EventSubmitter {
         {
             return Ok(intent);
         }
-        let Some(plane) = cba_effect_plane_for_intent(intent.kind())? else {
+        cba_effect_plane_for_intent(intent.kind())?;
+        if !intent.kind().is_control_plane() && !intent.kind().is_data_plane() {
             return Ok(intent);
-        };
+        }
         let realm_id = intent.realm_id_opt().cloned().ok_or_else(|| {
             anyhow::anyhow!(
                 "{} needs a CBA basis but carries no Realm scope",
                 intent.kind().as_str()
             )
         })?;
-        let intent = match plane {
-            CbaEffectPlane::Control => {
-                let seal_view = self
-                    .events_frontier_realm_seal_view(realm_id.as_str())
-                    .await?;
-                intent.with_seal_basis(seal_view.seal_basis())
+        let intent = if intent.kind().is_control_plane() {
+            let seal_view = self
+                .events_frontier_realm_seal_view(realm_id.as_str())
+                .await?;
+            intent.with_seal_basis(seal_view.seal_basis())
+        } else {
+            if !intent.preconditions().is_empty() {
+                anyhow::bail!(
+                    "DataEvent {} carries preconditions; CBA DataEvents must use seal_ref + auth_context only",
+                    intent.kind().as_str()
+                );
             }
-            CbaEffectPlane::Data => {
-                if !intent.preconditions().is_empty() {
-                    anyhow::bail!(
-                        "DataEvent {} carries preconditions; CBA DataEvents must use seal_ref + auth_context only",
-                        intent.kind().as_str()
-                    );
-                }
-                let seal = self.current_seal_for(realm_id.as_str()).await?;
-                let auth_context = data_event_auth_context(&intent)?;
-                intent
-                    .with_seal_ref(
-                        arkret_sdk::SealId::new(seal)
-                            .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
-                    )
-                    .with_auth_context(auth_context)
-            }
+            let seal = self.current_seal_for(realm_id.as_str()).await?;
+            let auth_context = data_event_auth_context(&intent)?;
+            intent
+                .with_seal_ref(
+                    arkret_sdk::SealId::new(seal)
+                        .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
+                )
+                .with_auth_context(auth_context)
         };
         tracing::warn!(
             kind = %intent.kind().as_str(),

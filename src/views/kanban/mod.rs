@@ -824,6 +824,16 @@ pub fn KanbanPanel(
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let local_realm_id = local_projection_realm_id(&selected_realm_id, &projection_realm_id);
+    // A Realm write cannot be authored until the accepted governance closure
+    // has been verified and pinned locally. The Realm events engine actively
+    // acquires a missing checkpoint; gating the create affordance here avoids
+    // enqueueing a request that is known to fail during that short recovery
+    // window. The durable same-operation retry below still covers races and
+    // transient failures after the click.
+    let governance_checkpoint_ready = state_store
+        .read()
+        .trusted_mls_governance_checkpoint(&selected_realm_id)
+        .is_some();
     // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
     // its `/task/<strand>` extension). Seeding `selected_board`
     // from the route — instead of always `board_options.first()` — is
@@ -1246,22 +1256,73 @@ pub fn KanbanPanel(
                                         }
                                     }
                                     // Pending creates are not selectable options:
-                                    // they have no protocol identity yet, so they
-                                    // render as disabled rows until the receipt
-                                    // reconciles them into confirmed Boards.
+                                    // they have no protocol identity yet. An
+                                    // in-flight row stays disabled; a failed row
+                                    // is the durable retry affordance for the same
+                                    // holder-local operation id.
                                     for pending in pending_board_creates().iter() {
                                         {
                                             let pending_label =
                                                 format!("{} ({})", pending.title, pending.status_hint());
+                                            let retryable = pending.is_retryable();
+                                            let retry_title = pending.error.clone().unwrap_or_else(|| {
+                                                if retryable {
+                                                    "Retry Board creation".to_owned()
+                                                } else {
+                                                    "Waiting for the Board to be accepted".to_owned()
+                                                }
+                                            });
+                                            let retry_board_title = pending.title.clone();
+                                            let retry_operation_id = pending.operation_id.clone();
+                                            let retry_base_url = base_url.clone();
+                                            let retry_realm_id = selected_realm_id.clone();
+                                            let retry_actor_id = principal_id.clone();
                                             rsx! {
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
                                                     class: "board-select-menu-item",
                                                     role: "option",
                                                     "aria-selected": "false",
-                                                    "aria-disabled": "true",
-                                                    disabled: true,
-                                                    title: "{pending_label}",
+                                                    "aria-disabled": "{!retryable}",
+                                                    disabled: !retryable,
+                                                    title: "{retry_title}",
+                                                    onclick: move |_| {
+                                                        if !retryable {
+                                                            return;
+                                                        }
+                                                        let operation = crate::operation::ak_ops::space_create(
+                                                            &retry_realm_id,
+                                                            &retry_actor_id,
+                                                            "board",
+                                                            &retry_board_title,
+                                                            None,
+                                                            None,
+                                                        )
+                                                        .and_then(|builder| builder.build_sdk_event("inkson"))
+                                                        .map(|operation| {
+                                                            operation.with_local_operation_id(
+                                                                retry_operation_id.clone(),
+                                                            )
+                                                        });
+                                                        match operation {
+                                                            Ok(operation) => {
+                                                                controller.enqueue_operation(
+                                                                    retry_base_url.clone(),
+                                                                    token,
+                                                                    retry_realm_id.clone(),
+                                                                    operation,
+                                                                    selected_scope_security_encrypted,
+                                                                );
+                                                                board_status.set(
+                                                                    "Retrying Board creation".to_owned(),
+                                                                );
+                                                                board_popover.set(BoardToolbarPopover::None);
+                                                            }
+                                                            Err(error) => board_status.set(format!(
+                                                                "cannot retry Board creation: {error:#}"
+                                                            )),
+                                                        }
+                                                    },
                                                     UiIcon { name: "board" }
                                                     span { "{pending_label}" }
                                                 }
@@ -1409,6 +1470,12 @@ pub fn KanbanPanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "create-board-space-button",
+                                        disabled: !event_write_ready || !governance_checkpoint_ready,
+                                        title: if governance_checkpoint_ready {
+                                            "Create Board"
+                                        } else {
+                                            "Waiting for verified Realm governance"
+                                        },
                                         onclick: {
                                             let base = base_url.clone();
                                             let realm = selected_realm_id.clone();

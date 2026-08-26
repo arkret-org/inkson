@@ -56,6 +56,8 @@ fn pending_board_create_derives_title_and_write_state_from_the_op_log() {
     assert_eq!(pending[0].title, "Design board");
     assert_eq!(pending[0].state, CardState::Queued);
     assert_eq!(pending[0].status_hint(), "creating");
+    assert!(!pending[0].is_retryable());
+    assert_eq!(pending[0].error, None);
 
     // A failed create stays visible as a failed pending write instead of
     // degrading into a fake Board id.
@@ -66,6 +68,7 @@ fn pending_board_create_derives_title_and_write_state_from_the_op_log() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].state, CardState::SoftFailed);
     assert_eq!(pending[0].status_hint(), "create failed");
+    assert!(pending[0].is_retryable());
 
     // A dropped (cancelled) write leaves no pending surface at all.
     assert!(

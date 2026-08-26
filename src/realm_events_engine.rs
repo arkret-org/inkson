@@ -349,16 +349,48 @@ pub async fn run_realm_events_engine(
     };
     let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     while provider.is_active() {
-        let Some(checkpoint) = ctx
+        let checkpoint = ctx
             .state_store
-            .read(|store| store.trusted_mls_governance_checkpoint(realm_id_typed.as_str()))
-        else {
-            tracing::warn!(
-                realm_id = %realm_id_typed,
-                "Realm Event subscription is waiting for a verified governance checkpoint"
-            );
-            crate::runtime_helpers::sleep_for(BACKOFF_FLOOR).await;
-            continue;
+            .read(|store| store.trusted_mls_governance_checkpoint(realm_id_typed.as_str()));
+        let checkpoint = match checkpoint {
+            Some(checkpoint) => checkpoint,
+            None => {
+                // A server restart, browser storage loss, a second device, or
+                // navigation into a Realm created through another surface can
+                // all leave the accepted Realm Seal available server-side but
+                // no locally pinned governance checkpoint. Merely waiting here
+                // is circular: history bootstrap itself is gated by the
+                // checkpoint. Re-enter the shared acquisition path, which
+                // fetches the complete Seal closure and verifies it with the
+                // SDK before pinning anything locally.
+                let result = acquire_realm_governance_checkpoint(&ctx, &realm_id_typed).await;
+                match result {
+                    Ok(()) => {
+                        restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
+                        tracing::info!(
+                            realm_id = %realm_id_typed,
+                            "Realm Event subscription acquired a verified governance checkpoint"
+                        );
+                        continue;
+                    }
+                    Err(error) => {
+                        let Some(retry_delay) = crate::runtime_helpers::next_reconnect_delay(
+                            provider.is_active(),
+                            &mut restart_backoff,
+                        ) else {
+                            break;
+                        };
+                        tracing::warn!(
+                            %error,
+                            realm_id = %realm_id_typed,
+                            retry_delay_ms = retry_delay.as_millis(),
+                            "Realm governance checkpoint acquisition failed; reconnecting"
+                        );
+                        crate::runtime_helpers::sleep_for(retry_delay).await;
+                        continue;
+                    }
+                }
+            }
         };
         let digest_suite = checkpoint.live_digest_suite;
         let projector = RealmIngestProjector {
@@ -460,6 +492,26 @@ pub async fn run_realm_events_engine(
         }
         crate::runtime_helpers::sleep_for(retry_delay).await;
     }
+}
+
+async fn acquire_realm_governance_checkpoint(
+    ctx: &RealmEventsEngineContext,
+    realm_id: &arkret_sdk::RealmId,
+) -> Result<(), String> {
+    let base_url = ctx.base_url.get();
+    let http = crate::identity::session_refresh::provide_authenticated_sdk_client(&base_url)
+        .await
+        .map_err(|error| format!("authenticated Realm checkpoint transport: {error}"))?;
+    let api = crate::transport::TransportClient::from_http(
+        http,
+        crate::transport::RequestContext::new(ctx.token.get()),
+    );
+    crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
+        &api,
+        ctx.state_store.clone(),
+        realm_id.as_str(),
+    )
+    .await
 }
 
 struct RealmTransportProvider {

@@ -28,28 +28,33 @@ use crate::state::LocalStateStore;
 /// every Realm, not only encrypted ones: subsequent writes derive authority
 /// and the digest suite from verified governance state covered by that
 /// checkpoint.
-pub(crate) async fn ensure_realm_governance_checkpoint(
+pub(crate) async fn ensure_realm_governance_checkpoint<
+    S: crate::mls::governance_proof::GovernanceProofStateStore,
+>(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: S,
     realm_id: &str,
 ) -> Result<(), String> {
     if state_store
-        .read()
-        .trusted_mls_governance_checkpoint(realm_id)
+        .with_read(|store| store.trusted_mls_governance_checkpoint(realm_id))
         .is_some()
     {
         return Ok(());
     }
-    let submitter = api
-        .event_submitter()
-        .map_err(|error| format!("Realm governance proof frontier client: {error}"))?;
+    // Checkpoint acquisition also runs from the framework-independent Realm
+    // events engine. Construct this read-only frontier client from the
+    // authenticated HTTP client instead of consulting Dioxus SessionContext;
+    // the durable state dependency is carried explicitly by `state_store`.
+    let submitter = crate::event_submit::EventSubmitter::new(
+        api.sdk_http_client()
+            .map_err(|error| format!("Realm governance proof frontier client: {error}"))?,
+    );
     let seal_view = wait_for_realm_seal_view(&submitter, realm_id)
         .await
         .map_err(|error| {
             format!("refreshing the accepted Seal view after Realm creation failed: {error}")
         })?;
-    {
-        let mut store = state_store.write();
+    state_store.with_write(|store| {
         let mut view = store.seal_view_for_realm(realm_id);
         view.frontier = seal_view
             .seal_basis
@@ -59,7 +64,7 @@ pub(crate) async fn ensure_realm_governance_checkpoint(
             .collect();
         view.state_root = None;
         store.set_realm_seal_view(realm_id.to_owned(), view);
-    }
+    });
     crate::mls::governance_proof::ensure_governance_checkpoint(api, state_store, realm_id)
         .await
         .map_err(|error| format!("establishing the Realm governance checkpoint failed: {error}"))
