@@ -5,6 +5,109 @@ fn recovery_state_retry_delay(attempt: u8) -> std::time::Duration {
     std::time::Duration::from_secs(1_u64 << exponent)
 }
 
+fn recovery_request_is_current(current_detection_key: Option<&str>, completed_key: &str) -> bool {
+    current_detection_key == Some(completed_key)
+}
+
+#[derive(Clone, Copy)]
+enum RecoveryRequestCompletion {
+    Success {
+        configured: bool,
+        retry_gate_verification: bool,
+    },
+    Failure,
+    AuthFailure,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RecoveryCompletionAction {
+    Stale,
+    Complete,
+    Retry { attempt: u8 },
+    InvalidateSession,
+}
+
+trait RecoveryCompletionState {
+    fn set_configured(&mut self, configured: Option<bool>);
+    fn detection_key(&self) -> Option<String>;
+    fn set_detection_key(&mut self, detection_key: Option<String>);
+    fn retry_attempt(&self) -> u8;
+    fn set_retry_attempt(&mut self, attempt: u8);
+}
+
+fn apply_recovery_request_completion(
+    state: &mut impl RecoveryCompletionState,
+    completed_key: &str,
+    completion: RecoveryRequestCompletion,
+) -> RecoveryCompletionAction {
+    if !recovery_request_is_current(state.detection_key().as_deref(), completed_key) {
+        return RecoveryCompletionAction::Stale;
+    }
+    match completion {
+        RecoveryRequestCompletion::Success {
+            configured,
+            retry_gate_verification,
+        } => {
+            state.set_configured(Some(configured));
+            if retry_gate_verification {
+                let attempt = state.retry_attempt().saturating_add(1);
+                state.set_retry_attempt(attempt);
+                RecoveryCompletionAction::Retry { attempt }
+            } else {
+                state.set_retry_attempt(0);
+                RecoveryCompletionAction::Complete
+            }
+        }
+        RecoveryRequestCompletion::Failure => {
+            state.set_configured(None);
+            let attempt = state.retry_attempt().saturating_add(1);
+            state.set_retry_attempt(attempt);
+            RecoveryCompletionAction::Retry { attempt }
+        }
+        RecoveryRequestCompletion::AuthFailure => {
+            state.set_configured(None);
+            RecoveryCompletionAction::InvalidateSession
+        }
+    }
+}
+
+fn clear_completed_recovery_request_for_retry(
+    state: &mut impl RecoveryCompletionState,
+    completed_key: &str,
+) {
+    if recovery_request_is_current(state.detection_key().as_deref(), completed_key) {
+        state.set_detection_key(None);
+    }
+}
+
+struct SignalRecoveryCompletionState {
+    account_recovery_configured: Signal<Option<bool>>,
+    account_recovery_detection_key_seen: Signal<Option<String>>,
+    account_recovery_retry_attempt: Signal<u8>,
+}
+
+impl RecoveryCompletionState for SignalRecoveryCompletionState {
+    fn set_configured(&mut self, configured: Option<bool>) {
+        self.account_recovery_configured.set(configured);
+    }
+
+    fn detection_key(&self) -> Option<String> {
+        (self.account_recovery_detection_key_seen)()
+    }
+
+    fn set_detection_key(&mut self, detection_key: Option<String>) {
+        self.account_recovery_detection_key_seen.set(detection_key);
+    }
+
+    fn retry_attempt(&self) -> u8 {
+        (self.account_recovery_retry_attempt)()
+    }
+
+    fn set_retry_attempt(&mut self, attempt: u8) {
+        self.account_recovery_retry_attempt.set(attempt);
+    }
+}
+
 /// Tracks whether the authenticated account has a server-side recovery path.
 /// The result feeds account-health reminders; transport and session invalidation
 /// stay owned by the mounted session shell instead of route rendering.
@@ -98,35 +201,29 @@ pub(super) fn AccountRecoveryEffects(
                     Ok::<_, anyhow::Error>((policy, gate_verification))
                 })
                 .await;
-            // Recovery publication explicitly clears this key. Do not let an
-            // older in-flight read overwrite the accepted `Some(true)` result
-            // with the pre-publication policy snapshot; the cleared key also
-            // schedules an authoritative re-fetch of the new generation.
-            if account_recovery_detection_key_seen().as_deref() != Some(detection_key.as_str()) {
-                return;
-            }
+            let mut completion_state = SignalRecoveryCompletionState {
+                account_recovery_configured,
+                account_recovery_detection_key_seen,
+                account_recovery_retry_attempt,
+            };
             match result {
                 Ok((policy, gate_verification)) => {
                     let mut retry_gate_verification = false;
+                    let mut remember_verified_gate = false;
+                    let mut gate_error = None;
+                    let mut gate_auth_expired = false;
                     if let Some(gate_verification) = gate_verification {
                         match gate_verification {
-                            Ok(()) => crate::event_submit::remember_verified_recovery_gate(
-                                remember_actor.as_str(),
-                                &remember_device,
-                            ),
+                            Ok(()) => remember_verified_gate = true,
                             Err(error) if crate::api_error::is_auth_expired_error(&error) => {
-                                session_coordinator.invalidate(
-                                    "session expired while verifying recovery material evidence",
-                                );
-                                account_recovery_configured.set(None);
-                                return;
+                                gate_auth_expired = true;
                             }
                             Err(error) => {
                                 retry_gate_verification = true;
-                                last_error.set(Some(format!(
+                                gate_error = Some(format!(
                                     "recovery_material_evidence: {}",
                                     crate::api_error::display_with_reason_detail(&error)
-                                )));
+                                ));
                             }
                         }
                     }
@@ -137,40 +234,78 @@ pub(super) fn AccountRecoveryEffects(
                     // `Checking` forever.
                     let recovery_configured =
                         crate::recovery_strand::active_recovery_policy(&policy).is_some();
-                    account_recovery_configured.set(Some(recovery_configured));
-                    if retry_gate_verification {
-                        // The accepted policy remains authoritative for the UI,
-                        // while the independent local-evidence rail retries
-                        // until Event submission can cache the verified PCR
-                        // bootstrap basis as well.
-                        let attempt = account_recovery_retry_attempt().saturating_add(1);
-                        account_recovery_retry_attempt.set(attempt);
-                        crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt))
-                            .await;
-                        if account_recovery_detection_key_seen().as_deref()
-                            == Some(detection_key.as_str())
-                        {
-                            account_recovery_detection_key_seen.set(None);
-                        }
+                    let completion = if gate_auth_expired {
+                        RecoveryRequestCompletion::AuthFailure
                     } else {
-                        account_recovery_retry_attempt.set(0);
+                        RecoveryRequestCompletion::Success {
+                            configured: recovery_configured,
+                            retry_gate_verification,
+                        }
+                    };
+                    let action = apply_recovery_request_completion(
+                        &mut completion_state,
+                        &detection_key,
+                        completion,
+                    );
+                    if action == RecoveryCompletionAction::Stale {
+                        return;
+                    }
+                    if remember_verified_gate {
+                        crate::event_submit::remember_verified_recovery_gate(
+                            remember_actor.as_str(),
+                            &remember_device,
+                        );
+                    }
+                    if let Some(error) = gate_error {
+                        last_error.set(Some(error));
+                    }
+                    match action {
+                        RecoveryCompletionAction::Retry { attempt } => {
+                            // The accepted policy remains authoritative for the UI,
+                            // while the independent local-evidence rail retries
+                            // until Event submission can cache the verified PCR
+                            // bootstrap basis as well.
+                            crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt))
+                                .await;
+                            clear_completed_recovery_request_for_retry(
+                                &mut completion_state,
+                                &detection_key,
+                            );
+                        }
+                        RecoveryCompletionAction::InvalidateSession => {
+                            session_coordinator.invalidate(
+                                "session expired while verifying recovery material evidence",
+                            );
+                        }
+                        RecoveryCompletionAction::Complete | RecoveryCompletionAction::Stale => {}
                     }
                 }
                 Err(error) if error.is_auth_expired() => {
-                    session_coordinator
-                        .invalidate("session expired while loading account recovery state");
-                    account_recovery_configured.set(None);
+                    if apply_recovery_request_completion(
+                        &mut completion_state,
+                        &detection_key,
+                        RecoveryRequestCompletion::AuthFailure,
+                    ) == RecoveryCompletionAction::InvalidateSession
+                    {
+                        session_coordinator
+                            .invalidate("session expired while loading account recovery state");
+                    }
                 }
                 Err(error) => {
-                    last_error.set(Some(format!("recovery_state: {}", error.display())));
-                    account_recovery_configured.set(None);
-                    let attempt = account_recovery_retry_attempt().saturating_add(1);
-                    account_recovery_retry_attempt.set(attempt);
-                    crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt)).await;
-                    if account_recovery_detection_key_seen().as_deref()
-                        == Some(detection_key.as_str())
+                    if let RecoveryCompletionAction::Retry { attempt } =
+                        apply_recovery_request_completion(
+                            &mut completion_state,
+                            &detection_key,
+                            RecoveryRequestCompletion::Failure,
+                        )
                     {
-                        account_recovery_detection_key_seen.set(None);
+                        last_error.set(Some(format!("recovery_state: {}", error.display())));
+                        crate::runtime_helpers::sleep_for(recovery_state_retry_delay(attempt))
+                            .await;
+                        clear_completed_recovery_request_for_retry(
+                            &mut completion_state,
+                            &detection_key,
+                        );
                     }
                 }
             }
@@ -182,7 +317,44 @@ pub(super) fn AccountRecoveryEffects(
 
 #[cfg(test)]
 mod tests {
-    use super::recovery_state_retry_delay;
+    use super::*;
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct TestRecoverySignals {
+        configured: Option<bool>,
+        detection_key: Option<String>,
+        retry_attempt: u8,
+    }
+
+    impl RecoveryCompletionState for TestRecoverySignals {
+        fn set_configured(&mut self, configured: Option<bool>) {
+            self.configured = configured;
+        }
+
+        fn detection_key(&self) -> Option<String> {
+            self.detection_key.clone()
+        }
+
+        fn set_detection_key(&mut self, detection_key: Option<String>) {
+            self.detection_key = detection_key;
+        }
+
+        fn retry_attempt(&self) -> u8 {
+            self.retry_attempt
+        }
+
+        fn set_retry_attempt(&mut self, attempt: u8) {
+            self.retry_attempt = attempt;
+        }
+    }
+
+    fn new_generation_signals() -> TestRecoverySignals {
+        TestRecoverySignals {
+            configured: Some(true),
+            detection_key: Some("generation-2".to_owned()),
+            retry_attempt: 0,
+        }
+    }
 
     #[test]
     fn recovery_state_retry_uses_bounded_exponential_backoff() {
@@ -190,5 +362,83 @@ mod tests {
         assert_eq!(recovery_state_retry_delay(2).as_secs(), 2);
         assert_eq!(recovery_state_retry_delay(6).as_secs(), 32);
         assert_eq!(recovery_state_retry_delay(u8::MAX).as_secs(), 32);
+    }
+
+    #[test]
+    fn recovery_state_stale_completions_cannot_mutate_new_generation_signals() {
+        for completion in [
+            RecoveryRequestCompletion::Success {
+                configured: false,
+                retry_gate_verification: false,
+            },
+            RecoveryRequestCompletion::Failure,
+            RecoveryRequestCompletion::AuthFailure,
+        ] {
+            let mut signals = new_generation_signals();
+            assert_eq!(
+                apply_recovery_request_completion(&mut signals, "generation-1", completion),
+                RecoveryCompletionAction::Stale
+            );
+            assert_eq!(signals, new_generation_signals());
+        }
+    }
+
+    #[test]
+    fn recovery_state_current_success_updates_state_and_resets_retry() {
+        let mut signals = new_generation_signals();
+        signals.configured = None;
+        signals.retry_attempt = 3;
+
+        assert_eq!(
+            apply_recovery_request_completion(
+                &mut signals,
+                "generation-2",
+                RecoveryRequestCompletion::Success {
+                    configured: true,
+                    retry_gate_verification: false,
+                },
+            ),
+            RecoveryCompletionAction::Complete
+        );
+
+        assert_eq!(signals.configured, Some(true));
+        assert_eq!(signals.retry_attempt, 0);
+        assert_eq!(signals.detection_key.as_deref(), Some("generation-2"));
+    }
+
+    #[test]
+    fn recovery_state_current_failure_clears_state_and_schedules_retry() {
+        let mut signals = new_generation_signals();
+
+        assert_eq!(
+            apply_recovery_request_completion(
+                &mut signals,
+                "generation-2",
+                RecoveryRequestCompletion::Failure,
+            ),
+            RecoveryCompletionAction::Retry { attempt: 1 }
+        );
+        clear_completed_recovery_request_for_retry(&mut signals, "generation-2");
+
+        assert_eq!(signals.configured, None);
+        assert_eq!(signals.retry_attempt, 1);
+        assert_eq!(signals.detection_key, None);
+    }
+
+    #[test]
+    fn recovery_state_current_auth_failure_invalidates_and_clears_state() {
+        let mut signals = new_generation_signals();
+
+        assert_eq!(
+            apply_recovery_request_completion(
+                &mut signals,
+                "generation-2",
+                RecoveryRequestCompletion::AuthFailure,
+            ),
+            RecoveryCompletionAction::InvalidateSession
+        );
+
+        assert_eq!(signals.configured, None);
+        assert_eq!(signals.detection_key.as_deref(), Some("generation-2"));
     }
 }
