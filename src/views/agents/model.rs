@@ -247,16 +247,13 @@ impl AgentServiceScopePreset {
 
     pub fn actions(self) -> &'static [&'static str] {
         match self {
-            Self::SubscribeEvents => &[ServiceOperationId::SELF_EVENTS_STREAM_SUBSCRIBE],
-            Self::ScanCatchUp => &[ServiceOperationId::SELF_EVENTS_READ_SCAN],
-            Self::SubmitEvents => &[
-                ServiceOperationId::SELF_EVENTS_READ_FRONTIER,
-                ServiceOperationId::SELF_SEALS_READ_FRONTIER,
-                ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE,
-                ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT,
-            ],
+            // The interactive runtime floor is injected from the canonical
+            // agent-runtime-scope registry by `service_actions_for_presets`.
+            // Presets only list optional additions here; keeping a second
+            // copy of the mandatory floor caused the Seal-frontier omission.
+            Self::SubscribeEvents | Self::ScanCatchUp => &[],
+            Self::SubmitEvents => &[ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE],
             Self::SecureMessaging => &[
-                ServiceOperationId::SELF_KEYS_KEYPACKAGES_UPLOAD_CREATE,
                 ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME,
                 // Standard KeyPackage lifecycle is upload|claim|consume|revoke
                 // (device-lifecycle §9). The runtime revokes its own published
@@ -304,7 +301,25 @@ pub fn content_actions_for_presets(presets: &[AgentGrantPreset]) -> Vec<String> 
 }
 
 pub fn service_actions_for_presets(presets: &[AgentServiceScopePreset]) -> Vec<String> {
-    let mut actions = Vec::new();
+    let mut capabilities = Vec::new();
+    if presets.iter().any(|preset| {
+        matches!(
+            preset,
+            AgentServiceScopePreset::SubscribeEvents
+                | AgentServiceScopePreset::ScanCatchUp
+                | AgentServiceScopePreset::SubmitEvents
+                | AgentServiceScopePreset::SecureMessaging
+        )
+    }) {
+        capabilities
+            .push(arkret_schema::agent_runtime_scope::AgentRuntimeCapability::InteractiveChat);
+    }
+    if presets.contains(&AgentServiceScopePreset::SecureMessaging) {
+        capabilities.push(arkret_schema::agent_runtime_scope::AgentRuntimeCapability::E2ee);
+    }
+    let mut actions =
+        arkret_schema::agent_runtime_scope::required_agent_runtime_operations(capabilities)
+            .expect("embedded Agent runtime scope registry must pass artifact validation");
     for preset in presets {
         for action in preset.actions() {
             push_unique_action(&mut actions, action);

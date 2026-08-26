@@ -98,7 +98,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     state_store: S,
 ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
     let current = submitter
-        .events_frontier_managed_agent_seal_head(realm_id, controller_id, state_store.clone())
+        .seals_frontier_managed_agent_head(realm_id, controller_id, state_store.clone())
         .await;
     if current
         .as_ref()
@@ -181,7 +181,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
 
     let expected = submitted.expect("managed PCR Seal submission branch always returns a Seal");
     let (view, head) = submitter
-        .events_frontier_managed_agent_seal_head(realm_id, controller_id, state_store)
+        .seals_frontier_managed_agent_head(realm_id, controller_id, state_store)
         .await?;
     if head.id != expected.id
         || head.state_root != expected.state_root
@@ -195,7 +195,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
 pub(crate) fn managed_agent_seal_head_receipt_unavailable(error: &anyhow::Error) -> bool {
     error
         .to_string()
-        .contains("events/frontier omitted the accepted managed Agent PCR Seal head")
+        .contains("seals/frontier omitted the accepted managed Agent PCR Seal head")
 }
 
 /// Seal one newly accepted controller self-PCR Event with the active
@@ -211,7 +211,7 @@ pub(crate) async fn seal_self_principal_event_current(
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
     let predecessor = submitter
-        .events_frontier_realm_seal_head(realm_id.as_str())
+        .seals_frontier_realm_head(realm_id.as_str())
         .await?;
     let controller_actor_id = arkret_sdk::project_full_id_to_core_id(controller_id)?;
     let mut accepted = submitter

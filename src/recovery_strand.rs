@@ -658,7 +658,7 @@ async fn submit_first_recovery_policy_seal(
     }
     let predecessor = api
         .event_submitter()?
-        .events_frontier_realm_seal_head(policy_event.realm_id.as_str())
+        .seals_frontier_realm_head(policy_event.realm_id.as_str())
         .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;

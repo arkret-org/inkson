@@ -1606,7 +1606,7 @@ impl EventSubmitter {
     /// Mint a DataEvent `seal_ref` head from the membership-gated Realm Seal
     /// view. Only the CBA data-plane stamping path uses this.
     pub(crate) async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
-        let view = self.events_frontier_realm_seal_view(realm_id).await?;
+        let view = self.seals_frontier_realm_view(realm_id).await?;
         Ok(view.sole_leaf()?.to_string())
     }
     /// Query durable events through the current `/_arkret/self/events` surface,
@@ -1721,11 +1721,11 @@ impl EventSubmitter {
     /// DataEvent `seal_ref` (`view.seal_id`) — SPEC-SOL-003 resolution.
     /// Fails closed (never fabricates a basis) when the server cannot
     /// serve the view or answers for a different Realm.
-    pub async fn events_frontier_realm_seal_view(
+    pub async fn seals_frontier_realm_view(
         &self,
         realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::RealmSealFrontierView> {
-        let (view, _) = self.events_frontier_realm_state(realm_id).await?;
+        let (view, _) = self.seals_frontier_realm_state(realm_id).await?;
         Ok(view)
     }
 
@@ -1734,11 +1734,11 @@ impl EventSubmitter {
     /// `event-auth-state-resolution.md` forbids treating any service-derived
     /// root hint as authority, so callers that need the frontier's signed roots
     /// resolve the leaf Seal itself through `ak.self.seals.read.resolve`.
-    pub async fn events_frontier_realm_seal_head(
+    pub async fn seals_frontier_realm_head(
         &self,
         realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::Seal> {
-        let view = self.events_frontier_realm_seal_view(realm_id).await?;
+        let view = self.seals_frontier_realm_view(realm_id).await?;
         let leaf = view.sole_leaf()?.clone();
         let outcome = self
             .http
@@ -1755,7 +1755,7 @@ impl EventSubmitter {
             .ok_or_else(|| anyhow::anyhow!("accepted Realm Seal frontier leaf did not resolve"))
     }
 
-    async fn events_frontier_realm_state(
+    async fn seals_frontier_realm_state(
         &self,
         realm_id: &str,
     ) -> anyhow::Result<(
@@ -1780,7 +1780,7 @@ impl EventSubmitter {
     /// Return the accepted head needed to author the next managed Agent PCR
     /// Seal. The head can intentionally lag accepted Events. It is accepted
     /// only when its exact bytes occur in the locally replayed checkpoint.
-    pub(crate) async fn events_frontier_managed_agent_seal_head<
+    pub(crate) async fn seals_frontier_managed_agent_head<
         S: crate::mls::governance_proof::GovernanceProofStateStore,
     >(
         &self,
@@ -1788,7 +1788,7 @@ impl EventSubmitter {
         _controller_id: &arkret_sdk::DidFullId,
         state_store: S,
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
-        let (view, receipts) = self.events_frontier_realm_state(realm_id).await?;
+        let (view, receipts) = self.seals_frontier_realm_state(realm_id).await?;
         let receipt = receipts.first().ok_or_else(|| {
             anyhow::anyhow!("seals/frontier omitted the accepted managed Agent PCR Seal head")
         })?;
@@ -2641,9 +2641,7 @@ impl EventSubmitter {
             )
         })?;
         let intent = if intent.kind().is_control_plane() {
-            let seal_view = self
-                .events_frontier_realm_seal_view(realm_id.as_str())
-                .await?;
+            let seal_view = self.seals_frontier_realm_view(realm_id.as_str()).await?;
             intent.with_seal_basis(seal_view.seal_basis())
         } else {
             if !intent.preconditions().is_empty() {

@@ -9,7 +9,7 @@
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke
 //!   submits the spec-canonical durable `ak.device.revoke` Control Move on the principal control
-//!   stream (envelope `seal_basis` minted from `ak.self.events.read.frontier`, SPEC-SOL-003) with a
+//!   stream (envelope `seal_basis` minted from `ak.self.seals.read.frontier`, SPEC-SOL-003) with a
 //!   [`crate::transport::TransportClient::revoke_device`], then rotates the account MLS history
 //!   secret and rewraps local `mls_history` backups.
 //!

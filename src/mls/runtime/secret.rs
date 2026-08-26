@@ -388,15 +388,6 @@ fn account_device_storage_suffix(
     Ok(format!("{authority}.{device}"))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LocalPublishedMlsKeyPackage {
-    pub keypackage_id: String,
-    pub keypackage_ref: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-}
-
 pub fn mls_key_package_inventory_key(
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
@@ -409,7 +400,7 @@ pub fn store_mls_key_package_inventory(
     store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
-    inventory: &[LocalPublishedMlsKeyPackage],
+    inventory: &arkret_sdk::LocalMlsKeyPackageInventory,
 ) -> Result<(), SecureKeyStoreError> {
     let key = mls_key_package_inventory_key(authority, device_id)?;
     let encoded = serde_json::to_string(inventory)
@@ -421,13 +412,29 @@ pub fn load_mls_key_package_inventory(
     store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
-) -> Result<Vec<LocalPublishedMlsKeyPackage>, SecureKeyStoreError> {
+) -> Result<arkret_sdk::LocalMlsKeyPackageInventory, SecureKeyStoreError> {
     let key = mls_key_package_inventory_key(authority, device_id)?;
     let Some(encoded) = store.get_secret(&key)? else {
-        return Ok(Vec::new());
+        return Ok(arkret_sdk::LocalMlsKeyPackageInventory {
+            endpoint: arkret_sdk::MlsEndpointIdentity::human_device(
+                authority.principal_id.clone(),
+                device_id.clone(),
+            ),
+            entries: std::collections::BTreeMap::new(),
+        });
     };
-    serde_json::from_str(&encoded)
-        .map_err(|error| SecureKeyStoreError::Backend(format!("invalid MLS inventory: {error}")))
+    let inventory: arkret_sdk::LocalMlsKeyPackageInventory = serde_json::from_str(&encoded)
+        .map_err(|error| SecureKeyStoreError::Backend(format!("invalid MLS inventory: {error}")))?;
+    let expected = arkret_sdk::MlsEndpointIdentity::human_device(
+        authority.principal_id.clone(),
+        device_id.clone(),
+    );
+    if inventory.endpoint != expected {
+        return Err(SecureKeyStoreError::Backend(
+            "MLS inventory endpoint does not match the active authority and device".to_owned(),
+        ));
+    }
+    Ok(inventory)
 }
 
 pub fn mls_pairwise_key_package_publish_marker_key(

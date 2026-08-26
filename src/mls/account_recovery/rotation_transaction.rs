@@ -179,12 +179,12 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let frontier = submitter
-        .events_frontier_realm_seal_view(control_realm.as_str())
+        .seals_frontier_realm_view(control_realm.as_str())
         .await?;
     // The active-series pointer binds the accepted Seal's own signed roots, so
     // the frontier leaf is resolved rather than trusting a service root hint.
     let frontier_seal = submitter
-        .events_frontier_realm_seal_head(control_realm.as_str())
+        .seals_frontier_realm_head(control_realm.as_str())
         .await?;
     let revoke = crate::operation::ak_ops::device_revoke(
         control_realm.as_str(),
@@ -409,7 +409,7 @@ async fn drive_security_rotation(
             .ok_or_else(|| anyhow!("security rotation has no verified PCR governance checkpoint"))?
             .live_digest_suite;
         let erase_frontier = submitter
-            .events_frontier_realm_seal_view(control_realm.as_str())
+            .seals_frontier_realm_view(control_realm.as_str())
             .await?;
         let erase_basis_leaf = erase_frontier.sole_leaf()?.clone();
         let erase_lease = crate::authorization_lease::acquire_for_intent(

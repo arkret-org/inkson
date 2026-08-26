@@ -161,12 +161,13 @@ mod personal_agent_tests {
                 "ak.event.read",
                 "ak.message.create",
                 "ak.reaction.add",
-                "ak.self.events.stream.subscribe",
-                "ak.self.events.read.scan",
-                "ak.self.events.read.frontier",
-                "ak.self.authorization_leases.command.issue",
                 "ak.self.events.command.submit",
+                "ak.self.events.read.frontier",
+                "ak.self.events.read.scan",
+                "ak.self.events.stream.subscribe",
                 "ak.self.keys.keypackages.upload.create",
+                "ak.self.seals.read.frontier",
+                "ak.self.authorization_leases.command.issue",
                 "ak.self.keys.keypackages.command.consume",
                 "ak.self.keys.keypackages.command.revoke",
                 "ak.self.device_messages.read.list",
@@ -180,11 +181,7 @@ mod personal_agent_tests {
             serde_json::json!([
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.stream.subscribe"
-                },
-                {
-                    "kind": "operation",
-                    "operation": "ak.self.events.read.scan"
+                    "operation": "ak.self.events.command.submit"
                 },
                 {
                     "kind": "operation",
@@ -192,15 +189,23 @@ mod personal_agent_tests {
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.authorization_leases.command.issue"
+                    "operation": "ak.self.events.read.scan"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.command.submit"
+                    "operation": "ak.self.events.stream.subscribe"
                 },
                 {
                     "kind": "operation",
                     "operation": "ak.self.keys.keypackages.upload.create"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.seals.read.frontier"
+                },
+                {
+                    "kind": "operation",
+                    "operation": "ak.self.authorization_leases.command.issue"
                 },
                 {
                     "kind": "operation",
@@ -241,7 +246,11 @@ mod personal_agent_tests {
                 "ak.event.read".to_owned(),
                 "ak.agent.draft.propose".to_owned(),
                 "ak.agent.action_request".to_owned(),
+                "ak.self.events.command.submit".to_owned(),
+                "ak.self.events.read.frontier".to_owned(),
+                "ak.self.events.read.scan".to_owned(),
                 "ak.self.events.stream.subscribe".to_owned(),
+                "ak.self.seals.read.frontier".to_owned(),
             ]
         );
     }
@@ -259,7 +268,14 @@ mod personal_agent_tests {
 
         assert_eq!(
             scope.actions,
-            vec!["ak.self.events.read.scan", "ak.self.events.resource.get"]
+            vec![
+                "ak.self.events.command.submit",
+                "ak.self.events.read.frontier",
+                "ak.self.events.read.scan",
+                "ak.self.events.stream.subscribe",
+                "ak.self.seals.read.frontier",
+                "ak.self.events.resource.get",
+            ]
         );
     }
 

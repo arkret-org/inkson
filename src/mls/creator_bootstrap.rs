@@ -361,7 +361,7 @@ async fn wait_for_realm_seal_view_after_basis(
     const ATTEMPTS: usize = 20;
     const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
     for attempt in 0..ATTEMPTS {
-        match submitter.events_frontier_realm_seal_view(realm_id).await {
+        match submitter.seals_frontier_realm_view(realm_id).await {
             Ok(view) if &view.seal_basis != previous => return Ok(view),
             Ok(_) if attempt + 1 < ATTEMPTS => {
                 crate::runtime_helpers::sleep_for(DELAY).await;
@@ -380,7 +380,7 @@ async fn wait_for_realm_seal_view_after_basis(
     unreachable!("Realm Seal retry loop returns on its final attempt")
 }
 
-/// Poll `ak.self.events.read.frontier` until the Realm has an accepted Seal.
+/// Poll `ak.self.seals.read.frontier` until the Realm has an accepted Seal.
 ///
 /// A Realm accepted moments ago may not be sealed yet. During that window the
 /// registered frontier surface can report either `not_found` before a Seal
@@ -395,7 +395,7 @@ pub(crate) async fn wait_for_realm_seal_view(
     const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
     for attempt in 0..ATTEMPTS {
-        match submitter.events_frontier_realm_seal_view(realm_id).await {
+        match submitter.seals_frontier_realm_view(realm_id).await {
             Ok(view) => return Ok(view),
             Err(error) if realm_seal_view_retry_is_allowed(&error, attempt, ATTEMPTS) => {
                 crate::runtime_helpers::sleep_for(DELAY).await;

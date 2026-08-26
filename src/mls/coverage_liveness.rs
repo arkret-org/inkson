@@ -135,7 +135,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS coverage repair frontier client: {error}"))?;
-    // The authoritative frontier source is `ak.self.events.read.frontier`
+    // The authoritative frontier source is `ak.self.seals.read.frontier`
     // (`client-sync.md` §4/§5 publishes none on the Realm delta). Storing it
     // also evicts the cached governance proofs bound to the older head, which
     // is exactly what the next request must not reuse.
