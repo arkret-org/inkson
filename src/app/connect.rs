@@ -1688,9 +1688,19 @@ pub(super) fn connect(
                                         account_data_key,
                                         entry,
                                     ) {
-                                        Ok(content) => store.set_notification_dnd_settings(
-                                            crate::notification_rules::parse_dnd_settings(&content),
-                                        ),
+                                        Ok(content) => {
+                                            match crate::notification_rules::parse_dnd_settings(
+                                                &content,
+                                            ) {
+                                                Ok(settings) => store
+                                                    .set_notification_dnd_settings(Some(settings)),
+                                                Err(rejection) => tracing::warn!(
+                                                    code = rejection.wire_code(),
+                                                    reason = %rejection.reason,
+                                                    "ignoring invalid ak.dnd_schedule; retaining the last valid setting"
+                                                ),
+                                            }
+                                        }
                                         Err(error) => tracing::warn!(
                                             "ignoring undecryptable ak.dnd_schedule: {error}"
                                         ),

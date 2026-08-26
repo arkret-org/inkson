@@ -251,6 +251,7 @@ impl AgentServiceScopePreset {
             Self::ScanCatchUp => &[ServiceOperationId::SELF_EVENTS_READ_SCAN],
             Self::SubmitEvents => &[
                 ServiceOperationId::SELF_EVENTS_READ_FRONTIER,
+                ServiceOperationId::SELF_SEALS_READ_FRONTIER,
                 ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE,
                 ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT,
             ],

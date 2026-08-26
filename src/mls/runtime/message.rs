@@ -1137,7 +1137,7 @@ pub(crate) fn sign_welcome_consume_request(
         mls_group_id: arkret_sdk::NonEmptyString::new(&candidate.mls_group_id)
             .map_err(|error| error.to_string())?,
         mls_epoch: candidate.epoch,
-        welcome_ref: arkret_sdk::NonEmptyString::new(&candidate.welcome_event_id)
+        welcome_ref: arkret_sdk::EventId::new(&candidate.welcome_event_id)
             .map_err(|error| error.to_string())?,
         welcome_digest: candidate.welcome_digest.clone(),
         durable_at: crate::clock::now_utc(),

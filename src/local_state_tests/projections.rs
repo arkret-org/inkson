@@ -83,17 +83,16 @@ fn mls_encrypted_projection_reads_canonical_realm_create_state_event() {
 }
 
 #[test]
-fn minimal_metadata_projection_detected_from_profiles_arrays() {
-    // SEC-08 — the committer reads minimal-metadata status off the cached
-    // projection. Recognised under `profiles[]` / `active_profiles[]` at the
-    // top level and inside the nested realm body; absent / unknown ⇒ false.
+fn minimal_metadata_projection_detected_from_genesis_schema_refs() {
+    // SEC-08 — only the create-locked structural role in `schema_refs[]` is
+    // authoritative; generic profile arrays are rejected as Realm state.
     let path = temp_state_path("minimal-metadata-projection");
     let mut store = LocalStateStore::with_path(path);
 
     let top = "ak:realm:Af7kHhjQt9bXM9MVmV6uu7VNZY1P_sjoIUGS2rxLV8Qt";
     store.save_realm_tree_projection(
         top.to_owned(),
-        json!({ "profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
+        json!({ "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
     );
     assert!(store.realm_projection_is_minimal_metadata(top));
 
@@ -102,7 +101,7 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
         nested.to_owned(),
         json!({
             "summary": {
-                "active_profiles": [
+                "schema_refs": [
                     "ak.profile.core.v1",
                     arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1
                 ]
@@ -114,9 +113,16 @@ fn minimal_metadata_projection_detected_from_profiles_arrays() {
     let plain = "ak:realm:AUsIM7jMWF-QEkZ3Fd8dVqgxiIcM5iASgTtudL5PCcGL";
     store.save_realm_tree_projection(
         plain.to_owned(),
-        json!({ "profiles": ["ak.profile.core.v1"] }),
+        json!({ "schema_refs": ["ak.profile.core.v1"] }),
     );
     assert!(!store.realm_projection_is_minimal_metadata(plain));
+
+    let retired = "ak:realm:AUKBRx5s1e-cYkHAftYCs36bgPmoYQVWDau5uOOyrgzF";
+    store.save_realm_tree_projection(
+        retired.to_owned(),
+        json!({ "active_profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1] }),
+    );
+    assert!(!store.realm_projection_is_minimal_metadata(retired));
 
     // Unknown Realm (no projection) ⇒ treated as non-minimal.
     assert!(!store.realm_projection_is_minimal_metadata(

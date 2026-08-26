@@ -257,27 +257,10 @@ impl EventOutboundSubmitter<'_> {
                         reason: format!("MLS Commit finality pending: {error:#}"),
                     });
                 }
-                let Some(PostAcceptAction::MlsAdmission {
-                    stage, welcomes, ..
-                }) = queued.post_accept.as_mut()
+                let Some(PostAcceptAction::MlsAdmission { stage, .. }) =
+                    queued.post_accept.as_mut()
                 else {
                     unreachable!("admission action was matched above")
-                };
-                let intents = welcomes
-                    .pending()
-                    .ok_or_else(|| {
-                        garth::Error::Protocol(
-                            "commit-accepted admission must still hold pending Welcome intents"
-                                .to_owned(),
-                        )
-                    })?
-                    .to_vec();
-                *welcomes = garth::QueuedMlsWelcomes::Authored {
-                    events: self
-                        .owner
-                        .author_independent_events(intents)
-                        .await
-                        .map_err(|error| garth::Error::Protocol(error.to_string()))?,
                 };
                 *stage = MlsAdmissionStage::WelcomesAuthored;
                 Ok(OutboundSubmitOutcome::Prepared {
@@ -286,14 +269,9 @@ impl EventOutboundSubmitter<'_> {
             }
             MlsAdmissionStage::WelcomesAuthored => {
                 let welcomes = match queued.post_accept.as_ref() {
-                    Some(PostAcceptAction::MlsAdmission { welcomes, .. }) => welcomes
-                        .authored()
-                        .ok_or_else(|| {
-                            garth::Error::Protocol(
-                                "authored-Welcome stage holds unauthored intents".to_owned(),
-                            )
-                        })?
-                        .to_vec(),
+                    Some(PostAcceptAction::MlsAdmission { welcomes, .. }) => {
+                        welcomes.authored().to_vec()
+                    }
                     _ => unreachable!("admission action was matched above"),
                 };
                 for welcome in &welcomes {
@@ -333,14 +311,7 @@ impl EventOutboundSubmitter<'_> {
                         commit_was_duplicate,
                         ..
                     }) => (
-                        welcomes
-                            .authored()
-                            .ok_or_else(|| {
-                                garth::Error::Protocol(
-                                    "Welcome finality stage holds unauthored intents".to_owned(),
-                                )
-                            })?
-                            .to_vec(),
+                        welcomes.authored().to_vec(),
                         commit_ingress_receipts.clone(),
                         *commit_was_duplicate,
                     ),
@@ -2174,6 +2145,23 @@ impl EventSubmitter {
             .into_iter()
             .map(|step| step(authored_commit.event_id()).map_err(anyhow::Error::msg))
             .collect::<anyhow::Result<Vec<_>>>()?;
+        let authored_welcomes = self.author_independent_events(welcome_intents).await?;
+        for welcome in &authored_welcomes {
+            let mut accepted_candidate = welcome.event().clone();
+            accepted_candidate.actor_kind = Some(if accepted_candidate.executed_by.is_some() {
+                arkret_sdk::EnvelopeActorKind::Agent
+            } else {
+                arkret_sdk::EnvelopeActorKind::Native
+            });
+            let accepted_bytes = arkret_sdk::canonical::canonical_json_bytes(&accepted_candidate)?;
+            if accepted_bytes.len() > arkret_sdk::MAX_EVENT_ENVELOPE_BYTES {
+                anyhow::bail!(
+                    "payload_too_large: MLS Welcome accepted Event candidate is {} bytes; maximum is {}",
+                    accepted_bytes.len(),
+                    arkret_sdk::MAX_EVENT_ENVELOPE_BYTES
+                );
+            }
+        }
         self.enqueue_and_drive_sdk_event(
             QueuedSdkEvent::authored(
                 QueuedEventIntent::new(intent, digest_suite),
@@ -2191,11 +2179,8 @@ impl EventSubmitter {
                     stage: MlsAdmissionStage::CommitPending,
                     commit_ingress_receipts: Vec::new(),
                     commit_was_duplicate: false,
-                    // Welcomes stay semantic intents until the Commit is final:
-                    // an unsigned envelope with an id nobody has committed to is
-                    // exactly the shape that used to need rewriting.
-                    welcomes: garth::QueuedMlsWelcomes::Pending {
-                        intents: welcome_intents,
+                    welcomes: garth::QueuedMlsWelcomes {
+                        events: authored_welcomes,
                     },
                     snapshot: snapshot.into_queued(),
                 }),
@@ -4266,7 +4251,7 @@ mod tests {
                 stage: MlsAdmissionStage::WelcomesAuthored,
                 commit_ingress_receipts: Vec::new(),
                 commit_was_duplicate: false,
-                welcomes: garth::QueuedMlsWelcomes::Authored {
+                welcomes: garth::QueuedMlsWelcomes {
                     events: vec![welcome.clone()],
                 },
                 snapshot: snapshot.into_queued(),
@@ -4280,7 +4265,7 @@ mod tests {
         };
         // Restoring the record re-proves each Welcome's identity against its own
         // content: a durable record is not a trusted source of identity.
-        assert_eq!(welcomes.authored(), Some([welcome].as_slice()));
+        assert_eq!(welcomes.authored(), [welcome].as_slice());
         assert_eq!(
             decoded
                 .authored_attempt

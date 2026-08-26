@@ -1067,7 +1067,7 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
     state.save_realm_tree_projection(
         realm,
         json!({
-            "active_profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
+            "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
             "content_scheme": "mls_rfc9420",
             "members_limited": false,
             "members": [{

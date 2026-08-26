@@ -240,13 +240,12 @@ fn realm_tree_projection_value_durability_policy(
 }
 
 /// SEC-08 (`encryption-and-audit.md` §2.9) — does a cached realm-tree
-/// projection declare the `ak.profile.mls.minimal_metadata_realm.v1` profile?
+/// projection carry the create-locked minimal-metadata structural role in
+/// `schema_refs[]`?
 ///
-/// Mirrors soland's server-side `payload_declares_minimal_metadata_realm`
-/// (`profiles[]` / `active_profiles[]` arrays) but scans the same nested
-/// containers ([summary]/[object]/[realm]/[metadata]) the encryption-state
-/// reader walks, since the local projection nests the realm body. The profile
-/// id is the SDK constant so the client and server agree on the exact string.
+/// The projection can nest the Realm object under several stable containers,
+/// but only the closed genesis `schema_refs` carrier is authoritative. Generic
+/// profile arrays are not Realm state and are deliberately ignored.
 /// The containers a realm-tree projection may nest its Realm object under.
 /// Callers scan all of them because the projection shape differs by source.
 fn realm_tree_projection_containers(body: &Value) -> Vec<&Value> {
@@ -260,26 +259,23 @@ fn realm_tree_projection_containers(body: &Value) -> Vec<&Value> {
     ]
 }
 
-/// Every profile the projection declares, from whichever container carries them.
-fn realm_tree_projection_profiles(body: &Value) -> Vec<String> {
-    let mut profiles = Vec::new();
+fn realm_tree_projection_schema_refs(body: &Value) -> Vec<String> {
+    let mut schema_refs = Vec::new();
     for container in realm_tree_projection_containers(body) {
-        for field in ["profiles", "active_profiles"] {
-            let Some(declared) = container.get(field).and_then(Value::as_array) else {
-                continue;
-            };
-            for profile in declared.iter().filter_map(Value::as_str) {
-                if !profiles.iter().any(|seen: &String| seen == profile) {
-                    profiles.push(profile.to_owned());
-                }
+        let Some(declared) = container.get("schema_refs").and_then(Value::as_array) else {
+            continue;
+        };
+        for schema_ref in declared.iter().filter_map(Value::as_str) {
+            if !schema_refs.iter().any(|seen: &String| seen == schema_ref) {
+                schema_refs.push(schema_ref.to_owned());
             }
         }
     }
-    profiles
+    schema_refs
 }
 
 fn realm_tree_projection_value_is_minimal_metadata(body: &Value) -> bool {
-    realm_tree_projection_profiles(body)
+    realm_tree_projection_schema_refs(body)
         .iter()
         .any(|profile| profile == arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1)
 }

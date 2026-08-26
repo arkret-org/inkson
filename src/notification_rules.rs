@@ -3,9 +3,10 @@
 pub use arkret_sdk::push_rule_core::WatchLevel;
 use arkret_wire::AccountDataKey;
 pub use chime::{
-    DndPeriod, DndSchedule, DndSettings, NotificationDecision, NotificationEvalContext,
-    NotificationSound, PushCondition, PushRule, PushRulesConfig, PushRulesRejection,
-    evaluate_notification, parse_dnd_settings, parse_push_rules,
+    DND_TZDB_VERSION, DndPeriod, DndSchedule, DndSettings, DndSettingsRejection,
+    NotificationDecision, NotificationEvalContext, NotificationSound, PushCondition, PushRule,
+    PushRulesConfig, PushRulesRejection, evaluate_notification, parse_dnd_settings,
+    parse_push_rules,
 };
 use serde_json::Value;
 
@@ -39,8 +40,18 @@ pub fn dnd_settings_from_account_data(
     authority: &arkret_sdk::PrincipalAuthorityKey,
     entries: &[arkret_sdk::Event],
 ) -> Option<DndSettings> {
-    encrypted_account_data_content(authority, entries, AccountDataKey::DND_SCHEDULE)
-        .and_then(|value| parse_dnd_settings(&value))
+    let value = encrypted_account_data_content(authority, entries, AccountDataKey::DND_SCHEDULE)?;
+    match parse_dnd_settings(&value) {
+        Ok(settings) => Some(settings),
+        Err(rejection) => {
+            tracing::warn!(
+                code = rejection.wire_code(),
+                reason = %rejection.reason,
+                "ignoring invalid ak.dnd_schedule account_data; retaining the last valid setting"
+            );
+            None
+        }
+    }
 }
 
 fn encrypted_account_data_content(

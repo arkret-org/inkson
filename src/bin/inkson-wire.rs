@@ -377,14 +377,9 @@ fn ingress_receipts(input: Value) -> Result<Value> {
         let mut receipt = arkret_wire::IngressReceipt {
             receipt_id: arkret_wire::ReceiptId::new_v7_at(receipt_unix_ms),
             event_digest: event_digest.clone(),
-            authorization_lease_id: authorization_lease.authorization_lease_id.clone(),
-            qualified_ingress_id: qualified_ingress_id.clone(),
+            qualified_ingress_id,
             received_at,
-            ingress_basis: authorization_lease.basis_ref.clone(),
             ingress_frontier: vec![submission.event.event_id.clone()],
-            service_id: arkret_wire::project_full_id_to_core_id(&qualified_ingress_id)
-                .context("project ingress service core id")?,
-            authority_set_ref: authorization_lease.authority_set_ref.clone(),
             proofs: Vec::new(),
         };
         let mut proof = arkret_wire::PayloadProof {
@@ -401,7 +396,7 @@ fn ingress_receipts(input: Value) -> Result<Value> {
             jws: String::new(),
         };
         let binding = receipt
-            .proof_binding_bytes(&proof)
+            .proof_binding_bytes(authorization_lease, &proof)
             .context("materialize ingress receipt proof transcript")?;
         proof.jws = format!(
             "{}..{}",

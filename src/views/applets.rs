@@ -29,9 +29,10 @@ use std::collections::BTreeSet;
 
 use arkret_models_collaboration::account_lifecycle::AppletRevokeRequestBody;
 use arkret_models_integration::{
-    AppletActorPolicy, AppletApprovalRequest, AppletGhostActorMode, AppletInstallAuthorRequestBody,
-    AppletInstallAuthoringRequestBasis, AppletInstallPlan, AppletInstallPreviewOutcome,
-    AppletInstallPreviewRequestBody, AppletInstallRequestBody, AppletPackage,
+    AppletActorPolicy, AppletApprovalRequest, AppletGhostActorMode,
+    AppletInstallAuthoringRequestBasis, AppletInstallCreateRequestBody, AppletInstallPlan,
+    AppletInstallPreviewOutcome, AppletInstallPreviewRequestBody, AppletInstallRequestBody,
+    AppletManagedActorAuthorRequestBody, AppletManagedActorPurpose, AppletPackage,
     AppletRegistrationEpochEvidence,
 };
 use arkret_wire::{AppletRevokeMode, ScopeRef, event_kind_str};
@@ -646,8 +647,6 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 ghost_actor_mode: Some(ghost_actor_mode),
                                             };
                                             let requested_at = crate::clock::now_utc_millis();
-                                            let requested_expires_at = requested_at
-                                                + chrono::Duration::minutes(5);
                                             let target_principal_server_id = match
                                                 crate::operation::authoring_principal_server_id()
                                             {
@@ -698,6 +697,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                     authoring_request_basis:
                                                         AppletInstallAuthoringRequestBasis {
                                                             schema: AppletInstallAuthoringRequestBasis::SCHEMA.to_owned(),
+                                                            purpose: AppletManagedActorPurpose::InstallBot,
                                                             target_principal_server_id,
                                                             install_actor_id,
                                                             applet_id: authored_package.applet_id.clone(),
@@ -708,8 +708,6 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                             actor_policy: Some(actor_policy),
                                                             e2ee_policy: None,
                                                             widget_policy: None,
-                                                            requested_at,
-                                                            requested_expires_at,
                                                             registration_event,
                                                             capability_grant_events: events,
                                                         },
@@ -726,8 +724,15 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             match result {
                                                 Ok((preview, requested_basis)) => match (|| {
                                                     preview.authoring_request.validate_bindings()?;
+                                                    let preview_basis = preview
+                                                        .authoring_request
+                                                        .basis
+                                                        .install()
+                                                        .ok_or_else(|| anyhow::anyhow!(
+                                                            "preview returned a non-install authoring basis"
+                                                        ))?;
                                                     if arkret_sdk::canonical::canonical_json_bytes(
-                                                        &preview.authoring_request.basis,
+                                                        preview_basis,
                                                     )? != arkret_sdk::canonical::canonical_json_bytes(
                                                         &requested_basis,
                                                     )? {
@@ -739,8 +744,10 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 })() {
                                                     Ok(actions)
                                                         if preview.plan.effective_scope == effective_scope
-                                                            && preview.authoring_request.basis.effective_scope
-                                                                == effective_scope =>
+                                                            && preview.authoring_request.basis.install()
+                                                                .is_some_and(|basis| {
+                                                                    basis.effective_scope == effective_scope
+                                                                }) =>
                                                     {
                                                         let scope_count = preview.plan.approved_scopes.len();
                                                         let digest = preview.plan.plan_digest.to_string();
@@ -811,13 +818,22 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             let authoring_request =
                                                 snapshot.preview.authoring_request;
                                             let idem = authoring_request
-                                                .authoring_request_id
-                                                .to_string();
+                                                .canonical_digest()
+                                                .map(|digest| digest.to_string());
+                                            let idem = match idem {
+                                                Ok(value) => value,
+                                                Err(error) => {
+                                                    install_status.set(format!(
+                                                        "cannot digest authoring request: {error}"
+                                                    ));
+                                                    return;
+                                                }
+                                            };
                                             let result = with_authed_sdk_client(&base, api_token, |http| async move {
                                                 let author_outcome = http
-                                                    .applet_install_author_at(
+                                                    .applet_managed_actor_author_at(
                                                         &applet_url,
-                                                        &AppletInstallAuthorRequestBody {
+                                                        &AppletManagedActorAuthorRequestBody {
                                                             authoring_request:
                                                                 authoring_request.clone(),
                                                         },
@@ -827,12 +843,12 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 author_outcome
                                                     .managed_actor_bundle
                                                     .validate_bindings(&authoring_request)?;
-                                                let body = AppletInstallRequestBody {
+                                                let body = AppletInstallRequestBody::Create(AppletInstallCreateRequestBody {
                                                     applet_package: snapshot.package,
                                                     authoring_request,
                                                     managed_actor_bundle:
                                                         author_outcome.managed_actor_bundle,
-                                                };
+                                                });
                                                 http.applet_install(&idem, &body)
                                                     .await
                                                     .map_err(anyhow::Error::from)

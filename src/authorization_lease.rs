@@ -823,7 +823,7 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn receipt(
-        lease: &arkret_wire::AuthorizationLease,
+        _lease: &arkret_wire::AuthorizationLease,
         received_at: DateTime<Utc>,
     ) -> arkret_wire::IngressReceipt {
         let mut receipt = arkret_wire::IngressReceipt {
@@ -832,24 +832,17 @@ pub(crate) mod test_support {
             )
             .unwrap(),
             event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "d".repeat(64))).unwrap(),
-            authorization_lease_id: lease.authorization_lease_id.clone(),
             qualified_ingress_id: arkret_sdk::DidFullId::new(
                 "did:webvh:z6mkfixture:ingress.example".to_owned(),
             )
             .unwrap(),
             received_at,
-            ingress_basis: lease.basis_ref.clone(),
             ingress_frontier: vec![
                 arkret_sdk::EventId::new(
                     "ak:event:ATqrupSFYozzL7O90hPaSlvHmLnxxSRiRUZA4RgeuZpD".to_owned(),
                 )
                 .unwrap(),
             ],
-            service_id: crate::mls_api_helpers::principal_core_id(
-                "did:webvh:z6mkfixture:ingress.example",
-            )
-            .unwrap(),
-            authority_set_ref: authority_set("ak.authority_set.realm_ingress.v1"),
             proofs: Vec::new(),
         };
         let digest = receipt.receipt_digest().unwrap();
@@ -859,14 +852,6 @@ pub(crate) mod test_support {
             received_at,
         )];
         receipt
-    }
-
-    fn authority_set(id: &str) -> arkret_wire::AuthoritySetRef {
-        arkret_wire::AuthoritySetRef {
-            authority_set_id: id.to_owned(),
-            authority_set_digest: arkret_sdk::Hash::new(format!("sha256:{}", "e".repeat(64)))
-                .unwrap(),
-        }
     }
 
     fn issuer_proof(

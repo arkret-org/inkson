@@ -694,7 +694,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     state.save_realm_tree_projection(
         realm,
         json!({
-            "active_profiles": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
+            "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
             "content_scheme": "mls_rfc9420",
             "members_limited": false,
             "members": [{

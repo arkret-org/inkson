@@ -326,17 +326,14 @@ pub(super) fn push_notification_rules_account_data(
 }
 
 pub(super) fn build_dnd_account_data_body(enabled: bool, mode: &str) -> serde_json::Value {
-    let periods = if enabled && mode == "now" {
-        vec![json!({"start": "00:00", "end": "23:59"})]
-    } else {
-        Vec::new()
-    };
     json!({
         "dnd": {
             "enabled": enabled,
             "schedule": {
-                "timezone": "local",
-                "periods": periods
+                "timezone": "Etc/UTC",
+                "tzdb_version": crate::notification_rules::DND_TZDB_VERSION,
+                "all_day": enabled && mode == "now",
+                "periods": []
             },
             "exceptions": ["override.priority"]
         }
@@ -356,9 +353,17 @@ pub(super) fn push_dnd_account_data(
     mut notification_settings_status: Signal<String>,
 ) {
     let plaintext_body = build_dnd_account_data_body(enabled, &mode);
+    let parsed_settings = match parse_dnd_settings(&plaintext_body) {
+        Ok(settings) => settings,
+        Err(rejection) => {
+            notification_settings_status
+                .set(format!("DND save failed validation: {}", rejection.reason));
+            return;
+        }
+    };
     state_store
         .write()
-        .set_notification_dnd_settings(parse_dnd_settings(&plaintext_body));
+        .set_notification_dnd_settings(Some(parsed_settings));
     if api_token.trim().is_empty() {
         notification_settings_status.set("DND settings saved locally; sign in to sync.".to_owned());
         return;
