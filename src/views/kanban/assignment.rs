@@ -69,7 +69,6 @@ struct QueuedAssignmentRecord<'a> {
     assignment_strand_id: &'a str,
     assignment_actor_id: &'a str,
     assignment_relation_id: String,
-    activity_summary: String,
 }
 
 fn queued_assignment_body(
@@ -83,20 +82,6 @@ fn queued_assignment_body(
             operation.typed_payload::<arkret_wire::event_spec::RelationTombstone>()?,
         ),
     })
-}
-
-pub(super) fn assignment_activity_summary(
-    mutation: &CardAssignmentMutation,
-    assignee_labels: &BTreeMap<String, String>,
-) -> String {
-    let actor = assignee_labels
-        .get(mutation.actor_id())
-        .cloned()
-        .unwrap_or_else(|| short_protocol_id(mutation.actor_id()));
-    match mutation {
-        CardAssignmentMutation::Create { .. } => format!("Assignee added: {actor}"),
-        CardAssignmentMutation::Tombstone { .. } => format!("Assignee removed: {actor}"),
-    }
 }
 
 pub(super) fn normalize_assignee_selection(
@@ -237,7 +222,6 @@ pub(super) fn dispatch_card_assignees_update(
     actor_id: String,
     current: KanbanCard,
     selected_actor_ids: BTreeSet<String>,
-    assignee_labels: BTreeMap<String, String>,
     mut selected_card: Signal<Option<KanbanCard>>,
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
@@ -320,7 +304,6 @@ pub(super) fn dispatch_card_assignees_update(
                 .relation_id()
                 .map(ToOwned::to_owned)
                 .unwrap_or_else(|| operation.local_operation_id().to_string()),
-            activity_summary: assignment_activity_summary(mutation, &assignee_labels),
         }) {
             Ok(record) => record,
             Err(err) => {

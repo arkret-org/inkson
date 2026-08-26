@@ -661,7 +661,6 @@ struct QueuedCalendarRsvpRecord<'a> {
     created_at: String,
     write_state: &'static str,
     body: arkret_sdk::RsvpSetPayload,
-    activity_summary: String,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -745,7 +744,6 @@ pub(super) fn dispatch_calendar_rsvp(
                     ),
                     write_state: "queued",
                     body,
-                    activity_summary: format!("RSVP {status}"),
                 }) {
                     Ok(record) => record,
                     Err(err) => {

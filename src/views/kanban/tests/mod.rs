@@ -15,7 +15,6 @@ pub(super) const TEST_REALM_ID: &str = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQ
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) use crate::state::isolated_store_for_tests;
 
-mod activity_assignment;
 mod calendar_event;
 mod card_detail_routes;
 mod due_calendar;

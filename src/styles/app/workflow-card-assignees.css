@@ -311,53 +311,6 @@
   font-size: 11px;
   line-height: 1.45;
 }
-.card-detail-activity {
-  gap: 9px;
-}
-.card-detail-activity-item {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr);
-  gap: 9px;
-  align-items: start;
-  font-size: 12px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-.card-detail-activity-dot {
-  width: 8px;
-  height: 8px;
-  margin-top: 5px;
-  border-radius: 999px;
-  background: var(--accent);
-}
-.card-detail-activity-item.pending .card-detail-activity-dot {
-  background: var(--warning);
-}
-.card-detail-activity-item.accepted .card-detail-activity-dot {
-  background: var(--success);
-}
-.card-detail-activity-item.failed .card-detail-activity-dot {
-  background: var(--danger);
-}
-.card-detail-activity-body {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-.card-detail-activity-body strong {
-  min-width: 0;
-  color: var(--text, var(--ak-ink));
-  font-size: 12px;
-  font-weight: 800;
-  overflow-wrap: anywhere;
-}
-.card-detail-activity-body span {
-  min-width: 0;
-  color: var(--text-3, var(--ak-muted));
-  font-size: 12px;
-  font-weight: 650;
-  overflow-wrap: anywhere;
-}
 .card-detail-edit-form {
   width: 100%;
   max-width: 72ch;

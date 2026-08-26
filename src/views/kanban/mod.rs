@@ -2633,7 +2633,6 @@ pub fn KanbanPanel(
 
 mod assignment;
 mod board_select;
-mod card_activity;
 mod card_detail;
 mod card_patch;
 mod members;
@@ -2642,7 +2641,6 @@ mod plaintext_guard;
 
 use assignment::*;
 use board_select::*;
-use card_activity::*;
 use card_detail::*;
 use card_patch::*;
 use members::*;

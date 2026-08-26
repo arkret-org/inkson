@@ -110,35 +110,6 @@ pub(super) fn card_detail_update_patch(
     Ok(Value::Object(patch))
 }
 
-pub(super) fn card_detail_activity_summary(
-    current: &KanbanCard,
-    draft: &CardDetailDraft,
-) -> String {
-    let current_due = editor_value_for_optional_card_field(&current.due);
-    let next_due = editor_value_for_optional_card_field(&draft.due);
-    if current_due != next_due {
-        return if next_due.is_empty() {
-            "Due date cleared".to_owned()
-        } else {
-            format!("Due date set to {next_due}")
-        };
-    }
-    if current.labels != draft.labels {
-        return "Labels updated".to_owned();
-    }
-    if current.calendar != draft.calendar {
-        return "Calendar schedule updated".to_owned();
-    }
-    if current.title.trim() != draft.title.trim()
-        || current.description.trim() != draft.description.trim()
-        || current.description_body.trim() != draft.description_body.trim()
-        || current.synthesis.trim() != draft.synthesis.trim()
-    {
-        return "Card details updated".to_owned();
-    }
-    "Card updated".to_owned()
-}
-
 pub(super) fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.title = draft.title.trim().to_owned();
     card.description = draft.description.trim().to_owned();

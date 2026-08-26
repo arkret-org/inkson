@@ -1654,32 +1654,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     })
                                                                     .collect::<Vec<_>>()
                                                             };
-                                                            let assignee_label_lookup = {
-                                                                let mut labels = BTreeMap::new();
-                                                                for (actor_id, label) in &assigned_people {
-                                                                    labels.insert(actor_id.clone(), label.clone());
-                                                                }
-                                                                for (actor_id, label, _) in &picker_people {
-                                                                    labels.insert(actor_id.clone(), label.clone());
-                                                                }
-                                                                labels
-                                                            };
                                                             let picker_open = assignee_picker_open();
                                                             let edit_status = assignee_edit_status();
-                                                            let activity_store = state_store.read();
-                                                            let activity_actor_label = |actor_id: &str| {
-                                                                assignee_label_for_actor(
-                                                                    &activity_store,
-                                                                    &realm_context,
-                                                                    &realm_member_rows,
-                                                                    actor_id,
-                                                                )
-                                                            };
-                                                            let activity_items = card_activity_items(
-                                                                card,
-                                                                &store.raw_operations,
-                                                                &activity_actor_label,
-                                                            );
                                                             rsx! {
                                                         div { class: "card-detail-side-fields", "data-testid": "card-fields",
                                                             dl { class: "card-detail-field-list",
@@ -1766,7 +1742,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             let realm = selected_realm_id.clone();
                                                                                             let actor = principal_id.clone();
                                                                                             let current_card = card.clone();
-                                                                                            let assignee_labels = assignee_label_lookup.clone();
                                                                                             move |_| {
                                                                                                 assignee_selected_actor_ids.set(BTreeSet::new());
                                                                                                 if dispatch_card_assignees_update(
@@ -1776,7 +1751,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     actor.clone(),
                                                                                                     current_card.clone(),
                                                                                                     BTreeSet::new(),
-                                                                                                    assignee_labels.clone(),
                                                                                                     selected_card,
                                                                                                     state_store,
                                                                                                     board_status,
@@ -1891,7 +1865,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 let realm = selected_realm_id.clone();
                                                                                                 let actor = principal_id.clone();
                                                                                                 let current_card = card.clone();
-                                                                                                let assignee_labels = assignee_label_lookup.clone();
                                                                                                 move |_| {
                                                                                                     if dispatch_card_assignees_update(
                                                                                                         base.clone(),
@@ -1900,7 +1873,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         actor.clone(),
                                                                                                         current_card.clone(),
                                                                                                         assignee_selected_actor_ids(),
-                                                                                                        assignee_labels.clone(),
                                                                                                         selected_card,
                                                                                                         state_store,
                                                                                                         board_status,
@@ -2508,27 +2480,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 div {
                                                                     dt { "Visibility" }
                                                                     dd { "{card.external_visibility}" }
-                                                                }
-                                                            }
-                                                        }
-                                                        div { class: "card-detail-side-section card-detail-activity", "data-testid": "card-audit-excerpt",
-                                                            h3 { "Activity" }
-                                                            for item in activity_items.iter() {
-                                                                {
-                                                                    let item_class = item.class_name();
-                                                                    rsx! {
-                                                                        div {
-                                                                            key: "{item.key}",
-                                                                            class: "{item_class}",
-                                                                            span { class: "card-detail-activity-dot" }
-                                                                            div { class: "card-detail-activity-body",
-                                                                                strong { "{item.title}" }
-                                                                                if let Some(detail) = item.detail.as_deref() {
-                                                                                    span { "{detail}" }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
                                                                 }
                                                             }
                                                         }

@@ -996,10 +996,6 @@ fn synthesis_edit_scope_preserves_metadata_fields() {
     );
     assert!(patch.get("metadata.fields.labels").is_none());
     assert!(patch.get("metadata.fields.due_at").is_none());
-    assert_eq!(
-        card_detail_activity_summary(&current, &draft),
-        "Card details updated"
-    );
 }
 
 #[test]

@@ -3,9 +3,8 @@ use serde_json::{Value, json};
 
 use super::model::*;
 use super::{
-    apply_card_detail_draft, card_detail_activity_summary, card_detail_update_patch,
-    collect_encryptable_private_patch_values, kanban_plaintext_block_reason,
-    replace_private_patch_values,
+    apply_card_detail_draft, card_detail_update_patch, collect_encryptable_private_patch_values,
+    kanban_plaintext_block_reason, replace_private_patch_values,
 };
 // YGN-ARCH-01 step 2: the MLS commit/genesis event construction moved to
 // `crate::mls::group_events` (it serves any effective scope and is consumed
@@ -533,7 +532,6 @@ pub(super) fn dispatch_card_detail_update(
                 crate::clock::now_utc_millis(),
             ),
             "write_state": "queued",
-            "activity_summary": card_detail_activity_summary(&current, &draft),
             "synthesis_entry_id": synthesis_entry_id,
             "synthesis_revision_body": local_synthesis_revision_body,
             "encrypted_payload_local": effective_security_encrypted,

@@ -35,7 +35,6 @@ fn card_detail_tab_deep_link_round_trips() {
         card_detail_tab_from_slug("discussion"),
         Some(CardDetailContentTab::Discussion)
     );
-    assert_eq!(card_detail_tab_from_slug("activity"), None);
     assert_eq!(
         card_detail_tab_from_slug("description"),
         Some(CardDetailContentTab::Description)
