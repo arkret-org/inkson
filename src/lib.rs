@@ -53,6 +53,7 @@ pub mod i18n;
 pub(crate) mod identity;
 pub mod key_backup;
 pub mod keyed_cooldown;
+pub(crate) mod keypackage_maintenance;
 /// Round R2/R3 (T16) — late key recovery UX helpers.
 pub mod late_recovery;
 pub mod media;

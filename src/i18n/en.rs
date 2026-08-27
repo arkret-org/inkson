@@ -847,15 +847,15 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set(
         "settings.mls_keypackages.refill_button",
-        "Publish 8 fresh KeyPackages",
+        "Check and replenish KeyPackages",
     );
     dict.set(
         "settings.mls_keypackages.refill_busy",
-        "Publishing fresh MLS KeyPackages…",
+        "Checking the local MLS KeyPackage inventory…",
     );
     dict.set(
         "settings.mls_keypackages.refill_done",
-        "Fresh MLS KeyPackages published:",
+        "KeyPackage maintenance complete; published:",
     );
     dict.set(
         "settings.mls_keypackages.refill_failed",

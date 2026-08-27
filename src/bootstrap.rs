@@ -454,80 +454,15 @@ pub(crate) async fn ensure_local_mls_key_package_inventory(
     authority: arkret_sdk::PrincipalAuthorityKey,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<Option<String>, String> {
-    static MAINTENANCE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
-        std::sync::OnceLock::new();
-    let _maintenance_guard = MAINTENANCE_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await;
     let base_scope = server_key(&base_url);
     if base_scope.is_empty() || session_credential.trim().is_empty() {
         return Ok(None);
     }
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let mut inventory = crate::mls::runtime::load_mls_key_package_inventory(
-        secure_store.as_ref(),
-        &authority,
-        &device_id,
+    Ok(
+        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
+            .await?
+            .latest_key_package_id,
     )
-    .map_err(|error| format!("load local MLS KeyPackage inventory: {error}"))?;
-    let now = crate::clock::now_utc();
-    inventory.entries.retain(|_, entry| {
-        entry.has_private_state
-            && !entry.last_resort
-            && entry.state == arkret_sdk::MlsKeyPackageState::Published
-            && entry.expires_at > now
-            && matches!(
-                crate::mls::runtime::load_mls_key_package_identity_state(
-                    secure_store.as_ref(),
-                    &authority,
-                    &device_id,
-                    &entry.keypackage_id,
-                ),
-                Ok(Some(_))
-            )
-    });
-    crate::mls::runtime::store_mls_key_package_inventory(
-        secure_store.as_ref(),
-        &authority,
-        &device_id,
-        &inventory,
-    )
-    .map_err(|error| format!("store pruned MLS KeyPackage inventory: {error}"))?;
-
-    const KEYPACKAGE_MIN_AVAILABLE: usize = 8;
-    let deficit = inventory.maintenance_deficit(now, KEYPACKAGE_MIN_AVAILABLE);
-    if deficit == 0 {
-        return Ok(inventory
-            .entries
-            .values()
-            .next_back()
-            .map(|entry| entry.keypackage_id.clone()));
-    }
-    let published = publish_fresh_local_mls_key_package_batch(
-        &base_url,
-        &session_credential,
-        &authority,
-        &device_id,
-        secure_store.as_ref(),
-        deficit,
-    )
-    .await?;
-    for entry in published {
-        inventory.entries.insert(entry.keypackage_id.clone(), entry);
-    }
-    crate::mls::runtime::store_mls_key_package_inventory(
-        secure_store.as_ref(),
-        &authority,
-        &device_id,
-        &inventory,
-    )
-    .map_err(|error| format!("store MLS KeyPackage inventory: {error}"))?;
-    Ok(inventory
-        .entries
-        .values()
-        .next_back()
-        .map(|entry| entry.keypackage_id.clone()))
 }
 
 pub(crate) async fn manual_refill_local_mls_key_packages(
@@ -536,23 +471,192 @@ pub(crate) async fn manual_refill_local_mls_key_packages(
     authority: arkret_sdk::PrincipalAuthorityKey,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
-    const MANUAL_REFILL_LOW_WATER: usize = 8;
-    let manual_refill_batch =
-        arkret_sdk::LocalMlsKeyPackageInventory::manual_refill_count(MANUAL_REFILL_LOW_WATER);
+    let base_scope = server_key(&base_url);
+    if base_scope.is_empty() || session_credential.trim().is_empty() {
+        return Ok(0);
+    }
+    Ok(
+        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
+            .await?
+            .published_count,
+    )
+}
+
+struct LocalMlsKeyPackageMaintenanceOutcome {
+    latest_key_package_id: Option<String>,
+    published_count: usize,
+}
+
+async fn maintain_local_mls_key_packages(
+    base_url: &str,
+    session_credential: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
+    let Some(lease) = crate::keypackage_maintenance::acquire(base_url, authority, device_id)
+        .await
+        .map_err(|error| format!("acquire MLS KeyPackage maintenance lease: {error}"))?
+    else {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let inventory = crate::mls::runtime::load_mls_key_package_inventory(
+            secure_store.as_ref(),
+            authority,
+            device_id,
+        )
+        .map_err(|error| format!("load local MLS KeyPackage inventory: {error}"))?;
+        return Ok(LocalMlsKeyPackageMaintenanceOutcome {
+            latest_key_package_id: inventory
+                .entries
+                .values()
+                .next_back()
+                .map(|entry| entry.keypackage_id.clone()),
+            published_count: 0,
+        });
+    };
+
+    let outcome = run_local_mls_key_package_maintenance_cycle(
+        base_url,
+        session_credential,
+        authority,
+        device_id,
+    )
+    .await;
+    let release = lease
+        .release()
+        .await
+        .map_err(|error| format!("release MLS KeyPackage maintenance lease: {error}"));
+    match (outcome, release) {
+        (Ok(outcome), Ok(())) => Ok(outcome),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+async fn run_local_mls_key_package_maintenance_cycle(
+    base_url: &str,
+    session_credential: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
+    const KEYPACKAGE_MIN_AVAILABLE: usize = 8;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let mut inventory = crate::mls::runtime::load_mls_key_package_inventory(
         secure_store.as_ref(),
-        &authority,
-        &device_id,
+        authority,
+        device_id,
     )
     .map_err(|error| format!("load local MLS KeyPackage inventory: {error}"))?;
-    let published = publish_fresh_local_mls_key_package_batch(
-        &base_url,
-        &session_credential,
-        &authority,
-        &device_id,
+
+    let now = crate::clock::now_utc();
+    let mut stale_entries = Vec::new();
+    for entry in inventory.entries.values() {
+        let private_state_present = crate::mls::runtime::load_mls_key_package_identity_state(
+            secure_store.as_ref(),
+            authority,
+            device_id,
+            &entry.keypackage_id,
+        )
+        .map_err(|error| {
+            format!(
+                "load MLS KeyPackage identity state {}: {error}",
+                entry.keypackage_id
+            )
+        })?
+        .is_some();
+        let usable = entry.has_private_state
+            && !entry.last_resort
+            && entry.state == arkret_sdk::MlsKeyPackageState::Published
+            && entry.expires_at > now
+            && private_state_present;
+        if !usable {
+            stale_entries.push(entry.clone());
+        }
+    }
+
+    let mut revoke_refs = stale_entries
+        .iter()
+        .filter(|entry| entry.state == arkret_sdk::MlsKeyPackageState::Published)
+        .map(|entry| entry.keypackage_ref.as_str().to_owned())
+        .collect::<Vec<_>>();
+    revoke_refs.sort();
+    revoke_refs.dedup();
+    if !revoke_refs.is_empty() {
+        let revoke_device_id = device_id.clone();
+        let revoke_authority = authority.clone();
+        let outcome = crate::transport::auth::with_endpoint_clients(
+            base_url,
+            session_credential.to_owned(),
+            None,
+            |clients| async move {
+                clients
+                    .mls()
+                    .revoke_key_packages(&revoke_authority, &revoke_device_id, revoke_refs)
+                    .await
+            },
+        )
+        .await
+        .map_err(|error| format!("revoke stale MLS KeyPackages: {}", error.display()))?;
+        let retryable_failures = outcome
+            .failures
+            .iter()
+            .filter(|failure| {
+                !matches!(
+                    failure.reason_code.as_str(),
+                    "already_consumed" | "already_consumed_or_missing" | "not_found"
+                )
+            })
+            .map(|failure| failure.reason_code.as_str())
+            .collect::<Vec<_>>();
+        if !retryable_failures.is_empty() {
+            return Err(format!(
+                "revoke stale MLS KeyPackages returned retryable failures: {}",
+                retryable_failures.join(",")
+            ));
+        }
+        if !outcome.failures.is_empty() {
+            tracing::warn!(
+                failure_count = outcome.failures.len(),
+                "some stale MLS KeyPackages were already terminal"
+            );
+        }
+    }
+
+    for entry in &stale_entries {
+        delete_unpublished_local_mls_key_package_state(
+            secure_store.as_ref(),
+            authority,
+            device_id,
+            &entry.keypackage_id,
+            entry.keypackage_ref.as_str(),
+        );
+        inventory.entries.remove(&entry.keypackage_id);
+    }
+    crate::mls::runtime::store_mls_key_package_inventory(
         secure_store.as_ref(),
-        manual_refill_batch,
+        authority,
+        device_id,
+        &inventory,
+    )
+    .map_err(|error| format!("store pruned MLS KeyPackage inventory: {error}"))?;
+
+    let deficit = inventory.maintenance_deficit(now, KEYPACKAGE_MIN_AVAILABLE);
+    if deficit == 0 {
+        return Ok(LocalMlsKeyPackageMaintenanceOutcome {
+            latest_key_package_id: inventory
+                .entries
+                .values()
+                .next_back()
+                .map(|entry| entry.keypackage_id.clone()),
+            published_count: 0,
+        });
+    }
+    let published = publish_fresh_local_mls_key_package_batch(
+        base_url,
+        session_credential,
+        authority,
+        device_id,
+        secure_store.as_ref(),
+        deficit,
     )
     .await?;
     let count = published.len();
@@ -561,12 +665,19 @@ pub(crate) async fn manual_refill_local_mls_key_packages(
     }
     crate::mls::runtime::store_mls_key_package_inventory(
         secure_store.as_ref(),
-        &authority,
-        &device_id,
+        authority,
+        device_id,
         &inventory,
     )
     .map_err(|error| format!("store MLS KeyPackage inventory: {error}"))?;
-    Ok(count)
+    Ok(LocalMlsKeyPackageMaintenanceOutcome {
+        latest_key_package_id: inventory
+            .entries
+            .values()
+            .next_back()
+            .map(|entry| entry.keypackage_id.clone()),
+        published_count: count,
+    })
 }
 
 async fn publish_fresh_local_mls_key_package_batch(

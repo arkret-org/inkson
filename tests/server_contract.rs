@@ -133,6 +133,7 @@ fn inkson_accepts_server_contract_payloads() {
         "supported_reducer_profiles": ["ak.reducer.core.v1"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory", "max_limit": 100},
+        "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "claimed_profiles": [],
         "verified_profiles": [],

@@ -936,15 +936,15 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set(
         "settings.mls_keypackages.refill_button",
-        "发布 8 个新 KeyPackage",
+        "检查并补充 KeyPackage",
     );
     dict.set(
         "settings.mls_keypackages.refill_busy",
-        "正在发布新的 MLS KeyPackage…",
+        "正在检查本地 MLS KeyPackage 库存…",
     );
     dict.set(
         "settings.mls_keypackages.refill_done",
-        "已发布新的 MLS KeyPackage：",
+        "KeyPackage 维护完成，本次发布：",
     );
     dict.set(
         "settings.mls_keypackages.refill_failed",

@@ -237,6 +237,29 @@ impl MlsEndpoints<'_> {
             .map_err(anyhow::Error::from)
     }
 
+    pub async fn revoke_key_packages(
+        &self,
+        authority: &arkret_sdk::PrincipalAuthorityKey,
+        device_id: &arkret_sdk::DeviceId,
+        key_package_refs: Vec<String>,
+    ) -> anyhow::Result<arkret_sdk::KeyPackagesRevokeOutcome> {
+        if key_package_refs.is_empty() {
+            anyhow::bail!("KeyPackage revoke batch is empty");
+        }
+        let unsigned = arkret_sdk::KeyPackagesRevokeUnsignedRequest {
+            owner_account_id: authority.principal_id.clone(),
+            key_package_refs,
+            device_id: device_id.clone(),
+            reason: None,
+        };
+        let signature = crate::mls_api_helpers::sign_keypackage_revoke_batch(&unsigned)?;
+        self.transport
+            .http()
+            .keypackages_revoke(&unsigned.into_signed(signature))
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
     pub async fn consume_key_package(
         &self,
         request: &arkret_sdk::KeyPackagesConsumeRequestBody,
