@@ -5,10 +5,10 @@ pub(super) struct ShellEffectState {
     pub account_primary_handle: Signal<String>,
     pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     pub token: Signal<String>,
-    pub server_description: Signal<Option<ServiceDescribe>>,
     pub personal_handles: Signal<Vec<String>>,
     pub personal_handles_status: Signal<String>,
     pub personal_handles_lookup_key: Signal<String>,
+    pub directory_handles_available: Signal<bool>,
     pub device_id: Signal<String>,
     pub current_account_display_name: Signal<String>,
     pub current_account_avatar_blob_ref: Signal<String>,
@@ -25,10 +25,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         mut account_primary_handle,
         principal_id,
         token,
-        server_description,
         mut personal_handles,
         mut personal_handles_status,
         mut personal_handles_lookup_key,
+        directory_handles_available,
         device_id,
         mut current_account_display_name,
         mut current_account_avatar_blob_ref,
@@ -262,18 +262,11 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let lookup_base_url = base_url();
             let lookup_actor = crate::app::principal_id_owned(principal_id());
             let lookup_token = token();
-            let lookup_supported = server_description().as_ref().is_some_and(|description| {
-                service_supports_operation(
-                    description,
-                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT_V1,
-                )
-            });
             let key = format!(
-                "{}|{}|{}|{}",
+                "{}|{}|{}",
                 lookup_base_url,
                 lookup_actor,
                 !lookup_token.trim().is_empty(),
-                lookup_supported,
             );
             if personal_handles_lookup_key() == key {
                 return;
@@ -285,12 +278,6 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 personal_handles_status.set("No authenticated session".to_owned());
                 return;
             }
-            if !lookup_supported {
-                if personal_handles().is_empty() {
-                    personal_handles_status.set("Not published".to_owned());
-                }
-                return;
-            }
             personal_handles_status.set("Loading handles".to_owned());
             let base = lookup_base_url.clone();
             let actor = lookup_actor.clone();
@@ -299,7 +286,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let existing_personal_handles = personal_handles();
             let mut handle_store = state_store;
             spawn(async move {
-                match crate::transport::auth::with_authed_sdk_client(
+                match crate::transport::auth::with_directory_sdk_client(
                     &base,
                     api_token,
                     |http| async move {
@@ -315,6 +302,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 .await
                 {
                     Ok(res) => {
+                        try_set_signal(directory_handles_available, true);
                         let directory_primary_handle = res
                             .primary_handle
                             .as_ref()
@@ -350,6 +338,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                         try_set_signal(personal_handles, handles);
                     }
                     Err(err) => {
+                        try_set_signal(directory_handles_available, false);
                         tracing::warn!(
                             ?err,
                             "directory list_handles_for_subject failed; keeping account primary handle claim"
@@ -369,12 +358,6 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         use_effect(move || {
             let lookup_base_url = base_url();
             let lookup_token = token();
-            let lookup_supported = server_description().as_ref().is_some_and(|description| {
-                service_supports_operation(
-                    description,
-                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT_V1,
-                )
-            });
             let mut peers = direct_contact_rows
                 .read()
                 .iter()
@@ -386,7 +369,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 })
                 .filter(|peer| peer.starts_with("did:"))
                 .collect::<BTreeSet<_>>();
-            if !lookup_supported || lookup_token.trim().is_empty() || peers.is_empty() {
+            if lookup_token.trim().is_empty() || peers.is_empty() {
                 if !contact_handles_lookup_key().is_empty() {
                     contact_handles_lookup_key.set(String::new());
                 }
@@ -407,10 +390,9 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             }
             let peer_key = peers.iter().cloned().collect::<Vec<_>>().join(",");
             let key = format!(
-                "{}|{}|{}|{}",
+                "{}|{}|{}",
                 lookup_base_url,
                 !lookup_token.trim().is_empty(),
-                lookup_supported,
                 peer_key,
             );
             if contact_handles_lookup_key() == key {
@@ -424,8 +406,10 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let api_token = lookup_token.clone();
             spawn(async move {
                 for subject_id in peers {
-                    let result =
-                        crate::transport::auth::with_authed_sdk_client(&base, api_token.clone(), {
+                    let result = crate::transport::auth::with_directory_sdk_client(
+                        &base,
+                        api_token.clone(),
+                        {
                             let subject_id = subject_id.clone();
                             move |http| async move {
                                 crate::transport::directory::list_handles_for_subject(
@@ -436,10 +420,12 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                                 )
                                 .await
                             }
-                        })
-                        .await;
+                        },
+                    )
+                    .await;
                     match result {
                         Ok(res) => {
+                            try_set_signal(directory_handles_available, true);
                             let primary = res
                                 .primary_handle
                                 .as_ref()
@@ -463,6 +449,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                                 );
                         }
                         Err(err) if !err.is_auth_expired() => {
+                            try_set_signal(directory_handles_available, false);
                             state_store_for_contact_handles
                                 .write()
                                 .save_member_handle_lookup(

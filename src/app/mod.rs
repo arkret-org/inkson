@@ -15,7 +15,6 @@ use crate::i18n::{TextDirection, UiLocale};
 use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_principal_server_requirements,
     projection_realm_id_for_known_node, service_supports_event_envelope_write_plane,
-    service_supports_operation,
 };
 // R28-B — realm-tree / projection / field-extraction helpers moved to
 // `crate::realm_tree`. Re-export the two `pub` entry points used by
@@ -492,6 +491,7 @@ fn AppBootstrap() -> Element {
     let mut personal_handles = use_signal(Vec::<String>::new);
     let mut personal_handles_status = use_signal(|| "Not published".to_owned());
     let mut personal_handles_lookup_key = use_signal(String::new);
+    let directory_handles_available = use_signal(|| false);
     let current_account_display_name = use_signal(String::new);
     let current_account_avatar_blob_ref = use_signal(String::new);
     let current_device_display_name = use_signal(String::new);
@@ -685,15 +685,7 @@ fn AppBootstrap() -> Element {
         .as_ref()
         .map(|description| description.service_id.as_str().to_owned())
         .unwrap_or_default();
-    let can_list_handles_for_subject =
-        active_server_description
-            .as_ref()
-            .is_some_and(|description| {
-                service_supports_operation(
-                    description,
-                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT_V1,
-                )
-            });
+    let can_list_handles_for_subject = directory_handles_available();
     let has_session = !token().trim().is_empty();
     let auth_surface = auth_surface_for_route(
         &route,
@@ -1442,10 +1434,10 @@ fn AppBootstrap() -> Element {
                         account_primary_handle,
                         principal_id,
                         token,
-                        server_description,
                         personal_handles,
                         personal_handles_status,
                         personal_handles_lookup_key,
+                        directory_handles_available,
                         device_id,
                         current_account_display_name,
                         current_account_avatar_blob_ref,

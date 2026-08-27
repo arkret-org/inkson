@@ -250,6 +250,33 @@ where
     }
 }
 
+/// Session-gated Directory exit backed by an independently verified Directory
+/// role route. The Principal grant is refreshed as a local session-liveness
+/// prerequisite but is never attached to the Directory client.
+pub async fn with_directory_sdk_client<F, Fut, T>(
+    principal_base_url: &str,
+    session_credential: String,
+    f: F,
+) -> Result<T, ApiCallError>
+where
+    F: FnOnce(arkret_sdk::http_client::Client) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    if session_credential.trim().is_empty() {
+        return Err(ApiCallError::AuthExpired(anyhow::anyhow!(
+            "missing authenticated session"
+        )));
+    }
+    ensure_self_path_auth_material_ready().await?;
+    crate::identity::session_refresh::provide_authenticated_sdk_client(principal_base_url)
+        .await
+        .map_err(ApiCallError::Unavailable)?;
+    let directory = crate::transport::directory::verified_directory_client(principal_base_url)
+        .await
+        .map_err(ApiCallError::Unavailable)?;
+    f(directory).await.map_err(ApiCallError::Failed)
+}
+
 /// Authenticated domain endpoint-client exit. New account/directory call
 /// sites use this typed boundary; remaining domains migrate here before the
 /// `TransportClient` facade is deleted.
