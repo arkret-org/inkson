@@ -2915,7 +2915,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.approve", "Approve");
     dict.set("manage.realms_title", "Manage Realms");
     dict.set("manage.principal_control_button", "PCR");
-    dict.set("manage.principal_control_title", "Principal Control Realm (PCR)");
+    dict.set(
+        "manage.principal_control_title",
+        "Principal Control Realm (PCR)",
+    );
     dict.set(
         "manage.principal_control_subtitle",
         "System identity and device authority. It is separate from collaboration Realms.",

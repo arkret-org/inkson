@@ -3700,6 +3700,43 @@ async fn finish_principal_setup(
         &bootstrap_seal_for_submit,
     )
     .await?;
+    // The accepted genesis unit, its frozen bootstrap Seal, and the receipt
+    // issuer already form the complete holder-side PCR authority evidence.
+    // Persist that verified evidence before publishing the recovery policy:
+    // policy materialization may transiently wait for a newer control Seal,
+    // and a retry must use these exact frozen bytes instead of attempting the
+    // forbidden current actor-history resolution path.
+    let pcr_genesis_unit = registration
+        .pcr_genesis_unit
+        .clone()
+        .context("recovery-material evidence omits PCR genesis unit")?;
+    let principal_id = account.full_id().clone();
+    let principal_core_id = account.principal_id().clone();
+    let principal_server_id = registration
+        .pcr_genesis_receipt
+        .as_ref()
+        .context("recovery-material evidence omits PCR genesis receipt")?
+        .issuer
+        .clone();
+    let controller_authority =
+        arkret_sdk::PrincipalAuthorityKey::new(principal_core_id, principal_server_id);
+    let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
+        principal_id,
+        device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
+        principal_control_realm_id: bootstrap_seal.realm_id.clone(),
+        pcr_genesis_unit,
+        bootstrap_seal: bootstrap_seal.clone(),
+        controller_authority: Some(controller_authority),
+    };
+    {
+        let barrier = {
+            let mut store = state_store.write();
+            store.set_pending_principal_registration(Some(registration.clone()))?;
+            store.set_recovery_material_evidence(Some(recovery_material_evidence))?;
+            store.begin_durable_flush()?
+        };
+        barrier.wait().await?;
+    }
     crate::recovery_strand::ensure_recovery_policy(
         &api,
         &recovery_actor,
@@ -3734,34 +3771,11 @@ async fn finish_principal_setup(
             crate::state::PendingPrincipalRegistrationStage::RecoveryMaterialComplete,
         )
         .map_err(anyhow::Error::msg)?;
-    let pcr_genesis_unit = registration
-        .pcr_genesis_unit
-        .clone()
-        .context("recovery-material evidence omits PCR genesis unit")?;
-    let principal_id = account.full_id().clone();
-    let principal_core_id = account.principal_id().clone();
-    let principal_server_id = registration
-        .pcr_genesis_receipt
-        .as_ref()
-        .context("recovery-material evidence omits PCR genesis receipt")?
-        .issuer
-        .clone();
-    let controller_authority =
-        arkret_sdk::PrincipalAuthorityKey::new(principal_core_id, principal_server_id);
-    let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
-        principal_id,
-        device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
-        principal_control_realm_id: bootstrap_seal.realm_id.clone(),
-        pcr_genesis_unit,
-        bootstrap_seal,
-        controller_authority: Some(controller_authority),
-    };
     let completed_registration = registration.clone();
     {
         let barrier = {
             let mut store = state_store.write();
             store.set_pending_principal_registration(Some(registration))?;
-            store.set_recovery_material_evidence(Some(recovery_material_evidence))?;
             store.begin_durable_flush()?
         };
         barrier.wait().await?;

@@ -2460,7 +2460,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.approve", "批准");
     dict.set("manage.realms_title", "管理 Realm");
     dict.set("manage.principal_control_button", "PCR");
-    dict.set("manage.principal_control_title", "Principal Control Realm（PCR）");
+    dict.set(
+        "manage.principal_control_title",
+        "Principal Control Realm（PCR）",
+    );
     dict.set(
         "manage.principal_control_subtitle",
         "用于系统身份与设备授权，与协作 Realm 分开管理。",

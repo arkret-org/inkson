@@ -426,8 +426,8 @@ impl PushTokenProvider for ApnsPushTokenProvider {
 /// description advertises Web Push support.
 ///
 /// The lookup order:
-/// 1. If `ServiceDescribe.limits.x_floria_supported_providers` includes `webpush`,
-///    the gateway confirms VAPID is in scope and inkson's deploy MAY rely on environment variable
+/// 1. If `ServiceDescribe.limits.x_floria_supported_providers` includes `webpush`, the gateway
+///    confirms VAPID is in scope and inkson's deploy MAY rely on environment variable
 ///    `VAPID_PUBLIC_KEY` (set by the dev-stack bootstrap) for the actual key bytes.
 /// 2. Otherwise return `None` — the WebPushTokenProvider will subscribe without an
 ///    `applicationServerKey`, which produces an unencrypted Web Push subscription and is fine for
