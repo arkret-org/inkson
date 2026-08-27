@@ -248,6 +248,18 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
     }
 }
 
+fn session_grant_for_config(grant_expires_in: i64, config: &ClientConfig) -> PersistedSessionGrant {
+    let mut grant = session_grant(grant_expires_in);
+    grant.audience = config
+        .active_account
+        .as_ref()
+        .expect("test config has an active account")
+        .authority
+        .principal_server_id
+        .to_string();
+    grant
+}
+
 #[test]
 fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
     let actor = "did:web:alice.example";
@@ -599,16 +611,16 @@ fn boot_session_credential_ignores_config_token_without_boot_material() {
 #[test]
 fn boot_session_credential_uses_fresh_session_grant() {
     let now = chrono::Utc::now().timestamp();
-    let state = ClientLocalState {
-        session_grant: Some(session_grant(3600)),
-        ..Default::default()
-    };
     let config = test_client_config(
         "https://local.host",
         "did:web:alice.example",
         "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
+    let state = ClientLocalState {
+        session_grant: Some(session_grant_for_config(3600, &config)),
+        ..Default::default()
+    };
 
     assert_eq!(
         initial_session_credential_from_state(&state, &config, now),
@@ -619,16 +631,16 @@ fn boot_session_credential_uses_fresh_session_grant() {
 #[test]
 fn boot_session_credential_ignores_expired_session_grant() {
     let now = chrono::Utc::now().timestamp();
-    let state = ClientLocalState {
-        session_grant: Some(session_grant(-1)),
-        ..Default::default()
-    };
     let config = test_client_config(
         "https://local.host",
         "did:web:alice.example",
         "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
+    let state = ClientLocalState {
+        session_grant: Some(session_grant_for_config(-1, &config)),
+        ..Default::default()
+    };
 
     assert_eq!(
         initial_session_credential_from_state(&state, &config, now),
@@ -639,23 +651,56 @@ fn boot_session_credential_ignores_expired_session_grant() {
 #[test]
 fn boot_session_credential_ignores_session_grant_for_other_server() {
     let now = chrono::Utc::now().timestamp();
-    let mut grant = session_grant(3600);
-    grant.principal_server_url = url::Url::parse("https://other.local.host").unwrap();
-    let state = ClientLocalState {
-        session_grant: Some(grant),
-        ..Default::default()
-    };
     let config = test_client_config(
         "https://local.host",
         "did:web:alice.example",
         "ak:device:01964137-0000-7000-8000-000000000001",
         "bridge-token",
     );
+    let mut grant = session_grant_for_config(3600, &config);
+    grant.principal_server_url = url::Url::parse("https://other.local.host").unwrap();
+    let state = ClientLocalState {
+        session_grant: Some(grant),
+        ..Default::default()
+    };
 
     assert_eq!(
         initial_session_credential_from_state(&state, &config, now),
         ""
     );
+}
+
+#[test]
+fn boot_session_credential_requires_the_complete_active_account_binding() {
+    let now = chrono::Utc::now().timestamp();
+    let config = test_client_config(
+        "https://local.host",
+        "did:web:alice.example",
+        "ak:device:01964137-0000-7000-8000-000000000001",
+        "",
+    );
+
+    let valid_grant = session_grant_for_config(3600, &config);
+    let mut wrong_principal = valid_grant.clone();
+    wrong_principal.principal_id =
+        crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap();
+    let mut wrong_device = valid_grant.clone();
+    wrong_device.device_id =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000099".to_owned())
+            .unwrap();
+    let mut wrong_audience = valid_grant;
+    wrong_audience.audience = "did:web:other.local.host".to_owned();
+
+    for grant in [wrong_principal, wrong_device, wrong_audience] {
+        let state = ClientLocalState {
+            session_grant: Some(grant),
+            ..Default::default()
+        };
+        assert_eq!(
+            initial_session_credential_from_state(&state, &config, now),
+            ""
+        );
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -865,6 +910,25 @@ fn auth_surface_hides_login_while_session_is_restoring() {
             true,
         ),
         AuthSurface::Login
+    );
+}
+
+#[test]
+fn onboarding_mounts_after_secure_store_even_when_connection_bootstrap_is_paused() {
+    assert_eq!(
+        auth_surface_for_route(
+            &Route::Onboarding,
+            false,
+            SessionBootState::Restoring,
+            false,
+        ),
+        AuthSurface::Restoring,
+        "onboarding must still wait for secure storage itself"
+    );
+    assert_eq!(
+        auth_surface_for_route(&Route::Onboarding, false, SessionBootState::Restoring, true,),
+        AuthSurface::AppShell,
+        "onboarding owns its pre-session flow once secure storage is ready"
     );
 }
 

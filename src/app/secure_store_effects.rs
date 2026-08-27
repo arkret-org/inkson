@@ -77,43 +77,41 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             .e2ee_plaintext_cache_secure_write();
                         match secure_write {
                             Ok(Some((key, Some(json)))) => {
-                                // This is a post-hydration repair, not input to
-                                // session classification. Keep it durable, but do
-                                // not let WebCrypto/IndexedDB persistence hold the
-                                // one-shot startup readiness barrier forever.
-                                let repair_store = secure_store.clone();
-                                let mut repair_state_store = state_store_for_secure_upgrade;
-                                wasm_bindgen_futures::spawn_local(async move {
-                                    match repair_store.store_secret_durable(&key, &json).await {
-                                        Ok(()) => {
-                                            // Clear pre-decrypt recovery checkpoints only
-                                            // after the combined snapshot + plaintext entry
-                                            // has durably committed.
-                                            match repair_state_store
-                                                .write()
-                                                .clear_mls_receive_recovery_snapshots_if_cache_unchanged(
-                                                    &key,
-                                                    &json,
-                                                ) {
-                                                Ok(true) => {}
-                                                Ok(false) => tracing::warn!(
-                                                    target: "secure_store",
-                                                    "MLS receive recovery checkpoint cleanup deferred because newer state arrived"
-                                                ),
-                                                Err(error) => tracing::warn!(
-                                                    ?error,
-                                                    "MLS receive recovery checkpoint cleanup failed",
-                                                ),
-                                            }
-                                        }
-                                        Err(error) => {
-                                            tracing::warn!(
+                                // Commit the recovered combined snapshot before
+                                // publishing readiness. Running this write in the
+                                // background lets an older repair overwrite a newer
+                                // cache write after normal effects have started. The
+                                // underlying WebCrypto and IndexedDB awaits are
+                                // timeout-bounded, so this barrier cannot hang forever.
+                                match secure_store.store_secret_durable(&key, &json).await {
+                                    Ok(()) => {
+                                        // Clear pre-decrypt recovery checkpoints only
+                                        // after the exact combined snapshot + plaintext
+                                        // entry has durably committed.
+                                        match state_store_for_secure_upgrade
+                                            .write()
+                                            .clear_mls_receive_recovery_snapshots_if_cache_unchanged(
+                                                &key,
+                                                &json,
+                                            ) {
+                                            Ok(true) => {}
+                                            Ok(false) => tracing::warn!(
+                                                target: "secure_store",
+                                                "MLS receive recovery checkpoint cleanup deferred because newer state arrived"
+                                            ),
+                                            Err(error) => tracing::warn!(
                                                 ?error,
-                                                "IndexedDB E2EE state durable bootstrap persist failed",
-                                            );
+                                                "MLS receive recovery checkpoint cleanup failed",
+                                            ),
                                         }
                                     }
-                                });
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            ?error,
+                                            "IndexedDB E2EE state durable bootstrap persist failed",
+                                        );
+                                    }
+                                }
                             }
                             Ok(Some((key, None))) => {
                                 if let Err(error) = secure_store.delete_secret(&key) {
@@ -193,7 +191,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         active_account.peek().as_ref().is_some_and(|account| {
                             session_grant_boot_usable(
                                 grant,
-                                account.server_url.as_str(),
+                                account,
                                 chrono::Utc::now().timestamp(),
                             )
                         })
@@ -202,7 +200,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     if restored_grant_present && active_grant.is_none() {
                         tracing::warn!(
                             target: "secure_store",
-                            "discarding expired or server-mismatched session grant after secure-store bootstrap"
+                            "discarding expired or account-mismatched session grant after secure-store bootstrap"
                         );
                         state_store_for_secure_upgrade
                             .write()
@@ -215,29 +213,27 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         local_state_session_grant_present = grant_present,
                         "secure store upgrade: post-upgrade credential sources (held_token from memory, config.session_credential, local_state.session_grant)"
                     );
-                    if held_token.is_empty() && grant_present {
-                        if let Some(rehydrated) = rehydrated_session_credential_for_active_config(
-                            &loaded_config,
-                            active_account.peek().as_ref(),
-                        )
-                        .or_else(|| active_grant.as_ref().map(|grant| grant.grant_jwt.clone()))
-                        {
-                            tracing::debug!(target: "secure_store", "secure store upgrade: rehydrated token from config.session_credential — session should restore");
-                            token_for_secure_upgrade.set(rehydrated);
+                    if let Some(active_grant) = active_grant.as_ref() {
+                        // The complete account/device/audience-bound persisted grant
+                        // is authoritative for the bearer string. A config or memory
+                        // token can be left over from an interrupted rotation; using
+                        // it with different restored grant metadata recreates an
+                        // impossible half-session and makes introspection fail.
+                        let authoritative_token = active_grant.grant_jwt.clone();
+                        if held_token != authoritative_token {
+                            tracing::warn!(
+                                target: "secure_store",
+                                held_token_empty = held_token.is_empty(),
+                                "normalizing session credential to the restored account-bound grant"
+                            );
+                            token_for_secure_upgrade.set(authoritative_token.clone());
                         }
-                    } else if grant_present {
-                        // A credential is already held in memory: sign-in completed
-                        // BEFORE this IndexedDB secure-store upgrade was ready, so
-                        // `config.rs` could only reach the localStorage tier, which
-                        // refuses session credentials. Now that the upgraded store is
-                        // installed, re-persist it so the session survives a reload /
-                        // re-render instead of bouncing back to /login.
                         persist_config(
                             config_store_for_secure_upgrade,
                             base_url_for_secure_upgrade(),
                             principal_id_for_secure_upgrade(),
                             device_id_for_secure_upgrade(),
-                            held_token,
+                            authoritative_token,
                         );
                     } else if !held_token.is_empty()
                         || !loaded_config.session_credential.trim().is_empty()

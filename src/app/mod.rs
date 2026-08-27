@@ -693,6 +693,30 @@ fn AppBootstrap() -> Element {
         session_boot_state(),
         secure_store_bootstrap_ready(),
     );
+    #[cfg(all(target_arch = "wasm32", debug_assertions))]
+    {
+        let auth_surface_route = route.clone();
+        use_effect(move || {
+            let secure_store_ready = secure_store_bootstrap_ready();
+            let boot_state = session_boot_state();
+            let has_session = !token().trim().is_empty();
+            let surface = auth_surface_for_route(
+                &auth_surface_route,
+                has_session,
+                boot_state,
+                secure_store_ready,
+            );
+            tracing::warn!(
+                target: "session_state",
+                route = ?auth_surface_route,
+                secure_store_ready,
+                has_session,
+                boot_state = ?boot_state,
+                surface = ?surface,
+                "auth surface classified"
+            );
+        });
+    }
     let active_server_label = normalize_server_url(&base_url());
     let principal_id_value = crate::app::principal_id_owned(principal_id());
     let device_id_value = device_id();

@@ -2,14 +2,20 @@ use super::*;
 
 pub(super) fn session_grant_boot_usable(
     grant: &PersistedSessionGrant,
-    principal_server_url: &str,
+    active_account: &crate::config::ActiveAccountContext,
     now_unix: i64,
 ) -> bool {
     if grant.grant_jwt.trim().is_empty()
         || !crate::identity::session_refresh::grant_matches_principal_server(
             grant,
-            principal_server_url,
+            active_account.server_url.as_str(),
         )
+        || !crate::identity::session_refresh::grant_matches_principal_id(
+            grant,
+            active_account.principal_id(),
+        )
+        || grant.device_id != active_account.device_id
+        || grant.audience != active_account.authority.principal_server_id.as_str()
     {
         return false;
     }
@@ -172,12 +178,17 @@ pub(super) fn auth_surface_for_route(
     // signing keys hydrated behind this barrier, including OIDC callback
     // completion. Mounting the callback before it settles lets a late hydrate
     // overwrite or discard the newly accepted session.
-    if !secure_store_ready || (!has_session && boot_state == SessionBootState::Restoring) {
+    if !secure_store_ready {
         AuthSurface::Restoring
     } else if matches!(route, Route::Onboarding) {
         // Account-first onboarding intentionally runs before a session grant
-        // exists; the short-lived handoff credential is held separately.
+        // exists; the short-lived handoff credential is held separately. This
+        // check must precede the generic Restoring guard because onboarding
+        // deliberately pauses ConnectionEffects and therefore does not rely on
+        // that effect to reclassify the session boot state.
         AuthSurface::AppShell
+    } else if !has_session && boot_state == SessionBootState::Restoring {
+        AuthSurface::Restoring
     } else if has_session {
         AuthSurface::AppShell
     } else if matches!(route, Route::AuthCallback) {
@@ -223,9 +234,11 @@ pub(super) fn initial_session_credential_from_state(
     now_unix: i64,
 ) -> String {
     if let Some(grant) = local_state.session_grant.as_ref() {
-        return if config.active_account.as_ref().is_some_and(|account| {
-            session_grant_boot_usable(grant, account.server_url.as_str(), now_unix)
-        }) {
+        return if config
+            .active_account
+            .as_ref()
+            .is_some_and(|account| session_grant_boot_usable(grant, account, now_unix))
+        {
             grant.grant_jwt.clone()
         } else {
             String::new()

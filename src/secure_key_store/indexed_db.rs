@@ -674,27 +674,31 @@ impl IndexedDbSecureKeyStore {
         // `!out.is_empty()`: if EVERYTHING failed the loaded key itself is wrong
         // (not the entries), so keep them rather than wipe the whole store.
         if !out.is_empty() && !orphaned.is_empty() {
-            let cleanup_db = db.clone();
-            let orphaned_count = orphaned.len();
-            wasm_bindgen_futures::spawn_local(async move {
-                for key_name in orphaned {
-                    if let Err(error) =
-                        Self::idb_delete_value(&cleanup_db, Self::OBJECT_STORE_ENTRIES, &key_name)
-                            .await
-                    {
+            let mut purged = 0_usize;
+            for key_name in &orphaned {
+                match Self::idb_delete_value(db, Self::OBJECT_STORE_ENTRIES, key_name).await {
+                    Ok(()) => purged += 1,
+                    Err(error) => {
                         tracing::warn!(
                             target: "secure_store",
                             ?error,
                             key = %key_name,
-                            "secure-store orphaned entry cleanup failed"
+                            "secure-store orphaned entry cleanup stopped after a failed delete"
                         );
+                        // Every request is individually timeout-bounded. Stop after
+                        // the first backend failure so a damaged database cannot
+                        // multiply that bound by the number of orphaned entries.
+                        break;
                     }
                 }
-            });
-            tracing::warn!(
-                count = orphaned_count,
-                "secure store: scheduled orphaned (undecryptable) entry cleanup to self-heal a past wrapping-key mismatch"
-            );
+            }
+            if purged > 0 {
+                tracing::warn!(
+                    count = purged,
+                    remaining = orphaned.len() - purged,
+                    "secure store: purged orphaned (undecryptable) entries to self-heal a past wrapping-key mismatch"
+                );
+            }
         }
         Ok(out)
     }
