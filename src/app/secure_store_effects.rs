@@ -43,15 +43,6 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
             tracing::debug!(target: "secure_store", "initializing IndexedDB secure store");
             match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
-                    // The durable logout journal is IndexedDB-only on wasm.
-                    // Retry it only after that backend is installed; the old
-                    // application-wide boot effect raced this initialization
-                    // and reported an expected unavailable backend as a fault.
-                    crate::pending_logout::run_pending_logout_with_store(
-                        chrono::Utc::now(),
-                        secure_store.as_ref(),
-                    )
-                    .await;
                     tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
                     // Hydrate the active account's main state from the IndexedDB
                     // encrypted entries store into `cached` before
@@ -167,10 +158,28 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             .write()
                             .set_session_grant(Some(grant));
                     }
-                    let active_grant = state_store_for_secure_upgrade.read().session_grant();
-                    let grant_present = active_grant
-                        .as_ref()
-                        .is_some_and(|grant| !grant.grant_jwt.trim().is_empty());
+                    let restored_active_grant =
+                        state_store_for_secure_upgrade.read().session_grant();
+                    let restored_grant_present = restored_active_grant.is_some();
+                    let active_grant = restored_active_grant.filter(|grant| {
+                        active_account.peek().as_ref().is_some_and(|account| {
+                            session_grant_boot_usable(
+                                grant,
+                                account.server_url.as_str(),
+                                chrono::Utc::now().timestamp(),
+                            )
+                        })
+                    });
+                    let grant_present = active_grant.is_some();
+                    if restored_grant_present && active_grant.is_none() {
+                        tracing::warn!(
+                            target: "secure_store",
+                            "discarding expired or server-mismatched session grant after secure-store bootstrap"
+                        );
+                        state_store_for_secure_upgrade
+                            .write()
+                            .set_session_grant(None);
+                    }
                     tracing::debug!(
                         target: "secure_store",
                         held_token_empty = held_token.is_empty(),
@@ -379,6 +388,21 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         }
                         let _ = user_store;
                     }
+
+                    // A durable logout retry can perform authority discovery and
+                    // network I/O. It must never be part of the one-shot secure
+                    // storage readiness barrier: a slow/offline authority would
+                    // otherwise leave every route permanently on the restoring
+                    // splash. The journal is already durable, so run it after
+                    // local hydration as an independent best-effort task.
+                    let pending_logout_store = secure_store.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        crate::pending_logout::run_pending_logout_with_store(
+                            chrono::Utc::now(),
+                            pending_logout_store.as_ref(),
+                        )
+                        .await;
+                    });
                 }
                 Ok(None) => {
                     tracing::warn!(

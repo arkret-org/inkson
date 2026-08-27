@@ -150,22 +150,37 @@ impl IndexedDbSecureKeyStore {
         use wasm_bindgen::{JsCast, JsValue};
         use wasm_bindgen_futures::JsFuture;
         type EventClosure = Closure<dyn FnMut(web_sys::Event)>;
+        type TimerClosure = Closure<dyn FnMut()>;
         let on_success: std::rc::Rc<std::cell::RefCell<Option<EventClosure>>> =
             std::rc::Rc::new(std::cell::RefCell::new(None));
         let on_error: std::rc::Rc<std::cell::RefCell<Option<EventClosure>>> =
             std::rc::Rc::new(std::cell::RefCell::new(None));
+        let on_timeout: std::rc::Rc<std::cell::RefCell<Option<TimerClosure>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        let timer_handle = std::rc::Rc::new(std::cell::Cell::new(None::<i32>));
+        let window = web_sys::window()
+            .ok_or_else(|| JsValue::from_str("indexedDB request: browser window unavailable"))?;
         let on_success_slot = on_success.clone();
         let on_error_slot = on_error.clone();
+        let on_timeout_slot = on_timeout.clone();
+        let timer_handle_slot = timer_handle.clone();
         let settled = std::rc::Rc::new(std::cell::Cell::new(false));
         let promise = js_sys::Promise::new(&mut |resolve, reject| {
             let success_settled = settled.clone();
             let success_resolve = resolve.clone();
             let success_reject = reject.clone();
+            let success_window = window.clone();
+            let success_timer_handle = timer_handle.clone();
             let error_settled = settled.clone();
             let error_reject = reject.clone();
+            let error_window = window.clone();
+            let error_timer_handle = timer_handle.clone();
             let success = Closure::wrap(Box::new(move |event: web_sys::Event| {
                 if success_settled.replace(true) {
                     return;
+                }
+                if let Some(handle) = success_timer_handle.get() {
+                    success_window.clear_timeout_with_handle(handle);
                 }
                 match event
                     .target()
@@ -191,6 +206,9 @@ impl IndexedDbSecureKeyStore {
                 if error_settled.replace(true) {
                     return;
                 }
+                if let Some(handle) = error_timer_handle.get() {
+                    error_window.clear_timeout_with_handle(handle);
+                }
                 let err = event
                     .target()
                     .and_then(|t| t.dyn_into::<web_sys::IdbRequest>().ok())
@@ -199,18 +217,46 @@ impl IndexedDbSecureKeyStore {
                     .unwrap_or_else(|| JsValue::from_str("indexedDB request error"));
                 let _ = error_reject.call1(&JsValue::NULL, &err);
             }) as Box<dyn FnMut(web_sys::Event)>);
+            let timeout_settled = settled.clone();
+            let timeout_reject = reject.clone();
+            let timeout = Closure::wrap(Box::new(move || {
+                if timeout_settled.replace(true) {
+                    return;
+                }
+                let _ = timeout_reject.call1(
+                    &JsValue::NULL,
+                    &JsValue::from_str(&format!(
+                        "indexedDB request timed out after {}ms",
+                        Self::OPEN_DB_TIMEOUT_MS
+                    )),
+                );
+            }) as Box<dyn FnMut()>);
             request.set_onsuccess(Some(success.as_ref().unchecked_ref()));
             request.set_onerror(Some(error.as_ref().unchecked_ref()));
+            match window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                timeout.as_ref().unchecked_ref(),
+                Self::OPEN_DB_TIMEOUT_MS,
+            ) {
+                Ok(handle) => timer_handle_slot.set(Some(handle)),
+                Err(err) => {
+                    let _ = reject.call1(&JsValue::NULL, &err);
+                }
+            }
             *on_success_slot.borrow_mut() = Some(success);
             *on_error_slot.borrow_mut() = Some(error);
+            *on_timeout_slot.borrow_mut() = Some(timeout);
         });
         let settled = JsFuture::from(promise).await;
         // Detach the handlers and free the closures only after the request
         // has settled, so the DOM can never invoke a freed closure.
         request.set_onsuccess(None);
         request.set_onerror(None);
+        if let Some(handle) = timer_handle.get() {
+            window.clear_timeout_with_handle(handle);
+        }
         drop(on_success);
         drop(on_error);
+        drop(on_timeout);
         settled
     }
 
