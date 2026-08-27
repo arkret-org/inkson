@@ -25,7 +25,7 @@ use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
-use crate::models::{ContactList, CurrentAccount, IdentityDescription, IdentityResolveOutcome};
+use crate::models::{ContactList, CurrentAccount, IdentityResolveOutcome};
 
 pub(crate) fn did_for_request_field(
     field: &str,
@@ -1010,7 +1010,7 @@ pub async fn consent_cells(
 
 pub async fn identity_describe(
     http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<IdentityDescription> {
+) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
     http.identity_describe()
         .await
         .map_err(|error| anyhow::anyhow!("identity describe: {error}"))

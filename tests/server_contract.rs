@@ -150,15 +150,13 @@ fn inkson_accepts_server_contract_payloads() {
         "https://server.local/_arkret"
     );
 
-    let identity: inkson::models::IdentityDescription = serde_json::from_value(json!({
-        "service_id": "ak:did_core:web:server.local",
-        "registry_mode": "development_local",
-        "supported_receipts": ["local"],
-        "protocol_version": "1.0",
-        "profiles": []
-    }))
-    .unwrap();
-    assert_eq!(identity.registry_mode, "development_local");
+    let mut identity = describe.clone();
+    identity.service_kind = arkret_sdk::ServiceKind::IdentityRegistry;
+    identity.supported_operation_bundles =
+        vec!["ak.operation_bundle.identity_registry.describe.v1".to_owned()];
+    identity
+        .validate()
+        .expect("identity describe uses canonical ServiceDescribe");
 
     let resolved_identity: inkson::models::IdentityResolveOutcome = serde_json::from_value(json!({
         "did_document": {

@@ -9,8 +9,6 @@ use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use super::UiIcon;
-use crate::models::IdentityDescription;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidResolutionHealthReason {
     IdentityDescribeFailedFreshCache,
@@ -52,7 +50,7 @@ impl DidResolutionHealth {
         }
     }
 
-    pub fn from_identity_description(description: &IdentityDescription) -> Self {
+    pub fn from_identity_description(description: &arkret_sdk::ServiceDescribe) -> Self {
         if description.protocol_version.trim() == "1.0" {
             Self::Healthy
         } else {
@@ -190,20 +188,26 @@ pub fn DidResolutionHealthBanner(health: Signal<DidResolutionHealth>) -> Element
 
 #[cfg(test)]
 mod tests {
-    use arkret_sdk::{DidDocument, DidFullId};
+    use arkret_sdk::{
+        DidDocument, DidFullId, ServiceDescribe, ServiceKind, TransportBinding, TrustDomainId,
+    };
     use chrono::Duration;
 
     use super::*;
 
-    fn identity_description(protocol_version: &str) -> IdentityDescription {
-        IdentityDescription {
-            service_id: crate::mls_api_helpers::principal_core_id("did:web:identity.example")
-                .expect("valid did"),
-            registry_mode: "local".to_owned(),
-            supported_receipts: Vec::new(),
-            protocol_version: protocol_version.to_owned(),
-            profiles: Vec::new(),
-        }
+    fn identity_description(protocol_version: &str) -> ServiceDescribe {
+        let mut description = ServiceDescribe::development(
+            DidFullId::new("did:web:identity.example".to_owned()).expect("valid did"),
+            TrustDomainId::new("ak:trust_domain:identity.example").expect("valid trust domain"),
+            ServiceKind::IdentityRegistry,
+            vec!["ak.operation_bundle.identity_registry.describe.v1".to_owned()],
+            vec![TransportBinding::HttpJson {
+                base_url: "https://identity.example/".to_owned(),
+                extension_profile_required: (),
+            }],
+        );
+        description.protocol_version = protocol_version.to_owned();
+        description
     }
 
     fn cache_with_entry(ttl: Duration, now: DateTime<Utc>) -> DidResolutionCache {

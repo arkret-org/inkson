@@ -190,12 +190,6 @@ pub fn missing_v1_principal_server_requirements(
     missing
 }
 
-// R35: `ak.identity.describe` body. The SDK's canonical type is
-// `IdentityDescription` (same fields, with `service_id: DidCoreId` validated on
-// construction); the SDK's own `IdentityDescription` is a transparent
-// newtype around it. We re-export the inner struct under the inkson-local
-// name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
-// unchanged while the field shapes are now SDK-owned.
 // `ak.self.account.read.describe.v1` decodes into the SDK's authoritative
 // `arkret_sdk::ServiceDescribe`; the former inkson-local describe mirror was
 // removed in favor of the wire type.
@@ -309,7 +303,7 @@ pub(crate) fn project_default_strand_from_sdk_events<'a>(
 // invite-accept with "error decoding response body" whenever the server omitted
 // those fields. The SDK type is the single source of truth.
 pub use arkret_models_discovery::{DirectoryRealmResolutionOutcome, RealmJoinCandidate};
-pub use arkret_models_identity::{IdentityDescription, IdentityResolveOutcome};
+pub use arkret_models_identity::IdentityResolveOutcome;
 
 /// Sidebar tag distinguishing a security-boundary Realm from a product
 /// Space. Wire signal is either the `ak.schema.{realm,space}.v1` schema

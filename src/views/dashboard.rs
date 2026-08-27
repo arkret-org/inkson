@@ -557,7 +557,7 @@ pub fn DashboardPanel(
                                                         Err(e) => rows.push(("Sync".to_owned(), format!("Error: {e}"))),
                                                     }
                                                     match async { crate::transport::account::identity_describe(&api.sdk_http_client()?).await }.await {
-                                                        Ok(i) => rows.push(("Identity".to_owned(), format!("mode={}", i.registry_mode))),
+                                                        Ok(i) => rows.push(("Identity".to_owned(), format!("{} v{}", i.service_kind, i.protocol_version))),
                                                         Err(e) => rows.push(("Identity".to_owned(), format!("Error: {e}"))),
                                                     }
                                                     Ok::<_, anyhow::Error>(rows)
