@@ -398,6 +398,52 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
 }
 
 #[test]
+fn stale_background_cache_write_cannot_clear_newer_receive_recovery_checkpoint() {
+    use crate::mls::persistence::encrypt_state;
+
+    let path = temp_state_path("e2ee-background-checkpoint-guard");
+    let actor = "did:web:alice.example";
+    let realm = "ak:realm:Af7hHJ0VGmDQ0p9hCnWFJg33V-mOz91iOFhCQ0ZOiB0L";
+    let first_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    let second_digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+    let base = encrypt_state(realm, "abcd", 8, b"base", "profile", b"salt");
+    let first = encrypt_state(realm, "abcd", 8, b"first", "profile", b"salt");
+    let second = encrypt_state(realm, "abcd", 8, b"second", "profile", b"salt");
+
+    let mut state = LocalStateStore::with_path(path);
+    state.switch_test_account(actor);
+    state.save_mls_snapshot(realm, base).unwrap();
+    state.advance_mls_receive_chain(realm, first, first_digest, b"first plaintext");
+    let (old_key, Some(old_json)) = state.e2ee_plaintext_cache_secure_write().unwrap().unwrap()
+    else {
+        panic!("first receive must produce an E2EE cache write");
+    };
+
+    // A second receive lands while the first durable browser write is in flight.
+    state.advance_mls_receive_chain(realm, second, second_digest, b"second plaintext");
+    assert!(
+        !state
+            .clear_mls_receive_recovery_snapshots_if_cache_unchanged(&old_key, &old_json)
+            .unwrap(),
+        "an older completed write must not clear recovery state for newer cache contents"
+    );
+    assert!(!state.load().mls_receive_recovery_snapshots.is_empty());
+
+    let (current_key, Some(current_json)) =
+        state.e2ee_plaintext_cache_secure_write().unwrap().unwrap()
+    else {
+        panic!("second receive must produce an E2EE cache write");
+    };
+    assert!(
+        state
+            .clear_mls_receive_recovery_snapshots_if_cache_unchanged(&current_key, &current_json,)
+            .unwrap(),
+        "the exact cache write may clear the checkpoints it covers"
+    );
+    assert!(state.load().mls_receive_recovery_snapshots.is_empty());
+}
+
+#[test]
 fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
     use crate::mls::persistence::encrypt_state;
     use crate::secure_key_store::MemorySecureKeyStore;

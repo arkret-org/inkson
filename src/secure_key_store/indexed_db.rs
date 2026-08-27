@@ -104,6 +104,7 @@ impl IndexedDbSecureKeyStore {
     const PBKDF2_ITERATIONS: u32 = 100_000;
     const SALT_BYTES: usize = 16;
     const OPEN_DB_TIMEOUT_MS: i32 = 12_000;
+    const WEB_CRYPTO_TIMEOUT_MS: u64 = 12_000;
 
     /// Open / create the IndexedDB database, derive (or recover) the
     /// non-extractable AES-GCM wrapping key, then decrypt every
@@ -112,13 +113,13 @@ impl IndexedDbSecureKeyStore {
     /// [`SecureKeyStore`] trait.
     pub async fn new_async(service_name: &str) -> Result<Self, SecureKeyStoreError> {
         let db_name = format!("inkson.secret.{service_name}");
-        tracing::debug!(target: "secure_store", db_name=%db_name, "new_async: step 1/3 open_db (awaiting IndexedDB open)…");
+        Self::trace_bootstrap_stage("1/3 open IndexedDB");
         let db = Self::open_db(&db_name).await?;
-        tracing::debug!(target: "secure_store", "new_async: step 1/3 open_db OK; step 2/3 load_or_derive_wrapping_key (SubtleCrypto)…");
+        Self::trace_bootstrap_stage("2/3 load or derive wrapping key");
         let crypto_key = Self::load_or_derive_wrapping_key(&db, service_name).await?;
-        tracing::debug!(target: "secure_store", "new_async: step 2/3 wrapping_key OK; step 3/3 load_and_decrypt_cache…");
+        Self::trace_bootstrap_stage("3/3 decrypt cached entries");
         let cache = Self::load_and_decrypt_cache(&db, &crypto_key).await?;
-        tracing::debug!(target: "secure_store", "new_async: step 3/3 cache OK; IndexedDbSecureKeyStore fully constructed");
+        Self::trace_bootstrap_stage("ready");
         Ok(Self {
             service_name: service_name.to_owned(),
             db_name,
@@ -126,6 +127,38 @@ impl IndexedDbSecureKeyStore {
             crypto_key: IndexedDbSendBoundary(send_wrapper::SendWrapper::new(Arc::new(crypto_key))),
             db: IndexedDbSendBoundary(send_wrapper::SendWrapper::new(Arc::new(db))),
         })
+    }
+
+    fn trace_bootstrap_stage(stage: &'static str) {
+        // Debug wasm intentionally filters normal INFO traffic. Keep these few
+        // milestones visible there so a browser-specific IndexedDB/WebCrypto
+        // stall identifies its exact async boundary instead of leaving only an
+        // eternal splash with no diagnostic signal.
+        #[cfg(debug_assertions)]
+        tracing::warn!(target: "secure_store", stage, "secure-store bootstrap stage");
+        #[cfg(not(debug_assertions))]
+        tracing::info!(target: "secure_store", stage, "secure-store bootstrap stage");
+    }
+
+    async fn await_web_crypto_promise(
+        promise: js_sys::Promise,
+        operation: &'static str,
+    ) -> Result<wasm_bindgen::JsValue, SecureKeyStoreError> {
+        use wasm_bindgen_futures::JsFuture;
+
+        let operation_future = JsFuture::from(promise);
+        tokio::pin!(operation_future);
+        tokio::select! {
+            result = &mut operation_future => result.map_err(|err| {
+                SecureKeyStoreError::Backend(format!("{operation} awaited: {err:?}"))
+            }),
+            () = crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
+                Self::WEB_CRYPTO_TIMEOUT_MS,
+            )) => Err(SecureKeyStoreError::Backend(format!(
+                "{operation} timed out after {}ms",
+                Self::WEB_CRYPTO_TIMEOUT_MS,
+            ))),
+        }
     }
 
     /// Await a one-shot IndexedDB request, resolving to its `result()`
@@ -512,7 +545,6 @@ impl IndexedDbSecureKeyStore {
     ) -> Result<wasm_bindgen::JsValue, SecureKeyStoreError> {
         use js_sys::{Array, Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
-        use wasm_bindgen_futures::JsFuture;
         let window = web_sys::window()
             .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?;
         let subtle = window
@@ -535,9 +567,8 @@ impl IndexedDbSecureKeyStore {
             .map_err(|err| {
                 SecureKeyStoreError::Backend(format!("subtle.importKey PBKDF2: {err:?}"))
             })?;
-        let base_key = JsFuture::from(base_key_promise).await.map_err(|err| {
-            SecureKeyStoreError::Backend(format!("subtle.importKey PBKDF2 awaited: {err:?}"))
-        })?;
+        let base_key =
+            Self::await_web_crypto_promise(base_key_promise, "subtle.importKey PBKDF2").await?;
         // Step 2: deriveKey → AES-GCM 256, extractable=false.
         let mut salt = [0u8; Self::SALT_BYTES];
         getrandom::fill(&mut salt)
@@ -593,9 +624,8 @@ impl IndexedDbSecureKeyStore {
                 &JsValue::from(aes_usages),
             )
             .map_err(|err| SecureKeyStoreError::Backend(format!("subtle.deriveKey: {err:?}")))?;
-        let derived = JsFuture::from(derive_promise)
-            .await
-            .map_err(|err| SecureKeyStoreError::Backend(format!("deriveKey awaited: {err:?}")))?;
+        let derived =
+            Self::await_web_crypto_promise(derive_promise, "subtle.deriveKey PBKDF2").await?;
         Ok(derived)
     }
 
@@ -606,8 +636,23 @@ impl IndexedDbSecureKeyStore {
         let entries = Self::idb_all_entries(db, Self::OBJECT_STORE_ENTRIES).await?;
         let mut out = HashMap::with_capacity(entries.len());
         let mut orphaned = Vec::new();
+        let decrypt_deadline = crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
+            Self::WEB_CRYPTO_TIMEOUT_MS,
+        ));
+        tokio::pin!(decrypt_deadline);
         for (key_name, wrapped_bytes) in entries {
-            match Self::subtle_decrypt(crypto_key, &wrapped_bytes).await {
+            let decrypt = Self::subtle_decrypt(crypto_key, &wrapped_bytes);
+            tokio::pin!(decrypt);
+            let result = tokio::select! {
+                result = &mut decrypt => result,
+                () = &mut decrypt_deadline => {
+                    return Err(SecureKeyStoreError::Backend(format!(
+                        "secure-store cache decrypt phase timed out after {}ms",
+                        Self::WEB_CRYPTO_TIMEOUT_MS,
+                    )));
+                }
+            };
+            match result {
                 Ok(plain) => {
                     if let Ok(s) = String::from_utf8(plain) {
                         out.insert(key_name, s);
@@ -629,12 +674,26 @@ impl IndexedDbSecureKeyStore {
         // `!out.is_empty()`: if EVERYTHING failed the loaded key itself is wrong
         // (not the entries), so keep them rather than wipe the whole store.
         if !out.is_empty() && !orphaned.is_empty() {
-            for key_name in &orphaned {
-                let _ = Self::idb_delete_value(db, Self::OBJECT_STORE_ENTRIES, key_name).await;
-            }
+            let cleanup_db = db.clone();
+            let orphaned_count = orphaned.len();
+            wasm_bindgen_futures::spawn_local(async move {
+                for key_name in orphaned {
+                    if let Err(error) =
+                        Self::idb_delete_value(&cleanup_db, Self::OBJECT_STORE_ENTRIES, &key_name)
+                            .await
+                    {
+                        tracing::warn!(
+                            target: "secure_store",
+                            ?error,
+                            key = %key_name,
+                            "secure-store orphaned entry cleanup failed"
+                        );
+                    }
+                }
+            });
             tracing::warn!(
-                count = orphaned.len(),
-                "secure store: purged orphaned (undecryptable) entries to self-heal a past wrapping-key mismatch"
+                count = orphaned_count,
+                "secure store: scheduled orphaned (undecryptable) entry cleanup to self-heal a past wrapping-key mismatch"
             );
         }
         Ok(out)
@@ -814,7 +873,6 @@ impl IndexedDbSecureKeyStore {
     ) -> Result<(Vec<u8>, Vec<u8>), SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
-        use wasm_bindgen_futures::JsFuture;
         let window = web_sys::window()
             .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?;
         let subtle = window
@@ -844,9 +902,7 @@ impl IndexedDbSecureKeyStore {
         let promise = subtle
             .encrypt_with_object_and_buffer_source(&algo, &key_typed, plain_array.as_ref())
             .map_err(|err| SecureKeyStoreError::Backend(format!("subtle.encrypt: {err:?}")))?;
-        let result = JsFuture::from(promise)
-            .await
-            .map_err(|err| SecureKeyStoreError::Backend(format!("encrypt awaited: {err:?}")))?;
+        let result = Self::await_web_crypto_promise(promise, "subtle.encrypt AES-GCM").await?;
         let buf: js_sys::ArrayBuffer = result.dyn_into().map_err(|_| {
             SecureKeyStoreError::Backend("encrypt did not return ArrayBuffer".to_owned())
         })?;
@@ -862,7 +918,6 @@ impl IndexedDbSecureKeyStore {
     ) -> Result<Vec<u8>, SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
-        use wasm_bindgen_futures::JsFuture;
         if packed.len() < 12 {
             return Err(SecureKeyStoreError::Backend(
                 "subtle_decrypt: packed too short".to_owned(),
@@ -895,9 +950,7 @@ impl IndexedDbSecureKeyStore {
         let promise = subtle
             .decrypt_with_object_and_buffer_source(&algo, &key_typed, ct_array.as_ref())
             .map_err(|err| SecureKeyStoreError::Backend(format!("subtle.decrypt: {err:?}")))?;
-        let result = JsFuture::from(promise)
-            .await
-            .map_err(|err| SecureKeyStoreError::Backend(format!("decrypt awaited: {err:?}")))?;
+        let result = Self::await_web_crypto_promise(promise, "subtle.decrypt AES-GCM").await?;
         let buf: js_sys::ArrayBuffer = result.dyn_into().map_err(|_| {
             SecureKeyStoreError::Backend("decrypt did not return ArrayBuffer".to_owned())
         })?;
@@ -1109,14 +1162,18 @@ pub async fn initialize_wasm_secure_key_store_async(
     // key). `ensure_wasm_secure_key_store_ready` guards its own call site, but
     // `upgrade_*` is also invoked directly (app boot), so it must guard too.
     if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {
+        IndexedDbSecureKeyStore::trace_bootstrap_stage("reuse initialized backend");
         return Ok(Some(store.clone()));
     }
     static INIT_MUTEX: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    IndexedDbSecureKeyStore::trace_bootstrap_stage("wait for initialization lock");
     let _init_guard = INIT_MUTEX
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
+    IndexedDbSecureKeyStore::trace_bootstrap_stage("initialization lock acquired");
     if let Some(store) = WASM_INDEXEDDB_SECURE_KEY_STORE.get() {
+        IndexedDbSecureKeyStore::trace_bootstrap_stage("reuse backend initialized by waiter");
         return Ok(Some(store.clone()));
     }
     // Probe for SubtleCrypto first — older browsers / file:// origins

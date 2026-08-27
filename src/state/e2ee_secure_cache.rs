@@ -423,7 +423,7 @@ impl LocalStateStore {
         Ok(changed)
     }
 
-    #[cfg(any(test, target_arch = "wasm32"))]
+    #[cfg(test)]
     pub(crate) fn clear_mls_receive_recovery_snapshots(&mut self) -> anyhow::Result<()> {
         self.ensure_cached_loaded();
         self.absorb_mls_receive_overlay();
@@ -432,6 +432,34 @@ impl LocalStateStore {
         }
         self.cached.mls_receive_recovery_snapshots.clear();
         self.flush()
+    }
+
+    /// Clear only the exact recovery-checkpoint set covered by a completed
+    /// durable cache write. A concurrent receive changes the encoded cache and
+    /// therefore keeps every checkpoint for the next persistence pass instead
+    /// of allowing an older background task to erase newer recovery state.
+    #[cfg(any(test, target_arch = "wasm32"))]
+    pub(crate) fn clear_mls_receive_recovery_snapshots_if_cache_unchanged(
+        &mut self,
+        persisted_key: &str,
+        persisted_json: &str,
+    ) -> anyhow::Result<bool> {
+        self.ensure_cached_loaded();
+        self.absorb_mls_receive_overlay();
+        let current_write = self.e2ee_plaintext_cache_secure_write()?;
+        if current_write
+            .as_ref()
+            .map(|(key, json)| (key.as_str(), json.as_deref()))
+            != Some((persisted_key, Some(persisted_json)))
+        {
+            return Ok(false);
+        }
+        if self.cached.mls_receive_recovery_snapshots.is_empty() {
+            return Ok(true);
+        }
+        self.cached.mls_receive_recovery_snapshots.clear();
+        self.flush()?;
+        Ok(true)
     }
 
     pub(super) fn clear_e2ee_plaintext_from_memory(&mut self) {

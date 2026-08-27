@@ -1,5 +1,16 @@
 use super::*;
 
+#[cfg(target_arch = "wasm32")]
+fn trace_secure_store_bootstrap_stage(stage: &'static str) {
+    // Keep startup diagnostics permanently visible in debug web builds. These
+    // milestones contain no account identifiers or secret material and make a
+    // browser-local IndexedDB/WebCrypto stall diagnosable from one screenshot.
+    #[cfg(debug_assertions)]
+    tracing::warn!(target: "secure_store", stage, "secure-store app bootstrap stage");
+    #[cfg(not(debug_assertions))]
+    tracing::info!(target: "secure_store", stage, "secure-store app bootstrap stage");
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct SecureStoreEffectState {
     pub config_store: Signal<LocalConfigStore>,
@@ -40,10 +51,10 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
         let mut token_for_secure_upgrade = token;
         use_future(move || async move {
             crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-            tracing::debug!(target: "secure_store", "initializing IndexedDB secure store");
+            trace_secure_store_bootstrap_stage("start backend initialization");
             match crate::secure_key_store::initialize_wasm_secure_key_store_async("inkson").await {
                 Ok(Some(secure_store)) => {
-                    tracing::debug!(target: "secure_store", "secure store upgrade: Ok(Some) — IndexedDb tier installed");
+                    trace_secure_store_bootstrap_stage("backend initialized");
                     // Hydrate the active account's main state from the IndexedDB
                     // encrypted entries store into `cached` before
                     // anything downstream reads it. Runs before the E2EE plaintext
@@ -53,39 +64,56 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     state_store_for_secure_upgrade
                         .write()
                         .hydrate_active_account_state_from_secure_store(secure_store.as_ref());
+                    trace_secure_store_bootstrap_stage("active account state hydrated");
                     let hydrated = state_store_for_secure_upgrade
                         .write()
                         .hydrate_e2ee_plaintext_cache_with_secure_store(secure_store.as_ref());
                     if let Err(error) = hydrated {
                         tracing::warn!(?error, "IndexedDB E2EE plaintext cache hydration failed",);
                     } else {
+                        trace_secure_store_bootstrap_stage("E2EE cache hydrated");
                         let secure_write = state_store_for_secure_upgrade
                             .read()
                             .e2ee_plaintext_cache_secure_write();
                         match secure_write {
                             Ok(Some((key, Some(json)))) => {
-                                match secure_store.store_secret_durable(&key, &json).await {
-                                    Ok(()) => {
-                                        // Clear pre-decrypt recovery checkpoints only
-                                        // after the combined snapshot + plaintext entry
-                                        // has durably committed.
-                                        if let Err(error) = state_store_for_secure_upgrade
-                                            .write()
-                                            .clear_mls_receive_recovery_snapshots()
-                                        {
+                                // This is a post-hydration repair, not input to
+                                // session classification. Keep it durable, but do
+                                // not let WebCrypto/IndexedDB persistence hold the
+                                // one-shot startup readiness barrier forever.
+                                let repair_store = secure_store.clone();
+                                let mut repair_state_store = state_store_for_secure_upgrade;
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    match repair_store.store_secret_durable(&key, &json).await {
+                                        Ok(()) => {
+                                            // Clear pre-decrypt recovery checkpoints only
+                                            // after the combined snapshot + plaintext entry
+                                            // has durably committed.
+                                            match repair_state_store
+                                                .write()
+                                                .clear_mls_receive_recovery_snapshots_if_cache_unchanged(
+                                                    &key,
+                                                    &json,
+                                                ) {
+                                                Ok(true) => {}
+                                                Ok(false) => tracing::warn!(
+                                                    target: "secure_store",
+                                                    "MLS receive recovery checkpoint cleanup deferred because newer state arrived"
+                                                ),
+                                                Err(error) => tracing::warn!(
+                                                    ?error,
+                                                    "MLS receive recovery checkpoint cleanup failed",
+                                                ),
+                                            }
+                                        }
+                                        Err(error) => {
                                             tracing::warn!(
                                                 ?error,
-                                                "MLS receive recovery checkpoint cleanup failed",
+                                                "IndexedDB E2EE state durable bootstrap persist failed",
                                             );
                                         }
                                     }
-                                    Err(error) => {
-                                        tracing::warn!(
-                                            ?error,
-                                            "IndexedDB E2EE state durable bootstrap persist failed",
-                                        );
-                                    }
-                                }
+                                });
                             }
                             Ok(Some((key, None))) => {
                                 if let Err(error) = secure_store.delete_secret(&key) {
@@ -238,6 +266,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         );
                     }
                     let account = active_account.peek().clone();
+                    trace_secure_store_bootstrap_stage("session material classified");
                     let user_store = account.as_ref().and_then(|account| {
                         match crate::secure_key_store::UserLocalStore::new(
                             account.authority.clone(),
@@ -388,6 +417,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         }
                         let _ = user_store;
                     }
+                    trace_secure_store_bootstrap_stage("device signer classified");
 
                     // A durable logout retry can perform authority discovery and
                     // network I/O. It must never be part of the one-shot secure
@@ -403,6 +433,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                         )
                         .await;
                     });
+                    trace_secure_store_bootstrap_stage("background maintenance scheduled");
                 }
                 Ok(None) => {
                     tracing::warn!(
@@ -414,7 +445,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                     tracing::warn!(target: "secure_store", ?error, "secure store upgrade: Err — IndexedDB secure-key-store upgrade failed");
                 }
             }
-            tracing::debug!(target: "secure_store", "secure store upgrade: settled, marking secure_store_bootstrap_ready=true");
+            trace_secure_store_bootstrap_stage("publishing ready signal");
             secure_store_ready_for_upgrade.set(true);
         });
     }
