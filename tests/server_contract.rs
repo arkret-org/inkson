@@ -171,9 +171,7 @@ fn inkson_accepts_server_contract_payloads() {
         describe.service_kind,
         arkret_sdk::ServiceKind::PrincipalServer
     );
-    assert!(
-        describe.supports_operation(arkret_sdk::ServiceOperationId::SelfAuthzReadCheck)
-    );
+    assert!(describe.supports_operation(arkret_sdk::ServiceOperationId::SelfAuthzReadCheck));
     assert_eq!(
         describe.supported_bindings[0].base_url.as_deref(),
         Some("/_arkret")
