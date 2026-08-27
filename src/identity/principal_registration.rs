@@ -403,13 +403,20 @@ pub async fn complete_account_handoff_binding(
             dpop.sdk_account_handoff_auth(account_handoff_grant),
         ))
         .build()?;
-    let prepared = crate::identity::account_auth::load_prepared_identity_creation_request(
-        handoff,
-        expected_account_subject,
-        checkpoint.full_id.as_str(),
-        &checkpoint.lease_id,
-    )
-    .await?;
+    let expected_principal_id = arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?;
+    let prepared =
+        crate::identity::account_auth::load_prepared_identity_creation_request(handoff, checkpoint)
+            .await?;
+    #[cfg(debug_assertions)]
+    tracing::warn!(
+        prepared_request_found = prepared.is_some(),
+        checkpoint_stage = ?checkpoint.stage,
+        server_account_bound = handoff.bound_principal_id.is_some(),
+        lease_fence = checkpoint.lease_fence,
+        checkpoint_full_id = %checkpoint.full_id,
+        storage_principal_id = %expected_principal_id,
+        "identity registration continuation state classified"
+    );
     let mut replaying_prepared_request = false;
     let mut lease = None::<arkret_sdk::IdentityCreationLease>;
     let mut challenge_retry_deadline = None::<DateTime<Utc>>;
@@ -420,7 +427,7 @@ pub async fn complete_account_handoff_binding(
             .identity_creation
             .as_ref()
             .context("prepared registration omits identity creation")?;
-        if prepared.principal_id != arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?
+        if prepared.principal_id != expected_principal_id
             || registration.identity_creation_lease_id != checkpoint.lease_id
             || registration.lease_fence != checkpoint.lease_fence
             || registration.pcr_genesis_unit != unit
@@ -554,8 +561,7 @@ pub async fn complete_account_handoff_binding(
     garth::validate_identity_creation_outcome(&register_outcome, &register_request)?;
     let binding_receipt = register_outcome.binding_receipt.clone();
     if &binding_receipt.account_subject != expected_account_subject
-        || binding_receipt.principal_id
-            != arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?
+        || binding_receipt.principal_id != expected_principal_id
     {
         anyhow::bail!("Account Authority binding receipt does not match the frozen account or DID");
     }

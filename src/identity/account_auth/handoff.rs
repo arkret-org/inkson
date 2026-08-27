@@ -89,16 +89,23 @@ pub fn clear_pending_identity_creation_recovery_key(
     Ok(())
 }
 
+// These are Inkson local-storage key domains, not Arkret protocol or operation
+// versions. This storage layout is v1; changing either byte string changes the
+// physical key and must not be used as an implicit migration mechanism.
+const PREPARED_IDENTITY_CREATION_REQUEST_KEY_DOMAIN: &[u8] =
+    b"inkson.prepared-identity-creation-request-scope-v1\0";
+const ACCOUNT_HANDOFF_GRANT_KEY_DOMAIN: &[u8] = b"inkson.account-handoff-grant-scope-v1\0";
+
 fn prepared_identity_creation_request_secret_key(
     account_subject: &arkret_sdk::Hash,
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidCoreId,
     lease_id: &str,
 ) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"inkson.prepared-identity-creation-request-scope-v1\0");
+    digest.update(PREPARED_IDENTITY_CREATION_REQUEST_KEY_DOMAIN);
     digest.update(account_subject.as_str().as_bytes());
     digest.update(b"\0");
-    digest.update(principal_id.as_bytes());
+    digest.update(principal_id.as_str().as_bytes());
     digest.update(b"\0");
     digest.update(lease_id.as_bytes());
     format!(
@@ -115,7 +122,7 @@ fn account_handoff_grant_secret_key(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("account handoff omits account subject"))?;
     let mut digest = Sha256::new();
-    digest.update(b"inkson.account-handoff-grant-scope-v1\0");
+    digest.update(ACCOUNT_HANDOFF_GRANT_KEY_DOMAIN);
     digest.update(account_subject.as_str().as_bytes());
     digest.update(b"\0");
     digest.update(handoff.request_id.as_bytes());
@@ -253,7 +260,7 @@ pub async fn persist_prepared_identity_creation_request(
         .ok_or_else(|| anyhow::anyhow!("prepared request omits identity creation"))?;
     let key = prepared_identity_creation_request_secret_key(
         &registration.control_proof.account_subject,
-        request.principal_id.as_str(),
+        &request.principal_id,
         &registration.identity_creation_lease_id,
     );
     let canonical = String::from_utf8(arkret_sdk::canonical::canonical_json_bytes(request)?)?;
@@ -266,13 +273,22 @@ pub async fn persist_prepared_identity_creation_request(
 
 pub async fn load_prepared_identity_creation_request(
     handoff: &crate::state::PendingAccountHandoff,
-    account_subject: &arkret_sdk::Hash,
-    principal_id: &str,
-    lease_id: &str,
+    checkpoint: &crate::state::PendingPrincipalRegistration,
 ) -> anyhow::Result<Option<arkret_sdk::AccountRegisterRequestBody>> {
+    let account_subject = checkpoint
+        .account_subject
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("registration checkpoint omits account subject"))?;
+    // AccountRegisterRequestBody carries the protocol/core DID. The checkpoint
+    // carries the project/full DID, so deriving the storage coordinate here is
+    // essential: using full_id makes every persisted request look absent.
+    let principal_id = arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?;
     let secure_store = default_secure_key_store("inkson");
-    let key =
-        prepared_identity_creation_request_secret_key(account_subject, principal_id, lease_id);
+    let key = prepared_identity_creation_request_secret_key(
+        account_subject,
+        &principal_id,
+        &checkpoint.lease_id,
+    );
     pending_store(handoff)?
         .load_secret(secure_store.as_ref(), &key)?
         .map(|canonical| parse_prepared_request(&canonical))
@@ -282,7 +298,7 @@ pub async fn load_prepared_identity_creation_request(
 pub fn clear_prepared_identity_creation_request(
     device_id: &arkret_sdk::DeviceId,
     account_subject: &arkret_sdk::Hash,
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidCoreId,
     lease_id: &str,
 ) -> anyhow::Result<()> {
     let secure_store = default_secure_key_store("inkson");
@@ -299,10 +315,11 @@ pub fn clear_prepared_identity_creation_request_for_checkpoint(
         return Ok(());
     };
     let device_id = arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?;
+    let principal_id = arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?;
     clear_prepared_identity_creation_request(
         &device_id,
         account_subject,
-        checkpoint.full_id.as_str(),
+        &principal_id,
         &checkpoint.lease_id,
     )
 }
@@ -315,35 +332,35 @@ mod tests {
     fn prepared_request_keys_are_isolated_by_account_principal_and_lease() {
         let account_a = arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap();
         let account_b = arkret_sdk::Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
-        let baseline = prepared_identity_creation_request_secret_key(
-            &account_a,
-            "did:webvh:alice.example",
-            "lease-a",
+        let alice = arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::DidFullId::new(
+                "did:webvh:z6mkfixture:alice.example".to_owned(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let bob = arkret_sdk::project_full_id_to_core_id(
+            &arkret_sdk::DidFullId::new("did:webvh:z6mkfixturebob:bob.example".to_owned()).unwrap(),
+        )
+        .unwrap();
+        let baseline = prepared_identity_creation_request_secret_key(&account_a, &alice, "lease-a");
+        assert_eq!(
+            baseline,
+            "prepared_identity_creation_request.v1.gzxa1uBq99sAqhOwl0vEZEmOxAXNZNHnpl423PlXAdE",
+            "the v1 storage key is stable; changing it requires an explicit storage decision"
         );
 
         assert_ne!(
             baseline,
-            prepared_identity_creation_request_secret_key(
-                &account_b,
-                "did:webvh:alice.example",
-                "lease-a"
-            )
+            prepared_identity_creation_request_secret_key(&account_b, &alice, "lease-a")
         );
         assert_ne!(
             baseline,
-            prepared_identity_creation_request_secret_key(
-                &account_a,
-                "did:webvh:bob.example",
-                "lease-a"
-            )
+            prepared_identity_creation_request_secret_key(&account_a, &bob, "lease-a")
         );
         assert_ne!(
             baseline,
-            prepared_identity_creation_request_secret_key(
-                &account_a,
-                "did:webvh:alice.example",
-                "lease-b"
-            )
+            prepared_identity_creation_request_secret_key(&account_a, &alice, "lease-b")
         );
     }
 
@@ -381,6 +398,10 @@ mod tests {
         let account_b = "b".repeat(64);
         let baseline =
             account_handoff_grant_secret_key(&handoff(&account_a, "req-a", "jkt-a")).unwrap();
+        assert_eq!(
+            baseline, "account_handoff_grant.v1.VE2834qbxrl65E2xOTMToRJsJTG1m2NTn-ks5RIHdro",
+            "the v1 storage key is stable; changing it requires an explicit storage decision"
+        );
 
         assert_ne!(
             baseline,
