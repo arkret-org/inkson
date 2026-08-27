@@ -2105,11 +2105,6 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
 fn setup_strings(dict: &mut TranslationDict) {
     // Realm wizard shell.
     dict.set("setup.new_realm", "New Realm");
-    dict.set("setup.realm_title_heading", "Create a Realm");
-    dict.set(
-        "setup.realm_intro",
-        "A Realm is the unit that owns security, sync, and encryption for everything inside it. The recommended setup encrypts both content and metadata end to end.",
-    );
     dict.set("setup.create_steps", "Create steps");
     dict.set("setup.step_progress", "{current} / {total}");
     dict.set("setup.state.draft", "Draft not created yet");
@@ -2126,7 +2121,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.step.done.subtitle", "open created Realm");
 
     // Basics step.
-    dict.set("setup.basics.hint", "required title");
     dict.set("setup.field.realm_title", "Realm title");
     dict.set(
         "setup.field.realm_title_placeholder",

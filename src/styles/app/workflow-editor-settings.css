@@ -227,6 +227,188 @@
   width: 100%;
 }
 
+/* Security defaults to a calm, readable status view. Protocol coordinates and
+   rare authority workflows are expanded only when an operator asks for them. */
+.security-health-header,
+.security-action-row,
+.security-owner-summary,
+.security-danger-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.security-health-header > div:first-child,
+.security-action-row > div:first-child,
+.security-owner-summary > div:first-child,
+.security-danger-action > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.security-health-intro {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 14px;
+}
+.security-diagnostics-button {
+  flex: 0 0 auto;
+}
+.security-health-list {
+  display: grid;
+  margin-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+.security-health-row,
+.security-next-step {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 12px 2px;
+}
+.security-health-row + .security-health-row,
+.security-health-row + .security-next-step {
+  border-top: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+}
+.security-health-row > div,
+.security-next-step > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.security-health-row strong,
+.security-next-step strong,
+.security-action-row strong,
+.security-danger-action strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.security-health-row span:not(.security-status-dot),
+.security-next-step span:not(.security-status-dot) {
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: right;
+}
+.security-status-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--text-3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-3) 16%, transparent);
+}
+.security-status-dot.is-ok {
+  background: var(--success, #3f9a6d);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success, #3f9a6d) 16%, transparent);
+}
+.security-status-dot.is-warning,
+.security-status-dot.is-action {
+  background: var(--warning, #d6972a);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning, #d6972a) 18%, transparent);
+}
+.security-status-dot.is-alert {
+  background: var(--danger, #c95d64);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger, #c95d64) 18%, transparent);
+}
+.security-next-step {
+  margin: 2px 0 0;
+  padding-inline: 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning, #d6972a) 9%, transparent);
+}
+.security-diagnostics-copy {
+  margin: 8px 0 4px;
+}
+.security-diagnostic-list {
+  display: grid;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.security-diagnostic-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 18px;
+  padding: 11px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+}
+.security-diagnostic-row > div {
+  display: grid;
+  gap: 2px;
+}
+.security-diagnostic-row code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.security-owner-summary,
+.security-action-row {
+  min-height: 40px;
+}
+.security-owner-summary {
+  margin-top: 12px;
+}
+.security-owner-summary strong {
+  overflow-wrap: anywhere;
+}
+.security-expanded-controls,
+.security-advanced-controls {
+  margin-top: 14px;
+}
+.security-expanded-controls {
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.security-danger-action {
+  margin-top: 6px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 38%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+.security-action-row > div:first-child > span,
+.security-danger-action > div:first-child > span {
+  line-height: 1.45;
+}
+
+@media (max-width: 700px) {
+  .security-health-header,
+  .security-action-row,
+  .security-owner-summary,
+  .security-danger-action {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .security-health-header button,
+  .security-action-row button,
+  .security-owner-summary button,
+  .security-danger-action button {
+    width: 100%;
+  }
+  .security-health-row > div,
+  .security-next-step > div {
+    display: grid;
+    gap: 3px;
+  }
+  .security-health-row span:not(.security-status-dot),
+  .security-next-step span:not(.security-status-dot) {
+    text-align: left;
+  }
+  .security-diagnostic-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .security-diagnostic-row code {
+    text-align: left;
+  }
+}
+
 /* Device settings use real segmented navigation instead of action buttons that
    look clickable even when they already represent the current page. */
 .device-access-toolbar {
@@ -495,6 +677,9 @@
 .new-realm-shell {
   grid-template-columns: minmax(0, 1fr);
 }
+.new-realm-stepper {
+  container-type: inline-size;
+}
 /* Step panels live inside the single stepper card now, so they read as a
    continuation of the step list rather than separate cards — a top divider
    separates each active step from the stepper header above it. */
@@ -515,7 +700,7 @@
 }
 .setup-step-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 .setup-step-list button {
@@ -566,7 +751,7 @@
   gap: 12px;
 }
 .setup-form-grid textarea {
-  min-height: 96px;
+  min-height: 72px;
   resize: vertical;
 }
 .setup-field {
@@ -579,6 +764,9 @@
   color: var(--text, var(--ak-ink));
   font-size: 13px;
   font-weight: 700;
+}
+.required-indicator {
+  color: var(--danger);
 }
 .setup-field-span-2 {
   grid-column: 1 / -1;
@@ -639,8 +827,24 @@
   .setup-axis-grid {
     grid-template-columns: 1fr;
   }
-  .setup-step-list { grid-template-columns: 1fr; }
   .setup-field-span-2 {
     grid-column: auto;
+  }
+}
+
+@container (max-width: 720px) {
+  .setup-step-list button[data-size] {
+    min-height: 2.5rem;
+    padding: 8px;
+    gap: 6px;
+  }
+  .setup-step-label small {
+    display: none;
+  }
+}
+
+@container (max-width: 480px) {
+  .setup-step-list {
+    display: none;
   }
 }

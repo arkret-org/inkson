@@ -3,6 +3,8 @@
 use super::{MlsRuntimeError, load_device_snapshot_secret, load_or_create_account_mls_secret};
 use crate::secure_key_store::SecureKeyStore;
 
+pub(crate) const EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH: &str = "epoch-0 snapshot governance binding differs from the verified Genesis Seal proof; recreate local MLS state";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InitialMlsSnapshotSummary {
     pub realm_id: String,
@@ -68,6 +70,82 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
     device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+    create_creator_mls_snapshot_for_effective_scope_with_binding(
+        state_store,
+        secure_store,
+        realm_id,
+        circle_id,
+        authority,
+        device_id,
+        sidecar_binding,
+        false,
+    )
+}
+
+/// Replace an epoch-0 creator snapshot that never became an accepted Genesis.
+///
+/// The caller must have independently established that the server has no
+/// accepted `ak.mls.genesis`. The local guards below additionally refuse to
+/// overwrite any snapshot carrying an accepted transition reference or an
+/// emitted marker. This is the recovery path for a create task interrupted
+/// after the staged snapshot was persisted but before Genesis submission,
+/// while the verified Realm checkpoint subsequently moved forward.
+pub(crate) fn recreate_unaccepted_creator_mls_snapshot(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<InitialMlsSnapshotSummary, MlsRuntimeError> {
+    let snapshot = state_store.mls_snapshot_for(realm_id).ok_or_else(|| {
+        MlsRuntimeError::Genesis(
+            "cannot rebase an unaccepted creator snapshot that is missing".to_owned(),
+        )
+    })?;
+    if snapshot.epoch != 0
+        || snapshot.group_state_event_id.is_some()
+        || state_store.mls_genesis_emitted_for(realm_id)
+        || state_store
+            .mls_group_state_ref_for_effective_scope(
+                realm_id,
+                None,
+                &snapshot.group_id,
+                snapshot.epoch,
+            )
+            .is_ok()
+    {
+        return Err(MlsRuntimeError::Genesis(
+            "refusing to replace creator MLS state that may already be accepted".to_owned(),
+        ));
+    }
+
+    create_creator_mls_snapshot_for_effective_scope_with_binding(
+        state_store,
+        secure_store,
+        realm_id,
+        None,
+        authority,
+        device_id,
+        None,
+        true,
+    )?
+    .ok_or_else(|| {
+        MlsRuntimeError::Genesis(
+            "recreating the unaccepted creator snapshot produced no epoch-0 material".to_owned(),
+        )
+    })
+}
+
+fn create_creator_mls_snapshot_for_effective_scope_with_binding(
+    state_store: &mut crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    authority: &arkret_sdk::PrincipalAuthorityKey,
+    device_id: &arkret_sdk::DeviceId,
+    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+    replace_unaccepted_epoch_zero: bool,
+) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
@@ -102,6 +180,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
     if state_store
         .mls_snapshot_for_scope_and_group(&effective_scope, &group_id)
         .is_some()
+        && !replace_unaccepted_epoch_zero
     {
         return Ok(None);
     }
@@ -321,8 +400,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     })?;
     if current_binding.as_ref() != Some(&expected_binding) {
         return Err(MlsRuntimeError::Genesis(
-            "epoch-0 snapshot governance binding differs from the verified Genesis Seal proof; recreate local MLS state"
-                .to_owned(),
+            EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH.to_owned(),
         ));
     }
     let (group_info_bytes, ratchet_tree_bytes) = group

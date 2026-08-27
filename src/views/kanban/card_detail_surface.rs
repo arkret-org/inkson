@@ -2216,35 +2216,13 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                     class: "calendar-editor",
                                                                                     "data-testid": "card-detail-calendar",
                                                                                     if editing_card_detail() && card_edit_scope() == CardEditScope::Calendar {
-                                                                                        CalendarScheduleEditForm {
-                                                                                            calendar: card_edit_calendar,
-                                                                                            status: card_detail_edit_status(),
-                                                                                            on_save: {
-                                                                                                let base = base_url.clone();
-                                                                                                let realm = selected_realm_id.clone();
-                                                                                                let actor = principal_id.clone();
-                                                                                                let device = device_id.clone();
-                                                                                                let current_card = card.clone();
-                                                                                                move |_| {
-                                                                                                    save_card_calendar_edit(
-                                                                                                        base.clone(),
-                                                                                                        token,
-                                                                                                        realm.clone(),
-                                                                                                        actor.clone(),
-                                                                                                        device.clone(),
-                                                                                                        current_card.clone(),
-                                                                                                        card_edit_calendar(),
-                                                                                                        selected_scope_security_encrypted,
-                                                                                                        editing_card_detail,
-                                                                                                        card_detail_actions_open,
-                                                                                                        card_detail_edit_status,
-                                                                                                        selected_card,
-                                                                                                        state_store,
-                                                                                                        board_status,
-                                                                                                    );
-                                                                                                }
-                                                                                            },
-                                                                                            on_cancel: {
+                                                                                        crate::components::DismissiblePopup {
+                                                                                            overlay_class: "due-date-modal-backdrop calendar-schedule-modal-backdrop",
+                                                                                            surface_class: "due-date-modal calendar-schedule-modal",
+                                                                                            overlay_test_id: Some("card-detail-calendar-editor-backdrop".to_owned()),
+                                                                                            surface_test_id: Some("card-detail-calendar-editor-dialog".to_owned()),
+                                                                                            aria_label: if has_schedule { "Edit calendar schedule" } else { "Add calendar schedule" },
+                                                                                            on_dismiss: {
                                                                                                 let current_calendar = card.calendar.clone();
                                                                                                 move |_| {
                                                                                                     card_edit_calendar.set(current_calendar.clone());
@@ -2254,6 +2232,69 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     card_detail_edit_status.set(String::new());
                                                                                                 }
                                                                                             },
+                                                                                            div { class: "due-date-modal-head",
+                                                                                                div { class: "due-date-modal-title",
+                                                                                                    h3 { if has_schedule { "Edit schedule" } else { "Add schedule" } }
+                                                                                                    p { "Set the event time, recurrence, and calendar details." }
+                                                                                                }
+                                                                                                Button {
+                                                                                                    variant: ButtonVariant::Secondary,
+                                                                                                    r#type: "button",
+                                                                                                    class: "due-date-modal-close",
+                                                                                                    "aria-label": "Close calendar schedule dialog",
+                                                                                                    title: "Close",
+                                                                                                    onclick: {
+                                                                                                        let current_calendar = card.calendar.clone();
+                                                                                                        move |_| {
+                                                                                                            card_edit_calendar.set(current_calendar.clone());
+                                                                                                            calendar_rsvp_occurrence.set(calendar_occurrence_hint(&current_calendar));
+                                                                                                            editing_card_detail.set(false);
+                                                                                                            card_detail_actions_open.set(false);
+                                                                                                            card_detail_edit_status.set(String::new());
+                                                                                                        }
+                                                                                                    },
+                                                                                                    UiIcon { name: "x" }
+                                                                                                }
+                                                                                            }
+                                                                                            CalendarScheduleEditForm {
+                                                                                                calendar: card_edit_calendar,
+                                                                                                status: card_detail_edit_status(),
+                                                                                                on_save: {
+                                                                                                    let base = base_url.clone();
+                                                                                                    let realm = selected_realm_id.clone();
+                                                                                                    let actor = principal_id.clone();
+                                                                                                    let device = device_id.clone();
+                                                                                                    let current_card = card.clone();
+                                                                                                    move |_| {
+                                                                                                        save_card_calendar_edit(
+                                                                                                            base.clone(),
+                                                                                                            token,
+                                                                                                            realm.clone(),
+                                                                                                            actor.clone(),
+                                                                                                            device.clone(),
+                                                                                                            current_card.clone(),
+                                                                                                            card_edit_calendar(),
+                                                                                                            selected_scope_security_encrypted,
+                                                                                                            editing_card_detail,
+                                                                                                            card_detail_actions_open,
+                                                                                                            card_detail_edit_status,
+                                                                                                            selected_card,
+                                                                                                            state_store,
+                                                                                                            board_status,
+                                                                                                        );
+                                                                                                    }
+                                                                                                },
+                                                                                                on_cancel: {
+                                                                                                    let current_calendar = card.calendar.clone();
+                                                                                                    move |_| {
+                                                                                                        card_edit_calendar.set(current_calendar.clone());
+                                                                                                        calendar_rsvp_occurrence.set(calendar_occurrence_hint(&current_calendar));
+                                                                                                        editing_card_detail.set(false);
+                                                                                                        card_detail_actions_open.set(false);
+                                                                                                        card_detail_edit_status.set(String::new());
+                                                                                                    }
+                                                                                                },
+                                                                                            }
                                                                                         }
                                                                                     } else {
                                                                                         if has_schedule {
@@ -2351,6 +2392,8 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             r#type: "button",
                                                                                             class: "card-detail-mini-action",
                                                                                             "data-testid": "card-detail-edit-calendar-button",
+                                                                                            "aria-haspopup": "dialog",
+                                                                                            "aria-expanded": "false",
                                                                                             onclick: {
                                                                                                 let current = card.clone();
                                                                                                 move |_| {
@@ -2516,7 +2559,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 div {
-                                                                    dt { "Visibility" }
+                                                                    dt { "Discussion scope" }
                                                                     dd { "{card.external_visibility}" }
                                                                 }
                                                             }

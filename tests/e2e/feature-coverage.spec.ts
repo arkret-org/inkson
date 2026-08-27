@@ -589,6 +589,7 @@ test.describe("feature coverage placeholders", () => {
       },
     );
     await expect(page.getByTestId("grant-explanation")).toHaveCount(0);
+    await page.getByTestId("advanced-access-toggle").click();
     await expect(page.getByTestId("capability-grant-card")).toBeVisible({
       timeout: 60_000,
     });

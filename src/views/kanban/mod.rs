@@ -236,7 +236,7 @@ fn CalendarScheduleEditForm(
         })
     });
     rsx! {
-        div { class: "workflow-form card-detail-edit-form", "data-testid": "card-detail-calendar-edit-form",
+        div { class: "workflow-form card-detail-edit-form calendar-schedule-edit-form", "data-testid": "card-detail-calendar-edit-form",
             div { class: "field",
                 Label { html_for: "card-detail-calendar-start-input", "Start" }
                 Input {

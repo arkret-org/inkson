@@ -330,16 +330,6 @@ pub(super) fn RealmsSection(
         }
         div { class: "setup-shell new-realm-shell", "data-testid": "realm-lifecycle-strand",
             div { class: "setup-column",
-                div { class: "event new-realm-hero", "data-testid": "realm-setup-guide",
-                    div { class: "event-head",
-                        span { {tr("setup.new_realm")} }
-                    }
-                    h2 { class: "settings-content-title", {tr("setup.realm_title_heading")} }
-                    div { class: "muted",
-                        {tr("setup.realm_intro")}
-                    }
-                }
-
                 div { class: "event new-realm-stepper",
                     div { class: "event-head",
                         span { {tr("setup.create_steps")} }
@@ -372,28 +362,22 @@ pub(super) fn RealmsSection(
                     div { class: "setup-step-panel",
                         div { class: "event-head",
                             span { {tr("setup.step.basics.label")} }
-                            span { {tr("setup.basics.hint")} }
                         }
                         div { class: "workflow-form setup-form-grid",
                             div { class: "setup-field",
-                                Label { html_for: "realm-title-input-input", {tr("setup.field.realm_title")} }
+                                Label {
+                                    html_for: "realm-title-input-input",
+                                    {tr("setup.field.realm_title")}
+                                    span { class: "required-indicator", "aria-hidden": "true", " *" }
+                                }
                                 Input {
                                     id: "realm-title-input-input",
                                     "data-testid": "realm-title-input",
+                                    required: true,
+                                    "aria-required": "true",
                                     value: "{title_value}",
                                     placeholder: tr("setup.field.realm_title_placeholder"),
                                     oninput: move |event: FormEvent| realm_title.set(event.value())
-                                }
-                            }
-                            div { class: "setup-field setup-field-span-2",
-                                Label { html_for: "realm-summary-input-input", {tr("setup.field.summary")} }
-                                Textarea {
-                                    id: "realm-summary-input-input",
-                                    "data-testid": "realm-summary-input",
-                                    value: "{summary_value}",
-                                    rows: "3",
-                                    placeholder: tr("setup.field.realm_summary_placeholder"),
-                                    oninput: move |event: FormEvent| realm_summary.set(event.value())
                                 }
                             }
                             div { class: "setup-field",
@@ -407,6 +391,17 @@ pub(super) fn RealmsSection(
                                     value: "{alias_value}",
                                     placeholder: tr("setup.field.realm_alias_placeholder"),
                                     oninput: move |event: FormEvent| realm_alias.set(event.value())
+                                }
+                            }
+                            div { class: "setup-field setup-field-span-2",
+                                Label { html_for: "realm-summary-input-input", {tr("setup.field.summary")} }
+                                Textarea {
+                                    id: "realm-summary-input-input",
+                                    "data-testid": "realm-summary-input",
+                                    value: "{summary_value}",
+                                    rows: "2",
+                                    placeholder: tr("setup.field.realm_summary_placeholder"),
+                                    oninput: move |event: FormEvent| realm_summary.set(event.value())
                                 }
                             }
                         }

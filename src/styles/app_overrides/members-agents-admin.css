@@ -1129,7 +1129,6 @@
   .setup-form-grid,
   .setup-axis-grid,
   .setup-shell,
-  .setup-step-list,
   .settings-shell {
     grid-template-columns: 1fr;
   }

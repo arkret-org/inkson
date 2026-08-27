@@ -1735,11 +1735,6 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
 fn setup_strings(dict: &mut TranslationDict) {
     // 领域向导外壳。
     dict.set("setup.new_realm", "新建 Realm");
-    dict.set("setup.realm_title_heading", "创建 Realm");
-    dict.set(
-        "setup.realm_intro",
-        "Realm 是内部所有内容的安全、同步与加密边界。推荐设置为内容与元数据都端到端加密。",
-    );
     dict.set("setup.create_steps", "创建步骤");
     dict.set("setup.step_progress", "{current} / {total}");
     dict.set("setup.state.draft", "草稿尚未创建");
@@ -1756,7 +1751,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.step.done.subtitle", "打开已创建的 Realm");
 
     // 基本信息。
-    dict.set("setup.basics.hint", "标题必填");
     dict.set("setup.field.realm_title", "Realm 名称");
     dict.set(
         "setup.field.realm_title_placeholder",

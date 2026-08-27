@@ -500,7 +500,16 @@ fn encrypted_realm_write_mls_ready(
     realm_id: &str,
     authority: &arkret_sdk::PrincipalAuthorityKey,
 ) -> bool {
-    if state_store.mls_snapshot_for(realm_id).is_none() {
+    // A snapshot and account secret alone are only executable key material;
+    // they do not prove that the snapshot's Genesis/Commit won governance.
+    // In particular, the creator flow can be interrupted after Genesis submit
+    // but before its checkpoint is advanced. Treat that state as recoverable,
+    // not ready, so Save re-enters the bootstrap convergence path instead of
+    // failing later while retaining the epoch history secret.
+    if state_store
+        .accepted_current_realm_mls_transition_evidence(realm_id)
+        .is_err()
+    {
         return false;
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");

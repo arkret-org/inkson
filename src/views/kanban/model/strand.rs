@@ -170,7 +170,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
     let external_visibility = if locked_strand.is_some() {
         "Locked discussion (lazy_link)".to_owned()
     } else {
-        "No external discussions linked".to_owned()
+        "Board only".to_owned()
     };
     let history_access = strand_projection_field_string(strand, None, &["history_access"])
         .unwrap_or_else(|| {

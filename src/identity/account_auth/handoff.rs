@@ -333,10 +333,7 @@ mod tests {
         let account_a = arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap();
         let account_b = arkret_sdk::Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
         let alice = arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new(
-                "did:webvh:z6mkfixture:alice.example".to_owned(),
-            )
-            .unwrap(),
+            &arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap(),
         )
         .unwrap();
         let bob = arkret_sdk::project_full_id_to_core_id(

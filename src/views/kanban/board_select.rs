@@ -126,7 +126,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 calendar: CalendarCardFields::default(),
                 primary_strand_id: DEMO_STRAND_SUPPORT_DISCUSSION_ID.to_owned(),
                 locked_strand: None,
-                external_visibility: "No external discussions linked".to_owned(),
+                external_visibility: "Board only".to_owned(),
                 history_access: "all history for current members".to_owned(),
                 security_encrypted: None,
                 state: CardState::Queued,

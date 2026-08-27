@@ -23,6 +23,27 @@ use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 
 use crate::state::LocalStateStore;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CreatorGenesisResumeAction {
+    Author,
+    ConvergeAccepted,
+}
+
+fn creator_genesis_resume_action(
+    accepted_event_id: Option<&arkret_sdk::EventId>,
+    emitted: bool,
+) -> Result<CreatorGenesisResumeAction, String> {
+    if accepted_event_id.is_some() {
+        return Ok(CreatorGenesisResumeAction::ConvergeAccepted);
+    }
+    if emitted {
+        return Err(
+            "MLS genesis is marked emitted but its accepted Event is unavailable".to_owned(),
+        );
+    }
+    Ok(CreatorGenesisResumeAction::Author)
+}
+
 /// Acquire, verify, and durably pin the accepted Seal checkpoint for a Realm
 /// that the current principal has created or joined. This is required for
 /// every Realm, not only encrypted ones: subsequent writes derive authority
@@ -102,23 +123,37 @@ pub(crate) fn creator_mls_bootstrap_pending(
     let Some(snapshot) = store.mls_snapshot_for(realm_id) else {
         return true;
     };
-    !store.mls_genesis_emitted_for(realm_id)
-        || store
-            .mls_group_state_ref_for_effective_scope(
-                realm_id,
-                None,
-                &snapshot.group_id,
-                snapshot.epoch,
-            )
-            .is_err()
+    // This recovery entry point owns the creator's epoch-0 transaction. Once
+    // the group has advanced, commit convergence owns later epochs.
+    if snapshot.epoch != 0 {
+        return false;
+    }
+    if !store.mls_genesis_emitted_for(realm_id) {
+        return true;
+    }
+    // `emitted` plus a local Event id is not a completion boundary. The
+    // create wizard can be unmounted immediately after the submit succeeds,
+    // leaving the accepted Genesis outside the still-pinned pre-Genesis
+    // checkpoint. The exact transition must be in a valid verified checkpoint
+    // and its accepted artifact must be durably published before bootstrap is
+    // considered complete.
+    let Ok(evidence) = store.accepted_current_realm_mls_transition_evidence(realm_id) else {
+        return true;
+    };
+    !store
+        .accepted_mls_artifact_snapshot()
+        .snapshot
+        .artifacts
+        .contains_key(evidence.transition_ref.as_str())
 }
 
 /// Refresh the accepted Seal view, acquire + verify + pin the governance
 /// proof, create the epoch-0 creator group and submit `ak.mls.genesis`.
 ///
-/// Idempotent and safe to re-enter: it returns early once a local snapshot and
-/// an emitted genesis both exist, and a server-side duplicate genesis is
-/// resolved to its accepted Event id rather than treated as an error.
+/// Idempotent and safe to re-enter: it returns early only after the accepted
+/// Genesis is present in the locally verified checkpoint and its accepted MLS
+/// artifact is durable. A server-side duplicate genesis is resolved to its
+/// accepted Event id rather than treated as an error.
 pub(crate) async fn ensure_creator_realm_mls_genesis(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -153,93 +188,164 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         actor_id,
         device_id.as_str(),
     )?;
-    let request = crate::mls::governance_proof::proof_request(
-        &state_store.read(),
-        realm_id,
-        None,
-        crate::mls::runtime::mls_group_id_for_realm(realm_id)?,
-        0,
-        0,
-        leaves.clone(),
-    )
-    .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
+    // Resolve server acceptance before touching the pre-Genesis authoring
+    // proof. A cancelled create task can leave an accepted Genesis plus its
+    // epoch-0 snapshot while the pinned checkpoint still predates Genesis.
+    // Re-fetching a current 0->0 proof first changes the cached binding and
+    // then makes the perfectly valid staged snapshot look corrupt. Once the
+    // Event is accepted, its verified checkpoint + artifact convergence is the
+    // only remaining work; Genesis authoring material must not be rebuilt.
+    let mut accepted_event_id = submitter
+        .find_mls_genesis_event_id(realm_id)
         .await
-        .map_err(|error| {
-            format!("verifying the accepted governance proof before MLS setup failed: {error}")
-        })?;
-
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    // The verified first-enrollment flow creates the account MLS root. Realm
-    // creation may only re-commit that existing root before writing the first
-    // dependent snapshot; it must never mint a replacement from a feature API.
-    crate::mls::runtime::ensure_existing_account_mls_secret_durable(
-        secure_store.as_ref(),
-        authority,
-    )
-    .await
-    .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
-    let fresh_summary = {
-        let mut store = state_store.write();
-        crate::mls::runtime::ensure_creator_mls_snapshot(
-            &mut store,
-            secure_store.as_ref(),
-            realm_id,
-            authority,
-            device_id,
-        )
-        .map_err(|error| format!("MLS initial group setup failed: {}", error.user_message()))?
-    };
-    // The interesting recovery case is "snapshot persisted, genesis never
-    // accepted": `ensure_creator_mls_snapshot` short-circuits to `None` there,
-    // and the genesis builder refuses to emit without epoch-0 material. Restore
-    // that material from the stored epoch-0 snapshot — the same fallback the
-    // direct-conversation and Agent PCR bootstraps use — so the submit is
-    // actually retried instead of silently skipped.
-    let summary = match fresh_summary {
-        Some(summary) => Some(summary),
-        None => crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
-            &state_store.read(),
-            secure_store.as_ref(),
-            realm_id,
-            authority,
-            device_id,
-        )
-        .map_err(|error| {
-            format!(
-                "restoring the epoch-0 MLS summary failed: {}",
-                error.user_message()
-            )
-        })?,
-    };
-    let genesis_event = {
-        let mut store = state_store.write();
-        if store.mls_genesis_emitted_for(realm_id) {
-            None
-        } else {
-            crate::mls::group_events::build_creator_mls_genesis_event(
-                &mut store,
-                realm_id,
-                actor_id,
-                summary.as_ref(),
-            )
-            .map_err(|error| format!("building ak.mls.genesis event failed: {error}"))?
+        .map_err(|error| format!("resolve accepted ak.mls.genesis Event: {error}"))?;
+    let genesis_emitted = state_store.read().mls_genesis_emitted_for(realm_id);
+    match creator_genesis_resume_action(accepted_event_id.as_ref(), genesis_emitted)? {
+        CreatorGenesisResumeAction::ConvergeAccepted => {
+            let accepted_event_id = accepted_event_id
+                .as_ref()
+                .expect("ConvergeAccepted requires an accepted Event id");
+            if state_store.read().mls_snapshot_for(realm_id).is_none() {
+                return Err(format!(
+                    "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
+                ));
+            }
+            state_store
+                .write()
+                .mark_mls_genesis_emitted_for_effective_scope_with_event(
+                    realm_id,
+                    None,
+                    accepted_event_id,
+                )?;
         }
-    };
-
-    if let Some(genesis_event) = genesis_event {
-        let genesis_material = summary.as_ref().ok_or_else(|| {
-            "ak.mls.genesis was built without recoverable epoch-0 public material".to_owned()
-        })?;
-        crate::mls::runtime::upload_mls_genesis_public_material(api, genesis_material)
+        CreatorGenesisResumeAction::Author => {
+            let request = crate::mls::governance_proof::proof_request(
+                &state_store.read(),
+                realm_id,
+                None,
+                crate::mls::runtime::mls_group_id_for_realm(realm_id)?,
+                0,
+                0,
+                leaves.clone(),
+            )
+            .map_err(|error| {
+                format!("preparing the MLS governance proof request failed: {error}")
+            })?;
+            crate::mls::governance_proof::fetch_verify_and_cache_proof(
+                api,
+                state_store,
+                &request,
+                &leaves,
+            )
             .await
             .map_err(|error| {
-                format!(
-                    "publishing ak.mls.genesis public group-state material failed: {}",
-                    error.user_message()
-                )
+                format!("verifying the accepted governance proof before MLS setup failed: {error}")
             })?;
-        let accepted = match submitter.submit_sdk_event(&genesis_event).await {
+
+            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+            // The verified first-enrollment flow creates the account MLS root. Realm
+            // creation may only re-commit that existing root before writing the first
+            // dependent snapshot; it must never mint a replacement from a feature API.
+            crate::mls::runtime::ensure_existing_account_mls_secret_durable(
+                secure_store.as_ref(),
+                authority,
+            )
+            .await
+            .map_err(|error| {
+                format!("durably persisting the account MLS secret failed: {error}")
+            })?;
+            let fresh_summary = {
+                let mut store = state_store.write();
+                crate::mls::runtime::ensure_creator_mls_snapshot(
+                    &mut store,
+                    secure_store.as_ref(),
+                    realm_id,
+                    authority,
+                    device_id,
+                )
+                .map_err(|error| {
+                    format!("MLS initial group setup failed: {}", error.user_message())
+                })?
+            };
+            // The interesting recovery case is "snapshot persisted, genesis never
+            // accepted": `ensure_creator_mls_snapshot` short-circuits to `None` there,
+            // and the genesis builder refuses to emit without epoch-0 material. Restore
+            // that material from the stored epoch-0 snapshot — the same fallback the
+            // direct-conversation and Agent PCR bootstraps use — so the submit is
+            // actually retried instead of silently skipped.
+            let summary = match fresh_summary {
+                Some(summary) => Some(summary),
+                None => {
+                    let restored_summary = {
+                        let store = state_store.read();
+                        crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
+                            &store,
+                            secure_store.as_ref(),
+                            realm_id,
+                            authority,
+                            device_id,
+                        )
+                    };
+                    match restored_summary {
+                        Ok(summary) => summary,
+                        Err(crate::mls::runtime::MlsRuntimeError::Genesis(reason))
+                            if reason
+                                == crate::mls::runtime::EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH =>
+                        {
+                            // The server has just confirmed that no Genesis is
+                            // accepted. The persisted epoch-0 group is therefore
+                            // staged authoring state, not history. Recreate it
+                            // under the now-current verified proof; the runtime
+                            // additionally refuses this replacement if any local
+                            // accepted/emitted marker exists.
+                            Some(
+                                crate::mls::runtime::recreate_unaccepted_creator_mls_snapshot(
+                                    &mut state_store.write(),
+                                    secure_store.as_ref(),
+                                    realm_id,
+                                    authority,
+                                    device_id,
+                                )
+                                .map_err(|error| {
+                                    format!(
+                                        "rebasing the unaccepted epoch-0 MLS snapshot failed: {}",
+                                        error.user_message()
+                                    )
+                                })?,
+                            )
+                        }
+                        Err(error) => {
+                            return Err(format!(
+                                "restoring the epoch-0 MLS summary failed: {}",
+                                error.user_message()
+                            ));
+                        }
+                    }
+                }
+            };
+            let genesis_event = {
+                let mut store = state_store.write();
+                crate::mls::group_events::build_creator_mls_genesis_event(
+                    &mut store,
+                    realm_id,
+                    actor_id,
+                    summary.as_ref(),
+                )
+                .map_err(|error| format!("building ak.mls.genesis event failed: {error}"))?
+                .ok_or_else(|| "creator MLS Genesis authoring returned no Event".to_owned())?
+            };
+            let genesis_material = summary.as_ref().ok_or_else(|| {
+                "ak.mls.genesis was built without recoverable epoch-0 public material".to_owned()
+            })?;
+            crate::mls::runtime::upload_mls_genesis_public_material(api, genesis_material)
+                .await
+                .map_err(|error| {
+                    format!(
+                        "publishing ak.mls.genesis public group-state material failed: {}",
+                        error.user_message()
+                    )
+                })?;
+            let accepted = match submitter.submit_sdk_event(&genesis_event).await {
             Ok(accepted) => arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(|error| {
                 anyhow::anyhow!("accepted ak.mls.genesis carries an invalid Event id: {error}")
             }),
@@ -263,35 +369,35 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                 }),
             Err(error) => Err(error),
         };
-        match accepted {
-            Ok(_accepted_event_id) => {
-                state_store
-                    .write()
-                    .mark_mls_genesis_emitted(realm_id.to_owned())?;
-            }
-            Err(error) => {
-                // The local snapshot and pinned checkpoint stay persisted, but the
-                // bootstrap is not complete until genesis is accepted and its
-                // exact Event id is recorded. Propagate the failure so the
-                // background effect clears its dedup key and retries; returning
-                // success here used to strand first-Realm writes permanently.
-                tracing::warn!(
-                    error = %error,
-                    realm = %realm_id,
-                    "ak.mls.genesis submit failed; creator MLS bootstrap will retry",
-                );
-                return Err(format!("submitting ak.mls.genesis failed: {error}"));
+            match accepted {
+                Ok(event_id) => {
+                    state_store
+                        .write()
+                        .mark_mls_genesis_emitted_for_effective_scope_with_event(
+                            realm_id, None, &event_id,
+                        )?;
+                    accepted_event_id = Some(event_id);
+                }
+                Err(error) => {
+                    // The local snapshot and pinned checkpoint stay persisted, but the
+                    // bootstrap is not complete until genesis is accepted and its
+                    // exact Event id is recorded. Propagate the failure so the
+                    // background effect clears its dedup key and retries; returning
+                    // success here used to strand first-Realm writes permanently.
+                    tracing::warn!(
+                        error = %error,
+                        realm = %realm_id,
+                        "ak.mls.genesis submit failed; creator MLS bootstrap will retry",
+                    );
+                    return Err(format!("submitting ak.mls.genesis failed: {error}"));
+                }
             }
         }
     }
 
-    let accepted_event_id = submitter
-        .find_mls_genesis_event_id(realm_id)
-        .await
-        .map_err(|error| format!("resolve accepted ak.mls.genesis Event: {error}"))?
-        .ok_or_else(|| {
-            "MLS genesis is marked emitted but its accepted Event is unavailable".to_owned()
-        })?;
+    let accepted_event_id = accepted_event_id.ok_or_else(|| {
+        "MLS genesis is marked emitted but its accepted Event is unavailable".to_owned()
+    })?;
     let checkpoint_has_genesis = state_store
         .read()
         .trusted_mls_governance_checkpoint(realm_id)
@@ -463,11 +569,85 @@ mod tests {
     const ACTOR: &str = "did:web:alice.example";
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
+    fn epoch_zero_snapshot(group_id: String) -> crate::mls::persistence::MlsSnapshotEnvelope {
+        crate::mls::persistence::MlsSnapshotEnvelope {
+            realm_id: REALM.to_owned(),
+            group_id,
+            epoch: 0,
+            admission_epoch: 0,
+            group_state_event_id: None,
+            salt_hex: "00".repeat(16),
+            ciphertext_hex: "11".repeat(32),
+            mac_hex: "22".repeat(12),
+            recorded_at: chrono::Utc::now(),
+            epoch_started_at: chrono::Utc::now(),
+            app_messages_observed: 0,
+            aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
+        }
+    }
+
     #[test]
     fn creator_of_an_encrypted_realm_without_local_mls_state_is_pending() {
         let mut store = temp_store("pending");
         store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
         assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+    }
+
+    #[test]
+    fn emitted_genesis_with_stale_checkpoint_remains_pending() {
+        let mut store = temp_store("stale-checkpoint");
+        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
+        let scope = arkret_sdk::HistoryEffectiveScope::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
+        };
+        let group_id = scope.canonical_mls_group_id().unwrap();
+        store
+            .save_mls_snapshot(REALM, epoch_zero_snapshot(group_id.clone()))
+            .unwrap();
+        let accepted_genesis =
+            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+                .unwrap();
+        store
+            .mark_mls_genesis_emitted_for_effective_scope_with_event(REALM, None, &accepted_genesis)
+            .unwrap();
+
+        // Reproduce the interrupted first-user transaction: a checkpoint is
+        // pinned, the local snapshot carries the accepted Genesis id, and the
+        // emitted flag is set, but the checkpoint still predates Genesis.
+        crate::mls::governance_proof::seed_test_governance_proof(
+            &mut store, REALM, None, group_id, 0, 0,
+        );
+        assert!(store.trusted_mls_governance_checkpoint(REALM).is_some());
+        assert_eq!(
+            store.mls_snapshot_for(REALM).unwrap().group_state_event_id,
+            Some(accepted_genesis)
+        );
+        assert!(
+            store
+                .accepted_current_realm_mls_transition_evidence(REALM)
+                .is_err()
+        );
+        assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+    }
+
+    #[test]
+    fn accepted_genesis_resumes_at_convergence_without_reauthoring() {
+        let accepted =
+            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+                .unwrap();
+        assert_eq!(
+            creator_genesis_resume_action(Some(&accepted), true).unwrap(),
+            CreatorGenesisResumeAction::ConvergeAccepted
+        );
+        assert_eq!(
+            creator_genesis_resume_action(Some(&accepted), false).unwrap(),
+            CreatorGenesisResumeAction::ConvergeAccepted
+        );
+        assert_eq!(
+            creator_genesis_resume_action(None, false).unwrap(),
+            CreatorGenesisResumeAction::Author
+        );
+        assert!(creator_genesis_resume_action(None, true).is_err());
     }
 
     #[test]

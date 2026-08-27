@@ -15,6 +15,26 @@ test("setup realm form stays in the main realm layout", async ({ page }) => {
   await refreshServer(page);
   await page.goto("/setup/realms", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("setup-panel")).toBeVisible();
+  await expect(page.getByTestId("realm-setup-guide")).toHaveCount(0);
+
+  const titleInput = page.getByTestId("realm-title-input");
+  await expect(titleInput).toHaveAttribute("required", "");
+  await expect(titleInput).toHaveAttribute("aria-required", "true");
+  await expect(page.locator('label[for="realm-title-input-input"]')).toHaveText(
+    /Realm title\s*\*/,
+  );
+
+  const fieldTops = await page.evaluate(() => ({
+    alias: document
+      .querySelector('[data-testid="realm-alias-input"]')
+      ?.getBoundingClientRect().top,
+    summary: document
+      .querySelector('[data-testid="realm-summary-input"]')
+      ?.getBoundingClientRect().top,
+  }));
+  expect(fieldTops.alias).toBeDefined();
+  expect(fieldTops.summary).toBeDefined();
+  expect(fieldTops.alias!).toBeLessThan(fieldTops.summary!);
 
   const activeStepButton = page.locator(
     '.setup-step-list button[data-style="primary"]',
@@ -32,6 +52,14 @@ test("setup realm form stays in the main realm layout", async ({ page }) => {
   expect(activeStepStyle.display).toBe("inline-flex");
   expect(activeStepStyle.borderRadius).toBe("8px");
   expect(activeStepStyle.backgroundImage).toContain("linear-gradient");
+
+  const stepTops = await page
+    .locator(".setup-step-list button")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => button.getBoundingClientRect().top),
+    );
+  expect(stepTops).toHaveLength(4);
+  expect(Math.max(...stepTops) - Math.min(...stepTops)).toBeLessThanOrEqual(1);
 
   const measureLayout = () => page.evaluate(() => {
     const rectOf = (selector: string) => {

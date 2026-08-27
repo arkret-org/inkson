@@ -447,6 +447,27 @@ impl LocalStateStore {
     /// snapshot. Only the locally verified governance checkpoint is accepted;
     /// a projection row or current Event id alone cannot manufacture
     /// `local_authoritative` status.
+    pub(crate) fn accepted_current_realm_mls_transition_evidence(
+        &self,
+        realm_id: &str,
+    ) -> Result<AcceptedMlsTransitionEvidence, String> {
+        let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
+            .map_err(|error| format!("invalid Realm id for MLS transition evidence: {error}"))?;
+        let effective_scope = arkret_sdk::ScopeRef::Realm { realm_id };
+        let snapshot = self
+            .mls_snapshot_for_scope(&effective_scope)
+            .ok_or_else(|| "Realm has no durable MLS snapshot".to_owned())?;
+        self.accepted_mls_transition_evidence(
+            &effective_scope,
+            snapshot.group_id.as_str(),
+            snapshot.epoch,
+        )
+    }
+
+    /// Resolve the exact accepted transition tuple for a durable local MLS
+    /// snapshot. Only the locally verified governance checkpoint is accepted;
+    /// a projection row or current Event id alone cannot manufacture
+    /// `local_authoritative` status.
     pub(crate) fn accepted_mls_transition_evidence(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,

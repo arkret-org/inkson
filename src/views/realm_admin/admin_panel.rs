@@ -66,6 +66,11 @@ pub fn RealmAdminPanel(
     let mut gov_transfer_acceptance = use_signal(String::new);
     let mut gov_transfer_confirm_open = use_signal(|| false);
     let mut gov_reset_confirm_open = use_signal(|| false);
+    // Keep protocol state and rare authority/access workflows out of the
+    // everyday security view. Operators can still open each surface on demand.
+    let mut security_diagnostics_open = use_signal(|| false);
+    let mut governance_controls_open = use_signal(|| false);
+    let mut advanced_access_open = use_signal(|| false);
     // `ak.realm.authority.reset` requires the payload to carry the literal
     // event-kind string as `destructive_confirmation`; the operator types it
     // here, and the typed text is what the payload ships.
@@ -138,26 +143,22 @@ pub fn RealmAdminPanel(
         (
             "Writes paused",
             "badge red",
-            "Rotate or recover the notary before asking members to retry writes.",
+            "Restore the Realm security service before asking members to try again.",
         )
     } else if realm_pending_mls_binding {
         (
             "Binding pending",
             "badge amber",
-            "Wait for the MLS commit Move to bind the latest encrypted message.",
+            "Wait for the encrypted update to finish, then retry if the alert remains.",
         )
     } else if !bottom_cells.is_empty() {
         (
             "Repair needed",
             "badge red",
-            "Open Repair & Danger to inspect unresolved concurrent candidates.",
+            "Open Repair & Danger to review the conflicting changes.",
         )
     } else {
-        (
-            "No active alerts",
-            "badge green",
-            "No administrator action is required from the current local view.",
-        )
+        ("No active alerts", "badge green", "No action needed.")
     };
     let active_section = RealmAdminSection::from_slug(active_section.as_deref());
     // The account-sync writer can update the shared store outside this
@@ -325,7 +326,7 @@ pub fn RealmAdminPanel(
                         }
                         div { class: "metric",
                             strong { "Security & repair" }
-                            span { "{alert_count} alerts · epoch {mls_epoch_label}" }
+                            span { "{alert_count} alerts" }
                             Link {
                                 class: "secondary",
                                 to: Route::RealmAdminSection {
@@ -346,11 +347,11 @@ pub fn RealmAdminPanel(
                     class: "event error-banner",
                     "data-testid": "notary-paused-banner",
                     div { class: "event-head",
-                        span { "Realm halted, waiting for the recovery notary" }
-                        span { class: "badge red", "notary_paused" }
+                        span { "Realm changes are temporarily paused" }
+                        span { class: "badge red", "Action needed" }
                     }
                     div { class: "muted",
-                        "soland's notary signing pipeline is offline for this Realm — Moves remain in MoveStore but no Seal batch will close until ops rotate the recovery notary (sodmin H'8). All write attempts surface state=notary_paused."
+                        "New changes cannot complete right now. Ask the deployment administrator to restore the security service, then try again."
                     }
                 }
             }
@@ -363,11 +364,11 @@ pub fn RealmAdminPanel(
                     class: "event",
                     "data-testid": "pending-mls-binding-toast",
                     div { class: "event-head",
-                        span { "Security Frontier binding has not yet been acknowledged" }
-                        span { class: "badge amber", "pending_mls_binding" }
+                        span { "Encrypted updates are still syncing" }
+                        span { class: "badge amber", "In progress" }
                     }
                     div { class: "muted",
-                        "The MLS commit Move that should bind your last encrypted message has not yet been acknowledged by the governance frontier. Outgoing messages stay encrypted but won't deliver until the binding lands."
+                        "The latest encrypted update is waiting for confirmation. Messages remain protected and will deliver when it completes."
                     }
                 }
             }
@@ -504,51 +505,116 @@ pub fn RealmAdminPanel(
             }
             if active_section == RealmAdminSection::Security {
                 div { class: "event admin-health-summary", "data-testid": "realm-security-summary",
-                    div { class: "event-head",
-                        span { "Security health" }
-                        span { class: security_health_badge, "{security_health_label}" }
+                    div { class: "security-health-header",
+                        div {
+                            div { class: "event-head",
+                                span { "Security health" }
+                                span { class: security_health_badge, "{security_health_label}" }
+                            }
+                            p { class: "security-health-intro",
+                                if security_health_label == "No active alerts" {
+                                    "Everything looks ready from this device."
+                                } else {
+                                    "One or more security checks need attention."
+                                }
+                            }
+                        }
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            class: "security-diagnostics-button",
+                            "data-testid": "security-diagnostics-toggle",
+                            "aria-expanded": "{security_diagnostics_open()}",
+                            onclick: move |_| security_diagnostics_open.toggle(),
+                            if security_diagnostics_open() { "Hide diagnostics" } else { "Diagnostics" }
+                        }
                     }
-                    div { class: "metric-grid",
-                        div { class: "metric",
-                            strong { "Writes" }
-                            span { if realm_paused { "Paused by notary state" } else { "Accepting local submissions" } }
+                    div { class: "security-health-list",
+                        div { class: "security-health-row",
+                            span {
+                                class: if realm_paused { "security-status-dot is-alert" } else { "security-status-dot is-ok" },
+                                "aria-hidden": "true"
+                            }
+                            div {
+                                strong { "Realm activity" }
+                                span { if realm_paused { "New changes are paused" } else { "New changes can be submitted" } }
+                            }
                         }
-                        div { class: "metric",
-                            strong { "MLS binding" }
-                            span { if realm_pending_mls_binding { "Pending governance acknowledgement" } else { "No pending binding alert" } }
+                        div { class: "security-health-row",
+                            span {
+                                class: if realm_pending_mls_binding { "security-status-dot is-warning" } else { "security-status-dot is-ok" },
+                                "aria-hidden": "true"
+                            }
+                            div {
+                                strong { "Encrypted updates" }
+                                span { if realm_pending_mls_binding { "Waiting for a security acknowledgement" } else { "Up to date" } }
+                            }
                         }
-                        div { class: "metric",
-                            strong { "Next step" }
-                            span { "{security_next_step}" }
+                        if security_health_label != "No active alerts" {
+                            div { class: "security-next-step",
+                                span { class: "security-status-dot is-action", "aria-hidden": "true" }
+                                div {
+                                    strong { "Recommended next step" }
+                                    span { "{security_next_step}" }
+                                }
+                            }
                         }
                     }
                 }
-                // Read-only MLS epoch widget from the current Seal view.
-                div { class: "event", "data-testid": "mls-epoch-widget",
-                    div { class: "event-head",
-                        span { "MLS epoch" }
-                        span { {CellFamilyId::MLS_EPOCH_V1} }
-                    }
-                    div { class: "muted",
-                        "Read-only view of the most recent MLS epoch published in the cell map."
-                    }
-                    div { class: "muted", "data-testid": "mls-epoch-value",
-                        "MLS epoch: {mls_epoch_label}"
-                    }
-                }
-                // Seal frontier debug — shows whether sync has surfaced a
-                // real Seal view yet. When empty this matches the sentinel
-                // Move builders thread in.
-                div { class: "event", "data-testid": "seal-frontier-debug",
-                    div { class: "event-head",
-                        span { "Seal frontier" }
-                        span { "leaves={seal_view.leaves.len()}" }
-                    }
-                    div { class: "muted", "data-testid": "seal-frontier-heads",
-                        "frontier: {seal_frontier_label}"
-                    }
-                    div { class: "muted", "data-testid": "seal-state-root",
-                        "state_root: {seal_state_root_label}"
+                if security_diagnostics_open() {
+                    div { class: "event security-diagnostics-panel", "data-testid": "security-diagnostics-panel",
+                        div { class: "event-head",
+                            span { "Diagnostics" }
+                            span { "Local protocol state" }
+                        }
+                        p { class: "muted security-diagnostics-copy",
+                            "Technical details for troubleshooting and support. These values do not normally require action."
+                        }
+                        div { class: "security-diagnostic-list",
+                            div { class: "security-diagnostic-row", "data-testid": "mls-epoch-widget",
+                                div {
+                                    strong { "Encryption epoch" }
+                                    span { class: "muted", "Latest locally published key generation" }
+                                }
+                                code { "data-testid": "mls-epoch-value", "{mls_epoch_label}" }
+                            }
+                            div { class: "security-diagnostic-row",
+                                div {
+                                    strong { "Epoch cell" }
+                                    span { class: "muted", "Protocol family" }
+                                }
+                                code { {CellFamilyId::MLS_EPOCH_V1} }
+                            }
+                            div { class: "security-diagnostic-row", "data-testid": "seal-frontier-debug",
+                                div {
+                                    strong { "Seal frontier" }
+                                    span { class: "muted", "{seal_view.leaves.len()} accepted leaves" }
+                                }
+                                code { "data-testid": "seal-frontier-heads", title: "{seal_frontier_label}", "{short_protocol_id(&seal_frontier_label)}" }
+                            }
+                            div { class: "security-diagnostic-row",
+                                div {
+                                    strong { "State root" }
+                                    span { class: "muted", "Current local projection" }
+                                }
+                                code { "data-testid": "seal-state-root", title: "{seal_state_root_label}", "{short_protocol_id(&seal_state_root_label)}" }
+                            }
+                            if let Some(root) = authority_root.clone() {
+                                div { class: "security-diagnostic-row",
+                                    div {
+                                        strong { "Controller epoch" }
+                                        span { class: "muted", "Ownership sequence" }
+                                    }
+                                    code { "data-testid": "governance-epoch", "{root.controller_epoch}" }
+                                }
+                                div { class: "security-diagnostic-row",
+                                    div {
+                                        strong { "Authority generation" }
+                                        span { class: "muted", "Capability generation" }
+                                    }
+                                    code { "data-testid": "governance-generation", "{root.authority_generation}" }
+                                }
+                            }
+                        }
                     }
                 }
                 // Realm governance — the two authority-root transitions
@@ -559,47 +625,47 @@ pub fn RealmAdminPanel(
                 // `realm_authority_root_conflict` instead of merging.
                 div { class: "event", "data-testid": "realm-governance-card",
                     div { class: "event-head",
-                        span { "Realm governance (authority root)" }
-                        span { class: "badge", "security_barrier" }
+                        span { "Ownership" }
+                        span { class: if is_root_controller { "badge green" } else { "badge" },
+                            if is_root_controller { "You are the owner" } else { "Member access" }
+                        }
                     }
                     if let Some(root) = authority_root.clone() {
                         {
                             let controller_full = root.controller_id.as_str().to_owned();
                             let controller_label = short_protocol_id(&controller_full);
                             rsx! {
-                                div { class: "metric-grid",
-                                    div { class: "metric",
-                                        strong { "Controller (owner)" }
-                                        span {
+                                div { class: "security-owner-summary",
+                                    div {
+                                        span { class: "muted", "Current owner" }
+                                        strong {
                                             class: "mono",
                                             title: "{controller_full}",
                                             "data-testid": "governance-controller",
                                             "{controller_label}"
                                         }
                                     }
-                                    div { class: "metric",
-                                        strong { "Controller epoch" }
-                                        span { "data-testid": "governance-epoch", "{root.controller_epoch}" }
-                                    }
-                                    div { class: "metric",
-                                        strong { "Authority generation" }
-                                        span { "data-testid": "governance-generation", "{root.authority_generation}" }
+                                    if is_root_controller {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "governance-controls-toggle",
+                                            "aria-expanded": "{governance_controls_open()}",
+                                            onclick: move |_| governance_controls_open.toggle(),
+                                            if governance_controls_open() { "Close controls" } else { "Manage ownership" }
+                                        }
                                     }
                                 }
                             }
                         }
-                        if is_root_controller {
-                            div { class: "workflow-form", "data-testid": "governance-owner-controls",
+                        if is_root_controller && governance_controls_open() {
+                            div { class: "workflow-form security-expanded-controls", "data-testid": "governance-owner-controls",
                                 // Owner transfer — the root controller's only
                                 // legitimate exit (capabilities.md §10.4).
                                 div { class: "event-head",
                                     span { "Transfer ownership" }
-                                    span { {event_kind_str::REALM_OWNER_TRANSFER} }
                                 }
                                 div { class: "muted",
-                                    "Hands the authority root to a joined member. Existing grants stay valid "
-                                    "(only an authority reset invalidates the generation); once sealed, this "
-                                    "account is no longer the controller."
+                                    "Choose a member to become the new owner. Your account will no longer control this Realm after the transfer completes."
                                 }
                                 label { "Successor (joined member)" }
                                 Select::<String> {
@@ -635,7 +701,7 @@ pub fn RealmAdminPanel(
                                     id: "owner-transfer-acceptance-input",
                                     "data-testid": "owner-transfer-acceptance-input",
                                     value: "{gov_transfer_acceptance}",
-                                    placeholder: "Paste the acceptance proof the successor produced — the transfer embeds it verbatim; it is never synthesized here or by the service.",
+                                    placeholder: "Paste the acceptance proof provided by the new owner.",
                                     oninput: move |event: FormEvent| gov_transfer_acceptance.set(event.value()),
                                 }
                                 div { class: "actions",
@@ -651,38 +717,33 @@ pub fn RealmAdminPanel(
                                     }
                                 }
                                 // Authority reset — guarded destructive entry.
-                                div { class: "event-head",
-                                    span { "Authority generation" }
-                                    span { "destructive" }
-                                }
-                                div { class: "muted",
-                                    "Resetting the authority generation invalidates every capability issued "
-                                    "under the current generation across the whole Realm."
-                                }
-                                div { class: "actions",
+                                div { class: "security-danger-action",
+                                    div {
+                                        strong { "Revoke all existing permissions" }
+                                        span { class: "muted",
+                                            "Use only after a security incident. Members stay, but every granted permission must be issued again."
+                                        }
+                                    }
                                     Button {
-                                        variant: ButtonVariant::Destructive,
-                                        "data-testid": "authority-reset-button",
-                                        onclick: move |_| {
-                                            gov_transfer_confirm_open.set(false);
-                                            gov_reset_confirm_text.set(String::new());
-                                            gov_reset_confirm_open.set(true);
-                                        },
-                                        "Reset authority generation…"
+                                            variant: ButtonVariant::Destructive,
+                                            "data-testid": "authority-reset-button",
+                                            onclick: move |_| {
+                                                gov_transfer_confirm_open.set(false);
+                                                gov_reset_confirm_text.set(String::new());
+                                                gov_reset_confirm_open.set(true);
+                                            },
+                                            "Revoke permissions…"
                                     }
                                 }
                             }
-                        } else {
+                        } else if !is_root_controller {
                             div { class: "muted", "data-testid": "governance-not-controller",
-                                "Only the current authority-root controller (Realm owner) can transfer "
-                                "ownership or reset the authority generation."
+                                "Only the current owner can transfer ownership or revoke Realm-wide permissions."
                             }
                         }
                     } else {
                         div { class: "muted", "data-testid": "governance-root-missing",
-                            "The authority root is not resolved in the local projection — either sync has "
-                            "not surfaced the accepted `ak.realm.create` yet. Governance transitions stay "
-                            "unavailable until a root value is projected."
+                            "Ownership information is not available yet. It may still be syncing."
                         }
                     }
                 }
@@ -1358,8 +1419,11 @@ pub fn RealmAdminPanel(
             // real local `self_update_commit` published as the canonical
             // `ak.mls.commit` event (persist-on-accept).
             div { class: "event", "data-testid": "mls-rotation",
-                div { class: "event-head", span { "MLS Epoch" } span { "rotation" } }
-                div { class: "actions",
+                div { class: "security-action-row",
+                    div {
+                        strong { "Encryption keys" }
+                        span { class: "muted", "Keys update automatically when membership changes. You can also refresh them now." }
+                    }
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "rotate-realm-epoch",
@@ -1510,11 +1574,13 @@ pub fn RealmAdminPanel(
                                 });
                             }
                         },
-                        {crate::i18n::tr("realm_admin.rotate_epoch")}
+                        "Refresh keys"
                     }
                 }
             }
+            }
 
+            if active_section == RealmAdminSection::Repair {
             // Leave Realm. The button only opens the confirmation dialog;
             // the membership event is submitted from the dialog's confirm
             // button below.
@@ -1528,9 +1594,7 @@ pub fn RealmAdminPanel(
                     div { class: "callout danger", "data-testid": "leave-realm-owner-guard",
                         strong { "Transfer ownership first" }
                         p {
-                            "This account is the Realm authority-root controller, and the protocol's "
-                            "only exit path for the root controller is `ak.realm.owner.transfer`. "
-                            "Transfer ownership from Security → Realm governance, then leave."
+                            "You currently own this Realm. Transfer ownership from Security → Ownership before leaving."
                         }
                     }
                 }
@@ -1654,6 +1718,23 @@ pub fn RealmAdminPanel(
             }
 
             if active_section == RealmAdminSection::Security {
+            div { class: "event security-advanced-card", "data-testid": "advanced-access-summary",
+                div { class: "security-action-row",
+                    div {
+                        strong { "Advanced permissions" }
+                        span { class: "muted", "Grant individual capabilities or Realm administrator access." }
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "advanced-access-toggle",
+                        "aria-expanded": "{advanced_access_open()}",
+                        onclick: move |_| advanced_access_open.toggle(),
+                        if advanced_access_open() { "Close" } else { "Manage permissions" }
+                    }
+                }
+            }
+            if advanced_access_open() {
+            div { class: "settings-content-stack security-advanced-controls", "data-testid": "advanced-access-controls",
             div { class: "event", "data-testid": "capability-grant-card",
                 div { class: "event-head",
                     span { "Capability grant / revoke" }
@@ -2075,6 +2156,8 @@ pub fn RealmAdminPanel(
                         {crate::i18n::tr("realm_admin.admin_revoke_button")}
                     }
                 }
+            }
+            }
             }
             }
 

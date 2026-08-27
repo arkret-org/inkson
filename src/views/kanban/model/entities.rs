@@ -283,7 +283,7 @@ pub(crate) enum CardDetailContentTab {
 }
 
 /// Which tab the right-hand card-detail sidebar is showing.
-/// - `Details`: per-card metadata (Strand ID, Assignees, Due, Visibility).
+/// - `Details`: per-card metadata (Strand ID, Assignees, Due, Discussion scope).
 /// - `Members`: every actor in the surrounding Realm/Space — sourced from the cached space
 ///   projection (`members`/`participants`/`owners` keys). Each row is also marked when the actor
 ///   has authored an event against the current Strand (derived from local raw operations), so
