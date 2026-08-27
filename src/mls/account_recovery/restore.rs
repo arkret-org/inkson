@@ -73,7 +73,7 @@ pub fn mls_restore_prompt_required(
             device_id,
             required = false,
             reason = "no_account_secret_backup",
-            "MLS restore prompt decision v2"
+            "MLS restore prompt decision"
         );
         return false;
     };
@@ -111,7 +111,7 @@ pub fn mls_restore_prompt_required(
         } else {
             "account_secret_ready"
         },
-        "MLS restore prompt decision v2"
+        "MLS restore prompt decision"
     );
     required
 }

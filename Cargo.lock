@@ -461,7 +461,6 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "thiserror 2.0.18",
 ]
 
@@ -4206,7 +4205,6 @@ dependencies = [
  "gloo-timers 0.4.0",
  "hex",
  "hkdf 0.13.0",
- "hmac 0.13.0",
  "image",
  "js-sys",
  "jsonschema 0.46.5",
@@ -4227,7 +4225,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-wasm",
- "unicode-normalization",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",

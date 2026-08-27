@@ -60,8 +60,11 @@ pub mod media;
 /// `ak.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
 /// effective [`arkret_sdk::MemberIdentity`] via the SDK's
-/// replacement-edge filter helper. MLS decryption (MID-4) + proof
-/// signature verification (MID-5) are gated on `TODO(R4)`.
+/// replacement-edge filter helper. MID-4 (MLS decryption) is handled at
+/// the carrier level — an encrypted carrier surfaces as
+/// `decryption_pending` — and MID-5 (proof signature verification) is
+/// implemented fail-closed in
+/// `identity::member_identity_store::MemberIdentityStore::current_identity`.
 /// G3.Y2 — messaging UI scaffolding (polls, mentions picker,
 /// discussion-promote, sidecar-hash). The chat view consumes these
 /// helpers; see `crate::messaging::mod` for the rationale.

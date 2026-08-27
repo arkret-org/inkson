@@ -10,25 +10,13 @@ pub fn english_translations() -> TranslationDict {
     let mut dict = TranslationDict::new(UiLocale::En);
 
     // Navigation & Shell
-    dict.set("app.title", "inkson");
     dict.set("nav.dashboard", "Home");
-    dict.set("nav.chat", "Chat");
-    dict.set("nav.forum", "Forum");
     dict.set("nav.directory", "Directory");
     dict.set("nav.notifications", "Notifications");
     dict.set("nav.settings", "Settings");
-    dict.set("nav.login", "Login");
-    dict.set("nav.audit", "Audit");
-    dict.set("nav.devices", "Devices");
     dict.set("nav.files", "Files");
     dict.set("nav.collaboration", "Collaboration");
     dict.set("nav.contacts", "Contacts");
-    dict.set("nav.direct_messages", "Direct");
-    dict.set("nav.new_realm_short", "Realm");
-    dict.set("nav.add_contact_short", "Contact");
-    dict.set("direct.empty", "No direct conversations");
-    dict.set("direct.sign_in", "Sign in to load direct conversations");
-    dict.set("direct.open", "Open direct conversation");
     dict.set("direct.unavailable", "Direct conversation unavailable");
     dict.set("contacts.empty", "No contacts yet");
     dict.set("contacts.sign_in", "Sign in to load contacts");
@@ -42,58 +30,9 @@ pub fn english_translations() -> TranslationDict {
     // AKP-0007 Circle error keys (P3B.3.2)
     add_circle_error_keys(&mut dict);
 
-    // Login
-    dict.set("login.server", "Server");
-    dict.set("login.connection_test", "connection test");
-    dict.set("login.server_url", "Server URL");
-    dict.set("login.test_connection", "Test Connection");
-    dict.set("login.account", "Account");
-    dict.set("login.principal_id", "Account DID");
-    dict.set("login.device_id", "Device ID");
-    dict.set("login.passkey", "Passkey Login");
-    dict.set("login.oidc", "OIDC Login");
-    dict.set("login.dev_login", "Dev Login");
-    dict.set("login.session", "Session");
-    dict.set("login.disconnected", "disconnected");
-    dict.set("login.connected", "connected");
-    dict.set("login.soft_logout", "soft-logout");
-    dict.set("login.no_token", "No active token");
-    dict.set("login.token_active", "Token active");
-    dict.set("login.session_credential", "Session Credential");
-    dict.set("login.re_login", "Re-Login");
-    dict.set(
-        "login.session_expired",
-        "Your session has expired. Log in again to continue.",
-    );
-
-    dict.set("message.redacted", "[Message redacted]");
-
     // Directory
-    dict.set("directory.title", "Directory");
-    dict.set("directory.search_placeholder", "Search...");
-    dict.set("directory.search", "Search");
-    dict.set("directory.load_more", "Load More");
-    dict.set("directory.tab.realms", "Realms");
     dict.set("directory.tab.organizations", "Organizations");
     dict.set("directory.tab.actors", "People");
-    dict.set("directory.tab.objects", "Objects");
-    dict.set("directory.tab.applets", "Applets");
-    dict.set("directory.applet.ping", "Ping");
-    dict.set("directory.applet.metadata", "Metadata");
-
-    // Notifications
-    dict.set("notifications.title", "Notifications");
-    dict.set("notifications.empty", "No notifications loaded.");
-    dict.set("notifications.mark_read", "Mark Read");
-    dict.set("notifications.archive", "Archive");
-
-    // Settings
-    dict.set("settings.title", "Settings");
-    dict.set("settings.theme", "Theme");
-    dict.set("settings.language", "Language");
-    dict.set("settings.light", "Light");
-    dict.set("settings.dark", "Dark");
-    dict.set("settings.system", "System");
 
     // Settings navigation — section labels (design/settings-ia-reorg.md §3.1).
     // Terminology humanised: Capabilities → App authorizations, Blocked actors → Block list,
@@ -146,7 +85,6 @@ pub fn english_translations() -> TranslationDict {
     );
     // Settings-nav filter (design §3.4).
     dict.set("settings.search.placeholder", "Search settings…");
-    dict.set("settings.search.no_results", "No matching settings");
 
     // T1.3 — proof mode (event signing) status. Exposed in the settings
     // panel and the top status bar so the user can confirm at a glance
@@ -154,14 +92,6 @@ pub fn english_translations() -> TranslationDict {
     // backed by an external signer (and refused on production targets
     // when no signer is configured).
     dict.set("settings.proof_mode.label", "Event signing");
-    dict.set(
-        "settings.proof_mode.hint",
-        "Determines what proof is attached when this device submits events.",
-    );
-    dict.set(
-        "settings.proof_mode.placeholder_dev",
-        "Development placeholder",
-    );
     dict.set("settings.proof_mode.real_ed25519", "real Ed25519");
     dict.set("settings.proof_mode.external_signer", "external signer");
     dict.set("settings.proof_mode.production", "no signer (production)");
@@ -171,26 +101,16 @@ pub fn english_translations() -> TranslationDict {
     // confirm at a glance that the device is signing with the expected
     // identity and how recently a proof has been produced.
     dict.set("settings.signer.label", "Active signer");
-    dict.set("settings.signer.freshness.label", "Last signed");
-    dict.set("settings.signer.freshness.never", "never");
 
     // Common
-    dict.set("common.loading", "Loading...");
-    dict.set("common.error", "Error");
     dict.set("common.retry", "Retry");
     dict.set("common.close", "Close");
-    dict.set("common.confirm", "Confirm");
     dict.set("common.cancel", "Cancel");
     dict.set("common.save", "Save");
-    dict.set("common.delete", "Delete");
     dict.set("common.edit", "Edit");
-    dict.set("common.send", "Send");
     dict.set("common.refresh", "Refresh");
-    dict.set("common.back", "Back");
-    dict.set("common.next", "Next");
     dict.set("common.online", "online");
     dict.set("common.offline", "offline");
-    dict.set("common.reconnecting", "reconnecting");
     dict.set("qr_share.scan", "Scan QR code");
     dict.set("qr_share.unavailable", "QR unavailable");
     dict.set("qr_share.use_link", "Or use this link");
@@ -207,13 +127,10 @@ pub fn english_translations() -> TranslationDict {
         "topbar.search_placeholder",
         "Jump to a Realm, view or action...",
     );
-    dict.set("topbar.notifications", "Notifications");
-    dict.set("topbar.new_space", "New Space");
     dict.set("topbar.account_menu", "Account menu");
 
     dict.set("login.continue", "Continue");
     dict.set("login.working", "Working...");
-    dict.set("login.signed_in_as", "Signed in as");
     dict.set("login.title", "Sign in");
     dict.set("login.completing", "Completing sign in");
     dict.set("login.principal_server", "Sign-in server");
@@ -248,33 +165,12 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("login.refresh_now", "Refresh now");
 
-    dict.set("dashboard.home", "Home");
     dict.set("dashboard.notifications_label", "Notifications");
     dict.set(
         "dashboard.notifications_delta_unread",
         "Unread and approvals",
     );
     dict.set("dashboard.notifications_delta_signin", "Sign in required");
-    dict.set("dashboard.realms_label", "Realms");
-    dict.set("dashboard.realms_delta_search", "Search or join a Realm");
-    dict.set("dashboard.realms_delta_signin", "Sign in to load Realms");
-    dict.set("dashboard.realm_setup", "Realm Setup");
-    dict.set(
-        "dashboard.realm_setup_delta",
-        "Bootstrap your first Realm and initial policy",
-    );
-    dict.set("dashboard.onboarding", "Onboarding");
-    dict.set("dashboard.onboarding_steps", "4 steps");
-    dict.set(
-        "dashboard.onboarding_delta",
-        "Identity, device, and recovery setup",
-    );
-    dict.set("dashboard.recent_realms", "Recent Realms");
-    dict.set("dashboard.no_realms", "No Realms loaded");
-    dict.set(
-        "dashboard.no_realms_help",
-        "The connected server did not return Realms yet.",
-    );
     dict.set(
         "dashboard.no_session_help",
         "The client is not showing placeholder Realms.",
@@ -301,10 +197,6 @@ pub fn english_translations() -> TranslationDict {
         "chat.settings.shared_history_hint",
         "Realm-scoped policy - managed under Realm settings.",
     );
-    dict.set(
-        "settings.muted_realms_empty",
-        "No Realms muted. Use the Notifications view to mute a noisy Realm.",
-    );
     dict.set("realm_admin.no_members_loaded", "No members yet.");
     dict.set(
         "realm_admin.members_empty_hint",
@@ -319,9 +211,6 @@ pub fn english_translations() -> TranslationDict {
         "For the most secure invite, use the invite link the person shares with you. If they allow being found, enter their handle or identity address plus their server.",
     );
 
-    dict.set("notifications.archived", "Show archived");
-    dict.set("notifications.mark_all_read", "Mark all read");
-    dict.set("notifications.empty_state", "No notifications loaded.");
     // F-NOTIF-VLIST-1: client-side paging UI.
     dict.set("notifications.showing", "Showing");
     dict.set("notifications.load_more", "Load more");
@@ -332,13 +221,6 @@ pub fn english_translations() -> TranslationDict {
         "Load More Organizations",
     );
     dict.set("directory.load_more_actors", "Load More People");
-
-    dict.set("composer.send", "Send");
-    dict.set("composer.encrypted_toggle", "Encrypt locally");
-    dict.set(
-        "composer.plaintext_warning",
-        "Plaintext messages may be visible to the configured server.",
-    );
 
     dict.set("command_palette.realms", "Realms");
     dict.set("command_palette.jump_to", "Jump to");
@@ -353,8 +235,6 @@ pub fn english_translations() -> TranslationDict {
 
     // Kanban / Board view (header + section labels)
     dict.set("kanban.board_header", "Board");
-    dict.set("kanban.board_title", "Board");
-    dict.set("kanban.board_hint", "Drag cards between lists.");
     dict.set("chat.send", "Send");
     dict.set("chat.send_secure", "Send Secure");
     dict.set("chat.scheduled_send.send_at", "Send at");
@@ -377,31 +257,14 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.scheduled_send.save", "Save");
     dict.set("chat.scheduled_send.dismiss_edit", "Cancel");
     dict.set("chat.scheduled_send.cancel_plan", "Delete");
-    dict.set(
-        "chat.plaintext_blocked",
-        "Type a message before secure send",
-    );
     dict.set("realm_admin.save_profile", "Save Profile");
     dict.set("realm_admin.destroy_realm", "Destroy Realm");
     dict.set("realm_admin.archive_realm", "Archive Realm");
-    dict.set("verify_device.refresh_trust", "Refresh");
-    dict.set("verify_device.verify_action", "Verify");
-    dict.set("verify_device.revoke_action", "Revoke");
-    dict.set("verify_device.revoke_confirm_title", "Revoke this device?");
-    dict.set("verify_device.revoke_confirm_button", "Confirm Revoke");
-    dict.set("common.cancel_button", "Cancel");
-    dict.set("common.refresh", "Refresh");
-    dict.set("common.save", "Save");
-    dict.set("common.submit", "Submit");
     dict.set("kanban.add_card", "Add Card");
     dict.set("kanban.add_list", "Add List");
     dict.set("kanban.save_card", "Save");
     dict.set("kanban.cancel_card", "Cancel");
     dict.set("kanban.rename_list_hint", "Double-click to rename");
-    dict.set(
-        "kanban.security_not_ready",
-        "Security state not ready; please retry shortly before writing to this Realm.",
-    );
     dict.set("realm_admin.apply_policy", "Apply Policy");
     dict.set(
         "realm_admin.grant_capability_move",
@@ -431,8 +294,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.refresh_members", "Refresh");
     dict.set("realm_admin.kick_member", "Kick");
     dict.set("realm_admin.ban_member", "Ban");
-    dict.set("realm_admin.kick_member_move", "Kick (Move)");
-    dict.set("realm_admin.ban_member_move", "Ban (Move)");
     dict.set("realm_admin.rotate_epoch", "Rotate Epoch");
     dict.set("realm_admin.leave_realm", "Leave");
     dict.set("realm_admin.leave_confirm_title", "Leave this Realm?");
@@ -446,7 +307,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("directory.list_contacts", "List");
     dict.set("directory.search_button", "Search");
     dict.set("directory.resolve_selected", "Resolve Selected");
-    dict.set("settings.store_backup", "Store Backup");
     dict.set("settings.register_push", "Register Push");
     dict.set("settings.unregister_push", "Unregister Push");
     dict.set("kanban.archive_action", "Archive");
@@ -502,7 +362,6 @@ pub fn english_translations() -> TranslationDict {
     );
 
     // Recovery view (top-level section headers)
-    dict.set("recovery.title", "Recovery");
     dict.set("recovery.recovery_key_section", "Recovery Key (24 words)");
 
     // Custody-confirmed Recovery Key upload status (`views/recovery/upload.rs`).
@@ -764,7 +623,6 @@ pub fn english_translations() -> TranslationDict {
         "recovery.panel.writeback_body",
         "A complete recovery makes the new device create its own keys, prove them against your active recovery policy, record a recovery receipt, authorize itself, and then unlock your encrypted history backups. Backup history stays visible above; the proof and device authorization are separate follow-up steps.",
     );
-    dict.set("device_authorization.aria_label", "Authorize this device");
     dict.set("device_authorization.title", "Authorize this device");
     dict.set(
         "device_authorization.subtitle",
@@ -800,7 +658,6 @@ pub fn english_translations() -> TranslationDict {
         "Continue with limited access",
     );
     dict.set("device_authorization.reopen", "Authorize this device");
-    dict.set("mls_unlock.aria_label", "Restore encrypted history");
     dict.set("mls_unlock.title", "Restore encrypted history");
     dict.set(
         "mls_unlock.subtitle",
@@ -906,7 +763,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("mls_backup.button_retry", "Retry backup");
     dict.set("mls_backup.button_busy", "Backing up...");
     dict.set("mls_backup.button_dismiss", "Remind me later");
-    dict.set("mls_backup.button_saved", "I saved the key");
     dict.set("mls_backup.button_confirm_saved", "Confirm saved key");
     dict.set("mls_backup.button_regenerate", "Generate a new key");
     dict.set("mls_backup.button_done", "Done");
@@ -1007,27 +863,21 @@ pub fn english_translations() -> TranslationDict {
     );
 
     // Space-admin view (section labels)
-    dict.set("realm_admin.title", "Realm Settings");
-    dict.set("realm_admin.devices", "Devices");
     dict.set("realm_admin.members", "Members");
     dict.set("realm_admin.access", "Access");
-    dict.set("realm_admin.security_mls", "Security & MLS");
 
     // Chat / Discussion view (panel headers + key buttons; reuse common.* for
     // generic verbs like Save/Cancel/Retry/Edit/Confirm).
     dict.set("chat.discussions_header", "Strand discussions");
     dict.set("chat.users_header", "Users");
     dict.set("chat.settings_header", "Settings");
-    dict.set("chat.new_discussion", "New discussion");
     dict.set("chat.new_strand", "New Strand");
     dict.set("chat.hide_list", "Hide discussion list");
     dict.set("chat.label.title", "Title");
     dict.set("chat.label.summary", "Summary");
-    dict.set("common.remove", "Remove");
     dict.set("chat.call.voice", "Start voice call");
     dict.set("chat.call.video", "Start video call");
     // T7.2 watch level fast switcher.
-    dict.set("chat.watch_level.prefix", "Watching");
     dict.set(
         "chat.watch_level.tooltip",
         "Choose how often this Strand notifies you.",
@@ -1043,17 +893,10 @@ pub fn english_translations() -> TranslationDict {
         "Watch level update failed (rolled back).",
     );
     // T7.3 handle reassigned context.
-    dict.set("chat.handle_reassigned.badge", "handle reassigned");
-    dict.set(
-        "chat.handle_reassigned.tooltip",
-        "This name pointed to a different account when the message was written than it does now. Check the sender carefully before trusting it.",
-    );
     dict.set("chat.binding_context.separator", " @ ");
     dict.set("chat.binding_context.details", "Show service binding");
     // T7.4 E2EE status indicators.
     dict.set("chat.crypto.decrypting", "Decrypting…");
-    dict.set("chat.crypto.decrypt_failed", "Failed to decrypt");
-    dict.set("chat.crypto.decrypt_failed_action", "Open recovery");
     dict.set("chat.crypto.key_missing", "Key not yet received");
     dict.set(
         "chat.crypto.key_missing_hint",
@@ -1073,13 +916,9 @@ pub fn english_translations() -> TranslationDict {
         "chat.crypto.undecryptable_generic",
         "This message can't be decrypted on this device.",
     );
-    dict.set("chat.mls.epoch", "Encryption version");
-    dict.set("chat.mls.key_package", "Device encryption key");
-    dict.set("chat.mls.welcome", "Join invitation");
     // T7.5 layout polish.
     dict.set("chat.tabs.settings", "Settings");
     dict.set("chat.tabs.members", "Members");
-    dict.set("chat.tabs.notifications", "Notifications");
     dict.set("chat.button.create", "Create");
     dict.set("chat.button.reply", "Reply");
     dict.set("moderation.report.action", "Report");
@@ -1110,7 +949,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("moderation.report.failed", "Report failed");
     dict.set("chat.button.react", "React");
     dict.set("chat.button.redact", "Redact");
-    dict.set("chat.you_badge", "ME");
     // Member visual indicators surfaced wherever a principal DID is
     // rendered (realm-admin member list, @mention picker, chat sender
     // attribution).
@@ -1143,10 +981,7 @@ pub fn english_translations() -> TranslationDict {
         "chat.outbox.flushing",
         "Back online - sending queued messages...",
     );
-    dict.set("chat.outbox.flushed", "Queued message sent.");
     // Message shared pin and holder-private saved item actions.
-    dict.set("message.pin", "Pin");
-    dict.set("message.unpin", "Unpin");
     dict.set("message.shared_pin", "Pin for everyone");
     dict.set("message.shared_unpin", "Unpin for everyone");
     dict.set("message.shared_pin_pending", "Sharing pin...");
@@ -1423,7 +1258,6 @@ pub fn english_translations() -> TranslationDict {
 
     // A6.4 — keyboard shortcut help overlay.
     dict.set("shortcuts.title", "Keyboard shortcuts");
-    dict.set("shortcuts.dismiss", "Dismiss");
     dict.set("shortcuts.list.help", "Show this shortcut help");
     dict.set("shortcuts.list.dismiss", "Close any open dialog");
     dict.set("shortcuts.list.palette", "Open command palette");
@@ -1437,7 +1271,6 @@ pub fn english_translations() -> TranslationDict {
     // account-data namespace. Used by the Settings → Privacy panel, the
     // member-row context action, and the message "blocked user"
     // placeholder row.
-    dict.set("settings.privacy.title", "Privacy");
     dict.set("settings.privacy.blocked_users.title", "Blocked users");
     dict.set(
         "settings.privacy.blocked_users.empty",
@@ -1470,7 +1303,6 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("settings.privacy.unblock", "Unblock");
     // A4b — avatar upload UI keys.
-    dict.set("settings.avatar.title", "Profile picture");
     dict.set("settings.avatar.upload", "Upload new avatar");
     dict.set("settings.avatar.clear", "Remove avatar");
     dict.set("settings.avatar.uploading", "Uploading avatar…");
@@ -1523,8 +1355,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("search.results.loading", "Searching…");
     dict.set("search.results.error", "Search failed");
     dict.set("search.no_results", "No matches found.");
-    dict.set("search.result.snippet", "Snippet");
-    dict.set("topbar.search_button", "Open search");
     dict.set("shortcuts.list.search", "Open global message search");
     dict.set("member.block", "Block this user");
     dict.set("member.block_confirm.title", "Block this user?");
@@ -1554,25 +1384,6 @@ pub fn english_translations() -> TranslationDict {
     // Raw protocol identifiers (did:webvh:, ak.*, schema ids, profile ids)
     // are only shown inside Developer Tools / Diagnostics surfaces.
     dict.set(
-        "friendly.identifier.placeholder",
-        "john:example.com or did:webvh:...",
-    );
-    dict.set(
-        "friendly.identifier.placeholder_multiline",
-        "alice:example.com\nbob:example.com",
-    );
-    dict.set("friendly.identifier.label", "Member identifier");
-    dict.set(
-        "friendly.identifier.hint",
-        "Enter a handle like user:domain.com, or paste a full DID.",
-    );
-    dict.set("friendly.identifier.handle_or_email", "Handle or DID");
-    dict.set("friendly.member.automated", "Automated member");
-    dict.set("friendly.member.bot", "Bot");
-    dict.set("friendly.member.human", "Person");
-    dict.set("friendly.member.agent_badge", "Bot");
-    dict.set("friendly.identifier.technical", "Protocol identifier");
-    dict.set(
         "friendly.identifier.show_technical",
         "Show technical details",
     );
@@ -1580,53 +1391,17 @@ pub fn english_translations() -> TranslationDict {
         "friendly.identifier.hide_technical",
         "Hide technical details",
     );
-    dict.set("friendly.security.encrypted", "Encrypted");
-    dict.set("friendly.security.encrypted_short", "Encrypted");
-    dict.set("friendly.draft.label", "Draft");
-    dict.set("friendly.sync.state", "Sync state");
-    dict.set("friendly.sync.synced", "Up to date");
-    dict.set("friendly.sync.pending", "Syncing…");
-    dict.set("friendly.sync.frontier", "Sync state");
 
     // Friendly labels for the security-boundary Realm and container Space split.
     dict.set("friendly.realm", "Realm");
-    dict.set("friendly.realm.short", "Realm");
     dict.set(
         "friendly.realm.description",
         "A Realm owns membership, rules, sharing between servers, and encryption for everything inside it.",
     );
-    dict.set("friendly.realm.security_class", "Security boundary");
-    dict.set(
-        "friendly.realm.security_class.standard",
-        "Standard security",
-    );
-    dict.set(
-        "friendly.realm.security_class.high_assurance",
-        "High assurance",
-    );
-    dict.set("friendly.realm.settings", "Realm settings");
-    dict.set(
-        "friendly.realm.settings.subtitle",
-        "Members, rules, sharing, and encryption",
-    );
-    dict.set("friendly.realm.switcher", "Switch Realm");
-    dict.set("friendly.realm.ref_label", "Realm");
     dict.set("friendly.space", "Space");
-    dict.set("friendly.space.short", "Space");
     dict.set(
         "friendly.space.description",
         "A space groups boards, lists, and sections inside a Realm.",
-    );
-    dict.set("friendly.space.container_class", "Navigation container");
-    dict.set("friendly.space.settings", "Space settings");
-    dict.set(
-        "friendly.space.settings.subtitle",
-        "Navigation, sort, and display",
-    );
-    dict.set("friendly.discussion.realm_ref", "Realm");
-    dict.set(
-        "friendly.discussion.realm_ref.hint",
-        "Which Realm this discussion belongs to (security boundary).",
     );
 
     // Profile gate (friendly version of ProfileGateNotice).
@@ -1648,22 +1423,15 @@ pub fn english_translations() -> TranslationDict {
 
     // Developer Tools / Diagnostics entry points used to expose the
     // protocol-level details that used to leak into the main strand.
-    dict.set("nav.developer", "Developer Tools");
     dict.set("developer.title", "Developer Tools");
     dict.set("developer.subtitle", "Protocol diagnostics and audit");
-    dict.set("developer.section.schemas", "Schemas & event kinds");
-    dict.set("developer.section.profiles", "Server profiles");
     dict.set("developer.section.events", "Raw event log");
-    dict.set("developer.section.conformance", "Protocol conformance");
     dict.set("developer.section.protocol_version", "Protocol version");
     dict.set(
         "developer.hint",
         "These details are intended for developers and operators. End users do not need to read them.",
     );
     dict.set("developer.profile.required", "Required profile id");
-    dict.set("developer.profile.advertised", "Server advertised");
-    dict.set("developer.event.kind", "Event kind");
-    dict.set("developer.schema.id", "Schema id");
 
     // Round R2/R3 (T11) — fail-closed blob presign error strings.
     dict.set(
@@ -1692,38 +1460,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("moderation.appeal.state.under_review", "Under review");
     dict.set("moderation.appeal.state.decided", "Decided");
     dict.set("moderation.appeal.state.closed", "Closed");
-
-    // Round R2/R3 (T07) — Realm terminal-state banner.
-    dict.set(
-        "realm.destroyed.banner",
-        "This Realm has been permanently retired.",
-    );
-
-    // Round R2/R3 (T15) — OOB lookup-form generic error string.
-    dict.set(
-        "oob.code.invalid_or_expired",
-        "That code is invalid or expired.",
-    );
-
-    // Round 4 (spec a77b995) — invite terminal-state labels surfaced
-    // by [`crate::invite_claim::InviteTerminalState`].
-    dict.set("invite.terminal.claimed", "Claimed");
-    dict.set(
-        "invite.terminal.send_failed",
-        "Could not deliver the invite (network or auth-server error).",
-    );
-    dict.set(
-        "invite.terminal.revoked_by_capability_loss",
-        "Revoked — the inviter no longer has permission to invite.",
-    );
-    dict.set(
-        "invite.terminal.revoked_by_inviter_left",
-        "Revoked — the inviter left the space.",
-    );
-    dict.set(
-        "invite.terminal.invalidated_by_rate_limit",
-        "Invalidated — too many failed attempts; the invite is now blocked.",
-    );
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
     // arkret-spec error code expansion (AKP-0010 media binding,
@@ -1958,7 +1694,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.state.accepted", "Contact");
     dict.set("contacts.state.rejected", "Declined");
     dict.set("contacts.state.tombstoned", "Removed");
-    dict.set("contacts.state.blocked", "Blocked");
     dict.set("contacts.action.accept", "Accept");
     dict.set("contacts.action.reject", "Decline");
     dict.set("contacts.action.withdraw", "Withdraw");
@@ -1983,10 +1718,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set(
         "contacts.petname.confusable_warning",
         "Possible Contact impersonation",
-    );
-    dict.set(
-        "contacts.petname.confusable_warning_detail",
-        "This public name is confusable with another accepted Contact's petname or saved public name. Verify the principal identifier.",
     );
     dict.set("contacts.dm.opening", "Opening direct chat…");
     dict.set(
@@ -2072,14 +1803,6 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("invite_policy.unknown_quarantine", "held for review");
     dict.set("invite_policy.unknown_suffix", ".");
     dict.set("invite_policy.disclosure_title", "Receipts");
-    dict.set(
-        "invite_policy.disclosure_toggle",
-        "Let contacts see the invite outcome",
-    );
-    dict.set(
-        "invite_policy.discovery_disclosure_toggle",
-        "Let handle-based inviters see the outcome",
-    );
     dict.set(
         "invite_policy.disclosure_hint",
         "Strangers (low-trust sources) never get a receipt, so you don't reveal whether you're online or accepted the invite.",
@@ -2352,14 +2075,6 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "error.circle.delivery_binding_handed_over",
         "The Circle's delivery binding moved to a newer set of devices — please retry the request.",
     );
-    dict.set("circle.action.leave", "Leave Circle");
-    dict.set("circle.action.archive", "Archive Circle");
-    dict.set("circle.action.restore", "Restore Circle");
-    dict.set("circle.action.tombstone", "Tombstone Circle");
-    dict.set("circle.action.scope_rotate", "Rotate scope");
-    dict.set("circle.status.active", "Active");
-    dict.set("circle.status.archived", "Archived");
-    dict.set("circle.status.tombstoned", "Tombstoned");
 
     // CircleScopePicker — default scope option + help text (render site
     // localizes; `CircleScope::label()` stays a static str).
@@ -2370,13 +2085,6 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
     );
 
     // R3.3 (AKP-0011) — shareable object links.
-    dict.set("object_link.share", "Share link");
-    dict.set("object_link.share_realm", "Share this Realm");
-    dict.set("object_link.share_strand", "Share this thread");
-    dict.set("object_link.share_message", "Share this message");
-    dict.set("object_link.copy_https", "Copy link");
-    dict.set("object_link.copy_app", "Copy \"Open in app\" link");
-    dict.set("object_link.copied", "Link copied");
     dict.set("object_link.open", "Open shared link");
     dict.set("object_link.open_placeholder", "Paste a shared link");
     dict.set("object_link.opening", "Opening link…");
@@ -2537,10 +2245,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
     dict.set("setup.blocker.sign_in", "Sign in before creating a Realm.");
     dict.set(
-        "setup.blocker.session_unavailable",
-        "Your authenticated session is unavailable. Sign in again before creating a Realm.",
-    );
-    dict.set(
         "setup.blocker.secure_store",
         "Device signing storage is still starting. Try again in a moment.",
     );
@@ -2573,10 +2277,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set(
         "setup.progress.plaintext_services",
         "Unencrypted services: {count}",
-    );
-    dict.set(
-        "setup.progress.mls_ready_backup",
-        "Encryption ready; history backup {id}",
     );
     dict.set(
         "setup.progress.mls_ready_local",
@@ -2833,14 +2533,6 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
     dict.set(
         "setup.policy_hint.invite_public.body",
         "Invite-only discovery paired with public join usually means the discovery model is underspecified.",
-    );
-    dict.set(
-        "setup.policy_hint.history_leak",
-        "History leaks more than existence",
-    );
-    dict.set(
-        "setup.policy_hint.history_leak.body",
-        "If history is world-readable, the Space behaves more openly than its discovery setting suggests.",
     );
     dict.set(
         "setup.content_scheme.prejoin_requires_exporter",

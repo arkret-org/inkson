@@ -83,17 +83,13 @@ mobile-ios = []
 # the shared SDK helper.
 # QR rendering for device-verification handoff. SVG output keeps the
 # crate pure-Rust with no image / font dependencies.
-# Recovery strand (R-recovery-001): real Argon2id passphrase stretching +
-# XChaCha20-Poly1305 AEAD for the Encrypted Cloud Vault upload. Both crates
-# are pure-Rust, no_std-friendly and build cleanly under wasm32; the same
-# pin is used for the ciphertext digest's sha256 (already in `sha2`).
-# key-management.md §7.5: backup AEAD key / nonce key / commitment key are HKDF
-# subkeys of the Argon2id root, and the passphrase_kdf nonce is HMAC-SHA256 over
-# a canonical transcript. Both pulled in transitively by the crypto stack; made
-# direct here for the spec-conformant key-backup crypto.
-# encryption-and-audit.md §2.9: the v2 reaction routing tag HMACs over the
-# NFC-normalised canonical emoji bytes, so the chosen-emoji privacy property
-# holds regardless of the sender's input normalisation form.
+# Recovery strand (R-recovery-001): the Encrypted Cloud Vault KDF / AEAD is
+# owned by `arkret_crypto::backup`; inkson holds no direct argon2 dependency.
+# encryption-and-audit.md §2.9: the v1 reaction routing tag is derived by the
+# SDK (`reaction_routing_tag`), which NFC-normalises the canonical emoji bytes
+# and HMACs them internally — inkson delegates the derivation, so the
+# chosen-emoji privacy property holds regardless of the sender's input
+# normalisation form with no direct unicode-normalization / hmac dependency.
 # key-management.md §7.5.2: `recipient_method=recovery_public_key` backups pin
 # the v1 default-MUST application-layer HPKE suite
 # `ak.hpke_x25519_aead_chacha20poly1305.v1` (DHKEM(X25519,HKDF-SHA256) +
@@ -150,7 +146,6 @@ getrandom_02 = {workspace = true,features = ["js"]}
 # (`prepare_inception` takes a 0.6 `RngCore`); inkson's primary rand_core is 0.10.
 rand_core_06 = {workspace = true}
 hkdf = {workspace = true}
-hmac = {workspace = true}
 image = {workspace = true,default-features = false,features = ["gif", "jpeg", "png", "webp"]}
 pulldown-cmark = {workspace = true,default-features = false,features = ["html"]}
 qrcode = {workspace = true,default-features = false,features = ["svg"]}
@@ -159,7 +154,6 @@ serde_json = {workspace = true}
 sha2 = {workspace = true}
 thiserror = {workspace = true}
 tracing = {workspace = true}
-unicode-normalization = {workspace = true}
 url = {workspace = true}
 x25519-dalek = {workspace = true,features = ["static_secrets"]}
 zeroize = {workspace = true,features = ["derive"]}
@@ -379,7 +373,6 @@ unimplemented = "deny"
 [workspace.dependencies]
 anyhow = "1.0.102"
 base64 = "0.22"
-bip39 = "2.2.2"
 chacha20poly1305 = {version = "0.10",default-features = false}
 chime = {version = "0.3.0",path = "../chime"}
 chrono = "0.4.45"
@@ -398,7 +391,6 @@ getrandom = "0.4.2"
 getrandom_02 = {package = "getrandom",version = "0.2.17"}
 gloo-timers = "0.4"
 hkdf = "0.13"
-hmac = "0.13"
 x25519-dalek = "2.0.1"
 image = {version = "0.25.10",default-features = false}
 js-sys = "0.3"
@@ -422,7 +414,6 @@ tokio = "1.52.3"
 tracing = "0.1"
 tracing-subscriber = "0.3.23"
 tracing-wasm = "0.2.1"
-unicode-normalization = "0.1"
 url = "2.5.8"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

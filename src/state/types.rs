@@ -1039,7 +1039,6 @@ pub struct ClientLocalState {
     /// retained here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_material_evidence: Option<RecoveryMaterialEvidence>,
-    /// Client-side telemetry log buffer. Mirrors sodmin's
     /// Persisted MLS group state snapshots, keyed by `realm_id`. Each
     /// entry is the encrypted envelope produced by
     /// [`crate::mls::persistence::encrypt_state`]; the boot path

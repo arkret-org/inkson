@@ -95,7 +95,7 @@ fn prepared_identity_creation_request_secret_key(
     lease_id: &str,
 ) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"inkson.prepared-identity-creation-request-scope-v2\0");
+    digest.update(b"inkson.prepared-identity-creation-request-scope-v1\0");
     digest.update(account_subject.as_str().as_bytes());
     digest.update(b"\0");
     digest.update(principal_id.as_bytes());
@@ -115,7 +115,7 @@ fn account_handoff_grant_secret_key(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("account handoff omits account subject"))?;
     let mut digest = Sha256::new();
-    digest.update(b"inkson.account-handoff-grant-scope-v2\0");
+    digest.update(b"inkson.account-handoff-grant-scope-v1\0");
     digest.update(account_subject.as_str().as_bytes());
     digest.update(b"\0");
     digest.update(handoff.request_id.as_bytes());

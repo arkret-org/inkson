@@ -12,8 +12,10 @@
 //! cargo run --example tracing_setup
 //! ```
 //!
-//! The browser sketch is comment-only; the actual hook lives in the Dioxus
-//! web entrypoint when the `web` feature is enabled.
+//! The browser sketch is comment-only; the actual hook lives in
+//! `src/main.rs::init_tracing`, compiled for `target_arch = "wasm32"`
+//! (inkson has no `web` feature of its own — `web` is a feature of the
+//! `dioxus` dependency).
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {

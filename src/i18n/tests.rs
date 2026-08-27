@@ -110,20 +110,20 @@ fn translation_lookup_fallback() {
     dicts.insert("en".to_owned(), english_translations());
     dicts.insert("zh".to_owned(), chinese_translations());
 
-    assert_eq!(translate(UiLocale::Zh, &dicts, "login.server"), "服务器");
+    assert_eq!(translate(UiLocale::Zh, &dicts, "nav.settings"), "设置");
 
     // Fallback to English for a key the Chinese dictionary is missing.
     let partial_dicts = {
         let mut partial = HashMap::new();
         let mut zh_partial = TranslationDict::new(UiLocale::Zh);
-        zh_partial.set("login.server", "服务器");
+        zh_partial.set("nav.settings", "设置");
         partial.insert("en".to_owned(), english_translations());
         partial.insert("zh".to_owned(), zh_partial);
         partial
     };
     assert_eq!(
-        translate(UiLocale::Zh, &partial_dicts, "login.passkey"),
-        "Passkey Login"
+        translate(UiLocale::Zh, &partial_dicts, "nav.dashboard"),
+        "Home"
     );
 
     // Fallback to the key itself when it is nowhere.

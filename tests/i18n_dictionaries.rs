@@ -2,41 +2,25 @@
 //!
 //! `translate_chain` falls back `zh → en → key`, so a missing Chinese key
 //! degrades to English rather than crashing — which is exactly why gaps go
-//! unnoticed and a page ends up half-translated. These tests make the gap a
-//! build failure for the namespaces that have been migrated.
-//!
-//! Secondary locales (ar / es / ja / fr) are intentionally partial; they are
-//! not checked here.
+//! unnoticed and a page ends up half-translated. These tests make any gap a
+//! build failure: en and zh must carry exactly the same key set.
 
 use std::collections::BTreeSet;
 
 use inkson::i18n::{UiLocale, chinese_translations, english_translations, translate};
 
-/// Namespaces whose Chinese coverage must be complete. Grow this list as
-/// modules are migrated; it mirrors `tests/ui_text_gate.rs::MIGRATED_ROOTS`.
-const ENFORCED_PREFIXES: &[&str] = &["setup.", "route."];
-
-fn keys_with_prefix(dict: &inkson::i18n::TranslationDict, prefix: &str) -> BTreeSet<String> {
-    dict.strings
-        .keys()
-        .filter(|key| key.starts_with(prefix))
-        .cloned()
-        .collect()
+fn key_set(dict: &inkson::i18n::TranslationDict) -> BTreeSet<String> {
+    dict.strings.keys().cloned().collect()
 }
 
 #[test]
-fn chinese_covers_every_migrated_english_key() {
+fn chinese_covers_every_english_key() {
     let en = english_translations();
     let zh = chinese_translations();
-    let mut missing = Vec::new();
-
-    for prefix in ENFORCED_PREFIXES {
-        for key in keys_with_prefix(&en, prefix) {
-            if zh.get(&key).is_none() {
-                missing.push(key);
-            }
-        }
-    }
+    let missing: Vec<String> = key_set(&en)
+        .into_iter()
+        .filter(|key| zh.get(key).is_none())
+        .collect();
 
     assert!(
         missing.is_empty(),
@@ -47,18 +31,13 @@ fn chinese_covers_every_migrated_english_key() {
 }
 
 #[test]
-fn no_orphan_chinese_keys_in_migrated_namespaces() {
+fn no_orphan_chinese_keys() {
     let en = english_translations();
     let zh = chinese_translations();
-    let mut orphans = Vec::new();
-
-    for prefix in ENFORCED_PREFIXES {
-        for key in keys_with_prefix(&zh, prefix) {
-            if en.get(&key).is_none() {
-                orphans.push(key);
-            }
-        }
-    }
+    let orphans: Vec<String> = key_set(&zh)
+        .into_iter()
+        .filter(|key| en.get(key).is_none())
+        .collect();
 
     assert!(
         orphans.is_empty(),
@@ -69,7 +48,7 @@ fn no_orphan_chinese_keys_in_migrated_namespaces() {
 }
 
 #[test]
-fn migrated_keys_resolve_to_real_text_in_both_locales() {
+fn keys_resolve_to_real_text_in_both_locales() {
     let en = english_translations();
     let zh = chinese_translations();
     let dicts =
@@ -80,15 +59,13 @@ fn migrated_keys_resolve_to_real_text_in_both_locales() {
     let allowed_blank = ["setup.opt.space_kind.space.hint"];
     let mut unresolved = Vec::new();
 
-    for prefix in ENFORCED_PREFIXES {
-        for key in keys_with_prefix(&en, prefix) {
-            for locale in [UiLocale::En, UiLocale::Zh] {
-                let text = translate(locale, &dicts, &key);
-                if text == key {
-                    unresolved.push(format!("{key} ({})", locale.code()));
-                } else if text.is_empty() && !allowed_blank.contains(&key.as_str()) {
-                    unresolved.push(format!("{key} ({}) is empty", locale.code()));
-                }
+    for key in key_set(&en) {
+        for locale in [UiLocale::En, UiLocale::Zh] {
+            let text = translate(locale, &dicts, &key);
+            if text == key {
+                unresolved.push(format!("{key} ({})", locale.code()));
+            } else if text.is_empty() && !allowed_blank.contains(&key.as_str()) {
+                unresolved.push(format!("{key} ({}) is empty", locale.code()));
             }
         }
     }

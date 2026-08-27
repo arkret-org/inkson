@@ -134,7 +134,7 @@ npm install
 npm run e2e
 ```
 
-The Playwright runner starts `dx serve --platform web --port 4727 --open false` and exercises the web shell against mocked `/_arkret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
+The Playwright runner builds the web bundle with `dx build --platform web --profile joint-e2e --features wasm-localstorage-secrets-test` (into `target/playwright-e2e`) and serves it via `node tests/e2e/staticServer.mjs` on port 4727, exercising the web shell against mocked `/_arkret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
 The e2e suite under `tests/e2e/` is **mock-only**: it pins inkson's UI surface against the contract in `tests/e2e/mockArkretContract.ts` and never speaks to a real Arkret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `inkson` and a real `soland` process. Any test that needs a live server should be added there, not here.
 
