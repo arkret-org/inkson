@@ -1461,27 +1461,6 @@ fn add_feedback_keys_zh(dict: &mut TranslationDict) {
     dict.set("feedback.contact_deleted", "已删除联系人:{name}");
     dict.set("feedback.contact_delete_failed", "删除联系人失败:{name}");
     dict.set("feedback.direct_open_failed", "无法打开私聊会话");
-    dict.set("feedback.bulk_realms_leaving", "正在退出 {total} 个 Realm…");
-    dict.set(
-        "feedback.bulk_realms_left",
-        "已退出 {done}/{total} 个 Realm",
-    );
-    dict.set(
-        "feedback.bulk_realms_leave_failed",
-        "已退出 {done}/{total} 个 Realm,部分失败",
-    );
-    dict.set(
-        "feedback.bulk_contacts_deleting",
-        "正在删除 {total} 个联系人…",
-    );
-    dict.set(
-        "feedback.bulk_contacts_deleted",
-        "已删除 {done}/{total} 个联系人",
-    );
-    dict.set(
-        "feedback.bulk_contacts_delete_failed",
-        "已删除 {done}/{total} 个联系人,部分失败",
-    );
     dict.set("feedback.directory_search_failed", "目录搜索失败");
     dict.set("feedback.directory_resolve_failed", "目录解析失败");
     dict.set("feedback.directory_load_more_failed", "加载更多结果失败");
@@ -1765,7 +1744,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.field.realm_alias_placeholder", "engineering");
 
     // 边界。
-    dict.set("setup.boundary.hint", "三条相互独立的轴");
     dict.set("setup.axis.discoverability", "可发现性");
     dict.set(
         "setup.axis.discoverability.question",
@@ -1827,8 +1805,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
 
     // 初始成员。
-    dict.set("setup.seed.heading", "初始成员");
-    dict.set("setup.seed.hint", "可选");
     dict.set("setup.field.seed_members", "初始成员");
     dict.set(
         "setup.field.seed_members_help",
@@ -1900,7 +1876,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
 
     // 完成。
-    dict.set("setup.done.hint", "下一个上下文");
     dict.set("setup.done.created_realm", "已创建的 Realm");
     dict.set("setup.done.empty", "请先创建 Realm，再打开下一个上下文。");
 
@@ -2127,14 +2102,6 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
 /// `ak.space.create` 表单与空间生命周期操作。
 fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.new_space", "新建空间");
-    dict.set("setup.space.hero.hint", "导航容器");
-    dict.set("setup.space.heading", "在 Realm 内创建空间");
-    dict.set(
-        "setup.space.intro",
-        "空间是产品结构上的容器（项目 / 文件夹 / 看板 / 列表）。它位于某个 Realm 之内，并完全继承该 Realm 的安全设置——不需要单独的成员资格、加密或联邦决策。",
-    );
-    dict.set("setup.space.basics", "基本信息");
-    dict.set("setup.space.basics.hint", "标题 + 类型");
     dict.set("setup.space.parent.root", "（根层级——无父级）");
     dict.set("setup.space.default_realm.label", "default_realm_id");
     dict.set(
@@ -2277,6 +2244,7 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.login", "登录");
     dict.set("route.register", "创建身份");
     dict.set("route.realms_manage", "管理 Realm");
+    dict.set("route.principal_control", "身份控制");
     dict.set("route.realm", "Realm");
     dict.set("route.chat", "讨论");
     dict.set("route.direct", "私聊");
@@ -2491,19 +2459,27 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.approving_button", "正在批准…");
     dict.set("agent_runtime.approve", "批准");
     dict.set("manage.realms_title", "管理 Realm");
+    dict.set("manage.principal_control_button", "PCR");
+    dict.set("manage.principal_control_title", "Principal Control Realm（PCR）");
     dict.set(
-        "manage.realms_subtitle",
-        "批量退出多个 Realm。服务器确认后,将移除其本地数据。",
+        "manage.principal_control_subtitle",
+        "用于系统身份与设备授权，与协作 Realm 分开管理。",
     );
-    dict.set("manage.stats_shown", "显示 {count} 个");
-    dict.set("manage.stats_total", "共 {count} 个");
-    dict.set("manage.stats_selected", "已选 {count} 个");
-    dict.set("manage.select_shown", "选择当前显示");
-    dict.set("manage.clear", "清空");
-    dict.set("manage.leaving", "正在退出…");
-    dict.set("manage.leave_selected", "退出所选");
-    dict.set("manage.realms_list_title", "Realm");
-    dict.set("manage.rows", "{count} 行");
+    dict.set("manage.principal_control_purpose_label", "用途");
+    dict.set(
+        "manage.principal_control_purpose_value",
+        "身份、设备授权与恢复控制",
+    );
+    dict.set("manage.principal_control_realm_id", "Realm ID");
+    dict.set(
+        "manage.principal_control_no_business_surfaces",
+        "该控制面 Realm 不提供 Board、Space、讨论、成员等业务页面。",
+    );
+    dict.set(
+        "manage.principal_control_unavailable",
+        "已接受的 Principal Control Realm 尚未进入本地投影。",
+    );
+    dict.set("manage.back_to_realms", "返回 Realm 管理");
     dict.set(
         "manage.realms_empty_hint",
         "同步完成后,Realm 将显示在这里。",
@@ -2513,15 +2489,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.row_unencrypted", "未加密");
     dict.set("manage.row_spaces", "{count} 个空间");
     dict.set("manage.contacts_title", "管理联系人");
-    dict.set(
-        "manage.contacts_subtitle",
-        "批量删除联系人,删除成功的联系人将从列表中移除。",
-    );
     dict.set("manage.search_contacts", "搜索联系人");
-    dict.set("manage.deleting", "正在删除…");
-    dict.set("manage.delete_selected", "删除所选");
-    dict.set("manage.delete_unavailable", "暂不可用");
-    dict.set("manage.contacts_list_title", "联系人");
     dict.set(
         "manage.contacts_empty_hint",
         "加载完成后,你的联系人将显示在这里。",

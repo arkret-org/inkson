@@ -9,6 +9,7 @@ import {
   openSettings,
   writeLocalConfig,
 } from "./strandsHarness";
+import { PRINCIPAL_CONTROL_REALM } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
@@ -44,8 +45,18 @@ test("realm sidebar separates contact-based direct chats", async ({ page }) => {
   await dismissBlockingRecoveryModal(page);
   await shell.getByTestId("realm-sidebar-manage-home-button").click();
   await expect(page).toHaveURL(/\/realms\/manage$/);
-  await expect(shell.getByTestId("realms-manage-page")).toBeVisible();
-  await expect(shell.getByTestId("realms-manage-page")).toContainText("Arkret Demo Realm");
+  const realmsManagePage = shell.getByTestId("realms-manage-page");
+  await expect(realmsManagePage).toBeVisible();
+  await expect(realmsManagePage).toContainText("Arkret Demo Realm");
+  await expect(realmsManagePage.locator(".realm-manage-hero")).toHaveCount(0);
+  await expect(realmsManagePage.locator('input[type="checkbox"]')).toHaveCount(0);
+  await expect(realmsManagePage).not.toContainText(/\d+\s+rows/);
+  const firstRealmRow = realmsManagePage.getByTestId("realms-manage-row").first();
+  await expect(firstRealmRow.getByTestId("realms-manage-row-open")).toBeHidden();
+  await firstRealmRow.hover();
+  await expect(firstRealmRow.getByTestId("realms-manage-row-open")).toBeVisible();
+  await expect(firstRealmRow.getByTestId("realms-manage-row-settings")).toBeVisible();
+  await expect(firstRealmRow.getByTestId("realms-manage-row-leave")).toBeVisible();
 
   await shell.getByTestId("realm-sidebar-tab-direct").click();
 
@@ -101,8 +112,46 @@ test("realm sidebar separates contact-based direct chats", async ({ page }) => {
   await shell.getByTestId("realm-sidebar-tab-direct").click();
   await shell.getByTestId("realm-sidebar-manage-home-button").click();
   await expect(page).toHaveURL(/\/contacts\/manage$/);
-  await expect(shell.getByTestId("contacts-manage-page")).toBeVisible();
-  await expect(shell.getByTestId("contacts-manage-page")).toContainText("bob:example.com");
+  const contactsManagePage = shell.getByTestId("contacts-manage-page");
+  await expect(contactsManagePage).toBeVisible();
+  await expect(contactsManagePage).toContainText("bob:example.com");
+  await expect(contactsManagePage.locator(".realm-manage-hero")).toHaveCount(0);
+  await expect(contactsManagePage.locator('input[type="checkbox"]')).toHaveCount(0);
+});
+
+test("PCR stays out of product navigation and opens only its control page", async ({ page }) => {
+  const shell = latestTestId(page, "client-shell");
+  await dismissBlockingRecoveryModal(page);
+
+  await expect(shell.getByTestId("realm-tree-list")).not.toContainText(
+    PRINCIPAL_CONTROL_REALM,
+  );
+  await shell.getByTestId("realm-sidebar-manage-home-button").click();
+  await expect(page).toHaveURL(/\/realms\/manage$/);
+  await expect(shell.getByTestId("realms-manage-list")).not.toContainText(
+    PRINCIPAL_CONTROL_REALM,
+  );
+
+  await shell.getByTestId("realms-manage-principal-control-button").click();
+  await expect(page).toHaveURL(/\/realms\/principal-control$/);
+  const controlPage = shell.getByTestId("principal-control-realm-page");
+  await expect(controlPage).toBeVisible();
+  await expect(controlPage.getByTestId("principal-control-realm-id")).toHaveText(
+    PRINCIPAL_CONTROL_REALM,
+  );
+  await expect(shell.getByTestId("kanban-panel")).toHaveCount(0);
+
+  await page.goto(`/realms/${PRINCIPAL_CONTROL_REALM}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(shell.getByTestId("principal-control-realm-page")).toBeVisible();
+  await expect(shell.getByTestId("kanban-panel")).toHaveCount(0);
+
+  await page.goto(`/kanban/${PRINCIPAL_CONTROL_REALM}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(shell.getByTestId("principal-control-realm-page")).toBeVisible();
+  await expect(shell.getByTestId("kanban-panel")).toHaveCount(0);
 });
 
 test("owned agent opens an independent two-principal Direct Conversation Realm", async ({ page }) => {

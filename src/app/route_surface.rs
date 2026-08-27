@@ -57,14 +57,13 @@ pub(super) struct RouteSurfaceState {
     pub(super) active_projection_realm_id: String,
     pub(super) realm_live_epoch: Signal<u64>,
     pub(super) has_session: bool,
+    pub(super) personal_control_realm_id: Option<String>,
+    pub(super) routed_control_realm_id: Option<String>,
     pub(super) manage_realm_rows: Vec<RealmManageRow>,
     pub(super) realm_manage_query: Signal<String>,
-    pub(super) manage_realm_selection: Signal<BTreeSet<String>>,
-    pub(super) manage_bulk_busy: Signal<bool>,
     pub(super) direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     pub(super) direct_contacts_loaded: Signal<bool>,
     pub(super) contact_manage_query: Signal<String>,
-    pub(super) manage_contact_selection: Signal<BTreeSet<String>>,
     pub(super) secure_store_bootstrap_ready: Signal<bool>,
     pub(super) needs_device_authorization: Signal<bool>,
     pub(super) device_authorization_check_complete: Signal<bool>,
@@ -104,14 +103,13 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         active_projection_realm_id,
         realm_live_epoch,
         has_session,
+        personal_control_realm_id,
+        routed_control_realm_id,
         manage_realm_rows,
         realm_manage_query,
-        manage_realm_selection,
-        manage_bulk_busy,
         direct_contact_rows,
         direct_contacts_loaded,
         contact_manage_query,
-        manage_contact_selection,
         secure_store_bootstrap_ready,
         needs_device_authorization,
         device_authorization_check_complete,
@@ -252,6 +250,11 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
     rsx! {
                 div { class: "realm-body",
                 match content_route {
+                    _ if routed_control_realm_id.is_some() => rsx! {
+                        PrincipalControlRealmPage {
+                            realm_id: routed_control_realm_id.clone(),
+                        }
+                    },
                     Route::Login | Route::AuthCallback | Route::Register => {
                         unreachable!("auth routes are owned exclusively by SessionSurface")
                     },
@@ -376,6 +379,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     Route::RealmsManage => rsx! {
                         RealmsManagePage {
                             principal_id: principal_full_id.clone(),
+                            principal_control_realm_id: personal_control_realm_id.clone(),
                             token,
                             has_session,
                             realm_rows: manage_realm_rows.clone(),
@@ -383,8 +387,11 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             selected_realm_id,
                             sync_cursor,
                             query: realm_manage_query,
-                            selection: manage_realm_selection,
-                            busy: manage_bulk_busy,
+                        }
+                    },
+                    Route::PrincipalControl => rsx! {
+                        PrincipalControlRealmPage {
+                            realm_id: personal_control_realm_id.clone(),
                         }
                     },
                     Route::ContactsManage => rsx! {
@@ -394,8 +401,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             contact_rows: direct_contact_rows,
                             contacts_loaded: direct_contacts_loaded,
                             query: contact_manage_query,
-                            selection: manage_contact_selection,
-                            busy: manage_bulk_busy,
                         }
                     },
                     Route::Contacts => rsx! {

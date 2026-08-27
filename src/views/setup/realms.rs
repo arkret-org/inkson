@@ -14,6 +14,7 @@ use super::helpers::{
 };
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api_error::is_auth_expired_error;
+use crate::components::HelpTip;
 use crate::config::LocalConfigStore;
 use crate::i18n::{tr, tr_args};
 use crate::routes::Route;
@@ -227,6 +228,87 @@ pub(super) fn RealmsSection(
     let digest_algorithm_value = realm_digest_algorithm();
     let federation_policy_open_forbidden = security_class_value == "high_assurance";
 
+    let discoverability_help = [
+        tr("setup.axis.discoverability.question"),
+        option_hint(
+            &DISCOVERABILITY_OPTIONS,
+            &discoverability_value,
+            "setup.axis.discoverability.unset",
+        ),
+    ]
+    .join(" ");
+    let join_rule_help = [
+        tr("setup.axis.join_rule.question"),
+        option_hint(
+            &JOIN_RULE_OPTIONS,
+            &join_rule_value,
+            "setup.axis.join_rule.unset",
+        ),
+    ]
+    .join(" ");
+    let history_access_help = [
+        tr("setup.axis.history_access.question"),
+        option_hint(
+            &HISTORY_ACCESS_OPTIONS,
+            &history_access_value,
+            "setup.axis.history_access.unset",
+        ),
+    ]
+    .join(" ");
+    let encryption_help = [
+        tr("setup.axis.encryption.question"),
+        option_hint(
+            &ENCRYPTION_PROFILE_OPTIONS,
+            &encryption_profile_value,
+            "setup.axis.encryption.unset",
+        ),
+        tr("setup.axis.encryption.locked"),
+    ]
+    .join(" ");
+    let mut content_scheme_help_parts = vec![
+        tr("setup.axis.content_scheme.question"),
+        option_hint(
+            &CONTENT_SCHEME_OPTIONS,
+            &content_scheme_value,
+            "setup.axis.content_scheme.unset",
+        ),
+        tr("setup.axis.content_scheme.capability_only"),
+    ];
+    if history_requires_exporter_aead {
+        content_scheme_help_parts.push(tr("setup.axis.content_scheme.prejoin_forced"));
+    }
+    let content_scheme_help = content_scheme_help_parts.join(" ");
+    let security_class_help = [
+        tr("setup.axis.security_class.question"),
+        option_hint(
+            &SECURITY_CLASS_OPTIONS,
+            &security_class_value,
+            "setup.axis.security_class.unset",
+        ),
+    ]
+    .join(" ");
+    let mut federation_policy_help_parts = vec![
+        tr("setup.axis.federation_policy.question"),
+        option_hint(
+            &FEDERATION_POLICY_OPTIONS,
+            &federation_policy_value,
+            "setup.axis.federation_policy.unset",
+        ),
+    ];
+    if federation_policy_open_forbidden {
+        federation_policy_help_parts.push(tr("setup.axis.federation_policy.high_assurance"));
+    }
+    let federation_policy_help = federation_policy_help_parts.join(" ");
+    let hash_profile_help = [
+        tr("setup.axis.hash_profile.question"),
+        option_hint(
+            &HASH_PROFILE_OPTIONS,
+            &digest_algorithm_value,
+            "setup.axis.hash_profile.unset",
+        ),
+    ]
+    .join(" ");
+
     let seed_members_value = seed_members();
     let realm_state_value = realm_state();
     let realm_create_busy_value = realm_create_busy();
@@ -360,9 +442,6 @@ pub(super) fn RealmsSection(
 
                 if active_create_step == NewRealmStep::Basics {
                     div { class: "setup-step-panel",
-                        div { class: "event-head",
-                            span { {tr("setup.step.basics.label")} }
-                        }
                         div { class: "workflow-form setup-form-grid",
                             div { class: "setup-field",
                                 Label {
@@ -419,17 +498,16 @@ pub(super) fn RealmsSection(
 
                 if active_create_step == NewRealmStep::Boundary {
                     div { class: "setup-step-panel",
-                        div { class: "event-head",
-                            span { {tr("setup.step.boundary.label")} }
-                            span { {tr("setup.boundary.hint")} }
-                        }
                         div { class: "setup-axis-grid",
-                            div { class: "metric directory-axis-card",
-                                strong { {tr("setup.axis.discoverability")} }
+                            div { class: "metric directory-axis-card setup-axis-card",
+                                div { class: "setup-axis-card-heading",
+                                    strong { {tr("setup.axis.discoverability")} }
+                                    HelpTip { text: discoverability_help }
+                                }
                                 div { class: "workflow-form setup-field",
-                                    label { {tr("setup.axis.discoverability.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-discoverability-input",
+                                        "aria-label": tr("setup.axis.discoverability"),
                                         value: Some(realm_discoverability_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
@@ -445,17 +523,17 @@ pub(super) fn RealmsSection(
                                             }
                                         }
                                     }
-                                    div { class: "muted",
-                                        {option_hint(&DISCOVERABILITY_OPTIONS, &discoverability_value, "setup.axis.discoverability.unset")}
-                                    }
                                 }
                             }
-                            div { class: "metric directory-axis-card",
-                                strong { {tr("setup.axis.join_rule")} }
+                            div { class: "metric directory-axis-card setup-axis-card",
+                                div { class: "setup-axis-card-heading",
+                                    strong { {tr("setup.axis.join_rule")} }
+                                    HelpTip { text: join_rule_help }
+                                }
                                 div { class: "workflow-form setup-field",
-                                    label { {tr("setup.axis.join_rule.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-policy-join-rule-input",
+                                        "aria-label": tr("setup.axis.join_rule"),
                                         value: Some(realm_policy_join_rule_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
@@ -471,17 +549,17 @@ pub(super) fn RealmsSection(
                                             }
                                         }
                                     }
-                                    div { class: "muted",
-                                        {option_hint(&JOIN_RULE_OPTIONS, &join_rule_value, "setup.axis.join_rule.unset")}
-                                    }
                                 }
                             }
-                            div { class: "metric directory-axis-card",
-                                strong { {tr("setup.axis.history_access")} }
+                            div { class: "metric directory-axis-card setup-axis-card",
+                                div { class: "setup-axis-card-heading",
+                                    strong { {tr("setup.axis.history_access")} }
+                                    HelpTip { text: history_access_help }
+                                }
                                 div { class: "workflow-form setup-field",
-                                    label { {tr("setup.axis.history_access.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-policy-history-access-input",
+                                        "aria-label": tr("setup.axis.history_access"),
                                         value: Some(realm_policy_history_access_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
@@ -506,19 +584,19 @@ pub(super) fn RealmsSection(
                                             }
                                         }
                                     }
-                                    div { class: "muted",
-                                        {option_hint(&HISTORY_ACCESS_OPTIONS, &history_access_value, "setup.axis.history_access.unset")}
-                                    }
                                 }
                             }
                             // These create-locked Realm fields are shown here so the user
                             // makes the permanent choice intentionally.
-                            div { class: "metric directory-axis-card",
-                                strong { {tr("setup.axis.encryption")} }
+                            div { class: "metric directory-axis-card setup-axis-card",
+                                div { class: "setup-axis-card-heading",
+                                    strong { {tr("setup.axis.encryption")} }
+                                    HelpTip { text: encryption_help }
+                                }
                                 div { class: "workflow-form setup-field",
-                                    label { {tr("setup.axis.encryption.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-encryption-profile-input",
+                                        "aria-label": tr("setup.axis.encryption"),
                                         value: Some(realm_encryption_profile_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
@@ -545,12 +623,6 @@ pub(super) fn RealmsSection(
                                             }
                                         }
                                     }
-                                    div { class: "muted",
-                                        {option_hint(&ENCRYPTION_PROFILE_OPTIONS, &encryption_profile_value, "setup.axis.encryption.unset")}
-                                    }
-                                    div { class: "muted",
-                                        {tr("setup.axis.encryption.locked")}
-                                    }
                                 }
                             }
                             // encryption-and-audit.md §2.10 — `content_scheme`
@@ -558,12 +630,15 @@ pub(super) fn RealmsSection(
                             // orthogonal to history access (the runtime
                             // delivery toggle). Default exporter-AEAD.
                             if encryption_is_e2ee {
-                                div { class: "metric directory-axis-card",
-                                    strong { {tr("setup.axis.content_scheme")} }
+                                div { class: "metric directory-axis-card setup-axis-card",
+                                    div { class: "setup-axis-card-heading",
+                                        strong { {tr("setup.axis.content_scheme")} }
+                                        HelpTip { text: content_scheme_help }
+                                    }
                                     div { class: "workflow-form setup-field",
-                                        label { {tr("setup.axis.content_scheme.question")} }
                                         Select::<String> {
                                             "data-testid": "realm-content-scheme-input",
+                                            "aria-label": tr("setup.axis.content_scheme"),
                                             value: Some(realm_content_scheme_selected.into()),
                                             on_value_change: move |v: Option<String>| {
                                                 if let Some(v) = v {
@@ -589,31 +664,23 @@ pub(super) fn RealmsSection(
                                                 }
                                             }
                                         }
-                                        div { class: "muted",
-                                            {option_hint(&CONTENT_SCHEME_OPTIONS, &content_scheme_value, "setup.axis.content_scheme.unset")}
-                                        }
-                                        if history_requires_exporter_aead {
-                                            div { class: "muted",
-                                                {tr("setup.axis.content_scheme.prejoin_forced")}
-                                            }
-                                        }
                                         if let Some(hint) = content_scheme_warning {
                                             div { class: "inline-warn",
                                                 span { class: "body", "{hint}" }
                                             }
                                         }
-                                        div { class: "muted",
-                                            {tr("setup.axis.content_scheme.capability_only")}
-                                        }
                                     }
                                 }
                             }
-                            div { class: "metric directory-axis-card",
-                                strong { {tr("setup.axis.security_class")} }
+                            div { class: "metric directory-axis-card setup-axis-card",
+                                div { class: "setup-axis-card-heading",
+                                    strong { {tr("setup.axis.security_class")} }
+                                    HelpTip { text: security_class_help }
+                                }
                                 div { class: "workflow-form setup-field",
-                                    label { {tr("setup.axis.security_class.question")} }
                                     Select::<String> {
                                         "data-testid": "realm-security-class-input",
+                                        "aria-label": tr("setup.axis.security_class"),
                                         value: Some(realm_security_class_selected.into()),
                                         on_value_change: move |v: Option<String>| {
                                             if let Some(v) = v {
@@ -628,9 +695,6 @@ pub(super) fn RealmsSection(
                                                 {tr(label)}
                                             }
                                         }
-                                    }
-                                    div { class: "muted",
-                                        {option_hint(&SECURITY_CLASS_OPTIONS, &security_class_value, "setup.axis.security_class.unset")}
                                     }
                                 }
                             }
@@ -650,12 +714,15 @@ pub(super) fn RealmsSection(
                                 {tr("setup.boundary.advanced_summary")}
                             }
                             div { class: "setup-axis-grid setup-advanced-grid",
-                                div { class: "metric directory-axis-card",
-                                    strong { {tr("setup.axis.federation_policy")} }
+                                div { class: "metric directory-axis-card setup-axis-card",
+                                    div { class: "setup-axis-card-heading",
+                                        strong { {tr("setup.axis.federation_policy")} }
+                                        HelpTip { text: federation_policy_help }
+                                    }
                                     div { class: "workflow-form setup-field",
-                                        label { {tr("setup.axis.federation_policy.question")} }
                                         Select::<String> {
                                             "data-testid": "realm-federation-policy-input",
+                                            "aria-label": tr("setup.axis.federation_policy"),
                                             value: Some(realm_federation_policy_selected.into()),
                                             on_value_change: move |v: Option<String>| {
                                                 if let Some(v) = v {
@@ -672,22 +739,17 @@ pub(super) fn RealmsSection(
                                                 }
                                             }
                                         }
-                                        div { class: "muted",
-                                            {option_hint(&FEDERATION_POLICY_OPTIONS, &federation_policy_value, "setup.axis.federation_policy.unset")}
-                                        }
-                                        if federation_policy_open_forbidden {
-                                            div { class: "muted",
-                                                {tr("setup.axis.federation_policy.high_assurance")}
-                                            }
-                                        }
                                     }
                                 }
-                                div { class: "metric directory-axis-card",
-                                    strong { {tr("setup.axis.hash_profile")} }
+                                div { class: "metric directory-axis-card setup-axis-card",
+                                    div { class: "setup-axis-card-heading",
+                                        strong { {tr("setup.axis.hash_profile")} }
+                                        HelpTip { text: hash_profile_help }
+                                    }
                                     div { class: "workflow-form setup-field",
-                                        label { {tr("setup.axis.hash_profile.question")} }
                                         Select::<String> {
                                             "data-testid": "realm-hash-profile-input",
+                                            "aria-label": tr("setup.axis.hash_profile"),
                                             value: Some(realm_digest_algorithm_selected.into()),
                                             on_value_change: move |v: Option<String>| {
                                                 if let Some(v) = v {
@@ -702,9 +764,6 @@ pub(super) fn RealmsSection(
                                                     {tr(label)}
                                                 }
                                             }
-                                        }
-                                        div { class: "muted",
-                                            {option_hint(&HASH_PROFILE_OPTIONS, &digest_algorithm_value, "setup.axis.hash_profile.unset")}
                                         }
                                     }
                                 }
@@ -741,10 +800,6 @@ pub(super) fn RealmsSection(
 
                 if active_create_step == NewRealmStep::Seed {
                     div { class: "setup-step-panel",
-                        div { class: "event-head",
-                            span { {tr("setup.seed.heading")} }
-                            span { {tr("setup.seed.hint")} }
-                        }
                         div { class: "workflow-form setup-form-grid",
                             div { class: "setup-field setup-field-span-2",
                                 Label { html_for: "seed-members-input-input", {tr("setup.field.seed_members")} }
@@ -1306,10 +1361,6 @@ pub(super) fn RealmsSection(
 
                 if active_create_step == NewRealmStep::Done {
                     div { class: "setup-step-panel", "data-testid": "realm-setup-done",
-                        div { class: "event-head",
-                            span { {tr("setup.step.done.label")} }
-                            span { {tr("setup.done.hint")} }
-                        }
                         if has_created_realm {
                             div { class: "setup-summary-list",
                                 div { class: "setup-summary-row",

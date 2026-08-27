@@ -9,7 +9,7 @@
 
 | Tool | Version |
 | --- | --- |
-| Rust | `1.92` (matches `Cargo.toml::rust-version`) |
+| Rust | `1.98` (matches `Cargo.toml::rust-version`) |
 | `cargo` | bundled with the rustup toolchain |
 | `wasm32-unknown-unknown` target | `rustup target add wasm32-unknown-unknown` |
 | `dx` (Dioxus CLI) | `cargo install dioxus-cli@0.7` |

@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use arkret_sdk::contact_operations::ContactScope;
 use dioxus::prelude::*;
-use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::*;
 use dioxus_router::{Link, Navigator, Outlet};
 use serde_json::Value;
@@ -29,7 +28,6 @@ use crate::state::projection::ProjectionEvent;
 use crate::state::{ClientLocalState, LocalStateStore, PersistedSessionGrant};
 use crate::transport::TransportClient;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
-use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::views::ConnectionState;
 use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
@@ -273,10 +271,14 @@ fn AppBootstrap() -> Element {
         crate::app::principal_id_text(&initial_principal_id),
         initial_secure_store_bootstrap_ready,
     );
+    let initial_control_realm_ids = principal_control_realm_ids(&initial_local_state);
     let initial_realm_tree_nodes = realm_tree_nodes_from_sync_realms_with_roles(
         &initial_local_state.realm_tree_projections,
         &initial_local_state.realm_collaboration_roles,
-    );
+    )
+    .into_iter()
+    .filter(|node| !initial_control_realm_ids.contains(&node.id))
+    .collect::<Vec<_>>();
     let initial_realm_tree_owner_did = initial_state_store
         .active_principal_id()
         .unwrap_or_default();
@@ -376,7 +378,16 @@ fn AppBootstrap() -> Element {
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let mut view = use_signal(|| route.to_view());
-    let current_route_uses_realm_context = route_uses_realm_context(&route);
+    let navigation_state_snapshot = state_store.read().load();
+    let principal_control_realm_ids = principal_control_realm_ids(&navigation_state_snapshot);
+    let personal_control_realm_id = personal_control_realm_id(&navigation_state_snapshot);
+    let routed_realm_id = route.realm_id().map(str::to_owned);
+    let routed_control_realm_id = routed_realm_id
+        .as_ref()
+        .filter(|realm_id| principal_control_realm_ids.contains(realm_id.as_str()))
+        .cloned();
+    let current_route_uses_realm_context =
+        route_uses_realm_context(&route) && routed_control_realm_id.is_none();
     let mut realm_events_route_enabled = use_signal(move || current_route_uses_realm_context);
     if *realm_events_route_enabled.peek() != current_route_uses_realm_context {
         realm_events_route_enabled.set(current_route_uses_realm_context);
@@ -404,6 +415,18 @@ fn AppBootstrap() -> Element {
     let mut selected_realm_id = use_signal(move || initial_selected_realm_id);
     let mut new_space_context_node = use_signal(String::new);
     let mut realm_tree_nodes = use_signal(move || initial_realm_tree_nodes_for_signal);
+    if realm_tree_nodes
+        .peek()
+        .iter()
+        .any(|node| principal_control_realm_ids.contains(&node.id))
+    {
+        realm_tree_nodes.set(
+            realm_tree_nodes()
+                .into_iter()
+                .filter(|node| !principal_control_realm_ids.contains(&node.id))
+                .collect(),
+        );
+    }
     let mut realm_tree_owner_did = use_signal(move || initial_realm_tree_owner_did_for_signal);
     let mut projection_events = use_signal(Vec::<ProjectionEvent>::new);
     let mut device_queue = use_signal(|| 0usize);
@@ -510,9 +533,6 @@ fn AppBootstrap() -> Element {
     let mut direct_sidebar_query = use_signal(String::new);
     let realm_manage_query = use_signal(String::new);
     let contact_manage_query = use_signal(String::new);
-    let manage_realm_selection = use_signal(BTreeSet::<String>::new);
-    let manage_contact_selection = use_signal(BTreeSet::<String>::new);
-    let manage_bulk_busy = use_signal(|| false);
     let direct_contact_rows = use_signal(Vec::<crate::models::ContactListRow>::new);
     let direct_contacts_loaded = use_signal(|| false);
     let own_agent_rows = use_signal(Vec::<arkret_sdk::AgentProjection>::new);
@@ -664,17 +684,20 @@ fn AppBootstrap() -> Element {
     // it on the first user-driven add-account / switch action.
     let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
 
-    let routed_realm_id = route.realm_id().map(str::to_owned);
     let remembered_realm_id = selected_realm_id();
-    let effective_realm_id = routed_realm_id.clone().or_else(|| {
-        if remembered_realm_id.trim().is_empty() {
-            None
-        } else {
-            Some(remembered_realm_id.clone())
-        }
-    });
+    let effective_realm_id = routed_realm_id
+        .clone()
+        .filter(|realm_id| !principal_control_realm_ids.contains(realm_id))
+        .or_else(|| {
+            if remembered_realm_id.trim().is_empty() {
+                None
+            } else {
+                Some(remembered_realm_id.clone())
+            }
+        });
     let active_realm_id = effective_realm_id.clone().unwrap_or_default();
     if let Some(route_realm_id) = routed_realm_id.as_deref()
+        && !principal_control_realm_ids.contains(route_realm_id)
         && remembered_realm_id != route_realm_id
     {
         selected_realm_id.set(route_realm_id.to_owned());
@@ -790,18 +813,23 @@ fn AppBootstrap() -> Element {
         .as_ref()
         .map(service_supports_event_envelope_write_plane)
         .unwrap_or(false);
-    let route_uses_realm_context = route_uses_realm_context(&route);
+    let route_uses_realm_context =
+        route_uses_realm_context(&route) && routed_control_realm_id.is_none();
     let context_realm_id = if route_uses_realm_context {
         effective_realm_id.clone()
     } else {
         None
     };
-    let resolved_realm_surface = resolve_realm_surface(
-        &route,
-        &state_store.read(),
-        crate::app::principal_id_text(&principal_id()),
-        context_realm_id.as_deref(),
-    );
+    let resolved_realm_surface = if routed_control_realm_id.is_some() {
+        None
+    } else {
+        resolve_realm_surface(
+            &route,
+            &state_store.read(),
+            crate::app::principal_id_text(&principal_id()),
+            context_realm_id.as_deref(),
+        )
+    };
     let realm_members_active = matches!(&route, Route::RealmMembers { .. });
     if let (Some(realm_id), Some(surface)) = (routed_realm_id.as_deref(), resolved_realm_surface)
         && matches!(
@@ -834,13 +862,16 @@ fn AppBootstrap() -> Element {
     } else {
         Vec::new()
     };
-    // Direct-conversation Realms are hidden here. PCR filtering must consume
-    // an accepted create/binding projection; the current RealmTreeNode does
-    // not carry that evidence, so it must not guess from the account DID.
+    // Control-plane and Direct Conversation Realms are never product
+    // navigation nodes. PCR ids come only from accepted create projections or
+    // the verified account-scoped recovery evidence; no DID-derived guess is
+    // permitted because Realm ids are Event-derived.
     let hidden_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
         .iter()
         .filter(|node| {
-            node.kind == RealmTreeNodeKind::Realm && realm_tree_node_is_direct_conversation(node)
+            node.kind == RealmTreeNodeKind::Realm
+                && (realm_tree_node_is_direct_conversation(node)
+                    || principal_control_realm_ids.contains(&node.id))
         })
         .flat_map(|node| descendant_node_ids(&loaded_realm_tree_nodes, &node.id))
         .collect();
@@ -1028,14 +1059,18 @@ fn AppBootstrap() -> Element {
     } else {
         "Switch to night theme"
     };
-    let route_title = resolved_realm_surface
-        .map(|surface| surface.title().to_owned())
-        .unwrap_or_else(|| match &route {
-            Route::Dashboard => crate::i18n::tr("nav.dashboard"),
-            Route::FileTransfer => crate::i18n::tr("nav.files"),
-            Route::Settings | Route::SettingsSection { .. } => crate::i18n::tr("nav.settings"),
-            _ => crate::i18n::tr(route_label_key(&route)),
-        });
+    let route_title = if routed_control_realm_id.is_some() {
+        crate::i18n::tr("route.principal_control")
+    } else {
+        resolved_realm_surface
+            .map(|surface| surface.title().to_owned())
+            .unwrap_or_else(|| match &route {
+                Route::Dashboard => crate::i18n::tr("nav.dashboard"),
+                Route::FileTransfer => crate::i18n::tr("nav.files"),
+                Route::Settings | Route::SettingsSection { .. } => crate::i18n::tr("nav.settings"),
+                _ => crate::i18n::tr(route_label_key(&route)),
+            })
+    };
     let topbar_context_title = selected_preview
         .as_ref()
         .map(|space| space.title.clone())
@@ -2038,7 +2073,7 @@ fn AppBootstrap() -> Element {
                                 }
                                 if realm_sidebar_tab() == "collaboration" {
                                     Link {
-                                        class: if matches!(content_route, Route::RealmsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
+                                        class: if matches!(content_route, Route::RealmsManage | Route::PrincipalControl) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
                                         "data-testid": "realm-sidebar-manage-home-button",
                                         title: crate::i18n::tr("manage.realms_title"),
                                         "aria-label": crate::i18n::tr("manage.realms_title"),
@@ -3979,14 +4014,13 @@ fn AppBootstrap() -> Element {
                             active_projection_realm_id: active_projection_realm_id.clone(),
                             realm_live_epoch,
                             has_session,
+                            personal_control_realm_id: personal_control_realm_id.clone(),
+                            routed_control_realm_id: routed_control_realm_id.clone(),
                             manage_realm_rows: manage_realm_rows.clone(),
                             realm_manage_query,
-                            manage_realm_selection,
-                            manage_bulk_busy,
                             direct_contact_rows,
                             direct_contacts_loaded,
                             contact_manage_query,
-                            manage_contact_selection,
                             secure_store_bootstrap_ready,
                             needs_device_authorization,
                             device_authorization_check_complete,

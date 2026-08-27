@@ -23,6 +23,9 @@ pub enum Route {
     #[route("/realms/manage", RoutePage)]
     RealmsManage,
 
+    #[route("/realms/principal-control", RoutePage)]
+    PrincipalControl,
+
     #[route("/realms/:realm_id", RealmPage)]
     Realm { realm_id: String },
 
@@ -288,7 +291,7 @@ impl Route {
         match self {
             Route::Dashboard => AppView::Dashboard,
             Route::Login | Route::Register | Route::AuthCallback => AppView::Login,
-            Route::RealmsManage => AppView::RealmsManage,
+            Route::RealmsManage | Route::PrincipalControl => AppView::RealmsManage,
             // `/realms/:id` is an entry point, not a surface: it resolves the
             // user's RealmSurface preference and renders the board
             // (design/route-view-ia.md §3.1, plan A). It shares the Kanban view.
@@ -450,6 +453,7 @@ mod tests {
             Route::Audit,
             Route::Developer,
             Route::RealmsManage,
+            Route::PrincipalControl,
             Route::Call {
                 call_id: String::new(),
                 peer: String::new(),

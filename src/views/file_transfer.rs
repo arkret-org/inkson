@@ -60,10 +60,7 @@ pub fn FileTransferPanel(
     rsx! {
         section { class: "file-transfer-shell", "data-testid": "file-transfer-panel",
             div { class: "file-transfer-header",
-                div {
-                    h1 { "Files" }
-                    div { class: "muted", "{item_count} items / {format_size(total_size)}" }
-                }
+                div { class: "muted", "{item_count} items / {format_size(total_size)}" }
                 div { class: "actions",
                     label {
                         class: if uploading() { "btn primary disabled" } else { "btn primary" },

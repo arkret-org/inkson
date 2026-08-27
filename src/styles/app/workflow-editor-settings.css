@@ -198,12 +198,20 @@
   background: color-mix(in srgb, var(--accent-soft) 26%, transparent);
   padding-left: 10px;
 }
-.settings-content-hero {
-  padding: 16px 18px;
-  background:
-    radial-gradient(circle at 100% 0, rgba(165, 107, 19, 0.12), transparent 26%),
-    radial-gradient(circle at 0 0, rgba(43, 107, 79, 0.14), transparent 34%),
-    var(--surface, var(--ak-surface));
+.event.settings-content-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 2px 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.settings-content-hero .settings-content-title {
+  font-size: 18px;
+  line-height: 1.2;
 }
 .settings-card-grid {
   display: grid;
@@ -690,9 +698,6 @@
   margin-top: 4px;
   border-top: 1px solid var(--ak-line);
 }
-.new-space-hero {
-  padding: 18px;
-}
 .setup-column {
   display: grid;
   gap: 12px;
@@ -775,6 +780,20 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+.setup-axis-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 0;
+}
+.setup-axis-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.setup-axis-card-heading .help-tip {
+  flex: 0 0 auto;
 }
 .setup-summary-list {
   display: grid;

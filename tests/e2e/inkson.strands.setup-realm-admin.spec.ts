@@ -144,7 +144,28 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await page.getByTestId("realm-title-input").fill("Setup Strand Space");
   await page.getByTestId("realm-summary-input").fill("Created from inkson realm setup");
   await page.getByTestId("new-realm-next-button").click();
-  await expect(page.getByTestId("realm-lifecycle-strand")).toContainText("three independent axes");
+  const boundaryPanel = page.getByTestId("realm-lifecycle-strand");
+  await expect(page.getByTestId("realm-discoverability-input")).toBeVisible();
+  await expect(
+    boundaryPanel.locator(".setup-step-panel > .event-head"),
+  ).toHaveCount(0);
+  const primaryAxisCards = boundaryPanel.locator(
+    ".setup-step-panel > .setup-axis-grid > .setup-axis-card",
+  );
+  await expect(primaryAxisCards).toHaveCount(6);
+  await expect(primaryAxisCards.locator(".help-tip")).toHaveCount(6);
+  await expect(primaryAxisCards.locator(".muted")).toHaveCount(0);
+  await expect(
+    boundaryPanel.getByText("Who can discover that this Realm exists?"),
+  ).toHaveCount(0);
+  const discoverabilityHelp = boundaryPanel
+    .locator(".setup-axis-card")
+    .filter({ hasText: "Discoverability" })
+    .locator(".help-tip");
+  await expect(discoverabilityHelp).toHaveAttribute(
+    "title",
+    /Who can discover that this Realm exists\?.*Visible in Search/,
+  );
   await page.getByTestId("new-realm-next-button").click();
   await page.getByTestId("seed-members-input").fill("did:web:bob.example");
   await expect(setupPanel.getByRole("button", { name: "Create Realm" })).toBeVisible();

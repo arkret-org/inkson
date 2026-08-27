@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
+use crate::components::HelpTip;
 use crate::routes::Route;
 use crate::transport::auth::with_authed_api;
 
@@ -102,11 +103,7 @@ pub fn CirclesPanel(
     rsx! {
         main { class: "circle-realm", "data-testid": "circles-panel",
             header { class: "circle-realm-header",
-                div {
-                    p { class: "eyebrow", "Realm access scopes" }
-                    h1 { "Circles" }
-                    p { class: "muted", "Circles restrict membership, history, delivery and encryption inside this Realm." }
-                }
+                HelpTip { text: "Circles restrict membership, history, delivery and encryption inside this Realm." }
                 div { class: "actions",
                     button {
                         class: "secondary",

@@ -235,222 +235,258 @@ fn CalendarScheduleEditForm(
             value => value.to_owned(),
         })
     });
+    let recurrence_enabled = use_memo(move || !calendar().recurrence_frequency.trim().is_empty());
+    let custom_recurrence_configured = use_memo(move || {
+        let draft = calendar();
+        !draft.recurrence_interval.trim().is_empty()
+            || !draft.recurrence_by_day.trim().is_empty()
+            || !draft.recurrence_by_month.trim().is_empty()
+            || !draft.recurrence_by_month_day.trim().is_empty()
+            || !draft.recurrence_by_set_position.trim().is_empty()
+            || !draft.recurrence_first_day_of_week.trim().is_empty()
+            || !draft.recurrence_count.trim().is_empty()
+            || !draft.recurrence_until.trim().is_empty()
+    });
     rsx! {
         div { class: "workflow-form card-detail-edit-form calendar-schedule-edit-form", "data-testid": "card-detail-calendar-edit-form",
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-start-input", "Start" }
-                Input {
-                    id: "card-detail-calendar-start-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-start-input",
-                    value: "{calendar().start}",
-                    placeholder: "2026-06-20T09:00:00.000Z",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.start = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-end-input", "End" }
-                Input {
-                    id: "card-detail-calendar-end-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-end-input",
-                    value: "{calendar().end}",
-                    placeholder: "2026-06-20T10:00:00.000Z",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.end = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-timezone-input", "Timezone" }
-                Input {
-                    id: "card-detail-calendar-timezone-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-timezone-input",
-                    value: "{calendar().timezone}",
-                    placeholder: "Asia/Shanghai",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.timezone = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-tzdb-input", "TZDB version" }
-                Input {
-                    id: "card-detail-calendar-tzdb-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-tzdb-input",
-                    value: "{calendar().tzdb_version}",
-                    placeholder: "{DEFAULT_CALENDAR_TZDB_VERSION}",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.tzdb_version = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-status-select", "Calendar status" }
-                Select::<String> {
-                    "data-testid": "card-detail-calendar-status-select",
-                    value: Some(selected_status.into()),
-                    on_value_change: move |value: Option<String>| {
-                        if let Some(value) = value {
-                            update_calendar_draft(calendar, |draft| draft.status = value);
+            section { class: "calendar-schedule-section calendar-schedule-primary",
+                div { class: "calendar-schedule-field-grid",
+                    div { class: "field",
+                        Label { html_for: "card-detail-calendar-start-input", "Start" }
+                        Input {
+                            id: "card-detail-calendar-start-input",
+                            class: "input",
+                            "data-testid": "card-detail-calendar-start-input",
+                            value: "{calendar().start}",
+                            placeholder: "2026-06-20T09:00:00",
+                            oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.start = event.value()),
                         }
-                    },
-                    SelectOption::<String> { index: 0usize, value: "confirmed".to_owned(), text_value: "Confirmed", "Confirmed" }
-                    SelectOption::<String> { index: 1usize, value: "tentative".to_owned(), text_value: "Tentative", "Tentative" }
-                    SelectOption::<String> { index: 2usize, value: "cancelled".to_owned(), text_value: "Cancelled", "Cancelled" }
+                    }
+                    div { class: "field",
+                        Label { html_for: "card-detail-calendar-end-input", "End" }
+                        Input {
+                            id: "card-detail-calendar-end-input",
+                            class: "input",
+                            "data-testid": "card-detail-calendar-end-input",
+                            value: "{calendar().end}",
+                            placeholder: "2026-06-20T10:00:00",
+                            oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.end = event.value()),
+                        }
+                    }
+                    label { class: "discussion-checkbox-row calendar-schedule-all-day",
+                        Checkbox {
+                            "data-testid": "card-detail-calendar-all-day",
+                            checked: if calendar().all_day { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                            on_checked_change: move |state: CheckboxState| {
+                                update_calendar_draft(calendar, |draft| draft.all_day = bool::from(state));
+                            },
+                        }
+                        span { "All day" }
+                    }
+                    div { class: "field",
+                        Label { html_for: "card-detail-calendar-timezone-input", "Timezone" }
+                        Input {
+                            id: "card-detail-calendar-timezone-input",
+                            class: "input",
+                            "data-testid": "card-detail-calendar-timezone-input",
+                            value: "{calendar().timezone}",
+                            placeholder: "Asia/Shanghai",
+                            oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.timezone = event.value()),
+                        }
+                    }
+                    div { class: "field calendar-schedule-span-2",
+                        Label { html_for: "card-detail-calendar-location-input", "Location" }
+                        Input {
+                            id: "card-detail-calendar-location-input",
+                            class: "input",
+                            "data-testid": "card-detail-calendar-location-input",
+                            value: "{calendar().location}",
+                            placeholder: "Add a location",
+                            oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| {
+                                draft.location = event.value();
+                                draft.location_locked = false;
+                            }),
+                        }
+                    }
+                    div { class: "field calendar-schedule-repeat-field",
+                        Label { html_for: "card-detail-calendar-recurrence-select", "Repeat" }
+                        Select::<String> {
+                            "data-testid": "card-detail-calendar-recurrence-select",
+                            value: Some(selected_frequency.into()),
+                            on_value_change: move |value: Option<String>| {
+                                if let Some(value) = value {
+                                    update_calendar_draft(calendar, |draft| {
+                                        if value == "none" {
+                                            draft.recurrence_frequency.clear();
+                                            draft.recurrence_interval.clear();
+                                            draft.recurrence_by_day.clear();
+                                            draft.recurrence_by_month.clear();
+                                            draft.recurrence_by_month_day.clear();
+                                            draft.recurrence_by_set_position.clear();
+                                            draft.recurrence_first_day_of_week.clear();
+                                            draft.recurrence_count.clear();
+                                            draft.recurrence_until.clear();
+                                        } else {
+                                            draft.recurrence_frequency = value;
+                                        }
+                                    });
+                                }
+                            },
+                            SelectOption::<String> { index: 0usize, value: "none".to_owned(), text_value: "Does not repeat", "Does not repeat" }
+                            SelectOption::<String> { index: 1usize, value: "daily".to_owned(), text_value: "Daily", "Daily" }
+                            SelectOption::<String> { index: 2usize, value: "weekly".to_owned(), text_value: "Weekly", "Weekly" }
+                            SelectOption::<String> { index: 3usize, value: "monthly".to_owned(), text_value: "Monthly", "Monthly" }
+                            SelectOption::<String> { index: 4usize, value: "yearly".to_owned(), text_value: "Yearly", "Yearly" }
+                        }
+                    }
                 }
             }
-            label { class: "discussion-checkbox-row",
-                Checkbox {
-                    "data-testid": "card-detail-calendar-all-day",
-                    checked: if calendar().all_day { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                    on_checked_change: move |state: CheckboxState| {
-                        update_calendar_draft(calendar, |draft| draft.all_day = bool::from(state));
-                    },
-                }
-                span { "All day" }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-recurrence-select", "Recurrence" }
-                Select::<String> {
-                    "data-testid": "card-detail-calendar-recurrence-select",
-                    value: Some(selected_frequency.into()),
-                    on_value_change: move |value: Option<String>| {
-                        if let Some(value) = value {
-                            update_calendar_draft(calendar, |draft| {
-                                draft.recurrence_frequency = if value == "none" {
-                                    String::new()
+            if recurrence_enabled() {
+                details {
+                    class: "calendar-schedule-disclosure",
+                    "data-testid": "card-detail-calendar-recurrence-options",
+                    summary { class: "calendar-schedule-disclosure-summary",
+                        span {
+                            strong { "Customize recurrence" }
+                            small {
+                                if custom_recurrence_configured() {
+                                    "Custom repeat rules are configured"
                                 } else {
-                                    value
-                                };
-                            });
+                                    "Intervals, selected days, and an optional end"
+                                }
+                            }
                         }
-                    },
-                    SelectOption::<String> { index: 0usize, value: "none".to_owned(), text_value: "None", "None" }
-                    SelectOption::<String> { index: 1usize, value: "daily".to_owned(), text_value: "Daily", "Daily" }
-                    SelectOption::<String> { index: 2usize, value: "weekly".to_owned(), text_value: "Weekly", "Weekly" }
-                    SelectOption::<String> { index: 3usize, value: "monthly".to_owned(), text_value: "Monthly", "Monthly" }
-                    SelectOption::<String> { index: 4usize, value: "yearly".to_owned(), text_value: "Yearly", "Yearly" }
+                        UiIcon { name: "chevron-down" }
+                    }
+                    div { class: "calendar-schedule-field-grid calendar-schedule-disclosure-body",
+                        div { class: "field",
+                            Label { html_for: "card-detail-calendar-interval-input", "Repeat every" }
+                            Input {
+                                id: "card-detail-calendar-interval-input",
+                                class: "input",
+                                "data-testid": "card-detail-calendar-interval-input",
+                                value: "{calendar().recurrence_interval}",
+                                placeholder: "1",
+                                oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_interval = event.value()),
+                            }
+                        }
+                        div { class: "field",
+                            Label { html_for: "card-detail-calendar-by-day-input", "Days of week" }
+                            Input {
+                                id: "card-detail-calendar-by-day-input",
+                                class: "input",
+                                "data-testid": "card-detail-calendar-by-day-input",
+                                value: "{calendar().recurrence_by_day}",
+                                placeholder: "MO, WE, FR",
+                                oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_day = event.value()),
+                            }
+                        }
+                        div { class: "field",
+                            Label { html_for: "card-detail-calendar-by-month-input", "Months" }
+                            Input {
+                                id: "card-detail-calendar-by-month-input",
+                                class: "input",
+                                "data-testid": "card-detail-calendar-by-month-input",
+                                value: "{calendar().recurrence_by_month}",
+                                placeholder: "1, 6, 12",
+                                oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_month = event.value()),
+                            }
+                        }
+                        div { class: "field",
+                            Label { html_for: "card-detail-calendar-by-month-day-input", "Days of month" }
+                            Input {
+                                id: "card-detail-calendar-by-month-day-input",
+                                class: "input",
+                                "data-testid": "card-detail-calendar-by-month-day-input",
+                                value: "{calendar().recurrence_by_month_day}",
+                                placeholder: "1, 15, -1",
+                                oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_month_day = event.value()),
+                            }
+                        }
+                        div { class: "field",
+                            Label { html_for: "card-detail-calendar-by-set-position-input", "Position in period" }
+                            Input {
+                                id: "card-detail-calendar-by-set-position-input",
+                                class: "input",
+                                "data-testid": "card-detail-calendar-by-set-position-input",
+                                value: "{calendar().recurrence_by_set_position}",
+                                placeholder: "1, -1",
+                                oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_set_position = event.value()),
+                            }
+                        }
+                        div { class: "field",
+                            Label { html_for: "card-detail-calendar-first-weekday-input", "Week starts on" }
+                            Input {
+                                id: "card-detail-calendar-first-weekday-input",
+                                class: "input",
+                                "data-testid": "card-detail-calendar-first-weekday-input",
+                                value: "{calendar().recurrence_first_day_of_week}",
+                                placeholder: "MO",
+                                oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_first_day_of_week = event.value()),
+                            }
+                        }
+                        div { class: "field",
+                            Label { html_for: "card-detail-calendar-count-input", "End after occurrences" }
+                            Input {
+                                id: "card-detail-calendar-count-input",
+                                class: "input",
+                                "data-testid": "card-detail-calendar-count-input",
+                                value: "{calendar().recurrence_count}",
+                                placeholder: "10",
+                                oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_count = event.value()),
+                            }
+                        }
+                        div { class: "field",
+                            Label { html_for: "card-detail-calendar-until-input", "End on" }
+                            Input {
+                                id: "card-detail-calendar-until-input",
+                                class: "input",
+                                "data-testid": "card-detail-calendar-until-input",
+                                value: "{calendar().recurrence_until}",
+                                placeholder: "2026-12-31T23:59:59",
+                                oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_until = event.value()),
+                            }
+                        }
+                    }
                 }
             }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-interval-input", "Interval" }
-                Input {
-                    id: "card-detail-calendar-interval-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-interval-input",
-                    value: "{calendar().recurrence_interval}",
-                    placeholder: "1",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_interval = event.value()),
+            details {
+                class: "calendar-schedule-disclosure calendar-schedule-technical",
+                "data-testid": "card-detail-calendar-advanced-options",
+                summary { class: "calendar-schedule-disclosure-summary",
+                    span {
+                        strong { "Advanced calendar settings" }
+                        small { "Status and timezone database version" }
+                    }
+                    UiIcon { name: "chevron-down" }
                 }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-by-day-input", "By day" }
-                Input {
-                    id: "card-detail-calendar-by-day-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-by-day-input",
-                    value: "{calendar().recurrence_by_day}",
-                    placeholder: "MO, WE, FR",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_day = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-by-month-input", "By month" }
-                Input {
-                    id: "card-detail-calendar-by-month-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-by-month-input",
-                    value: "{calendar().recurrence_by_month}",
-                    placeholder: "1, 6, 12",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_month = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-by-month-day-input", "By month day" }
-                Input {
-                    id: "card-detail-calendar-by-month-day-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-by-month-day-input",
-                    value: "{calendar().recurrence_by_month_day}",
-                    placeholder: "1, 15, -1",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_month_day = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-by-set-position-input", "By set position" }
-                Input {
-                    id: "card-detail-calendar-by-set-position-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-by-set-position-input",
-                    value: "{calendar().recurrence_by_set_position}",
-                    placeholder: "1, -1",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_by_set_position = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-first-weekday-input", "First day of week" }
-                Input {
-                    id: "card-detail-calendar-first-weekday-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-first-weekday-input",
-                    value: "{calendar().recurrence_first_day_of_week}",
-                    placeholder: "MO",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_first_day_of_week = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-count-input", "Count" }
-                Input {
-                    id: "card-detail-calendar-count-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-count-input",
-                    value: "{calendar().recurrence_count}",
-                    placeholder: "10",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_count = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-until-input", "Until" }
-                Input {
-                    id: "card-detail-calendar-until-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-until-input",
-                    value: "{calendar().recurrence_until}",
-                    placeholder: "2026-12-31T23:59:59",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.recurrence_until = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-location-input", "Location" }
-                Input {
-                    id: "card-detail-calendar-location-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-location-input",
-                    value: "{calendar().location}",
-                    placeholder: "Encrypted location",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| {
-                        draft.location = event.value();
-                        draft.location_locked = false;
-                    }),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-call-id-input", "Call ID" }
-                Input {
-                    id: "card-detail-calendar-call-id-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-call-id-input",
-                    value: "{calendar().call_id}",
-                    placeholder: "ak:call:…",
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.call_id = event.value()),
-                }
-            }
-            div { class: "field",
-                Label { html_for: "card-detail-calendar-attendees-input", "Attendees (JSON)" }
-                Input {
-                    id: "card-detail-calendar-attendees-input",
-                    class: "input",
-                    "data-testid": "card-detail-calendar-attendees-input",
-                    value: "{calendar().attendees_json}",
-                    placeholder: r#"[{{"actor_id":"ak:did_core:web:alice.example","role":"required"}}]"#,
-                    oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.attendees_json = event.value()),
+                div { class: "calendar-schedule-field-grid calendar-schedule-disclosure-body",
+                    div { class: "field",
+                        Label { html_for: "card-detail-calendar-status-select", "Calendar status" }
+                        Select::<String> {
+                            "data-testid": "card-detail-calendar-status-select",
+                            value: Some(selected_status.into()),
+                            on_value_change: move |value: Option<String>| {
+                                if let Some(value) = value {
+                                    update_calendar_draft(calendar, |draft| draft.status = value);
+                                }
+                            },
+                            SelectOption::<String> { index: 0usize, value: "confirmed".to_owned(), text_value: "Confirmed", "Confirmed" }
+                            SelectOption::<String> { index: 1usize, value: "tentative".to_owned(), text_value: "Tentative", "Tentative" }
+                            SelectOption::<String> { index: 2usize, value: "cancelled".to_owned(), text_value: "Cancelled", "Cancelled" }
+                        }
+                    }
+                    div { class: "field",
+                        Label { html_for: "card-detail-calendar-tzdb-input", "TZDB version" }
+                        Input {
+                            id: "card-detail-calendar-tzdb-input",
+                            class: "input",
+                            "data-testid": "card-detail-calendar-tzdb-input",
+                            value: "{calendar().tzdb_version}",
+                            placeholder: "{DEFAULT_CALENDAR_TZDB_VERSION}",
+                            oninput: move |event: FormEvent| update_calendar_draft(calendar, |draft| draft.tzdb_version = event.value()),
+                        }
+                    }
                 }
             }
             CardDetailEditActions {

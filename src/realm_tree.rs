@@ -288,6 +288,41 @@ fn projected_state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
         .chain(state_event_values(body))
 }
 
+/// Return the create-locked control purpose only when the accepted Realm
+/// genesis carries both normative PCR markers. A bare `purpose` string or a
+/// profile ref by itself is not enough to classify a Realm as control-plane.
+pub(crate) fn realm_projection_control_purpose(body: &Value) -> Option<&str> {
+    projected_state_event_values(body)
+        .filter(|event| {
+            event
+                .get("kind")
+                .or_else(|| event.get("type"))
+                .and_then(Value::as_str)
+                == Some(arkret_sdk::EventKind::RealmCreate.as_str())
+        })
+        .find_map(|event| {
+            let object = event
+                .pointer("/payload/object")
+                .or_else(|| event.pointer("/content/object"))?;
+            let purpose = object.get("purpose").and_then(Value::as_str)?;
+            let is_control_purpose =
+                matches!(purpose, "principal_control" | "managed_agent_control");
+            let has_control_profile = object
+                .get("schema_refs")
+                .and_then(Value::as_array)
+                .is_some_and(|refs| {
+                    refs.iter().any(|value| {
+                        value.as_str() == Some(arkret_wire::ProfileId::PRINCIPAL_CONTROL_REALM_V1)
+                    })
+                });
+            (is_control_purpose && has_control_profile).then_some(purpose)
+        })
+}
+
+pub(crate) fn realm_projection_is_principal_control(body: &Value) -> bool {
+    realm_projection_control_purpose(body).is_some()
+}
+
 /// Resolve the Realm's effective content scheme from the reducer-derived
 /// policy-components facet. `state_after` represents the timeline-end state
 /// and therefore precedes the current `state` container. Materialized fields
@@ -862,6 +897,7 @@ pub fn realm_tree_nodes_from_sync_realms_with_roles(
         .filter(|(id, body)| {
             is_realm_or_space_projection_id(id)
                 && !projection_looks_like_strand(body)
+                && !realm_projection_is_principal_control(body)
                 && collaboration_roles.get(*id)
                     != Some(&arkret_sdk::CollaborationRealmRole::DirectConversation)
         })
@@ -1434,6 +1470,59 @@ mod tests {
             json!({"summary": {"category": "direct_conversation", "tags": ["dm"]}}),
         )]));
         assert!(!realm_tree_node_is_direct_conversation(&heuristic_only[0]));
+    }
+
+    #[test]
+    fn principal_control_realms_are_excluded_from_product_navigation() {
+        let pcr_id = "ak:realm:Ac9iLS6pVSDjqFeDeJjvUhbtREpxQ8IWem2mi64wrqDq";
+        let collaboration_id = "ak:realm:AXqScWrSVbMRHSSnD37HwS-fgoTGt3HbHkvBV3SttpCU";
+        let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([
+            (
+                pcr_id.to_owned(),
+                json!({
+                    "state": {
+                        "events": [{
+                            "kind": "ak.realm.create",
+                            "payload": {
+                                "object": {
+                                    "purpose": "principal_control",
+                                    "schema_refs": ["ak.profile.principal_control_realm.v1"]
+                                }
+                            }
+                        }]
+                    }
+                }),
+            ),
+            (
+                collaboration_id.to_owned(),
+                json!({"summary": {"title": "Product Realm"}}),
+            ),
+        ]));
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].id, collaboration_id);
+    }
+
+    #[test]
+    fn principal_control_classification_requires_purpose_and_profile() {
+        let purpose_only = json!({
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"purpose": "principal_control"}}
+            }]}
+        });
+        let profile_only = json!({
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {
+                    "purpose": "collaboration",
+                    "schema_refs": ["ak.profile.principal_control_realm.v1"]
+                }}
+            }]}
+        });
+
+        assert!(!realm_projection_is_principal_control(&purpose_only));
+        assert!(!realm_projection_is_principal_control(&profile_only));
     }
 
     #[test]

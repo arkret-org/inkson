@@ -2339,18 +2339,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         strong { "{location_label}" }
                                                                                                     }
                                                                                                 }
-                                                                                                if !schedule.call_id.trim().is_empty() {
-                                                                                                    div {
-                                                                                                        span { "Call" }
-                                                                                                        strong { "{schedule.call_id}" }
-                                                                                                    }
-                                                                                                }
-                                                                                                if !schedule.attendees_json.trim().is_empty() {
-                                                                                                    div {
-                                                                                                        span { "Attendees" }
-                                                                                                        strong { "{schedule.attendees_json}" }
-                                                                                                    }
-                                                                                                }
                                                                                             }
                                                                                             match agenda {
                                                                                                 Ok(items) if !items.is_empty() => rsx! {

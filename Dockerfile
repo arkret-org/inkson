@@ -7,7 +7,7 @@
 #   GITHUB_TOKEN=<pat> docker build -f inkson/Dockerfile \
 #     --secret id=github_token,env=GITHUB_TOKEN -t inkson-web .
 
-FROM rust:1-bookworm AS build
+FROM rust:bookworm AS build
 
 ARG DIOXUS_CLI_VERSION=0.7.9
 

@@ -83,6 +83,7 @@ pub(super) fn route_label_key(route: &Route) -> &'static str {
         Route::Login | Route::AuthCallback => "route.login",
         Route::Register => "route.register",
         Route::RealmsManage => "route.realms_manage",
+        Route::PrincipalControl => "route.principal_control",
         Route::Realm { .. } => "route.realm",
         Route::Chat { .. } => "route.chat",
         Route::DirectConversation { .. } => "route.direct",

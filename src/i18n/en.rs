@@ -1526,27 +1526,6 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.direct_open_failed",
         "Could not open the direct conversation",
     );
-    dict.set("feedback.bulk_realms_leaving", "Leaving {total} Realm(s)…");
-    dict.set(
-        "feedback.bulk_realms_left",
-        "Left {done} of {total} Realm(s)",
-    );
-    dict.set(
-        "feedback.bulk_realms_leave_failed",
-        "Left {done} of {total} Realm(s); some failed",
-    );
-    dict.set(
-        "feedback.bulk_contacts_deleting",
-        "Deleting {total} contact(s)…",
-    );
-    dict.set(
-        "feedback.bulk_contacts_deleted",
-        "Deleted {done} of {total} contact(s)",
-    );
-    dict.set(
-        "feedback.bulk_contacts_delete_failed",
-        "Deleted {done} of {total} contact(s); some failed",
-    );
     dict.set(
         "feedback.directory_search_failed",
         "Directory search failed",
@@ -2135,7 +2114,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.field.realm_alias_placeholder", "engineering");
 
     // Boundary step.
-    dict.set("setup.boundary.hint", "three independent axes");
     dict.set("setup.axis.discoverability", "Discoverability");
     dict.set(
         "setup.axis.discoverability.question",
@@ -2218,8 +2196,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
 
     // Seed step.
-    dict.set("setup.seed.heading", "Seed members");
-    dict.set("setup.seed.hint", "optional");
     dict.set("setup.field.seed_members", "Initial members");
     dict.set(
         "setup.field.seed_members_help",
@@ -2304,7 +2280,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
 
     // Done step.
-    dict.set("setup.done.hint", "next context");
     dict.set("setup.done.created_realm", "Created Realm");
     dict.set(
         "setup.done.empty",
@@ -2537,14 +2512,6 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
 /// `ak.space.create` form + Space lifecycle actions.
 fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.new_space", "New Space");
-    dict.set("setup.space.hero.hint", "navigation container");
-    dict.set("setup.space.heading", "Create a Space inside a Realm");
-    dict.set(
-        "setup.space.intro",
-        "A Space is a product-structure container (project / folder / board / list). It lives inside a Realm and inherits all security from it — no separate membership, encryption, or federation decisions.",
-    );
-    dict.set("setup.space.basics", "Basics");
-    dict.set("setup.space.basics.hint", "title + kind");
     dict.set("setup.space.parent.root", "(root — no parent)");
     dict.set("setup.space.default_realm.label", "default_realm_id");
     dict.set(
@@ -2720,6 +2687,7 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.login", "Login");
     dict.set("route.register", "Create identity");
     dict.set("route.realms_manage", "Manage Realms");
+    dict.set("route.principal_control", "Principal Control");
     dict.set("route.realm", "Realm");
     dict.set("route.chat", "Discussion");
     dict.set("route.direct", "Direct");
@@ -2946,19 +2914,27 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.approving_button", "Approving…");
     dict.set("agent_runtime.approve", "Approve");
     dict.set("manage.realms_title", "Manage Realms");
+    dict.set("manage.principal_control_button", "PCR");
+    dict.set("manage.principal_control_title", "Principal Control Realm (PCR)");
     dict.set(
-        "manage.realms_subtitle",
-        "Leave multiple Realms at once. Their local data is removed after the server confirms.",
+        "manage.principal_control_subtitle",
+        "System identity and device authority. It is separate from collaboration Realms.",
     );
-    dict.set("manage.stats_shown", "{count} shown");
-    dict.set("manage.stats_total", "{count} total");
-    dict.set("manage.stats_selected", "{count} selected");
-    dict.set("manage.select_shown", "Select shown");
-    dict.set("manage.clear", "Clear");
-    dict.set("manage.leaving", "Leaving…");
-    dict.set("manage.leave_selected", "Leave selected");
-    dict.set("manage.realms_list_title", "Realms");
-    dict.set("manage.rows", "{count} rows");
+    dict.set("manage.principal_control_purpose_label", "Purpose");
+    dict.set(
+        "manage.principal_control_purpose_value",
+        "Identity, device authorization, and recovery control",
+    );
+    dict.set("manage.principal_control_realm_id", "Realm ID");
+    dict.set(
+        "manage.principal_control_no_business_surfaces",
+        "This control-plane Realm does not provide Boards, Spaces, discussions, members, or other business surfaces.",
+    );
+    dict.set(
+        "manage.principal_control_unavailable",
+        "The accepted Principal Control Realm has not arrived in the local projection yet.",
+    );
+    dict.set("manage.back_to_realms", "Back to Realm management");
     dict.set(
         "manage.realms_empty_hint",
         "Realms will appear here once sync finishes.",
@@ -2971,15 +2947,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("manage.row_unencrypted", "Unencrypted");
     dict.set("manage.row_spaces", "{count} spaces");
     dict.set("manage.contacts_title", "Manage contacts");
-    dict.set(
-        "manage.contacts_subtitle",
-        "Delete multiple contacts at once; removed contacts disappear from your list.",
-    );
     dict.set("manage.search_contacts", "Search contacts");
-    dict.set("manage.deleting", "Deleting…");
-    dict.set("manage.delete_selected", "Delete selected");
-    dict.set("manage.delete_unavailable", "Not available yet");
-    dict.set("manage.contacts_list_title", "Contacts");
     dict.set(
         "manage.contacts_empty_hint",
         "Your contacts appear here once loading finishes.",

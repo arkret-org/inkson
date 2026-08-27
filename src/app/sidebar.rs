@@ -41,6 +41,38 @@ pub(super) struct RealmManageRow {
     pub(super) space_count: usize,
 }
 
+pub(super) fn principal_control_realm_ids(state: &ClientLocalState) -> BTreeSet<String> {
+    let mut ids = state
+        .realm_tree_projections
+        .iter()
+        .filter(|(_, projection)| {
+            crate::realm_tree::realm_projection_is_principal_control(projection)
+        })
+        .map(|(realm_id, _)| realm_id.clone())
+        .collect::<BTreeSet<_>>();
+    if let Some(evidence) = state.recovery_material_evidence.as_ref() {
+        ids.insert(evidence.principal_control_realm_id.to_string());
+    }
+    ids
+}
+
+pub(super) fn personal_control_realm_id(state: &ClientLocalState) -> Option<String> {
+    state
+        .recovery_material_evidence
+        .as_ref()
+        .map(|evidence| evidence.principal_control_realm_id.to_string())
+        .or_else(|| {
+            state
+                .realm_tree_projections
+                .iter()
+                .find(|(_, projection)| {
+                    crate::realm_tree::realm_projection_control_purpose(projection)
+                        == Some("principal_control")
+                })
+                .map(|(realm_id, _)| realm_id.clone())
+        })
+}
+
 pub(super) fn sidebar_text_matches_query(normalized_query: &str, values: &[&str]) -> bool {
     normalized_query.is_empty()
         || values

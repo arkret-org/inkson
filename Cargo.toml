@@ -2,7 +2,7 @@
 name = "inkson"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.97"
+rust-version = "1.98"
 description = "Dioxus desktop and web Arkret v1 reference client"
 license = "Apache-2.0"
 repository = "https://github.com/arkret-org/inkson"

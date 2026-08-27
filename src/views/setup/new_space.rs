@@ -241,25 +241,14 @@ pub(super) fn NewSpaceSection(
     rsx! {
         div { class: "setup-shell new-space-shell", "data-testid": "space-create-strand",
             div { class: "setup-column",
-                div { class: "event new-space-hero",
-                    div { class: "event-head",
-                        span { {tr("setup.space.new_space")} }
-                        span { {tr("setup.space.hero.hint")} }
-                    }
-                    h2 { class: "settings-content-title", {tr("setup.space.heading")} }
-                    div { class: "muted",
-                        {tr("setup.space.intro")}
-                    }
-                }
-
                 div { class: "event",
-                    div { class: "event-head",
-                        span { {tr("setup.space.basics")} }
-                        span { {tr("setup.space.basics.hint")} }
-                    }
                     div { class: "workflow-form setup-form-grid",
                         div { class: "setup-field",
-                            Label { html_for: "new-space-title-input-input", {tr("setup.space.field.title")} }
+                            Label {
+                                html_for: "new-space-title-input-input",
+                                {tr("setup.space.field.title")}
+                                span { class: "required-indicator", "aria-hidden": "true", " *" }
+                            }
                             Input {
                                 id: "new-space-title-input-input",
                                 "data-testid": "new-space-title-input",

@@ -13,6 +13,8 @@ import {
 } from "./currentDescribeCapabilities";
 
 const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+export const PRINCIPAL_CONTROL_REALM =
+  "ak:realm:Ac9iLS6pVSDjqFeDeJjvUhbtREpxQ8IWem2mi64wrqDq";
 const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
 const DEMO_FRONTIER_EVENT = "ak:event:Ad0EZUHcfLJv92Of4w-RJec6fkNlWP11fsQAQ4dqUOHS";
 const SETUP_REALM = "ak:realm:AfoRpfP-sl-s9gK_9-GfLiYW9eincnIfCJF8xRcVowkj";
@@ -105,6 +107,7 @@ type MockArkretApiOptions = {
   accountDevices?: MockAccountDevice[];
   includeDemoRealms?: boolean;
   includeLowFloorRealm?: boolean;
+  includePrincipalControlRealm?: boolean;
   personalAgentPairingExpiresAt?: string;
   sidecarPendingMemberReconciliations?: Array<Record<string, unknown>>;
   includeSidecarInCircleList?: boolean;
@@ -2346,6 +2349,57 @@ export async function mockArkretApi(
               },
             ]),
           ),
+          ...(options.includePrincipalControlRealm
+            ? {
+                [PRINCIPAL_CONTROL_REALM]: {
+                  state_at_window_start: {
+                    actor_profiles: {},
+                    realm_metadata: {},
+                    e2ee_epoch: {
+                      epoch: 0,
+                      key_ref: `mock-key:${PRINCIPAL_CONTROL_REALM}`,
+                    },
+                  },
+                  summary: { joined_member_count: 1 },
+                  timeline: { events: [], limited: false },
+                  state: {
+                    events: [
+                      {
+                        event_id: eventIdForDerivedId(
+                          PRINCIPAL_CONTROL_REALM,
+                          "ak:realm:",
+                        ),
+                        kind: "ak.realm.create",
+                        realm_id: PRINCIPAL_CONTROL_REALM,
+                        scope_ref: {
+                          kind: "realm",
+                          realm_id: PRINCIPAL_CONTROL_REALM,
+                        },
+                        actor_id: accountPrincipalId,
+                        actor_seq: 0,
+                        created_at: "2026-04-27T12:00:00.000Z",
+                        hlc: "019641360000-0000-12345678",
+                        prev_refs: [],
+                        payload: {
+                          object: {
+                            purpose: "principal_control",
+                            schema_refs: [
+                              "ak.profile.principal_control_realm.v1",
+                            ],
+                            encryption_profile: "mls_rfc9420",
+                          },
+                        },
+                        proofs: [],
+                      },
+                    ],
+                  },
+                  unread_notifications: {
+                    notification_count: 0,
+                    highlight_count: 0,
+                  },
+                },
+              }
+            : {}),
           ...(includeDemoRealms
             ? {
                 [DEMO_REALM]: {

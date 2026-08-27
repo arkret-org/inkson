@@ -206,11 +206,7 @@ pub fn DashboardPanel(
     };
     rsx! {
         div { class: "timeline", "data-testid": "dashboard-panel",
-            div { class: "mb-24", "data-testid": "dashboard-hero",
-                h1 { style: "font-size: 22px; margin: 0; letter-spacing: 0;", {tr("nav.dashboard")} }
-            }
-
-            div { class: "metric-grid mb-24", "data-testid": "dashboard-metrics",
+            div { class: "metric-grid", "data-testid": "dashboard-metrics",
                 Link {
                     class: "metric",
                     to: Route::Notifications,

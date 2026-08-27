@@ -464,6 +464,9 @@ export function registerStrandsBeforeEach() {
       includeSidecarInCircleList: testInfo.title.startsWith(
         "ordinary Circle list",
       ),
+      includePrincipalControlRealm: testInfo.title.startsWith(
+        "PCR stays out of product navigation",
+      ),
       emptyBoard: testInfo.title.startsWith(
         "kanban hides list creation until a board exists",
       ),
