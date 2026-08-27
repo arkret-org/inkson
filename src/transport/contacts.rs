@@ -54,7 +54,7 @@ pub(crate) async fn submit_principal_successor_seal(
     principal_event: &arkret_sdk::Event,
 ) -> anyhow::Result<()> {
     let accepted_rows = http
-        .events_read_all_pages(context.control_realm.as_str())
+        .events_read_all_pages_for_actor(&context.actor_id)
         .await?
         .events;
     let mut accepted = crate::models::require_complete_event_rows(
