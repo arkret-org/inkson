@@ -2,6 +2,30 @@ use super::binding::push_token_entry_key;
 use super::token_source::{current_platform, default_gateway_binding, push_preferences};
 use super::*;
 
+fn push_gateway_describe(providers: &[&str]) -> ServiceDescribe {
+    let mut describe = ServiceDescribe::development(
+        arkret_wire::DidFullId::new("did:web:push.example".to_owned()).unwrap(),
+        arkret_wire::TrustDomainId::new("ak:trust_domain:test".to_owned()).unwrap(),
+        arkret_wire::ServiceKind::PushGateway,
+        vec![
+            "ak.operation_bundle.push_gateway.describe.v1".to_owned(),
+            "ak.operation_bundle.push_gateway.http_notify.v1".to_owned(),
+        ],
+        vec![arkret_models_discovery::TransportBinding::http_json(
+            "https://push.example/_arkret",
+        )],
+    );
+    describe.limits.extensions.insert(
+        "x_floria_supported_providers".to_owned(),
+        serde_json::json!(providers),
+    );
+    describe.limits.extensions.insert(
+        "x_floria_auth_modes".to_owned(),
+        serde_json::json!(["http-message-signature"]),
+    );
+    describe
+}
+
 fn build_register_request(
     device_id: &str,
 ) -> anyhow::Result<chime::ChimePushRegisterDeviceRequest> {
@@ -73,31 +97,13 @@ fn builds_unregister_request_from_existing_state() {
 }
 
 #[test]
-fn summarizes_push_bridge_contract() {
-    let summary = summarize_push_gateway_bridge(&PushBridgeDescribeOutcome {
-        contract: "ak.push.bridge.v1".to_owned(),
-        version: "2026-05-03".to_owned(),
-        api_base_path: "/_arkret/edge/push".to_owned(),
-        gateway: Default::default(),
-        notify: chime::PushBridgeDescribeNotifyDescriptor {
-            notify_path: "/_arkret/edge/push/notify".to_owned(),
-            ..Default::default()
-        },
-        privacy: chime::PushBridgeDescribePrivacyDescriptor {
-            default_mode: "e2ee_blind_wakeup".to_owned(),
-            ..Default::default()
-        },
-        examples: Default::default(),
-        provider_capabilities_version: None,
-        provider_capabilities: Vec::new(),
-        failure_reason_codes: Vec::new(),
-        todos: vec!["TODO(push-bridge)".to_owned()],
-        spec_version: None,
-    });
+fn summarizes_canonical_push_gateway_description() {
+    let summary = summarize_push_gateway(&push_gateway_describe(&["webpush", "fcm"]));
 
-    assert!(summary.contains("ak.push.bridge.v1"));
-    assert!(summary.contains("/_arkret/edge/push/notify"));
-    assert!(summary.contains("e2ee_blind_wakeup"));
+    assert!(summary.contains("ak:did_core:web:push.example"));
+    assert!(summary.contains("ak.edge.push.command.notify.v1"));
+    assert!(summary.contains("webpush,fcm"));
+    assert!(summary.contains("http-message-signature"));
 }
 
 #[test]
@@ -201,11 +207,8 @@ fn apns_provider_returns_bridged_host_token() {
 
 #[test]
 fn vapid_extractor_returns_none_when_webpush_not_advertised() {
-    let mut describe = PushBridgeDescribeOutcome::default();
-    describe.contract = "ak.push.bridge.v1".to_owned();
-    describe.version = "2026-05-09".to_owned();
-    describe.gateway.supported_profiles = vec!["fcm".to_owned(), "apns".to_owned()];
-    assert!(vapid_public_key_from_describe(&describe).is_none());
+    let describe = push_gateway_describe(&["fcm", "apns"]);
+    assert!(vapid_public_key_from_service_describe(&describe).is_none());
 }
 
 #[test]
@@ -213,8 +216,7 @@ fn vapid_extractor_falls_back_to_env_when_webpush_advertised() {
     // SAFETY: env var mutation in tests is gated behind the per-test
     // serial guard via a unique key; we still scope the change so a
     // panic in the test can't leak into other tests.
-    let mut describe = PushBridgeDescribeOutcome::default();
-    describe.gateway.supported_profiles = vec!["webpush".to_owned()];
+    let describe = push_gateway_describe(&["webpush"]);
 
     // Guard env var manipulation behind cfg(not(target_arch=wasm32))
     // because std::env::set_var doesn't compile on wasm.
@@ -226,7 +228,7 @@ fn vapid_extractor_falls_back_to_env_when_webpush_advertised() {
     unsafe {
         std::env::set_var("VAPID_PUBLIC_KEY", "BFakeVapidPublicKey-base64url-string");
     }
-    let key = vapid_public_key_from_describe(&describe);
+    let key = vapid_public_key_from_service_describe(&describe);
     // SAFETY: same serial-guard rationale as the set_var above; this restores
     // the env so neighbouring tests start from a clean slate.
     #[cfg(not(target_arch = "wasm32"))]

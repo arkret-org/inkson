@@ -9,8 +9,8 @@
 //!
 //! * `WebPushTokenProvider` — drives `navigator.serviceWorker.register` + `pushManager.subscribe({
 //!   userVisibleOnly: true, applicationServerKey })` on wasm32 targets. The VAPID
-//!   `applicationServerKey` is fetched from soland's push-bridge describe endpoint
-//!   (ak.push.bridge.v1), so deploys can rotate without rebuilding the client.
+//!   `applicationServerKey` eligibility is discovered from the gateway's canonical
+//!   `ServiceDescribe`, so deploys can rotate without rebuilding the client.
 //! * `FcmPushTokenProvider` / `ApnsPushTokenProvider` — read tokens bridged by the native host or
 //!   supplied through the documented local environment variables.
 //!
@@ -24,7 +24,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use chime::PushBridgeDescribeOutcome;
+use chime::ServiceDescribe;
 
 /// Production push-token provider trait. One implementation
 /// is installed at boot (`set_push_token_provider`); push-registration
@@ -422,25 +422,29 @@ impl PushTokenProvider for ApnsPushTokenProvider {
     }
 }
 
-/// The VAPID `applicationServerKey` exposed by soland's
-/// push-bridge describe endpoint. The current chime describe schema does
-/// not yet expose VAPID material as a typed field — once the schema
-/// graduates `webpush.vapid_public_key`, this helper picks it up
-/// without a chime version bump on inkson's side.
+/// Resolve the VAPID `applicationServerKey` only when the canonical gateway
+/// description advertises Web Push support.
 ///
 /// The lookup order:
-/// 1. If the gateway advertises a `webpush` profile via
-///    [`PushBridgeDescribeOutcome::provider_capability_by_kind`], the capability's stable `kind`
-///    ack confirms VAPID is in scope and inkson's deploy MAY rely on environment variable
+/// 1. If `ServiceDescribe.limits.x_floria_supported_providers` includes `webpush`,
+///    the gateway confirms VAPID is in scope and inkson's deploy MAY rely on environment variable
 ///    `VAPID_PUBLIC_KEY` (set by the dev-stack bootstrap) for the actual key bytes.
 /// 2. Otherwise return `None` — the WebPushTokenProvider will subscribe without an
 ///    `applicationServerKey`, which produces an unencrypted Web Push subscription and is fine for
 ///    restricted-origin demos.
-pub fn vapid_public_key_from_describe(describe: &PushBridgeDescribeOutcome) -> Option<String> {
-    // The gateway must at least advertise the webpush profile for VAPID
-    // to be relevant.
-    let webpush_advertised = describe.gateway.supports_profile("webpush")
-        || describe.provider_capability_by_kind("webpush").is_some();
+pub fn vapid_public_key_from_service_describe(describe: &ServiceDescribe) -> Option<String> {
+    let webpush_advertised = describe
+        .limits
+        .extensions
+        .get("x_floria_supported_providers")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|providers| {
+            providers.iter().any(|provider| {
+                provider
+                    .as_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("webpush"))
+            })
+        });
     if !webpush_advertised {
         return None;
     }

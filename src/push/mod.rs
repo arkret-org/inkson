@@ -16,7 +16,7 @@ use std::sync::Arc;
 use arkret_models_integration::PushRegisterDeviceOutcome;
 pub use binding::*;
 #[cfg(test)]
-use chime::PushBridgeDescribeOutcome;
+use chime::ServiceDescribe;
 pub use gateway::*;
 pub use request::*;
 pub use token_provider::*;

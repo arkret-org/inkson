@@ -8,12 +8,11 @@
 //! are unchanged.
 
 use chime::{
-    ArkretPushClient, ChimePushRegisterDeviceRequest, PushBridgeDescribeOutcome,
-    PushRegistrationState,
+    ArkretPushClient, ChimePushRegisterDeviceRequest, PushRegistrationState, ServiceDescribe,
 };
 use serde_json::Value;
 
-use super::token_provider::vapid_public_key_from_describe;
+use super::token_provider::vapid_public_key_from_service_describe;
 
 /// P4 (AKP-0007 hygiene): the previous hard-coded
 /// `https://push.example/_arkret/edge/push/notify` placeholder is gone.
@@ -175,36 +174,49 @@ fn push_describe_client(push_gateway_url: &str) -> ArkretPushClient {
     client
 }
 
-pub async fn describe_push_gateway_bridge(
-    push_gateway_url: &str,
-) -> anyhow::Result<PushBridgeDescribeOutcome> {
+pub async fn describe_push_gateway(push_gateway_url: &str) -> anyhow::Result<ServiceDescribe> {
     Ok(push_describe_client(push_gateway_url)
-        .floria_bridge_describe()
+        .service_describe()
         .await?)
 }
 
-pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeOutcome) -> String {
+pub fn summarize_push_gateway(describe: &ServiceDescribe) -> String {
+    let providers = describe
+        .limits
+        .extensions
+        .get("x_floria_supported_providers")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "none".to_owned());
+    let auth_modes = describe
+        .limits
+        .extensions
+        .get("x_floria_auth_modes")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "none".to_owned());
     format!(
-        "contract={} version={} notify_path={} providers={} auth_modes={} privacy_mode={} todos={}",
-        bridge.contract,
-        bridge.version,
-        bridge.notify.notify_path,
-        if bridge.gateway.supported_providers.is_empty() {
-            "none".to_owned()
-        } else {
-            bridge.gateway.supported_providers.join(",")
-        },
-        if bridge.gateway.auth_modes.is_empty() {
-            "none".to_owned()
-        } else {
-            bridge.gateway.auth_modes.join(",")
-        },
-        bridge.privacy.default_mode,
-        if bridge.todos.is_empty() {
-            "none".to_owned()
-        } else {
-            bridge.todos.join(" | ")
-        },
+        "service_id={} kind={} protocol={} notify_operation={} providers={} auth_modes={}",
+        describe.service_id,
+        describe.service_kind,
+        describe.protocol_version,
+        arkret_wire::ServiceOperationId::EDGE_PUSH_COMMAND_NOTIFY_V1,
+        providers,
+        auth_modes,
     )
 }
 
@@ -215,6 +227,6 @@ pub fn summarize_push_gateway_bridge(bridge: &PushBridgeDescribeOutcome) -> Stri
 pub async fn fetch_vapid_application_server_key(
     push_gateway_url: &str,
 ) -> anyhow::Result<Option<String>> {
-    let describe = describe_push_gateway_bridge(push_gateway_url).await?;
-    Ok(vapid_public_key_from_describe(&describe))
+    let describe = describe_push_gateway(push_gateway_url).await?;
+    Ok(vapid_public_key_from_service_describe(&describe))
 }

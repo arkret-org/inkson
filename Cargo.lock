@@ -1232,6 +1232,7 @@ name = "chime"
 version = "0.3.0"
 dependencies = [
  "arkret-canonical",
+ "arkret-models-discovery",
  "arkret-models-integration",
  "arkret-push-policy",
  "arkret-retry",
