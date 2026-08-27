@@ -2149,6 +2149,10 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.error.create_failed", "创建失败:{error}");
     dict.set("setup.error.created_then_failed", "已创建 {id};{error}");
     dict.set("setup.error.invalid_server_url", "无效的服务器地址:{error}");
+    dict.set(
+        "setup.error.invalid_default_strand_id",
+        "服务器接受的默认 Strand 标识符无效:{error}",
+    );
 
     // 完成。
     dict.set("setup.done.hint", "下一个上下文");

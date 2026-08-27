@@ -2604,6 +2604,10 @@ fn setup_strings(dict: &mut TranslationDict) {
         "setup.error.invalid_server_url",
         "invalid server URL: {error}",
     );
+    dict.set(
+        "setup.error.invalid_default_strand_id",
+        "The server accepted an invalid default Strand identifier: {error}",
+    );
 
     // Done step.
     dict.set("setup.done.hint", "next context");

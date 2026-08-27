@@ -121,8 +121,12 @@ async fn create_initial_default_discussion(
         crate::operation::ak_ops::initial_default_discussion_strand_create(realm_id, actor)?
             .build_sdk_event("inkson")?;
     let accepted = api.event_submitter()?.submit_sdk_event(&create).await?;
-    let event_id = arkret_sdk::EventId::new(accepted.event_id)
-        .map_err(|error| anyhow::anyhow!("accepted default Strand id is invalid: {error}"))?;
+    let event_id = arkret_sdk::EventId::new(accepted.event_id).map_err(|error| {
+        anyhow::anyhow!(tr_args(
+            "setup.error.invalid_default_strand_id",
+            &[("error", error.to_string())],
+        ))
+    })?;
     let strand_id = arkret_sdk::StrandId::from_event_id(&event_id).into_string();
     let set_default =
         crate::operation::ak_ops::realm_set_default_strand(realm_id, actor, &strand_id)?
