@@ -114,7 +114,7 @@ export function mockArkretContract(req) {
       trust_domain: "ak:trust_domain:server.local",
       service_kind: "directory_service",
       protocol_version: "1.0",
-      supported_profiles: [],
+      supported_profiles: ["ak.profile.directory_service.v1"],
       ...currentHttpDescribeCapabilities(
         [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_HTTP_CORE_BUNDLE],
         "https://server.local/_arkret/find/directory",
