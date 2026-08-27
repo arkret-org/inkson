@@ -25,7 +25,7 @@ pub use organization::{RealmOrganizationPanel, ServerAdminSignal, is_server_admi
 
 // NOTE: All build_signed_*_move helpers and record_submit_outcome have
 // been removed — every Move-based write path was migrated to
-// ak.self.events.command.submit via the ak_ops::* event builders. The original
+// ak.self.events.command.submit.v1 via the ak_ops::* event builders. The original
 // helpers (and their tests) are preserved in git history.
 
 // (Move-strand test module removed; the wire shapes are now covered by soland's events.submit tests

@@ -426,8 +426,13 @@ impl ResolverDidAnchor {
         let Some((document_url, log_url)) = trusted_webvh_urls(trusted_base_url, service) else {
             return false;
         };
-        let Some((document_content_type, document_body)) =
-            fetch_did_bytes_from_url(http, document_url.as_str(), DID_WEB_MAX_DOCUMENT_BYTES).await
+        let Some((document_content_type, document_body)) = fetch_did_bytes_from_url(
+            http,
+            document_url.as_str(),
+            DID_WEB_MAX_DOCUMENT_BYTES,
+            None,
+        )
+        .await
         else {
             return false;
         };
@@ -435,7 +440,7 @@ impl ResolverDidAnchor {
             return false;
         }
         let Some((_log_content_type, log_body)) =
-            fetch_did_bytes_from_url(http, log_url.as_str(), DID_WEBVH_MAX_LOG_BYTES).await
+            fetch_did_bytes_from_url(http, log_url.as_str(), DID_WEBVH_MAX_LOG_BYTES, None).await
         else {
             return false;
         };
@@ -591,6 +596,24 @@ pub(crate) async fn fetch_did_bytes(
     url: &str,
     max_bytes: usize,
 ) -> Option<(String, Vec<u8>)> {
+    fetch_guarded_bytes(http, url, max_bytes, None).await
+}
+
+pub(crate) async fn fetch_arkret_bytes(
+    http: &reqwest::Client,
+    url: &str,
+    max_bytes: usize,
+    operation: &str,
+) -> Option<(String, Vec<u8>)> {
+    fetch_guarded_bytes(http, url, max_bytes, Some(operation)).await
+}
+
+async fn fetch_guarded_bytes(
+    http: &reqwest::Client,
+    url: &str,
+    max_bytes: usize,
+    operation: Option<&str>,
+) -> Option<(String, Vec<u8>)> {
     // P3.2c SSRF egress guard — fail-closed *before* any outbound request.
     // The `did:web` / `did:webvh` host is taken verbatim from an untrusted
     // actor DID, so a hostile `did:web:127.0.0.1` /
@@ -606,7 +629,7 @@ pub(crate) async fn fetch_did_bytes(
         // not reused because DNS pinning is a per-target client property.
         let _ = http;
         let client = locked_did_fetch_client(url).await?;
-        fetch_did_bytes_from_url(&client, url, max_bytes).await
+        fetch_did_bytes_from_url(&client, url, max_bytes, operation).await
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -615,7 +638,7 @@ pub(crate) async fn fetch_did_bytes(
         if !url_host_is_safe(url) {
             return None;
         }
-        fetch_did_bytes_from_url(http, url, max_bytes).await
+        fetch_did_bytes_from_url(http, url, max_bytes, operation).await
     }
 }
 
@@ -623,8 +646,13 @@ async fn fetch_did_bytes_from_url(
     http: &reqwest::Client,
     url: &str,
     max_bytes: usize,
+    operation: Option<&str>,
 ) -> Option<(String, Vec<u8>)> {
-    let response = http.get(url).send().await.ok()?;
+    let mut request = http.get(url);
+    if let Some(operation) = operation {
+        request = request.header("Arkret-Operation", operation);
+    }
+    let response = request.send().await.ok()?;
     if !response.status().is_success() {
         return None;
     }

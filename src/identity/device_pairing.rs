@@ -82,7 +82,7 @@ pub struct PendingPairingRequest {
     /// RFC 3339 expiry of the request.
     pub expires_at: String,
     /// When the new device staged its request through the server-mediated
-    /// short-link (`ak.open.device_pairing.command.stage`), the staged
+    /// short-link (`ak.open.device_pairing.command.stage.v1`), the staged
     /// `device_pairing_request_id`. Echoed back into `account_device_pair` so the
     /// server flips the staged row to `authorized` for the new device's status
     /// poll. `None` for direct QR/paste pairing.

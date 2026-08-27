@@ -178,7 +178,7 @@ pub(crate) fn push_client_language_account_data(
 
 /// A4b — variant of [`push_client_ui_account_data`] that also carries
 /// the most-recently uploaded `avatar_blob_ref`. The avatar itself is
-/// also published via `ak.self.account.command.update_profile` so other actors see
+/// also published via `ak.self.account.command.update_profile.v1` so other actors see
 /// it through the directory; mirroring the ref into `ak.client.ui_state` keeps a
 /// second device that signs in primed before the profile lookup
 /// completes.
@@ -867,7 +867,7 @@ pub fn SettingsPanel(
                             // helper when a blob_ref is present), an
                             // upload control, and a clear button. The
                             // avatar is also published to soland's
-                            // `ak.self.account.command.update_profile` so the
+                            // `ak.self.account.command.update_profile.v1` so the
                             // directory + member lists pick it up.
                             div { class: "event settings-card-span-2 settings-avatar-card", "data-testid": "settings-avatar-card",
                                 div { class: "event-head",

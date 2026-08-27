@@ -273,7 +273,7 @@ impl<H> garth::EventsScanTransport for StreamRail<H>
 where
     H: garth::EventsScanTransport,
 {
-    /// §1 — `ak.self.events.read.scan` is not a covered operation, so a scan
+    /// §1 — `ak.self.events.read.scan.v1` is not a covered operation, so a scan
     /// always uses the canonical HTTPS binding even while the rail is live.
     fn scan_events<'a>(
         &'a self,

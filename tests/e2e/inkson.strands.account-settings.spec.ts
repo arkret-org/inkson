@@ -53,32 +53,6 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await expect(page.getByTestId("settings-panel")).toBeVisible();
 });
 
-test("account menu falls back to account localpart when handle directory lookup is not advertised", async ({
-  page,
-}) => {
-  let handleDirectoryRequests = 0;
-  const pageErrors: string[] = [];
-  page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/_arkret/find/directory/list-handles-for-subject") {
-      handleDirectoryRequests += 1;
-    }
-  });
-  page.on("pageerror", (error) => {
-    pageErrors.push(error.message);
-  });
-
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
-  await refreshServer(page);
-  await dismissBlockingRecoveryModal(page);
-  await latestTestId(page, "account-menu-button").click();
-
-  await expect(latestTestId(page, "account-menu-handles")).toHaveText("@alice:local.host");
-  await expect(latestTestId(page, "account-menu-handles")).not.toContainText("unavailable");
-  expect(handleDirectoryRequests).toBe(0);
-  expect(pageErrors).toEqual([]);
-});
-
 test("account menu keeps the viewer fallback when the handle directory returns an empty page", async ({
   page,
 }) => {
@@ -471,14 +445,14 @@ test("account settings split account/server info and surface personal agents", a
     "ak.event.read",
     "ak.message.create",
     "ak.reaction.add",
-    "ak.self.events.stream.subscribe",
-    "ak.self.events.read.scan",
-    "ak.self.events.command.submit",
-    "ak.self.keys.keypackages.upload.create",
-    "ak.self.keys.keypackages.command.consume",
-    "ak.self.keys.keypackages.command.revoke",
-    "ak.self.device_messages.read.list",
-    "ak.self.device_messages.command.ack",
+    "ak.self.events.stream.subscribe.v1",
+    "ak.self.events.read.scan.v1",
+    "ak.self.events.command.submit.v1",
+    "ak.self.keys.keypackages.upload.create.v1",
+    "ak.self.keys.keypackages.command.consume.v1",
+    "ak.self.keys.keypackages.command.revoke.v1",
+    "ak.self.device_messages.read.list.v1",
+    "ak.self.device_messages.command.ack.v1",
   ]);
   expect(JSON.stringify(provisionBody.requested_scope.resources)).not.toContain("realm_id");
   try {

@@ -6,7 +6,7 @@
 //! against current accepted state.
 //!
 //! The authenticated Principal Server issues leases through the standard
-//! `ak.self.authorization_leases.command.issue` operation after a read-only
+//! `ak.self.authorization_leases.command.issue.v1` operation after a read-only
 //! pre-admission pass. The client never mints, edits, or extends lease bytes.
 
 use std::collections::BTreeMap;

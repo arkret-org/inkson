@@ -423,10 +423,14 @@ async fn fetch_route_material_from_origin(
         "{}_arkret/describe?service_kind={MEDIA_SERVICE_KIND}",
         record.record.base_url
     );
-    let (_, describe_bytes) =
-        crate::identity::did_resolver::fetch_did_bytes(http, &describe_url, ROUTE_FETCH_MAX_BYTES)
-            .await
-            .with_context(|| format!("service describe fetch refused or failed: {describe_url}"))?;
+    let (_, describe_bytes) = crate::identity::did_resolver::fetch_arkret_bytes(
+        http,
+        &describe_url,
+        ROUTE_FETCH_MAX_BYTES,
+        arkret_wire::ServiceOperationId::SERVER_READ_DESCRIBE_V1,
+    )
+    .await
+    .with_context(|| format!("service describe fetch refused or failed: {describe_url}"))?;
     let describe: arkret_models_discovery::ServiceDescribe =
         serde_json::from_slice(&describe_bytes)
             .map_err(|error| anyhow::anyhow!("ServiceDescribe parse failed: {error}"))?;

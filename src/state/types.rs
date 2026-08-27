@@ -178,7 +178,7 @@ impl StoredNotification {
     }
 }
 
-/// Realm-scoped cache for `ak.find.directory.read.list_handles_for_subject`.
+/// Realm-scoped cache for `ak.find.directory.read.list_handles_for_subject.v1`.
 ///
 /// Handles are display evidence, not identity keys. Cache entries are
 /// therefore bound to the visible subject DID, the Realm context, and the
@@ -520,7 +520,7 @@ impl MoveSubmissionState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveSubmissionRecord {
     pub move_id: String,
-    /// Server-assigned Event id returned by `ak.self.events.command.submit`. Older
+    /// Server-assigned Event id returned by `ak.self.events.command.submit.v1`. Older
     /// records may only have `move_id` (the local idempotency alias);
     /// sync `event_states[]` uses this id, so new records persist it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -878,7 +878,7 @@ pub struct ClientLocalState {
     /// a complete server response below this floor must fail closed.
     #[serde(default)]
     pub key_backup_active_series_highest_seen: BTreeMap<String, u64>,
-    /// Per-realm `ak.self.events.stream.subscribe` resume cursors, keyed by
+    /// Per-realm `ak.self.events.stream.subscribe.v1` resume cursors, keyed by
     /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
     /// `sync_cursor`: the realm events stream and the account stream are
     /// bound to different `filter_digest`s (encoding.md §8.3.1), so their
@@ -1280,7 +1280,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub member_identity_events: BTreeMap<String, BTreeMap<String, Vec<Value>>>,
     /// Display-only cache for reverse handle lookup by subject DID. Entries
-    /// come from validated `ak.find.directory.read.list_handles_for_subject` responses
+    /// come from validated `ak.find.directory.read.list_handles_for_subject.v1` responses
     /// or equivalent roster evidence and are never used as authority for
     /// ACL, attribution, membership, or delivery.
     #[serde(default)]

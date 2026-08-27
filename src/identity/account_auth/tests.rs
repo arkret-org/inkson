@@ -479,6 +479,14 @@ fn principal_description() -> arkret_sdk::ServiceDescribe {
         arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
         arkret_sdk::TrustDomainId::new("ak:trust_domain:principal.example".to_owned()).unwrap(),
         arkret_sdk::ServiceKind::PrincipalServer,
+        vec![
+            "ak.operation_bundle.principal_server.describe.v1".to_owned(),
+            "ak.operation_bundle.principal_server.http_core.v1".to_owned(),
+        ],
+        vec![arkret_sdk::TransportBinding::HttpJson {
+            base_url: "https://principal.example/_arkret".to_owned(),
+            extension_profile_required: (),
+        }],
     );
     description.auth_metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: "https://auth.example".to_owned(),

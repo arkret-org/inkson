@@ -29,7 +29,6 @@ fn build_register_request(
 
 fn register_outcome(registration_id: Option<&str>) -> PushRegisterDeviceOutcome {
     PushRegisterDeviceOutcome {
-        ok: true,
         push_target_id: arkret_wire::PushTargetId::new(
             "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8".to_owned(),
         )

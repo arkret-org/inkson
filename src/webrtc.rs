@@ -11,7 +11,7 @@ use crate::operation::TypedOperationBuilder;
 
 // NOTE: `ak.call.signal` MUST route through the encrypted Signal rail
 // (`crate::signal::SignalPayload::CallSignal` -> `POST /_arkret/self/signal`),
-// NOT through `ak.self.events.command.submit`. The signal kind is one of the
+// NOT through `ak.self.events.command.submit.v1`. The signal kind is one of the
 // canonical values represented by `arkret_sdk::CallSignalData` and lives in
 // the ciphertext. Do NOT re-introduce a durable `OperationBuilder`-based
 // helper, a plaintext envelope, or a parallel kind list here.

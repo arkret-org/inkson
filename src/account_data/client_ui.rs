@@ -31,7 +31,7 @@ use crate::i18n::UiLocale;
 /// `avatar_blob_ref` (A4b) carries the actor-private cross-device cache
 /// of the most-recently uploaded avatar reference. The blob_ref itself
 /// (`ak:blob:sha256:<hex>`) is public — the avatar is also published via
-/// `ak.self.account.command.update_profile` so other actors see it through the
+/// `ak.self.account.command.update_profile.v1` so other actors see it through the
 /// directory. We mirror it here so a second device that signs in picks
 /// up the same blob without needing to re-fetch the account viewer.
 pub fn build_client_ui_body(

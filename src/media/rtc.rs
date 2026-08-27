@@ -3,7 +3,7 @@
 //! This module is the single source of truth for joining a call's media
 //! plane. The flow is:
 //!
-//! 1. **CALL-1** — `media_token_exchange` POSTs `ak.self.call.media.exchange.issue_token` to
+//! 1. **CALL-1** — `media_token_exchange` POSTs `ak.self.call.media.exchange.issue_token.v1` to
 //!    soland's `/_arkret/self/rtc/token`, then anchors + verifies the response via
 //!    [`arkret_signatures::media::verify_call_media_token_outcome`] (issuer anchoring, ≤600s TTL,
 //!    six-tuple binding).
@@ -40,7 +40,7 @@ use serde_json::Value;
 use crate::transport::TransportClient;
 
 /// Spec-mandated TTL ceiling for media tokens
-/// (`ak.self.call.media.exchange.issue_token`). Soland defaults to 300s; the
+/// (`ak.self.call.media.exchange.issue_token.v1`). Soland defaults to 300s; the
 /// ceiling is 600s.
 pub const MEDIA_TOKEN_TTL_MAX_SECS: u64 = arkret_sdk::MEDIA_TOKEN_TTL_MAX_SECS;
 

@@ -1,6 +1,5 @@
 use arkret_sdk::ErrorEnvelope;
 use reqwest::StatusCode;
-use serde::Deserialize;
 use serde_json::Value;
 
 mod classify;
@@ -251,19 +250,9 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
     })
 }
 
-#[derive(Debug, Deserialize)]
-struct ApiErrorBody {
-    error: ErrorEnvelope,
-}
-
-/// Decode a server error response into an SDK [`ErrorEnvelope`]. We try
-/// the current on-the-wire shapes in order:
-///
-///   1. The canonical wrapped shape `{ "error": ErrorEnvelope }` (what our principal server emits
-///      when its inner handler bubbles a typed envelope through the outer `ApiErrorBody`).
-///   2. The canonical bare envelope `{ "ok": false, "error": { code, message }, request_id }`.
-///
-/// If none match, we synthesise a minimal envelope tagged
+/// Decode a canonical RFC 9457 Arkret Problem response into an SDK
+/// [`ErrorEnvelope`]. If it does not match the single current wire shape, we
+/// synthesise a minimal envelope tagged
 /// `ak.error.http_status` so downstream code always has something
 /// well-formed to surface.
 ///
@@ -274,9 +263,7 @@ struct ApiErrorBody {
 /// obligations array (per `authz/policy-server.md` §3) is pulled from
 /// the envelope's `details["obligations"]` slot if present.
 pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
-    let envelope = if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
-        body.error
-    } else if let Ok(plain) = serde_json::from_slice::<ErrorEnvelope>(bytes) {
+    let envelope = if let Ok(plain) = serde_json::from_slice::<ErrorEnvelope>(bytes) {
         plain
     } else {
         ErrorEnvelope::new(

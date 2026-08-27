@@ -2377,15 +2377,9 @@ mod tests {
     }
 
     fn api_exchange_error(status: u16, code: &str) -> garth::Error {
-        let envelope: arkret_sdk::ErrorEnvelope = serde_json::from_value(serde_json::json!({
-            "ok": false,
-            "error": { "code": code, "message": "fixture" },
-            "request_id": "unknown"
-        }))
-        .unwrap();
         garth::Error::Api {
             status,
-            error: Box::new(envelope),
+            error: Box::new(arkret_sdk::ErrorEnvelope::new(code, "fixture")),
         }
     }
 

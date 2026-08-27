@@ -65,7 +65,7 @@ pub async fn effective_grants(
 }
 
 /// Read the verified Realm ↔ organization relationships projection
-/// (`ak.self.realm_organization.read.list`,
+/// (`ak.self.realm_organization.read.list.v1`,
 /// `GET /_arkret/self/realms/{realm_id}/organizations`).
 ///
 /// The server only returns `verified_active` / `revoked_or_expired`

@@ -3,7 +3,13 @@
 // `cotest/tests/fixtures/inkson_mock_parity.json` and gets compared
 // against a real soland process. When adding a branch, also add the
 // matching fixture case — unmatched branches are silently dead code.
-import { currentHttpDescribeBindings } from "./currentOperationBindings";
+import {
+  currentHttpDescribeCapabilities,
+  DIRECTORY_DESCRIBE_BUNDLE,
+  DIRECTORY_HTTP_CORE_BUNDLE,
+  PRINCIPAL_DESCRIBE_BUNDLE,
+  PRINCIPAL_HTTP_CORE_BUNDLE,
+} from "./currentDescribeCapabilities";
 
 const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
 
@@ -31,23 +37,17 @@ export function mockArkretContract(req) {
         "ak.profile.full_client.v1",
         "ak.profile.principal_server_events_api.v1",
       ],
-      supported_features: ["sync.client_sync", "directory.search_realms", "events.submit"],
-      ...currentHttpDescribeBindings([
-        "ak.server.read.describe",
-        "ak.self.events.command.submit",
-        "ak.self.events.read.scan",
-        "ak.find.directory.read.search_realms",
-        "ak.self.keys.backups.read.list",
-        "ak.self.signal.command.send",
+      supported_features: [],
+      ...currentHttpDescribeCapabilities([
+        PRINCIPAL_DESCRIBE_BUNDLE,
+        PRINCIPAL_HTTP_CORE_BUNDLE,
       ]),
       limits: {},
       auth_metadata: { mode: "development" },
       plaintext_visibility: { max_visibility: "none" },
       rate_limit_policy: { policy_version: "1", entries: [] },
-      implemented_features: [],
       claimed_profiles: [],
       verified_profiles: [],
-      experimental_features: [],
       interop_surfaces: [],
       development_mode: true,
     });
@@ -114,21 +114,21 @@ export function mockArkretContract(req) {
       trust_domain: "ak:trust_domain:server.local",
       service_kind: "directory_service",
       protocol_version: "1.0",
-      supported_profiles: ["ak.profile.directory_service.v1"],
-      ...currentHttpDescribeBindings(["ak.find.directory.read.describe"]),
+      supported_profiles: [],
+      ...currentHttpDescribeCapabilities(
+        [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_HTTP_CORE_BUNDLE],
+        "https://server.local/_arkret/find/directory",
+      ),
       supported_features: [],
       auth_metadata: { mode: "public_no_auth" },
       limits: {},
       plaintext_visibility: {},
       rate_limit_policy: {},
-      implemented_features: [],
       claimed_profiles: [],
       verified_profiles: [],
-      experimental_features: [],
       interop_surfaces: [],
       development_mode: false,
       resource_kinds: ["realm", "organization", "actor"],
-      discovery_profiles: ["ak.profile.directory_service.v1"],
       restricted_query_proof: false,
       ingest_modes: ["push"],
       accept_policy_kind: "open",
@@ -230,25 +230,8 @@ export function mockArkretContract(req) {
   return undefined;
 }
 
-// Short-form aliases for callers that pass a path without the `/_arkret/`
-// prefix. Each alias MUST resolve to a path with a matching branch above;
-// `/realm/create` and `/realms/create` were dropped together with the
-// realm/space creation surface forbidden by inkson/tests/server_contract.rs.
-// `/account/viewer` is the short alias for the spec account viewer. Profile
-// update remains distinct and MUST NOT collapse onto this read path.
 export function canonicalPath(path) {
-  const clean = path.startsWith("/_arkret/") ? path : path.replace(/\/+$/, "");
-  const aliases = {
-    "/server/describe": "/_arkret/describe",
-    "/events/submit": "/_arkret/self/events",
-    "/events/list": "/_arkret/self/events",
-    "/account/viewer": "/_arkret/self/account/viewer",
-    "/directory/search-realms": "/_arkret/find/directory/search-realms",
-    "/keys/backups": "/_arkret/self/keys/backups",
-    "/gate/account/device-pair": "/_arkret/gate/account/device-pair",
-    "/signal": "/_arkret/self/signal",
-  };
-  return aliases[clean] ?? clean;
+  return path.replace(/\/+$/, "");
 }
 
 function firstEventId(events) {

@@ -168,7 +168,7 @@ impl crate::transport::TransportClient {
     /// Publish or rotate the principal's signed recovery policy.
     ///
     /// The request is the canonical `ak.policy.set` EventInitialSubmission
-    /// required by `ak.root.identity.recovery_policy.command.publish`.
+    /// required by `ak.root.identity.recovery_policy.command.publish.v1`.
     pub async fn put_recovery_policy(
         &self,
         body: &arkret_sdk::RecoveryPolicyPublishRequest,

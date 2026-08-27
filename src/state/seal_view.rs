@@ -216,7 +216,7 @@ impl LocalSealView {
     /// `RealmSyncEntry` has no such field, and the one adjacent field it does
     /// define (`state_at_window_start`) is explicitly projection-only ("实现仍
     /// MUST NOT 把它当作权威 cell value"). The authoritative frontier /
-    /// `state_root` come from `ak.self.seals.read.frontier` and from
+    /// `state_root` come from `ak.self.seals.read.frontier.v1` and from
     /// governance proof bundles that passed the `encryption-and-audit.md`
     /// §2.5.1.1 verification order.
     ///

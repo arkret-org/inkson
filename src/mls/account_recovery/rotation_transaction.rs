@@ -418,7 +418,7 @@ async fn drive_security_rotation(
                 scope_ref: arkret_sdk::ScopeRef::Realm {
                     realm_id: control_realm.clone(),
                 },
-                action: arkret_sdk::CapabilityActionId::SELF_KEYS_BACKUP_SERIES_COMMAND_ERASE
+                action: arkret_sdk::CapabilityActionId::SELF_KEYS_BACKUP_SERIES_COMMAND_ERASE_V1
                     .to_owned(),
                 authorization_rule_id: "realm_admission".to_owned(),
                 risk_tier: RiskTier::High,

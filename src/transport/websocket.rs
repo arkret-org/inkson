@@ -18,10 +18,16 @@ use garth::websocket::socket::{
     AuthProofRequest, BoxSocketFuture, WebSocketConnector, WebSocketInbound, WebSocketSocket,
 };
 use garth::websocket::{
-    WebSocketBindingDescriptor, WebSocketConsumerHandoff, WebSocketConsumerOwner,
-    WebSocketFallbackPolicy, WebSocketHandshakeFailure, WebSocketTransportDecision,
-    select_websocket_binding,
+    WebSocketConsumerHandoff, WebSocketConsumerOwner, WebSocketFallbackPolicy,
+    WebSocketHandshakeFailure, WebSocketTransportDecision,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebSocketEndpoint {
+    pub base_url: String,
+    pub max_frame_bytes: u32,
+    pub max_channels: u32,
+}
 
 /// The largest reassembled frame this client will buffer, independent of what
 /// a service advertises. §4 caps the effective limit at the minimum of
@@ -36,7 +42,7 @@ pub const CLIENT_MAX_FRAME_BYTES: u32 = 262_144;
 /// handshake that never reached `101`, a protocol or oversize close, a second
 /// policy failure, or a third restart without a `welcome`.
 pub struct WebSocketTransportSelector {
-    descriptor: Option<WebSocketBindingDescriptor>,
+    descriptor: Option<WebSocketEndpoint>,
     policy: WebSocketFallbackPolicy,
     handoff: WebSocketConsumerHandoff,
 }
@@ -46,15 +52,30 @@ impl WebSocketTransportSelector {
     /// skipped silently — §2 says to ignore the binding and stay on HTTP, never
     /// to guess an endpoint.
     pub fn from_describe(describe: &arkret_sdk::ServiceDescribe) -> Self {
+        let descriptor =
+            arkret_models_discovery::select_websocket_binding(describe, CLIENT_MAX_FRAME_BYTES)
+                .and_then(|binding| match binding {
+                    arkret_models_discovery::TransportBinding::Websocket {
+                        base_url,
+                        max_frame_bytes,
+                        max_channels,
+                        ..
+                    } => Some(WebSocketEndpoint {
+                        base_url: base_url.clone(),
+                        max_frame_bytes: max_frame_bytes.to_owned(),
+                        max_channels: max_channels.to_owned(),
+                    }),
+                    _ => None,
+                });
         Self {
-            descriptor: select_websocket_binding(describe, CLIENT_MAX_FRAME_BYTES),
+            descriptor,
             policy: WebSocketFallbackPolicy::new(),
             handoff: WebSocketConsumerHandoff::new(),
         }
     }
 
     /// The binding to connect to, or `None` to stay on HTTP.
-    pub fn descriptor(&self) -> Option<&WebSocketBindingDescriptor> {
+    pub fn descriptor(&self) -> Option<&WebSocketEndpoint> {
         self.descriptor.as_ref()
     }
 
@@ -426,18 +447,20 @@ mod browser {
 #[cfg(test)]
 pub(crate) mod tests_support {
     pub(crate) fn describe_without_websocket() -> arkret_sdk::ServiceDescribe {
-        super::tests::describe_with(vec![arkret_sdk::SupportedBinding::new(
-            arkret_wire::BindingKind::HttpJson,
-        )])
+        super::tests::describe_with(
+            "ak.operation_bundle.principal_server.http_core.v1",
+            arkret_sdk::TransportBinding::HttpJson {
+                base_url: "https://server.example/_arkret".to_owned(),
+                extension_profile_required: (),
+            },
+        )
     }
 
     pub(crate) fn describe_with_websocket() -> arkret_sdk::ServiceDescribe {
-        let descriptor = super::WebSocketBindingDescriptor::new(
-            "wss://server.example/_arkret/ws",
-            super::CLIENT_MAX_FRAME_BYTES,
-            16,
-        );
-        super::tests::describe_with(vec![descriptor.to_supported_binding().unwrap()])
+        super::tests::describe_with(
+            "ak.operation_bundle.principal_server.websocket.v1",
+            super::tests::websocket_transport(super::CLIENT_MAX_FRAME_BYTES),
+        )
     }
 }
 
@@ -445,36 +468,67 @@ pub(crate) mod tests_support {
 pub(crate) mod tests {
     use super::*;
 
+    pub(crate) fn websocket_transport(max_frame_bytes: u32) -> arkret_sdk::TransportBinding {
+        arkret_sdk::TransportBinding::Websocket {
+            base_url: "wss://server.example/_arkret/ws".to_owned(),
+            extension_profile_required:
+                arkret_models_discovery::WebSocketBindingProfile::BindingWebsocketV1,
+            subprotocol: arkret_models_discovery::WebSocketBindingSubprotocol::ArkretV1,
+            authentication:
+                arkret_models_discovery::WebSocketBindingAuthentication::ChallengeDpopSessionV1,
+            max_frame_bytes,
+            max_channels: 16,
+        }
+    }
+
     pub(crate) fn describe_with(
-        bindings: Vec<arkret_sdk::SupportedBinding>,
+        bundle_id: &str,
+        binding: arkret_sdk::TransportBinding,
     ) -> arkret_sdk::ServiceDescribe {
-        let mut describe = arkret_sdk::ServiceDescribe::development(
+        let mut bundles = vec![
+            "ak.operation_bundle.principal_server.describe.v1".to_owned(),
+            bundle_id.to_owned(),
+        ];
+        bundles.sort();
+        bundles.dedup();
+        let transports = if matches!(binding, arkret_sdk::TransportBinding::Websocket { .. }) {
+            vec![
+                binding,
+                arkret_sdk::TransportBinding::HttpJson {
+                    base_url: "https://server.example/_arkret".to_owned(),
+                    extension_profile_required: (),
+                },
+            ]
+        } else {
+            vec![binding]
+        };
+        arkret_sdk::ServiceDescribe::development(
             arkret_sdk::DidFullId::new("did:web:server.example").unwrap(),
             arkret_sdk::TrustDomainId::new("ak:trust_domain:server.example").unwrap(),
             arkret_sdk::ServiceKind::PrincipalServer,
-        );
-        describe.supported_bindings = bindings;
-        describe
+            bundles,
+            transports,
+        )
     }
 
     #[test]
     fn a_service_without_the_profile_stays_on_http() {
-        let selector = WebSocketTransportSelector::from_describe(&describe_with(vec![
-            arkret_sdk::SupportedBinding::new(arkret_wire::BindingKind::HttpJson),
-        ]));
+        let selector = WebSocketTransportSelector::from_describe(&describe_with(
+            "ak.operation_bundle.principal_server.http_core.v1",
+            arkret_sdk::TransportBinding::HttpJson {
+                base_url: "https://server.example/_arkret".to_owned(),
+                extension_profile_required: (),
+            },
+        ));
         assert!(selector.descriptor().is_none());
     }
 
     #[test]
     fn an_advertised_binding_is_used_when_this_build_can_honour_it() {
-        let descriptor = WebSocketBindingDescriptor::new(
-            "wss://server.example/_arkret/ws",
-            CLIENT_MAX_FRAME_BYTES,
-            16,
-        );
-        let selector = WebSocketTransportSelector::from_describe(&describe_with(vec![
-            descriptor.to_supported_binding().unwrap(),
-        ]));
+        let selector = WebSocketTransportSelector::from_describe(&describe_with(
+            "ak.operation_bundle.principal_server.websocket.v1",
+            websocket_transport(CLIENT_MAX_FRAME_BYTES),
+        ));
         assert_eq!(
             selector.descriptor().map(|entry| entry.base_url.as_str()),
             Some("wss://server.example/_arkret/ws")
@@ -485,27 +539,19 @@ pub(crate) mod tests {
     fn a_frame_ceiling_above_this_build_is_ignored() {
         // §4 makes the effective limit a minimum, and a client that cannot
         // buffer what the service may send has no usable binding.
-        let descriptor = WebSocketBindingDescriptor::new(
-            "wss://server.example/_arkret/ws",
-            CLIENT_MAX_FRAME_BYTES + 1024,
-            16,
-        );
-        let selector = WebSocketTransportSelector::from_describe(&describe_with(vec![
-            descriptor.to_supported_binding().unwrap(),
-        ]));
+        let selector = WebSocketTransportSelector::from_describe(&describe_with(
+            "ak.operation_bundle.principal_server.websocket.v1",
+            websocket_transport(CLIENT_MAX_FRAME_BYTES + 1024),
+        ));
         assert!(selector.descriptor().is_none());
     }
 
     #[test]
     fn an_incompatible_close_drops_the_binding_until_discovery_changes() {
-        let descriptor = WebSocketBindingDescriptor::new(
-            "wss://server.example/_arkret/ws",
-            CLIENT_MAX_FRAME_BYTES,
-            16,
-        );
-        let mut selector = WebSocketTransportSelector::from_describe(&describe_with(vec![
-            descriptor.to_supported_binding().unwrap(),
-        ]));
+        let mut selector = WebSocketTransportSelector::from_describe(&describe_with(
+            "ak.operation_bundle.principal_server.websocket.v1",
+            websocket_transport(CLIENT_MAX_FRAME_BYTES),
+        ));
         selector.welcomed();
         assert_eq!(
             selector.on_close(WebSocketCloseCode::ProtocolError, None),
@@ -516,14 +562,10 @@ pub(crate) mod tests {
 
     #[test]
     fn a_policy_failure_keeps_one_retry_and_keeps_the_binding() {
-        let descriptor = WebSocketBindingDescriptor::new(
-            "wss://server.example/_arkret/ws",
-            CLIENT_MAX_FRAME_BYTES,
-            16,
-        );
-        let mut selector = WebSocketTransportSelector::from_describe(&describe_with(vec![
-            descriptor.to_supported_binding().unwrap(),
-        ]));
+        let mut selector = WebSocketTransportSelector::from_describe(&describe_with(
+            "ak.operation_bundle.principal_server.websocket.v1",
+            websocket_transport(CLIENT_MAX_FRAME_BYTES),
+        ));
         selector.welcomed();
         assert!(matches!(
             selector.on_close(WebSocketCloseCode::PolicyViolation, None),

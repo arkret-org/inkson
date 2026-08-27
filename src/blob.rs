@@ -5,7 +5,7 @@
 //! with the spec's content-hash typed-id (`ak:blob:sha256:<hex>`).
 //!
 //! The actual upload bytes go to the Principal Server's
-//! `ak.self.blob.upload.create` endpoint; this module covers client-side
+//! `ak.self.blob.upload.create.v1` endpoint; this module covers client-side
 //! encryption and content addressing.
 //!
 //! # Attachment AEAD is the SDK's canonical codec

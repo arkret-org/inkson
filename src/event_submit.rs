@@ -1637,7 +1637,7 @@ impl EventSubmitter {
     /// Stream the canonical `/_arkret/self/events/subscribe` NDJSON response and
     /// invoke `on_frame` once per parsed frame.
     ///
-    /// Send one Signal (`ak.self.signal.command.send`).
+    /// Send one Signal (`ak.self.signal.command.send.v1`).
     ///
     /// Typing, presence, read receipts and call signalling all travel this one
     /// encrypted rail: the product payload type and its target are AEAD
@@ -1733,7 +1733,7 @@ impl EventSubmitter {
     ///
     /// `event-auth-state-resolution.md` forbids treating any service-derived
     /// root hint as authority, so callers that need the frontier's signed roots
-    /// resolve the leaf Seal itself through `ak.self.seals.read.resolve`.
+    /// resolve the leaf Seal itself through `ak.self.seals.read.resolve.v1`.
     pub async fn seals_frontier_realm_head(
         &self,
         realm_id: &str,
@@ -1841,7 +1841,7 @@ impl EventSubmitter {
     }
 
     /// `QUERY /_arkret/self/events/describe` — spec binds the response to the
-    /// canonical `ServiceDescribe` shape (OpenAPI `ak.self.events.read.describe`).
+    /// canonical `ServiceDescribe` shape (OpenAPI `ak.self.events.read.describe.v1`).
     /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
     /// mirror (with its non-spec `capabilities` blob) was removed.
     pub async fn events_describe(&self) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
@@ -2806,7 +2806,7 @@ impl EventSubmitter {
         )
     }
 
-    /// `ak.self.events.command.submit` in batch form over typed envelopes. Spec binds
+    /// `ak.self.events.command.submit.v1` in batch form over typed envelopes. Spec binds
     /// events.submit to `POST /_arkret/self/events` and distinguishes the three
     /// accepted body shapes (single envelope,
     /// [`arkret_sdk::EventsSubmitBatchRequestBody`],
@@ -2830,7 +2830,7 @@ impl EventSubmitter {
             .await?;
         // YOU-01-016: the former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
-        // body is one of the three spec-defined `ak.self.events.command.submit`
+        // body is one of the three spec-defined `ak.self.events.command.submit.v1`
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
         for sdk_event in sdk_events {
@@ -3049,13 +3049,13 @@ impl EventSubmitter {
         Ok(submissions)
     }
 
-    /// `POST /_arkret/self/signal` — `ak.self.signal.command.send`.
+    /// `POST /_arkret/self/signal` — `ak.self.signal.command.send.v1`.
     ///
     /// The Signal Extension rail is encrypted-only: the exact signal kind and
     /// target live inside `encrypted_payload` and are never on the outer
     /// header, so this method can only re-check the structural envelope. The
     /// plaintext ephemeral rail (`POST /_arkret/self/ephemeral`) does not exist
-    /// in v1 and a Signal MUST NOT travel via `ak.self.events.command.submit`.
+    /// in v1 and a Signal MUST NOT travel via `ak.self.events.command.submit.v1`.
     pub async fn submit_signal_envelope(
         &self,
         envelope: &arkret_wire::SignalEnvelope,
@@ -3074,7 +3074,7 @@ impl EventSubmitter {
     }
 
     /// `POST /_arkret/gate/account/agent-key-pair` —
-    /// `ak.gate.account.command.pair_agent_key`. The runtime generated the
+    /// `ak.gate.account.command.pair_agent_key.v1`. The runtime generated the
     /// key and PoP; the controller signs `authorize_event` locally before this
     /// method submits the pairing request.
     pub(crate) async fn agent_key_pair(

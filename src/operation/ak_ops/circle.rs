@@ -1,6 +1,6 @@
 //! Circle administration builders.
 //!
-//! `ak.self.circle.command.create` takes the caller-signed `ak.circle.create`
+//! `ak.self.circle.command.create.v1` takes the caller-signed `ak.circle.create`
 //! Event, so the Circle the user configures in the UI is authored here and the
 //! resulting Circle id falls out of that Event. The server neither names the
 //! Circle nor signs for the user.

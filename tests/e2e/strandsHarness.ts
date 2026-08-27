@@ -441,9 +441,6 @@ export function registerStrandsBeforeEach() {
       testInfo.title.startsWith("new Recovery Key");
     await mockArkretApi(page, {
       currentDeviceId: initialDeviceId,
-      advertiseListHandlesForSubject: !testInfo.title.startsWith(
-        "account menu falls back to account localpart",
-      ),
       directoryPrimaryHandle: testInfo.title.startsWith(
         "account menu keeps the viewer fallback when the handle directory returns an empty page",
       )

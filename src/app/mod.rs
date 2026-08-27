@@ -691,7 +691,7 @@ fn AppBootstrap() -> Element {
             .is_some_and(|description| {
                 service_supports_operation(
                     description,
-                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT,
+                    arkret_sdk::ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT_V1,
                 )
             });
     let has_session = !token().trim().is_empty();

@@ -28,7 +28,7 @@ use crate::operation::{EventKind, LocalOperation, ak_ops};
 use crate::realm_helpers::validate_join_rule_v1;
 
 /// Build + submit the spec-canonical `ak.realm.create` event bundle
-/// (and its facet follow-ups) via `ak.self.events.command.submit`
+/// (and its facet follow-ups) via `ak.self.events.command.submit.v1`
 /// (`POST /_arkret/self/events`).
 ///
 /// Per spec realm-and-space.md §2.5, create carries only identity/security
@@ -234,7 +234,7 @@ pub async fn change_space_lifecycle(
 
 /// Member-state FSM transition (kick / ban / unban / leave) on the
 /// Realm's `ak.component.member.state.v1` cell. Submits a `ak.member.state`
-/// event via `ak.self.events.command.submit`; deployment-local member REST shims are
+/// event via `ak.self.events.command.submit.v1`; deployment-local member REST shims are
 /// intentionally not used.
 pub async fn transition_member_state(
     submitter: &EventSubmitter,
@@ -256,7 +256,7 @@ pub async fn transition_member_state(
     submitter.submit_sdk_event(&event).await
 }
 
-// ── Space / Realm Management (all writes go through ak.self.events.command.submit) ─
+// ── Space / Realm Management (all writes go through ak.self.events.command.submit.v1) ─
 
 /// Replace the Realm display profile through its dedicated singleton facet.
 /// Generic Realm patches are intentionally unsupported: title, summary and
@@ -712,7 +712,7 @@ pub async fn ban_member(
 //
 // Setting / revoking Realm admins, sealing moderation decisions, and
 // running the appeal loop are now self-authored protocol Moves submitted
-// via `ak.self.events.command.submit` (`POST /_arkret/self/events`) —
+// via `ak.self.events.command.submit.v1` (`POST /_arkret/self/events`) —
 // mirroring `transition_member_state` / `ban_member`. P1 (capability)
 // and P2 (moderation) projected the matching reducers in soland and the
 // sodmin-side admin write paths were retired; these are the inkson-side

@@ -28,7 +28,7 @@ pub(crate) fn select_join_candidate(
             candidate
                 .operations
                 .iter()
-                .any(|op| op == ServiceOperationId::PEER_EVENTS_COMMAND_SUBMIT)
+                .any(|op| op == ServiceOperationId::PEER_EVENTS_COMMAND_SUBMIT_V1)
         })
         .filter(|candidate| candidate.join_methods.contains(&join_method))
         .filter(|candidate| join_candidate_is_current(candidate))

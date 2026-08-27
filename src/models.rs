@@ -11,12 +11,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// App-local current-account projection derived from the spec
-/// `ak.self.account.read.viewer` response. `handle` is populated only from a
+/// `ak.self.account.read.viewer.v1` response. `handle` is populated only from a
 /// signed `primary_handle_claim.handle`; an empty string means the server did
 /// not include handle evidence in the viewer response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CurrentAccount {
-    /// Stable principal core id returned by `ak.self.account.read.viewer`.
+    /// Stable principal core id returned by `ak.self.account.read.viewer.v1`.
     ///
     /// This is deliberately typed as a core id: the account viewer does not
     /// return resolution material and callers must not persist this value as a
@@ -131,7 +131,7 @@ pub struct SpaceCreateResult {
 }
 
 // (Move/Seal pipeline DTOs deleted; all writes now go through
-// ak.self.events.command.submit via SubmitEventResult.)
+// ak.self.events.command.submit.v1 via SubmitEventResult.)
 
 /// Return whether the canonical service description advertises a profile.
 pub fn service_supports_profile(description: &ServiceDescribe, profile: &str) -> bool {
@@ -145,12 +145,7 @@ pub fn service_supports_operation(description: &ServiceDescribe, operation_id: &
     let Some(operation_id) = arkret_sdk::ServiceOperationId::from_wire(operation_id) else {
         return false;
     };
-    let Ok(local) = arkret_sdk::OperationBinding::current_http_json(operation_id) else {
-        return false;
-    };
-    description
-        .select_operation_binding(operation_id, &[local])
-        .is_some()
+    description.supports_operation_binding(operation_id, arkret_sdk::BindingKind::HttpJson)
 }
 
 pub fn missing_event_envelope_write_requirements(
@@ -164,15 +159,15 @@ pub fn missing_event_envelope_write_requirements(
     }
     if !service_supports_operation(
         description,
-        arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_DESCRIBE,
+        arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_DESCRIBE_V1,
     ) {
-        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_DESCRIBE);
+        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_DESCRIBE_V1);
     }
     if !service_supports_operation(
         description,
-        arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT,
+        arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1,
     ) {
-        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT);
+        missing.push(arkret_sdk::ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1);
     }
     missing
 }
@@ -201,7 +196,7 @@ pub fn missing_v1_principal_server_requirements(
 // newtype around it. We re-export the inner struct under the inkson-local
 // name so call sites (`registry_mode` read in `views/dashboard.rs`) stay
 // unchanged while the field shapes are now SDK-owned.
-// `ak.self.account.read.describe` decodes into the SDK's authoritative
+// `ak.self.account.read.describe.v1` decodes into the SDK's authoritative
 // `arkret_sdk::ServiceDescribe`; the former inkson-local describe mirror was
 // removed in favor of the wire type.
 /// App runtime state derived from validated canonical account-subscribe frames.
@@ -492,28 +487,43 @@ mod tests {
     use super::{projection_realm_id_for_known_node, service_supports_operation};
 
     #[test]
-    fn operation_support_requires_the_exact_current_http_carrier() {
-        let operation = arkret_sdk::ServiceOperationId::SelfEventsReadScan;
-        let mut description = arkret_sdk::ServiceDescribe::development(
+    fn operation_support_comes_only_from_registered_bundle_membership() {
+        let description = arkret_sdk::ServiceDescribe::development(
             arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:service.example").unwrap(),
             arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
             arkret_sdk::ServiceKind::PrincipalServer,
+            vec![
+                "ak.operation_bundle.principal_server.describe.v1".to_owned(),
+                "ak.operation_bundle.principal_server.http_core.v1".to_owned(),
+            ],
+            vec![arkret_sdk::TransportBinding::HttpJson {
+                base_url: "https://service.example/_arkret".to_owned(),
+                extension_profile_required: (),
+            }],
         );
-        let exact = arkret_sdk::OperationBinding::current_http_json(operation).unwrap();
-        description.operation_bindings.push(exact.clone());
         assert!(service_supports_operation(
             &description,
-            arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_SCAN,
+            arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_SCAN_V1,
         ));
 
-        description.operation_bindings[0].response_schema_ref =
-            Some("schemas/unknown.schema.json".to_owned());
+        let unrelated = arkret_sdk::ServiceDescribe::development(
+            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:service.example").unwrap(),
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
+            arkret_sdk::ServiceKind::PrincipalServer,
+            vec![
+                "ak.operation_bundle.principal_server.agent_pairing_handoff.v1".to_owned(),
+                "ak.operation_bundle.principal_server.describe.v1".to_owned(),
+            ],
+            vec![arkret_sdk::TransportBinding::HttpJson {
+                base_url: "https://service.example/_arkret".to_owned(),
+                extension_profile_required: (),
+            }],
+        );
         assert!(!service_supports_operation(
-            &description,
-            arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_SCAN,
+            &unrelated,
+            arkret_sdk::ServiceOperationId::SELF_EVENTS_READ_SCAN_V1,
         ));
 
-        description.operation_bindings[0] = exact;
         assert!(!service_supports_operation(
             &description,
             "ak.self.events.read.not_registered",
@@ -769,7 +779,7 @@ impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
     }
 }
 
-// `ak.self.snapshot.read.manifest_head` returns the full signed
+// `ak.self.snapshot.read.manifest_head.v1` returns the full signed
 // `ak.schema.snapshot.v1` manifest. See `api::TransportClient::snapshot_head`.
 
 pub use arkret_models_collaboration::governance::authorization::AuthzCheckOutcome;
@@ -778,7 +788,7 @@ pub use arkret_models_collaboration::governance::authorization::AuthzCheckOutcom
 /// former inkson-local `InvitesView` mirror was removed in favor of the wire
 /// type.
 pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
-/// `ak.self.authz.grants.read.effective` response. soland serialises the SDK
+/// `ak.self.authz.grants.read.effective.v1` response. soland serialises the SDK
 /// `GrantList` (`grants: Vec<CapabilityGrant>`) verbatim, so the client
 /// decodes the same authoritative wire contract instead of a weakly-typed
 /// local mirror.
@@ -919,7 +929,7 @@ pub struct RealmPolicyResult {
 
 // ── Device & Crypto ─────────────────────────────────────────────
 
-/// `ak.self.events.command.submit` response.
+/// `ak.self.events.command.submit.v1` response.
 ///
 /// Decodes the canonical `EventsSubmitOutcome` wire shape and folds it into
 /// the inkson-facing result:

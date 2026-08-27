@@ -20,7 +20,7 @@ pub async fn list_circles(
 }
 
 /// Add or move a Circle member by submitting the caller-signed
-/// `ak.circle.member.state`. Spec OpenAPI `ak.self.circle.member.command.add`.
+/// `ak.circle.member.state`. Spec OpenAPI `ak.self.circle.member.command.add.v1`.
 pub async fn add_circle_member(
     submitter: &EventSubmitter,
     realm_id: &str,

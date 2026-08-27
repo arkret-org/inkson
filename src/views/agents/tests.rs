@@ -161,18 +161,18 @@ mod personal_agent_tests {
                 "ak.event.read",
                 "ak.message.create",
                 "ak.reaction.add",
-                "ak.self.events.command.submit",
-                "ak.self.events.read.frontier",
-                "ak.self.events.read.scan",
-                "ak.self.events.stream.subscribe",
-                "ak.self.keys.keypackages.upload.create",
-                "ak.self.seals.read.frontier",
-                "ak.self.authorization_leases.command.issue",
-                "ak.self.keys.keypackages.command.consume",
-                "ak.self.keys.keypackages.command.revoke",
-                "ak.self.device_messages.read.list",
-                "ak.self.device_messages.command.ack",
-                "ak.self.signal.command.send",
+                "ak.self.events.command.submit.v1",
+                "ak.self.events.read.frontier.v1",
+                "ak.self.events.read.scan.v1",
+                "ak.self.events.stream.subscribe.v1",
+                "ak.self.keys.keypackages.upload.create.v1",
+                "ak.self.seals.read.frontier.v1",
+                "ak.self.authorization_leases.command.issue.v1",
+                "ak.self.keys.keypackages.command.consume.v1",
+                "ak.self.keys.keypackages.command.revoke.v1",
+                "ak.self.device_messages.read.list.v1",
+                "ak.self.device_messages.command.ack.v1",
+                "ak.self.signal.command.send.v1",
             ]
         );
         let wire = serde_json::to_value(&scope).unwrap();
@@ -181,51 +181,51 @@ mod personal_agent_tests {
             serde_json::json!([
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.command.submit"
+                    "operation": "ak.self.events.command.submit.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.read.frontier"
+                    "operation": "ak.self.events.read.frontier.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.read.scan"
+                    "operation": "ak.self.events.read.scan.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.events.stream.subscribe"
+                    "operation": "ak.self.events.stream.subscribe.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.keys.keypackages.upload.create"
+                    "operation": "ak.self.keys.keypackages.upload.create.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.seals.read.frontier"
+                    "operation": "ak.self.seals.read.frontier.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.authorization_leases.command.issue"
+                    "operation": "ak.self.authorization_leases.command.issue.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.keys.keypackages.command.consume"
+                    "operation": "ak.self.keys.keypackages.command.consume.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.keys.keypackages.command.revoke"
+                    "operation": "ak.self.keys.keypackages.command.revoke.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.device_messages.read.list"
+                    "operation": "ak.self.device_messages.read.list.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.device_messages.command.ack"
+                    "operation": "ak.self.device_messages.command.ack.v1"
                 },
                 {
                     "kind": "operation",
-                    "operation": "ak.self.signal.command.send"
+                    "operation": "ak.self.signal.command.send.v1"
                 }
             ])
         );
@@ -246,11 +246,11 @@ mod personal_agent_tests {
                 "ak.event.read".to_owned(),
                 "ak.agent.draft.propose".to_owned(),
                 "ak.agent.action_request".to_owned(),
-                "ak.self.events.command.submit".to_owned(),
-                "ak.self.events.read.frontier".to_owned(),
-                "ak.self.events.read.scan".to_owned(),
-                "ak.self.events.stream.subscribe".to_owned(),
-                "ak.self.seals.read.frontier".to_owned(),
+                "ak.self.events.command.submit.v1".to_owned(),
+                "ak.self.events.read.frontier.v1".to_owned(),
+                "ak.self.events.read.scan.v1".to_owned(),
+                "ak.self.events.stream.subscribe.v1".to_owned(),
+                "ak.self.seals.read.frontier.v1".to_owned(),
             ]
         );
     }
@@ -269,12 +269,12 @@ mod personal_agent_tests {
         assert_eq!(
             scope.actions,
             vec![
-                "ak.self.events.command.submit",
-                "ak.self.events.read.frontier",
-                "ak.self.events.read.scan",
-                "ak.self.events.stream.subscribe",
-                "ak.self.seals.read.frontier",
-                "ak.self.events.resource.get",
+                "ak.self.events.command.submit.v1",
+                "ak.self.events.read.frontier.v1",
+                "ak.self.events.read.scan.v1",
+                "ak.self.events.stream.subscribe.v1",
+                "ak.self.seals.read.frontier.v1",
+                "ak.self.events.resource.get.v1",
             ]
         );
     }
@@ -592,7 +592,7 @@ mod personal_agent_tests {
 
         let expected_pairing_digest =
             arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
-                arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY,
+                arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY_V1,
                 &controller_actor_id,
                 &request.agent_id,
                 &request.pairing_request_id,

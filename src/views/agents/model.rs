@@ -252,20 +252,20 @@ impl AgentServiceScopePreset {
             // Presets only list optional additions here; keeping a second
             // copy of the mandatory floor caused the Seal-frontier omission.
             Self::SubscribeEvents | Self::ScanCatchUp => &[],
-            Self::SubmitEvents => &[ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE],
+            Self::SubmitEvents => &[ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE_V1],
             Self::SecureMessaging => &[
-                ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME,
+                ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME_V1,
                 // Standard KeyPackage lifecycle is upload|claim|consume|revoke
                 // (device-lifecycle §9). The runtime revokes its own published
                 // pool on unbind/replacement, and the requested_scope ceiling
                 // is immutable after provisioning (key-management §4.5), so
                 // revoke must be part of the default ceiling from day one.
-                ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_REVOKE,
-                ServiceOperationId::SELF_DEVICE_MESSAGES_READ_LIST,
-                ServiceOperationId::SELF_DEVICE_MESSAGES_COMMAND_ACK,
-                ServiceOperationId::SELF_SIGNAL_COMMAND_SEND,
+                ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_REVOKE_V1,
+                ServiceOperationId::SELF_DEVICE_MESSAGES_READ_LIST_V1,
+                ServiceOperationId::SELF_DEVICE_MESSAGES_COMMAND_ACK_V1,
+                ServiceOperationId::SELF_SIGNAL_COMMAND_SEND_V1,
             ],
-            Self::ResolveResources => &[ServiceOperationId::SELF_EVENTS_RESOURCE_GET],
+            Self::ResolveResources => &[ServiceOperationId::SELF_EVENTS_RESOURCE_GET_V1],
         }
     }
 }
@@ -523,7 +523,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
         controller_id: controller_actor_id,
         requested_scope,
         verifier_service_id,
-        audience: NonEmptyString::new(ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY)
+        audience: NonEmptyString::new(ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY_V1)
             .map_err(anyhow::Error::msg)?,
         challenge: NonEmptyString::new(pairing_request_id.as_str().to_owned())
             .map_err(anyhow::Error::msg)?,
@@ -706,7 +706,7 @@ pub fn prepare_agent_key_authorize_pairing(
     })?;
     let pairing_digest =
         arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
-            arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY,
+            arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY_V1,
             &controller_actor_id,
             &request.agent_id,
             &request.pairing_request_id,
@@ -874,7 +874,7 @@ pub fn finish_agent_key_authorization_for_pairing(
 }
 
 /// Expand one preset into a canonical `ak.capability.grant` object for
-/// `ak.self.agent.grant.command.attach`. The agent principal id is the
+/// `ak.self.agent.grant.command.attach.v1`. The agent principal id is the
 /// grant `subject`; `realm_id` scopes it; `expires_at` (RFC3339 Z)
 /// bounds the TTL. This is a separate Realm-scoped grant and is never
 /// materialized by provisioning.

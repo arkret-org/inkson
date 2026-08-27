@@ -102,7 +102,7 @@ impl KeysEndpoints<'_> {
     }
 
     /// Stage a new device's key server-side, returning the short pairing handle
-    /// + code (`ak.open.device_pairing.command.stage`).
+    /// + code (`ak.open.device_pairing.command.stage.v1`).
     pub async fn device_pairing_stage(
         &self,
         body: &arkret_sdk::DevicePairingStageRequestBody,
@@ -115,7 +115,7 @@ impl KeysEndpoints<'_> {
     }
 
     /// Resolve a scanned/pasted pairing token into the staged bootstrap
-    /// (`ak.open.device_pairing.read.resolve`).
+    /// (`ak.open.device_pairing.read.resolve.v1`).
     pub async fn device_pairing_resolve(
         &self,
         body: &arkret_sdk::DevicePairingResolveRequestBody,
@@ -128,7 +128,7 @@ impl KeysEndpoints<'_> {
     }
 
     /// Poll whether a staged pairing request has been authorized
-    /// (`ak.open.device_pairing.read.status`).
+    /// (`ak.open.device_pairing.read.status.v1`).
     pub async fn device_pairing_status(
         &self,
         body: &arkret_sdk::DevicePairingStatusRequestBody,

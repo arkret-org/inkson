@@ -2,7 +2,7 @@
 
 use crate::identity::handle::parse_user_handle;
 
-/// Context for `ak.find.directory.read.resolve_handle`.
+/// Context for `ak.find.directory.read.resolve_handle.v1`.
 ///
 /// Protocol distinction: `lookup` / `mention` are display-safe resolves;
 /// `member_add` / `invite` request Realm/audience-bound membership-builder

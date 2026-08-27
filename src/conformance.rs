@@ -1,33 +1,15 @@
-//! Runtime conformance gates backed by the SDK's generated profile requirements.
+//! Runtime conformance gates backed by explicit service profile claims.
 
-use crate::models::{ServiceDescribe, service_supports_operation, service_supports_profile};
+use crate::models::{ServiceDescribe, service_supports_profile};
 
 /// Report whether the server supports a client profile.
 ///
-/// Until service discovery completes, the UI remains permissive. Once a
-/// description is available, an explicit profile claim or complete support
-/// for the SDK-generated required operation set enables the profile.
+/// Discovery absence is unknown and therefore fails closed. A conformance
+/// profile is not a runtime capability table: only an explicit service claim
+/// enables this gate. Operation availability is negotiated separately from
+/// the service's advertised operation bundles.
 pub fn profile_ready(server: Option<&ServiceDescribe>, profile_id: &str) -> bool {
-    server
-        .map(|description| {
-            service_supports_profile(description, profile_id)
-                || missing_requirements(profile_id, description).is_empty()
-        })
-        .unwrap_or(true)
-}
-
-fn missing_requirements(profile_id: &str, server: &ServiceDescribe) -> Vec<String> {
-    let Some(requirements) =
-        arkret_wire::generated::profile_requirements::requirements_for(profile_id)
-    else {
-        return vec![format!("unknown profile {profile_id}")];
-    };
-    requirements
-        .required_operations
-        .iter()
-        .filter(|operation| !service_supports_operation(server, operation))
-        .map(|operation| (*operation).to_owned())
-        .collect()
+    server.is_some_and(|description| service_supports_profile(description, profile_id))
 }
 
 #[cfg(test)]
@@ -37,7 +19,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn profile_ready_is_permissive_until_describe_finishes() {
-        assert!(profile_ready(None, ProfileId::E2EE_CLIENT_V1));
+    fn profile_ready_fails_closed_until_describe_finishes() {
+        assert!(!profile_ready(None, ProfileId::E2EE_CLIENT_V1));
     }
 }

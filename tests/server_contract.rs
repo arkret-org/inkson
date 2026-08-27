@@ -23,22 +23,6 @@ fn parse_server_description(
     Ok(serde_json::from_value(value)?)
 }
 
-fn http_operation_bindings(operation_ids: &[&str]) -> serde_json::Value {
-    serde_json::Value::Array(
-        operation_ids
-            .iter()
-            .map(|operation_id| {
-                let operation_id = arkret_sdk::ServiceOperationId::from_wire(operation_id)
-                    .expect("fixture operation must be registered");
-                serde_json::to_value(
-                    arkret_sdk::OperationBinding::current_http_json(operation_id).unwrap(),
-                )
-                .unwrap()
-            })
-            .collect(),
-    )
-}
-
 fn snapshot_contract_event_id(suffix: &str) -> arkret_sdk::EventId {
     let seed = u8::from_str_radix(&suffix[suffix.len() - 2..], 16).unwrap();
     arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [seed; 32])
@@ -54,6 +38,14 @@ fn service_resolution(full_id: &str) -> serde_json::Value {
         "method_history_head": "sha256:fixture",
         "version_id": "fixture-v1"
     })
+}
+
+fn problem_bytes(status: StatusCode, code: &str, detail: &str) -> Vec<u8> {
+    serde_json::to_vec(
+        &arkret_sdk::Problem::new(code, status.as_u16(), detail)
+            .with_instance("ak:request:server-contract"),
+    )
+    .unwrap()
 }
 
 fn snapshot_contract_manifest_payload() -> serde_json::Value {
@@ -128,41 +120,22 @@ fn inkson_accepts_server_contract_payloads() {
         "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": ["ak.profile.core_event_store.v1"],
-        "supported_features": [
-            "account.subscribe",
-            "sync.backfill",
-            "directory.search_realms",
-            "directory.resolve_realm",
-            "index.query",
-            "authz.check",
-            "profile.presence",
-            "push.register_device",
-            "moderation.report"
+        "supported_operation_bundles": [
+            "ak.operation_bundle.principal_server.describe.v1",
+            "ak.operation_bundle.principal_server.http_core.v1"
         ],
-        "operation_bindings": http_operation_bindings(&[
-            "ak.self.account.stream.subscribe",
-            "ak.self.events.read.scan",
-            "ak.self.events.stream.subscribe",
-            "ak.self.snapshot.read.manifest_head",
-            "ak.find.directory.read.describe",
-            "ak.find.directory.read.search_realms",
-            "ak.find.directory.read.resolve_realm",
-            "ak.self.authz.read.check",
-            "ak.self.authz.grants.read.effective",
-            "ak.self.authz.invites.read.list",
-            "ak.edge.push.command.register_device",
-            "ak.edge.push.command.unregister_device",
-            "ak.self.moderation.command.report"
-        ]),
-        "supported_bindings": [{"kind": "http_json", "base_url": "/_arkret"}],
+        "transport_bindings": [{
+            "kind": "http_json",
+            "base_url": "https://server.local/_arkret",
+            "extension_profile_required": null
+        }],
+        "supported_features": [],
         "supported_reducer_profiles": ["ak.reducer.core.v1"],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "memory", "max_limit": 100},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
-        "experimental_features": [],
         "interop_surfaces": [],
         "development_mode": true,
     }))
@@ -171,10 +144,10 @@ fn inkson_accepts_server_contract_payloads() {
         describe.service_kind,
         arkret_sdk::ServiceKind::PrincipalServer
     );
-    assert!(describe.supports_operation(arkret_sdk::ServiceOperationId::SelfAuthzReadCheck));
+    assert!(describe.supports_operation(arkret_sdk::ServiceOperationId::SelfAuthzReadCheckV1));
     assert_eq!(
-        describe.supported_bindings[0].base_url.as_deref(),
-        Some("/_arkret")
+        describe.transport_bindings[0].base_url(),
+        "https://server.local/_arkret"
     );
 
     let identity: inkson::models::IdentityDescription = serde_json::from_value(json!({
@@ -208,16 +181,17 @@ fn inkson_accepts_server_contract_payloads() {
         "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": ["ak.profile.minimal_client.v1"],
+        "supported_operation_bundles": [
+            "ak.operation_bundle.principal_server.describe.v1",
+            "ak.operation_bundle.principal_server.http_core.v1"
+        ],
+        "transport_bindings": [],
         "supported_features": [],
-        "operation_bindings": http_operation_bindings(&["ak.self.account.read.describe"]),
-        "supported_bindings": [],
         "auth_metadata": {"mode": "development"},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
-        "experimental_features": [],
         "interop_surfaces": [],
         "development_mode": false
     }))
@@ -254,22 +228,26 @@ fn inkson_accepts_server_contract_payloads() {
         "trust_domain": "ak:trust_domain:server.local",
         "service_kind": "directory_service",
         "protocol_version": "1.0",
-        "supported_profiles": ["ak.profile.directory_service.v1"],
-        "operation_bindings": http_operation_bindings(&["ak.find.directory.read.describe"]),
-        "supported_bindings": [{"kind": "http_json"}],
+        "supported_profiles": [],
+        "supported_operation_bundles": [
+            "ak.operation_bundle.directory_service.describe.v1",
+            "ak.operation_bundle.directory_service.http_core.v1"
+        ],
+        "transport_bindings": [{
+            "kind": "http_json",
+            "base_url": "https://directory.local/_arkret/find/directory",
+            "extension_profile_required": null
+        }],
         "supported_features": [],
         "auth_metadata": {"mode": "public_no_auth"},
         "limits": {},
         "plaintext_visibility": {},
         "rate_limit_policy": {},
-        "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
-        "experimental_features": [],
         "interop_surfaces": [],
         "development_mode": false,
         "resource_kinds": ["realm", "organization", "actor"],
-        "discovery_profiles": ["ak.profile.directory_service.v1"],
         "restricted_query_proof": false,
         "ingest_modes": ["push"],
         "accept_policy_kind": "open",
@@ -282,8 +260,8 @@ fn inkson_accepts_server_contract_payloads() {
     }))
     .unwrap();
     assert_eq!(
-        directory.discovery_profiles[0],
-        "ak.profile.directory_service.v1"
+        directory.service_kind,
+        arkret_sdk::ServiceKind::DirectoryService
     );
 
     let resolved: inkson::models::DirectoryRealmResolutionOutcome = serde_json::from_value(json!({
@@ -309,7 +287,7 @@ fn inkson_accepts_server_contract_payloads() {
             "service_kind": "principal_server",
             "role": "joined_member_principal_server",
             "endpoint": "http://server",
-            "operations": ["ak.peer.events.command.submit"],
+            "operations": ["ak.peer.events.command.submit.v1"],
             "join_methods": ["invite_accept", "member_join"],
             "encryption_profile": "mls_rfc9420",
             "digest_algorithm": "sha256",
@@ -454,12 +432,14 @@ fn inkson_accepts_server_contract_payloads() {
     assert!(!claimed.one_time_keys.is_empty());
 
     let device_send: inkson::models::DeviceMessagesSendOutcome = serde_json::from_value(json!({
-        "ok": true,
         "delivered": {"did:web:alice.example": ["dev_alice"]},
         "unknown_devices": {}
     }))
     .unwrap();
-    assert!(device_send.ok);
+    assert_eq!(
+        device_send.delivered["did:web:alice.example"],
+        json!(["dev_alice"])
+    );
 
     // SDK shape: the to-device queue field is `messages`, not the old `events`.
     let device_receive: inkson::models::DeviceMessagesGetOutcome = serde_json::from_value(json!({
@@ -471,7 +451,6 @@ fn inkson_accepts_server_contract_payloads() {
     assert!(!device_receive.limited);
 
     let push: inkson::models::PushRegisterDeviceOutcome = serde_json::from_value(json!({
-        "ok": true,
         "push_target_id": "ak:pseudonym:push:kosc9iQ4gVct1OB-b6X364WIFIsJFVbVzn7BMBs1sm8",
         "registration_id": "push:dev_alice",
         "expires_at": null
@@ -523,7 +502,11 @@ fn inkson_accepts_server_contract_payloads() {
 
     let error = decode_arkret_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":null},"request_id":"ak:request:server-contract"}"#,
+        &problem_bytes(
+            StatusCode::CONFLICT,
+            "expected_head_mismatch",
+            "expected_head mismatch",
+        ),
     );
     assert_eq!(error.code(), "expected_head_mismatch");
     assert_eq!(error.message(), "expected_head mismatch");
@@ -541,20 +524,21 @@ fn server_description_gates_event_envelope_write_plane() {
             "ak.profile.core_event_store.v1",
             "ak.profile.principal_server_events_api.v1"
         ],
-        "operation_bindings": http_operation_bindings(&[
-            "ak.self.events.read.describe",
-            "ak.self.events.command.submit",
-            "ak.self.account.stream.subscribe"
-        ]),
-        "supported_bindings": [{"kind": "http_json"}],
-        "supported_features": ["events.submit", "account.subscribe"],
+        "supported_operation_bundles": [
+            "ak.operation_bundle.principal_server.describe.v1",
+            "ak.operation_bundle.principal_server.http_core.v1"
+        ],
+        "transport_bindings": [{
+            "kind": "http_json",
+            "base_url": "https://soland.local/_arkret",
+            "extension_profile_required": null
+        }],
+        "supported_features": [],
         "auth_metadata": {"mode": "development"},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
-        "experimental_features": [],
         "interop_surfaces": [],
         "development_mode": true,
     }))
@@ -583,16 +567,19 @@ fn server_description_gates_event_envelope_write_plane() {
             "ak.profile.core_event_store.v1",
             "ak.profile.principal_server_events_api.v1"
         ],
-        "operation_bindings": http_operation_bindings(&[
-            "ak.self.events.read.describe",
-            "ak.self.events.command.submit"
-        ]),
-        "supported_bindings": [{"kind": "http_json", "base_url": "https://local.host"}],
-        "supported_features": ["ak.feature.soland.events.describe"],
+        "supported_operation_bundles": [
+            "ak.operation_bundle.principal_server.describe.v1",
+            "ak.operation_bundle.principal_server.http_core.v1"
+        ],
+        "transport_bindings": [{
+            "kind": "http_json",
+            "base_url": "https://local.host/_arkret",
+            "extension_profile_required": null
+        }],
+        "supported_features": [],
         "auth_metadata": {"mode": "development"},
         "limits": {"storage": "postgres"},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "implemented_features": ["ak.feature.soland.events.describe"],
         "claimed_profiles": [
             {
                 "profile_id": "ak.profile.core_event_store.v1",
@@ -600,7 +587,6 @@ fn server_description_gates_event_envelope_write_plane() {
             }
         ],
         "verified_profiles": [],
-        "experimental_features": [],
         "interop_surfaces": [external_interop_surface],
         "development_mode": true,
     }))
@@ -630,13 +616,16 @@ fn server_description_gates_event_envelope_write_plane() {
             "service_kind": "principal_server",
             "protocol_version": "1.0",
             "supported_profiles": [],
-            "operation_bindings": http_operation_bindings(&["ak.self.account.stream.subscribe"]),
-            "supported_features": ["account.subscribe"]
+            "supported_operation_bundles": [
+                "ak.operation_bundle.principal_server.describe.v1",
+                "ak.operation_bundle.principal_server.websocket.v1"
+            ],
+            "supported_features": []
         }))
         .is_err()
     );
 
-    // A v2-shaped payload that still omits the event write requirements is
+    // A complete payload that still omits the event write requirements is
     // accepted by the SDK parser but flagged by the inkson helpers.
     let events_missing = parse_server_description(json!({
         "service_id": "ak:did_core:web:minimal.local",
@@ -645,16 +634,21 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_kind": "principal_server",
         "protocol_version": "1.0",
         "supported_profiles": [],
-        "operation_bindings": http_operation_bindings(&["ak.self.account.stream.subscribe"]),
-        "supported_bindings": [{"kind": "http_json"}],
-        "supported_features": ["account.subscribe"],
+        "supported_operation_bundles": [
+            "ak.operation_bundle.principal_server.agent_pairing_handoff.v1",
+            "ak.operation_bundle.principal_server.describe.v1"
+        ],
+        "transport_bindings": [{
+            "kind": "http_json",
+            "base_url": "https://minimal.local/_arkret",
+            "extension_profile_required": null
+        }],
+        "supported_features": [],
         "auth_metadata": {"mode": "development"},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "implemented_features": [],
         "claimed_profiles": [],
         "verified_profiles": [],
-        "experimental_features": [],
         "interop_surfaces": [],
         "development_mode": true,
     }))
@@ -666,8 +660,8 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_event_envelope_write_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.self.events.read.describe",
-            "ak.self.events.command.submit"
+            "ak.self.events.read.describe.v1",
+            "ak.self.events.command.submit.v1"
         ]
     );
     // `plaintext_visibility` is now present + non-null, so it falls out of
@@ -676,8 +670,8 @@ fn server_description_gates_event_envelope_write_plane() {
         missing_v1_principal_server_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
-            "ak.self.events.read.describe",
-            "ak.self.events.command.submit",
+            "ak.self.events.read.describe.v1",
+            "ak.self.events.command.submit.v1",
         ]
     );
 }
@@ -864,7 +858,7 @@ fn inkson_config_store_preserves_signed_out_state_without_placeholder_identity()
 }
 
 // (Move/Seal pipeline tests removed — all writes now go through
-// ak.self.events.command.submit; the SubmitEventResult decoder is exercised by
+// ak.self.events.command.submit.v1; the SubmitEventResult decoder is exercised by
 // soland's own integration tests and the arkret-spec fixtures.)
 
 /// Regression: `is_auth_expired_error` MUST treat a bare 401
@@ -887,12 +881,10 @@ fn bare_401_does_not_count_as_session_loss() {
     // soft_logged_out —
     // should drop the session.
     for code in ["auth_expired", "unauthenticated", "soft_logged_out"] {
-        let body = format!(
-            r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}},"request_id":"ak:request:server-contract"}}"#
-        );
+        let body = problem_bytes(StatusCode::UNAUTHORIZED, code, "unknown token");
         let envelope: anyhow::Error = TransportClientError {
             status: StatusCode::UNAUTHORIZED,
-            error: decode_arkret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
+            error: decode_arkret_error(StatusCode::UNAUTHORIZED, &body),
         }
         .into();
         assert!(
@@ -905,41 +897,40 @@ fn bare_401_does_not_count_as_session_loss() {
         status: StatusCode::UNAUTHORIZED,
         error: decode_arkret_error(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"},"request_id":"ak:request:server-contract"}"#,
+            &problem_bytes(StatusCode::UNAUTHORIZED, "rate_limited", "slow down"),
         ),
     }
     .into();
     assert!(!is_auth_expired_error(&unrelated));
 }
 
-/// Regression: `decode_arkret_error` MUST tolerate the current
-/// on-the-wire shapes (canonical wrapped and direct envelopes) and synthesise
-/// a stable `http_status` envelope when none match. A regression here silently
-/// degrades every error message in the UI.
+/// Regression: `decode_arkret_error` accepts the single canonical Problem
+/// shape and synthesises a stable `http_status` envelope when it does not
+/// match. A regression here silently degrades every error message in the UI.
 #[test]
-fn decoder_handles_all_envelope_shapes() {
-    // 1. Canonical wrapped: { "error": ErrorEnvelope }. Extra hints (e.g. the cell ref the server
-    //    is reporting the conflict on) must strand through the `details` map so the conflict UI can
-    //    surface them.
-    let wrapped = decode_arkret_error(
-        StatusCode::CONFLICT,
-        br#"{"error":{"ok":false,"error":{"code":"expected_head_mismatch","message":"head mismatch","retry_after_ms":250,"details":{"cell":"ak:cell:ak.component.strand.position.v1:demo"}},"request_id":"ak:request:server-contract-wrapped"}}"#,
-    );
-    assert_eq!(wrapped.code(), "expected_head_mismatch");
-    assert_eq!(wrapped.retry_after_ms(), Some(250));
+fn decoder_handles_problem_and_non_problem() {
+    let problem = serde_json::to_vec(
+        &arkret_sdk::Problem::new(
+            "expected_head_mismatch",
+            StatusCode::CONFLICT.as_u16(),
+            "head mismatch",
+        )
+        .with_instance("ak:request:server-contract")
+        .with_extension("retry_after_ms", json!(250))
+        .with_extension(
+            "cell",
+            json!("ak:cell:ak.component.strand.position.v1:demo"),
+        ),
+    )
+    .unwrap();
+    let decoded = decode_arkret_error(StatusCode::CONFLICT, &problem);
+    assert_eq!(decoded.code(), "expected_head_mismatch");
+    assert_eq!(decoded.retry_after_ms(), Some(250));
     assert_eq!(
-        wrapped.details()["cell"],
+        decoded.details()["cell"],
         "ak:cell:ak.component.strand.position.v1:demo"
     );
 
-    // 2. Direct canonical envelope.
-    let plain = decode_arkret_error(
-        StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"param_invalid","message":"bad did"},"request_id":"ak:request:server-contract-direct"}"#,
-    );
-    assert_eq!(plain.code(), "param_invalid");
-
-    // 3. Garbage / non-JSON: synthesised fallback.
     let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");
     assert_eq!(fallback.code(), "http_status");
     assert!(fallback.message().contains("503"));

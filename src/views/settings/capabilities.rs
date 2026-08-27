@@ -34,7 +34,7 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 /// One row in the user's capability list. Backed by either the user
 /// being the subject (capability held) or the issuer (capability
 /// granted to someone else). Mapped from the authoritative SDK
-/// [`CapabilityGrant`] rows that `ak.self.authz.grants.read.effective`
+/// [`CapabilityGrant`] rows that `ak.self.authz.grants.read.effective.v1`
 /// returns (soland serialises the SDK `GrantList` verbatim).
 #[derive(Clone, Debug, PartialEq)]
 struct CapabilityRow {

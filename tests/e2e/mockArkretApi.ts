@@ -4,7 +4,13 @@ import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mockArkretContract } from "./mockArkretContract";
-import { currentHttpDescribeBindings } from "./currentOperationBindings";
+import {
+  currentHttpDescribeCapabilities,
+  DIRECTORY_DESCRIBE_BUNDLE,
+  DIRECTORY_HTTP_CORE_BUNDLE,
+  PRINCIPAL_DESCRIBE_BUNDLE,
+  PRINCIPAL_HTTP_CORE_BUNDLE,
+} from "./currentDescribeCapabilities";
 
 const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
 const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
@@ -92,7 +98,6 @@ type StrandProjection = {
 };
 
 type MockArkretApiOptions = {
-  advertiseListHandlesForSubject?: boolean;
   accountPrincipalId?: string;
   primaryHandle?: string | null;
   directoryPrimaryHandle?: string | null;
@@ -292,8 +297,6 @@ export async function mockArkretApi(
   page: Page,
   options: MockArkretApiOptions = {},
 ) {
-  const advertiseListHandlesForSubject =
-    options.advertiseListHandlesForSubject ?? true;
   const accountPrincipalId =
     options.accountPrincipalId ?? "did:web:alice.example";
   const accountPrincipalCoreId = accountPrincipalId.startsWith("ak:did_core:")
@@ -581,7 +584,7 @@ export async function mockArkretApi(
   const activeAssistantId = "did:web:agents.example:assistant";
   const activeAssistantScope = {
     actions: ["ak.event.read"],
-    resources: [{ kind: "operation", operation: "ak.self.events.read.scan" }],
+    resources: [{ kind: "operation", operation: "ak.self.events.read.scan.v1" }],
   };
   const activeAssistantKeyState = {
     agent_id: activeAssistantId,
@@ -660,14 +663,14 @@ export async function mockArkretApi(
         "ak.event.read",
         "ak.message.create",
         "ak.reaction.add",
-        "ak.self.events.stream.subscribe",
-        "ak.self.events.read.scan",
-        "ak.self.events.command.submit",
+        "ak.self.events.stream.subscribe.v1",
+        "ak.self.events.read.scan.v1",
+        "ak.self.events.command.submit.v1",
       ],
       resources: [
         {
           kind: "operation",
-          operation: "ak.self.events.stream.subscribe",
+          operation: "ak.self.events.stream.subscribe.v1",
         },
       ],
     };
@@ -1092,103 +1095,10 @@ export async function mockArkretApi(
           "ak.profile.core_event_store.v1",
           "ak.profile.principal_server_events_api.v1",
         ],
-        supported_features: [
-          "sync.client_sync",
-          "sync.backfill",
-          "directory.search_realms",
-          "directory.resolve_realm",
-          "authz.check",
-          "realm.create",
-          "space.create",
-          "space.manage_members",
-          "message.create",
-          "message.revise",
-          "message.redact",
-          "reaction.add",
-          "keys.upload",
-          "keys.query",
-          "keys.claim",
-          "device_messages.get",
-          "device_messages.put",
-          "device_messages.ack",
-          "push.register_device",
-          "mimi_provider_facade",
-          "events.submit",
-        ],
-        ...currentHttpDescribeBindings([
-          "ak.server.read.describe",
-          "ak.self.account.stream.subscribe",
-          "ak.self.account.read.describe",
-          "ak.self.account.read.viewer",
-          "ak.self.account.command.update_profile",
-          "ak.self.events.read.scan",
-          "ak.self.events.stream.subscribe",
-          "ak.self.events.read.describe",
-          "ak.self.events.command.submit",
-          "ak.self.space.read.list",
-          "ak.self.strand.read.list",
-          "ak.find.directory.read.search_realms",
-          "ak.find.directory.read.resolve_realm",
-          "ak.find.directory.read.describe",
-          "ak.find.directory.read.search_organizations",
-          "ak.find.directory.read.search_actors",
-          "ak.find.directory.read.resolve_handle",
-          ...(advertiseListHandlesForSubject
-            ? ["ak.find.directory.read.list_handles_for_subject"]
-            : []),
-          "ak.self.authz.read.check",
-          "ak.self.authz.grants.read.effective",
-          "ak.self.authz.invites.read.list",
-          "ak.root.identity.registry.read.describe",
-          "ak.root.identity.read.resolve",
-          "ak.root.identity.recovery_policy.resource.get",
-          "ak.root.identity.recovery_policy.command.publish",
-          "ak.gate.account.command.register",
-          "ak.gate.account.command.pair_device",
-          "ak.gate.account.command.revoke_session",
-          "ak.self.contact.read.list",
-          "ak.self.contact.command.request",
-          "ak.self.contact.command.respond",
-          "ak.self.contact.command.tombstone",
-          "ak.self.invite_receive_policy.resource.get",
-          "ak.self.invite_receive_policy.resource.replace",
-          "ak.self.direct_conversation.read.resolve",
-          "ak.self.circle.command.create",
-          "ak.self.circle.read.list",
-          "ak.self.circle.resource.get",
-          "ak.self.circle.member.command.add",
-          "ak.self.circle.member.resource.delete",
-          "ak.self.circle.command.rotate_scope",
-          "ak.self.circle.command.archive",
-          "ak.self.circle.command.restore",
-          "ak.self.circle.command.tombstone",
-          "ak.self.keys.upload.create",
-          "ak.self.keys.read.lookup",
-          "ak.self.keys.command.claim",
-          "ak.self.keys.backups.read.list",
-          "ak.self.keys.backups.resource.replace",
-          "ak.self.device_messages.read.list",
-          "ak.self.device_messages.command.send",
-          "ak.self.device_messages.command.ack",
-          "ak.edge.push.command.register_device",
-          "ak.edge.push.command.unregister_device",
-          "ak.self.blob.upload.create",
-          "ak.self.blob.resource.get",
-          "ak.self.media.read.ice_config",
-          "ak.self.moderation.command.report",
-          "ak.open.mimi.read.provider_directory",
-          "ak.open.mimi.exchange.request_key_material",
-          "ak.open.mimi.read.group_info",
-          "ak.open.mimi.command.update_room",
-          "ak.open.mimi.command.notify",
-          "ak.open.mimi.command.submit_message",
-          "ak.open.mimi.command.request_consent",
-          "ak.open.mimi.command.update_consent",
-          "ak.open.mimi.read.identifiers",
-          "ak.open.mimi.command.report_abuse",
-          "ak.open.mimi.command.proxy_download",
-          "ak.open.invite_locator.read.resolve",
-          "ak.self.signal.command.send",
+        supported_features: [],
+        ...currentHttpDescribeCapabilities([
+          PRINCIPAL_DESCRIBE_BUNDLE,
+          PRINCIPAL_HTTP_CORE_BUNDLE,
         ]),
         supported_reducer_profiles: ["ak.reducer.core.v1"],
         auth_metadata: {
@@ -1224,10 +1134,8 @@ export async function mockArkretApi(
           max_visibility: "none",
           notes: "E2EE-only mock: no plaintext-visible service surface.",
         },
-        implemented_features: [],
         claimed_profiles: [],
         verified_profiles: [],
-        experimental_features: [],
         interop_surfaces: [],
         development_mode: true,
         frontier: [DEMO_FRONTIER_EVENT],
@@ -1716,7 +1624,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/events/describe" &&
       route.request().method() === "QUERY"
     ) {
-      // Spec ak.self.events.read.describe -> canonical ServiceDescribe shape
+      // Spec ak.self.events.read.describe.v1 -> canonical ServiceDescribe shape
       // (17 required fields; inkson decodes the SDK ServerDescription).
       return json(route, {
         service_id: "ak:did_core:web:server.local",
@@ -1729,11 +1637,11 @@ export async function mockArkretApi(
         service_kind: "principal_server",
         protocol_version: "1.0",
         supported_profiles: ["ak.profile.core_event_store.v1"],
-        ...currentHttpDescribeBindings([
-          "ak.self.events.command.submit",
-          "ak.self.events.read.describe",
+        ...currentHttpDescribeCapabilities([
+          PRINCIPAL_DESCRIBE_BUNDLE,
+          PRINCIPAL_HTTP_CORE_BUNDLE,
         ]),
-        supported_features: ["events_query_range_completeness"],
+        supported_features: ["ak.feature.events_query_range_completeness.v1"],
         auth_metadata: {
           mode: "development",
           account_authority: {
@@ -1767,10 +1675,8 @@ export async function mockArkretApi(
           max_visibility: "none",
           notes: "E2EE-only mock: no plaintext-visible service surface.",
         },
-        implemented_features: ["events_query_range_completeness"],
         claimed_profiles: [],
         verified_profiles: [],
-        experimental_features: [],
         interop_surfaces: [],
         development_mode: true,
         frontier: [DEMO_FRONTIER_EVENT],
@@ -2019,7 +1925,7 @@ export async function mockArkretApi(
           },
         ],
         receipt: {
-          kind: "ak.open.mimi.exchange.request_key_material",
+          kind: "ak.open.mimi.exchange.request_key_material.v1",
           profile: "ak.profile.mimi_interop.v1",
         },
       });
@@ -2034,7 +1940,7 @@ export async function mockArkretApi(
         ok: true,
         room_id: roomId,
         receipt: {
-          kind: "ak.open.mimi.command.update_room",
+          kind: "ak.open.mimi.command.update_room.v1",
           operation_id: "ak:operation:mimi-room-update",
         },
       });
@@ -2048,7 +1954,7 @@ export async function mockArkretApi(
         ok: true,
         accepted: ["did:web:remote.example"],
         receipt: {
-          kind: "ak.open.mimi.command.notify",
+          kind: "ak.open.mimi.command.notify.v1",
           notification_id: "ak:mimi:notify:e2e",
         },
       });
@@ -2093,7 +1999,7 @@ export async function mockArkretApi(
         ok: true,
         consent_id: "ak:mimi-consent:e2e",
         state: "requested",
-        receipt: { kind: "ak.open.mimi.command.request_consent" },
+        receipt: { kind: "ak.open.mimi.command.request_consent.v1" },
       });
     }
 
@@ -2105,7 +2011,7 @@ export async function mockArkretApi(
         ok: true,
         consent_id: "ak:mimi-consent:e2e",
         state: "accepted",
-        receipt: { kind: "ak.open.mimi.command.update_consent" },
+        receipt: { kind: "ak.open.mimi.command.update_consent.v1" },
       });
     }
 
@@ -2137,7 +2043,7 @@ export async function mockArkretApi(
         ok: true,
         report_id: "ak:report:mimi-e2e",
         status: "queued",
-        receipt: { kind: "ak.open.mimi.command.report_abuse" },
+        receipt: { kind: "ak.open.mimi.command.report_abuse.v1" },
       });
     }
 
@@ -2272,8 +2178,8 @@ export async function mockArkretApi(
               identityCreation.initial_session.session_public_key,
             audience: identityCreation.initial_session.audience,
             granted_scope: [
-              "ak.self.account.read.describe",
-              "ak.self.events.read.scan",
+              "ak.self.account.read.describe.v1",
+              "ak.self.events.read.scan.v1",
             ],
           },
         };
@@ -2744,25 +2650,30 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        service_id: "did:web:server.local",
+        service_id: "ak:did_core:web:server.local",
+        service_resolution: {
+          full_id: "did:web:server.local",
+          method_history_head: "development-unverified",
+          version_id: "development-unverified",
+        },
         trust_domain: "ak:trust_domain:server.local",
         service_kind: "directory_service",
         protocol_version: "1.0",
-        supported_profiles: ["ak.profile.directory_service.v1"],
-        ...currentHttpDescribeBindings(["ak.find.directory.read.describe"]),
+        supported_profiles: [],
+        ...currentHttpDescribeCapabilities(
+          [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_HTTP_CORE_BUNDLE],
+          "https://server.local/_arkret/find/directory",
+        ),
         supported_features: [],
         auth_metadata: { mode: "public_no_auth" },
         limits: {},
         plaintext_visibility: {},
         rate_limit_policy: {},
-        implemented_features: [],
         claimed_profiles: [],
         verified_profiles: [],
-        experimental_features: [],
         interop_surfaces: [],
         development_mode: false,
         resource_kinds: ["realm", "organization", "actor"],
-        discovery_profiles: ["ak.profile.directory_service.v1"],
         restricted_query_proof: false,
         ingest_modes: ["push"],
         accept_policy_kind: "open",
@@ -2857,7 +2768,7 @@ export async function mockArkretApi(
 
     // invite-addressing.md §7 — before dispatching private invite delivery the
     // client MUST read the accepted Event back through
-    // `ak.self.events.read.resolve` (`QUERY /_arkret/self/events/resolve`)
+    // `ak.self.events.read.resolve.v1` (`QUERY /_arkret/self/events/resolve`)
     // rather than re-authoring an equivalent one, because only the server's own
     // view is guaranteed byte-identical to the persisted canonical bytes. The
     // mock therefore serves back exactly what it accepted on POST
@@ -2885,7 +2796,7 @@ export async function mockArkretApi(
       });
     }
 
-    // invite-addressing.md §7 — `ak.self.invites.command.dispatch`. The client
+    // invite-addressing.md §7 — `ak.self.invites.command.dispatch.v1`. The client
     // hands raw `introduction_evidence` plus the accepted Event to its OWN
     // Principal Server; it never signs federation material and never calls the
     // peer surface. The response is the closed `invite_delivery_outcome`: §5.1
@@ -2913,7 +2824,7 @@ export async function mockArkretApi(
     }
 
     // NB: no `/_arkret/self/snapshot/head` route. The mock's describe does
-    // not advertise `ak.self.snapshot.read.manifest_head`, so the client falls back to
+    // not advertise `ak.self.snapshot.read.manifest_head.v1`, so the client falls back to
     // event replay before issuing the request. The current wire shape is the
     // full signed `ak.schema.snapshot.v1` manifest (self-id field `id`); the
     // removed `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
@@ -4287,7 +4198,7 @@ function joinCandidate() {
     service_kind: "principal_server",
     role: "primary",
     endpoint: null,
-    operations: ["ak.self.events.command.submit"],
+    operations: ["ak.self.events.command.submit.v1"],
     join_methods: ["invite_accept", "member_join"],
     priority: 0,
     source: "directory_ingest",

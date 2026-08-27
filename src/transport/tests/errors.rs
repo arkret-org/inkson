@@ -7,20 +7,39 @@ use crate::api_error::{
     is_terminal_session_grant_refresh_error, rate_limited_retry_after,
 };
 
-fn sdk_api_error(status: StatusCode, body: &'static [u8]) -> anyhow::Error {
+fn problem_body(status: StatusCode, code: &str, detail: &str) -> Vec<u8> {
+    serde_json::to_vec(
+        &arkret_sdk::Problem::new(code, status.as_u16(), detail).with_instance("ak:request:test"),
+    )
+    .unwrap()
+}
+
+fn decode_problem(status: StatusCode, code: &str, detail: &str) -> arkret_sdk::ErrorEnvelope {
+    decode_arkret_error(status, &problem_body(status, code, detail))
+}
+
+fn sdk_api_error(status: StatusCode, code: &str, detail: &str) -> anyhow::Error {
     arkret_sdk::Error::Api {
         status: status.as_u16(),
-        error: Box::new(decode_arkret_error(status, body)),
+        error: Box::new(decode_problem(status, code, detail)),
     }
     .into()
 }
 
 #[test]
-fn decodes_bare_arkret_error_envelope() {
-    let decoded = decode_arkret_error(
-        StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"expected_head_mismatch","message":"expected_head mismatch","retry_after_ms":250,"details":{"scope":"repo"}},"request_id":"ak:request:test"}"#,
-    );
+fn decodes_canonical_problem_details() {
+    let body = serde_json::to_vec(
+        &arkret_sdk::Problem::new(
+            "expected_head_mismatch",
+            StatusCode::CONFLICT.as_u16(),
+            "expected_head mismatch",
+        )
+        .with_instance("ak:request:test")
+        .with_extension("retry_after_ms", serde_json::json!(250))
+        .with_extension("scope", serde_json::json!("repo")),
+    )
+    .unwrap();
+    let decoded = decode_arkret_error(StatusCode::CONFLICT, &body);
     assert_eq!(decoded.code(), "expected_head_mismatch");
     assert_eq!(decoded.message(), "expected_head mismatch");
     assert_eq!(decoded.retry_after_ms(), Some(250));
@@ -28,16 +47,7 @@ fn decodes_bare_arkret_error_envelope() {
 }
 
 #[test]
-fn decodes_plain_error_envelope_and_falls_back() {
-    let decoded = decode_arkret_error(
-        StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"param_invalid","message":"invalid did"},"request_id":"ak:request:test"}"#,
-    );
-    assert_eq!(decoded.code(), "param_invalid");
-
-    // The SDK's ErrorEnvelope::new strips the `ak.error.` prefix in
-    // `canonical_error_code` and we depend on that canonicalization so
-    // downstream comparisons against the registry shape match.
+fn non_problem_response_falls_back_to_http_status() {
     let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
     assert_eq!(fallback.code(), "http_status");
     assert!(fallback.message().contains("503 Service Unavailable"));
@@ -45,10 +55,16 @@ fn decodes_plain_error_envelope_and_falls_back() {
 
 #[test]
 fn decodes_canonical_error_envelope_with_request_id() {
-    let decoded = decode_arkret_error(
-        StatusCode::FORBIDDEN,
-        br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:01964137-0000-7000-8000-000000000010"}"#,
-    );
+    let body = serde_json::to_vec(
+        &arkret_sdk::Problem::new(
+            "capability_denied",
+            StatusCode::FORBIDDEN.as_u16(),
+            "actor is not a member of the event Space",
+        )
+        .with_instance("ak:request:01964137-0000-7000-8000-000000000010"),
+    )
+    .unwrap();
+    let decoded = decode_arkret_error(StatusCode::FORBIDDEN, &body);
 
     assert_eq!(decoded.code(), "capability_denied");
     assert_eq!(
@@ -62,49 +78,48 @@ fn decodes_canonical_error_envelope_with_request_id() {
 }
 
 #[test]
-fn decodes_wrapped_canonical_error_envelope() {
-    let decoded = decode_arkret_error(
-        StatusCode::UNAUTHORIZED,
-        br#"{"error":{"ok":false,"error":{"code":"auth_expired","message":"session expired"},"request_id":"ak:request:01964137-0000-7000-8000-000000000011"}}"#,
-    );
-
-    assert_eq!(decoded.code(), "auth_expired");
-    assert_eq!(decoded.message(), "session expired");
-    assert_eq!(
-        decoded.request_id,
-        "ak:request:01964137-0000-7000-8000-000000000011"
-    );
-}
-
-#[test]
 fn sdk_api_errors_use_same_classifiers() {
-    let rate_limited = sdk_api_error(
-        StatusCode::TOO_MANY_REQUESTS,
-        br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down","retry_after_ms":250},"request_id":"ak:request:test"}"#,
-    );
+    let rate_body = serde_json::to_vec(
+        &arkret_sdk::Problem::new(
+            "rate_limited",
+            StatusCode::TOO_MANY_REQUESTS.as_u16(),
+            "slow down",
+        )
+        .with_instance("ak:request:test")
+        .with_extension("retry_after_ms", serde_json::json!(250)),
+    )
+    .unwrap();
+    let rate_limited: anyhow::Error = arkret_sdk::Error::Api {
+        status: StatusCode::TOO_MANY_REQUESTS.as_u16(),
+        error: Box::new(decode_arkret_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            &rate_body,
+        )),
+    }
+    .into();
     assert_eq!(rate_limited_retry_after(&rate_limited), Some(250));
 
-    let auth_expired = sdk_api_error(
-        StatusCode::UNAUTHORIZED,
-        br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"},"request_id":"ak:request:test"}"#,
-    );
+    let auth_expired = sdk_api_error(StatusCode::UNAUTHORIZED, "auth_expired", "session expired");
     assert!(is_auth_expired_error(&auth_expired));
 
     let revoked_session_grant = sdk_api_error(
         StatusCode::FORBIDDEN,
-        br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ak:request:test"}"#,
+        "capability_denied",
+        "session grant is not active: revoked",
     );
     assert!(is_terminal_session_grant_error(&revoked_session_grant));
 
     let actor_seq_cas = sdk_api_error(
         StatusCode::CONFLICT,
-        br#"{"ok":false,"error":{"code":"cas_conflict","message":"actor_seq is behind the accepted frontier"},"request_id":"ak:request:test"}"#,
+        "cas_conflict",
+        "actor_seq is behind the accepted frontier",
     );
     assert!(!is_actor_seq_cas_conflict_error(&actor_seq_cas));
 
     let consumed_refresh_grant = sdk_api_error(
         StatusCode::BAD_REQUEST,
-        br#"{"ok":false,"error":{"code":"grant_already_consumed","message":"session grant already consumed"},"request_id":"ak:request:test"}"#,
+        "grant_already_consumed",
+        "session grant already consumed",
     );
     assert!(is_terminal_session_grant_refresh_error(
         &consumed_refresh_grant
@@ -119,9 +134,10 @@ fn recognizes_device_not_authorized_errors() {
     // nothing else.
     let device_unauthorized: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"device_unauthorized","message":"key backup write requires the authenticated session device to be verified"},"request_id":"ak:request:test"}"#,
+            "device_unauthorized",
+            "key backup write requires the authenticated session device to be verified",
         ),
     }
     .into();
@@ -133,9 +149,10 @@ fn recognizes_device_not_authorized_errors() {
     // raw long-error fallback that overflows the modal.
     let recovery_policy_denial: anyhow::Error = TransportClientError {
         status: StatusCode::CONFLICT,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::CONFLICT,
-            br#"{"ok":false,"error":{"code":"recovery_policy_device_unauthorized","message":"recovery policy genesis requires an authorized device for did:webvh:..."},"request_id":"ak:request:test"}"#,
+            "recovery_policy_device_unauthorized",
+            "recovery policy genesis requires an authorized device for did:webvh:...",
         ),
     }
     .into();
@@ -146,10 +163,7 @@ fn recognizes_device_not_authorized_errors() {
     // route the user away from generating their first Recovery Key.
     let other_denial: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
-            StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"not a member"},"request_id":"ak:request:test"}"#,
-        ),
+        error: decode_problem(StatusCode::FORBIDDEN, "capability_denied", "not a member"),
     }
     .into();
     assert!(!is_device_not_authorized_error(&other_denial));
@@ -159,9 +173,10 @@ fn recognizes_device_not_authorized_errors() {
 fn recognizes_agent_keypackage_readiness_error() {
     let readiness_error: anyhow::Error = TransportClientError {
         status: StatusCode::CONFLICT,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::CONFLICT,
-            br#"{"ok":false,"error":{"code":"mls_keypackage_not_found","message":"no claimable KeyPackage"},"request_id":"ak:request:test"}"#,
+            "mls_keypackage_not_found",
+            "no claimable KeyPackage",
         ),
     }
     .into();
@@ -171,10 +186,7 @@ fn recognizes_agent_keypackage_readiness_error() {
 
     let unrelated: anyhow::Error = TransportClientError {
         status: StatusCode::CONFLICT,
-        error: decode_arkret_error(
-            StatusCode::CONFLICT,
-            br#"{"ok":false,"error":{"code":"cas_conflict","message":"membership changed"},"request_id":"ak:request:test"}"#,
-        ),
+        error: decode_problem(StatusCode::CONFLICT, "cas_conflict", "membership changed"),
     }
     .into();
     assert!(!crate::api_error::is_mls_keypackage_not_found_error(
@@ -186,10 +198,7 @@ fn recognizes_agent_keypackage_readiness_error() {
 fn recognizes_auth_expired_errors() {
     let error: anyhow::Error = TransportClientError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_arkret_error(
-            StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"},"request_id":"ak:request:test"}"#,
-        ),
+        error: decode_problem(StatusCode::UNAUTHORIZED, "auth_expired", "session expired"),
     }
     .into();
     assert!(is_auth_expired_error(&error));
@@ -209,12 +218,10 @@ fn recognizes_auth_expired_errors() {
 
     // Registry session-loss aliases for the same condition should all trigger.
     for code in ["unauthenticated", "soft_logged_out"] {
-        let body = format!(
-            r#"{{"ok":false,"error":{{"code":"{code}","message":"unknown token"}},"request_id":"ak:request:test"}}"#
-        );
+        let body = problem_body(StatusCode::UNAUTHORIZED, code, "unknown token");
         let aliased: anyhow::Error = TransportClientError {
             status: StatusCode::UNAUTHORIZED,
-            error: decode_arkret_error(StatusCode::UNAUTHORIZED, body.as_bytes()),
+            error: decode_arkret_error(StatusCode::UNAUTHORIZED, &body),
         }
         .into();
         assert!(is_auth_expired_error(&aliased), "code {code} should match");
@@ -224,29 +231,24 @@ fn recognizes_auth_expired_errors() {
     // wrapped in 401, etc.) must not be misclassified as session death.
     let unrelated: anyhow::Error = TransportClientError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_arkret_error(
-            StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"code":"rate_limited","message":"slow down"},"request_id":"ak:request:test"}"#,
-        ),
+        error: decode_problem(StatusCode::UNAUTHORIZED, "rate_limited", "slow down"),
     }
     .into();
     assert!(!is_auth_expired_error(&unrelated));
 
     let forbidden: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
-            StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"auth_expired","message":"session expired"},"request_id":"ak:request:test"}"#,
-        ),
+        error: decode_problem(StatusCode::FORBIDDEN, "auth_expired", "session expired"),
     }
     .into();
     assert!(!is_auth_expired_error(&forbidden));
 
     let revoked_session_grant: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"session grant is not active: revoked"},"request_id":"ak:request:test"}"#,
+            "capability_denied",
+            "session grant is not active: revoked",
         ),
     }
     .into();
@@ -255,9 +257,10 @@ fn recognizes_auth_expired_errors() {
 
     let unrelated_capability_denied: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:test"}"#,
+            "capability_denied",
+            "actor is not a member of the event Space",
         ),
     }
     .into();
@@ -276,9 +279,10 @@ fn recognizes_auth_expired_errors() {
 fn coauth_rejected_introspection_is_a_terminal_session_grant_loss() {
     let rejected: anyhow::Error = TransportClientError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"code":"unauthenticated","message":"session grant introspection was rejected by the Auth Server"},"request_id":"ak:request:test"}"#,
+            "unauthenticated",
+            "session grant introspection was rejected by the Auth Server",
         ),
     }
     .into();
@@ -288,9 +292,10 @@ fn coauth_rejected_introspection_is_a_terminal_session_grant_loss() {
     // A rejection that is not about the session grant must stay non-terminal.
     let unrelated: anyhow::Error = TransportClientError {
         status: StatusCode::UNAUTHORIZED,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::UNAUTHORIZED,
-            br#"{"ok":false,"error":{"code":"unauthenticated","message":"device proof was rejected"},"request_id":"ak:request:test"}"#,
+            "unauthenticated",
+            "device proof was rejected",
         ),
     }
     .into();
@@ -301,9 +306,10 @@ fn coauth_rejected_introspection_is_a_terminal_session_grant_loss() {
 fn recognizes_plaintext_visibility_policy_errors() {
     let error: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"policy_denied","message":"private plaintext message operations require this service in plaintext_visible_services"},"request_id":"ak:request:test"}"#,
+            "policy_denied",
+            "private plaintext message operations require this service in plaintext_visible_services",
         ),
     }
     .into();
@@ -311,9 +317,10 @@ fn recognizes_plaintext_visibility_policy_errors() {
 
     let capability_error: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"private plaintext message operations require this service in plaintext_visible_services"},"request_id":"ak:request:test"}"#,
+            "capability_denied",
+            "private plaintext message operations require this service in plaintext_visible_services",
         ),
     }
     .into();
@@ -321,9 +328,10 @@ fn recognizes_plaintext_visibility_policy_errors() {
 
     let other_policy: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"policy_denied","message":"only the space owner can update policy"},"request_id":"ak:request:test"}"#,
+            "policy_denied",
+            "only the space owner can update policy",
         ),
     }
     .into();
@@ -334,9 +342,10 @@ fn recognizes_plaintext_visibility_policy_errors() {
 fn recognizes_space_membership_denied_errors() {
     let error: anyhow::Error = TransportClientError {
         status: StatusCode::FORBIDDEN,
-        error: decode_arkret_error(
+        error: decode_problem(
             StatusCode::FORBIDDEN,
-            br#"{"ok":false,"error":{"code":"capability_denied","message":"actor is not a member of the event Space"},"request_id":"ak:request:01964137-0000-7000-8000-000000000010"}"#,
+            "capability_denied",
+            "actor is not a member of the event Space",
         ),
     }
     .into();

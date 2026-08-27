@@ -1,7 +1,7 @@
 //! Moderation decision / appeal FSM builders.
 //!
 //! Daily moderation governance is authored as self-signed protocol
-//! events submitted via `ak.self.events.command.submit`
+//! events submitted via `ak.self.events.command.submit.v1`
 //! (`POST /_arkret/self/events`); the product-admin moderation write path
 //! is retired. The soland P2 reducer (`apply_moderation`) projects
 //! these into `ak.component.moderation_state.v1` /

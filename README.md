@@ -60,9 +60,9 @@ section plus the protocol spec history in `../arkret-spec/spec/v1/`.
 See the protocol spec tree (`../arkret-spec/spec/v1/`) for the normative source.
 
 - **Signal routing** — typing / receipts / presence / call-signal do not
-  travel through the durable `ak.self.events.command.submit` path. They are
+  travel through the durable `ak.self.events.command.submit.v1` path. They are
   encrypted inside `SignalEnvelope` and sent with
-  `ak.self.signal.command.send`; device verification uses
+  `ak.self.signal.command.send.v1`; device verification uses
   `ak.schema.device_message.v1`.
 - **Moderation appeal strand** — when a moderation decision blocks a
   member, they can now file an appeal directly from the timeline.

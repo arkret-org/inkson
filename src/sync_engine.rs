@@ -2810,7 +2810,7 @@ fn ingest_member_identity_events_from_projection(
             // Otherwise hydrate envelopes from `state.events[]` keyed
             // by id. Missing references are dropped silently — the
             // server will resend them on the next subscribe frame, or
-            // a `ak.self.events.read.scan` backfill will catch up.
+            // a `ak.self.events.read.scan.v1` backfill will catch up.
             if let Some(refs) = map.get("identity_event_ids").and_then(Value::as_array) {
                 let mut resolved: Vec<Value> = Vec::new();
                 for r in refs {

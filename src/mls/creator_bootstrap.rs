@@ -380,7 +380,7 @@ async fn wait_for_realm_seal_view_after_basis(
     unreachable!("Realm Seal retry loop returns on its final attempt")
 }
 
-/// Poll `ak.self.seals.read.frontier` until the Realm has an accepted Seal.
+/// Poll `ak.self.seals.read.frontier.v1` until the Realm has an accepted Seal.
 ///
 /// A Realm accepted moments ago may not be sealed yet. During that window the
 /// registered frontier surface can report either `not_found` before a Seal

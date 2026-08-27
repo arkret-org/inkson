@@ -9,8 +9,8 @@
 //! - `device-revoke-button` per row, which opens a confirmation modal
 //! - `device-revoke-confirm-button` / `device-revoke-status` after the user confirms; revoke
 //!   submits the spec-canonical durable `ak.device.revoke` Control Move on the principal control
-//!   stream (envelope `seal_basis` minted from `ak.self.seals.read.frontier`, SPEC-SOL-003) with a
-//!   [`crate::transport::TransportClient::revoke_device`], then rotates the account MLS history
+//!   stream (envelope `seal_basis` minted from `ak.self.seals.read.frontier.v1`, SPEC-SOL-003) with
+//!   a [`crate::transport::TransportClient::revoke_device`], then rotates the account MLS history
 //!   secret and rewraps local `mls_history` backups.
 //!
 //! The pair strand on `/settings/devices/pair` carries:
@@ -158,7 +158,7 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
 /// Build the QR / paste payload that an already-authorized device approves.
 /// The new device owns `requesting_device_id` and its device-identity public
 /// key; the existing device turns this payload into
-/// `ak.gate.account.command.pair_device`.
+/// `ak.gate.account.command.pair_device.v1`.
 fn build_pair_payload(
     principal_id: &str,
     requesting_device_id: &str,
@@ -214,7 +214,7 @@ fn build_pair_payload(
 #[allow(clippy::expect_used)]
 /// Compact base64url handoff token embedded in the pairing QR deep-link.
 /// Mirrors the agent-pairing token (`{"r":request_id,"c":code}`); the resolving
-/// device decodes it and calls `ak.open.device_pairing.read.resolve`.
+/// device decodes it and calls `ak.open.device_pairing.read.resolve.v1`.
 fn build_device_pairing_handoff_token(
     device_pairing_request_id: &str,
     pairing_code: &str,
@@ -253,7 +253,7 @@ fn build_device_pairing_deep_link(
 }
 
 /// Parse a scanned/pasted pairing deep-link (or a bare token) into the compact
-/// handoff token expected by `ak.open.device_pairing.read.resolve`.
+/// handoff token expected by `ak.open.device_pairing.read.resolve.v1`.
 fn extract_device_pairing_token(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {

@@ -1,4 +1,4 @@
-//! Encrypted Signal receive rail (`ak.self.signal.stream.subscribe`).
+//! Encrypted Signal receive rail (`ak.self.signal.stream.subscribe.v1`).
 //!
 //! This is the third subscribe engine, alongside [`crate::sync_engine`]
 //! (account aggregate) and [`crate::realm_events_engine`] (per-Realm events).

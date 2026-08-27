@@ -418,7 +418,7 @@ async fn verify_active_series_range_completeness(
     if !describe
         .supported_features
         .iter()
-        .any(|feature| feature == "events_query_range_completeness")
+        .any(|feature| feature == "ak.feature.events_query_range_completeness.v1")
     {
         return Err(anyhow!(
             "first-device active-series recovery requires events_query_range_completeness"

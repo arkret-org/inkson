@@ -85,7 +85,7 @@ pub async fn resolve_active_account_context(
 }
 
 /// Author and sign the authenticated principal's profile Event, then hand its
-/// exact publication wrapper to `ak.self.account.command.update_profile`.
+/// exact publication wrapper to `ak.self.account.command.update_profile.v1`.
 /// Existing profiles use the accepted create-derived id and PCR returned by
 /// account viewer. First creation additionally requires the durable accepted
 /// PCR bootstrap evidence retained by the local account state.
@@ -616,7 +616,7 @@ pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<
 /// Read the actor's `invite_receive_policy` ("who can invite me", U4).
 ///
 /// Spec `invite-addressing.md` §5 / OpenAPI
-/// `ak.self.invite_receive_policy.resource.get`: served from the self plane at
+/// `ak.self.invite_receive_policy.resource.get.v1`: served from the self plane at
 /// `GET /_arkret/self/invite-receive-policy` and returns the bare
 /// `arkret_sdk::InviteReceivePolicy` (soland echoes the stored override or
 /// its recommended default). When the deployment does not yet wire this
@@ -632,7 +632,7 @@ pub async fn get_invite_receive_policy(
 
 /// Persist the actor's `invite_receive_policy` (U4).
 ///
-/// Spec `ak.self.invite_receive_policy.resource.replace`:
+/// Spec `ak.self.invite_receive_policy.resource.replace.v1`:
 /// `PUT /_arkret/self/invite-receive-policy` with the bare
 /// `arkret_sdk::InviteReceivePolicy` as the body. The handler enforces
 /// `subject_id == session actor` and requires the `schema` constant, so the
@@ -999,7 +999,7 @@ fn owned_agent_reply_update_needed(
 
 /// List the holder-private consent cells visible to the authenticated
 /// actor (cells where the actor is either holder or peer). Spec
-/// `identity/consent-model.md` §3 / OpenAPI `ak.self.consent.read.list`.
+/// `identity/consent-model.md` §3 / OpenAPI `ak.self.consent.read.list.v1`.
 pub async fn consent_cells(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_sdk::ConsentCellList> {
@@ -1179,7 +1179,7 @@ pub async fn tombstone_contact(
 }
 
 /// Read one holder-private consent cell. Spec OpenAPI
-/// `ak.self.consent.resource.get`.
+/// `ak.self.consent.resource.get.v1`.
 pub async fn consent_cell(
     http: &arkret_sdk::http_client::Client,
     holder: &str,
@@ -1198,7 +1198,7 @@ pub async fn consent_cell(
 
 /// Grant scoped consent to `peer` from the holder cell. `expires_at` is an
 /// optional RFC 3339 time window upper bound. Spec OpenAPI
-/// `ak.self.consent.command.grant`.
+/// `ak.self.consent.command.grant.v1`.
 ///
 /// The Control Move is authored and signed here: its `consent_id` is the cell
 /// subject and its `event_id` becomes the or_set add dot, so neither is the
@@ -1250,7 +1250,7 @@ pub async fn grant_consent(
 }
 
 /// Revoke scoped consent from `peer`. Spec OpenAPI
-/// `ak.self.consent.command.revoke`.
+/// `ak.self.consent.command.revoke.v1`.
 ///
 /// The current cell is read first because the Control Move MUST name the exact
 /// dots being removed; there is nothing the server could substitute for that
@@ -1295,7 +1295,7 @@ pub async fn revoke_consent(
 
 /// Open an outbound consent request: ask `holder` to grant the
 /// authenticated actor the given scope. The response is deliberately opaque.
-/// Spec OpenAPI `ak.self.consent.command.request`.
+/// Spec OpenAPI `ak.self.consent.command.request.v1`.
 pub async fn request_consent(
     http: &arkret_sdk::http_client::Client,
     holder: &str,
@@ -1312,7 +1312,7 @@ pub async fn request_consent(
 
 /// Submit a `did:webvh` DID operation (inception / rotation) to soland's
 /// embedded identity provider. Spec op
-/// `ak.root.identity.command.submit_did_operation`
+/// `ak.root.identity.command.submit_did_operation.v1`
 /// (`POST /_arkret/root/identity/submit-did-operation`). The body is the
 /// SDK-built `submit_body` from `arkret_sdk::webvh::prepare_inception`.
 pub async fn submit_did_operation(

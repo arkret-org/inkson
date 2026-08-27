@@ -2509,7 +2509,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                     "data-testid": "agent-admin-renew-pairing-button",
                                                     disabled: any_pairing_action_in_flight,
                                                     onclick: {
-                                                        // `ak.self.agent.command.renew_pairing`:
+                                                        // `ak.self.agent.command.renew_pairing.v1`:
                                                         // re-open pairing on this agent in place —
                                                         // fresh one-time code + QR, same principal,
                                                         // no replacement agent.
@@ -2837,7 +2837,7 @@ pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> 
                                                     variant: ButtonVariant::Secondary,
                                                     "data-testid": "agent-admin-replace-runtime-confirm-button",
                                                     onclick: {
-                                                        // `ak.self.agent.command.renew_pairing`:
+                                                        // `ak.self.agent.command.renew_pairing.v1`:
                                                         // lifecycle intent, keys and grants stay
                                                         // untouched until the new runtime pairs;
                                                         // the old key is then atomically revoked
