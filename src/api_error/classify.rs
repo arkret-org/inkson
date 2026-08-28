@@ -39,8 +39,7 @@ pub fn is_mls_keypackage_not_found_error(error: &anyhow::Error) -> bool {
             || envelope.message().contains("mls_keypackage_not_found")
             || envelope
                 .details()
-                .get("reason")
-                .or_else(|| envelope.details().get("reason_code"))
+                .get("reason_code")
                 .and_then(serde_json::Value::as_str)
                 == Some("mls_keypackage_not_found")
     })
@@ -156,7 +155,6 @@ pub fn is_pcr_genesis_already_accepted_error(error: &anyhow::Error) -> bool {
         let reason = envelope
             .details()
             .get("reason_code")
-            .or_else(|| envelope.details().get("reason"))
             .and_then(serde_json::Value::as_str);
         matches!(
             reason,
@@ -182,7 +180,6 @@ pub fn is_identity_creation_challenge_expired_error(error: &anyhow::Error) -> bo
         let reason = envelope
             .details()
             .get("reason_code")
-            .or_else(|| envelope.details().get("reason"))
             .and_then(serde_json::Value::as_str);
         status == StatusCode::CONFLICT
             && envelope.code() == arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION

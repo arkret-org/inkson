@@ -18,6 +18,7 @@ pub struct HistoryResponsePageInstallOutcome {
 pub struct HistorySourceOutboxDrainOutcome {
     pub completed: usize,
     pub expired: usize,
+    pub permanently_rejected: usize,
     pub unfinished: usize,
 }
 
@@ -640,10 +641,15 @@ fn live_ranges_cover_epoch(
     ranges: &[arkret_sdk::EpochRange],
     epoch: u64,
 ) -> bool {
-    status != garth::HistorySourceAttemptStatus::Expired
-        && ranges
-            .iter()
-            .any(|range| range.from_epoch <= epoch && epoch <= range.to_epoch)
+    // history-visibility.md 6.2: a permanently_rejected attempt will never be
+    // accepted, so its coverage must not suppress the replacement manifest.
+    matches!(
+        status,
+        garth::HistorySourceAttemptStatus::Unfinished
+            | garth::HistorySourceAttemptStatus::Completed
+    ) && ranges
+        .iter()
+        .any(|range| range.from_epoch <= epoch && epoch <= range.to_epoch)
 }
 
 fn ranges_cover(outer: &[arkret_sdk::EpochRange], inner: &[arkret_sdk::EpochRange]) -> bool {
@@ -1033,6 +1039,9 @@ pub async fn drain_source_outbox(
             Ok(attempt) => match attempt.status {
                 garth::HistorySourceAttemptStatus::Completed => outcome.completed += 1,
                 garth::HistorySourceAttemptStatus::Expired => outcome.expired += 1,
+                garth::HistorySourceAttemptStatus::PermanentlyRejected => {
+                    outcome.permanently_rejected += 1
+                }
                 garth::HistorySourceAttemptStatus::Unfinished => outcome.unfinished += 1,
             },
             Err(error) => {
@@ -1980,6 +1989,11 @@ mod tests {
         ));
         assert!(!live_ranges_cover_epoch(
             garth::HistorySourceAttemptStatus::Expired,
+            &ranges,
+            8,
+        ));
+        assert!(!live_ranges_cover_epoch(
+            garth::HistorySourceAttemptStatus::PermanentlyRejected,
             &ranges,
             8,
         ));

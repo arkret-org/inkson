@@ -98,7 +98,6 @@ impl LocalStateStore {
             let reason = entry
                 .get("event_state_reason_code")
                 .or_else(|| entry.get("reason_code"))
-                .or_else(|| entry.get("reason"))
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
             let state = MoveSubmissionState::from_submit_state(state_label, reason.as_deref());

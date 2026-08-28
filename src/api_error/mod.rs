@@ -125,10 +125,11 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
     };
 
     // Typed reason codes are the most specific signal — check them first.
+    // api-conventions.md §5 registers `reason_code`; a bare `reason` would be a
+    // second dispatch track and is deliberately not read.
     let reason = envelope
         .details()
-        .get("reason")
-        .or_else(|| envelope.details().get("reason_code"))
+        .get("reason_code")
         .and_then(Value::as_str);
     if let Some(reason) = reason {
         if reason == ReasonCode::CELL_IN_BOTTOM_STATE {
@@ -275,14 +276,8 @@ pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     maybe_dispatch_policy_deny(status, &envelope);
     let reason = envelope
         .details()
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            envelope
-                .details()
-                .get("reason_code")
-                .and_then(|v| v.as_str())
-        });
+        .get("reason_code")
+        .and_then(|v| v.as_str());
     crate::components::maybe_dispatch_circle_error(envelope.code(), reason);
     tracing::warn!(
         target: "inkson.api",
