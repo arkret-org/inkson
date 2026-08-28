@@ -93,6 +93,16 @@ fn agent_id(agent: &AgentView) -> String {
     agent_field(agent, "agent_id")
 }
 
+fn selected_agent_binding_matches(
+    selected_agent_id: &str,
+    controller_id: &arkret_sdk::DidCoreId,
+    key_state: &KeyState,
+) -> bool {
+    arkret_sdk::DidCoreId::new(selected_agent_id.to_owned())
+        .is_ok_and(|agent_id| agent_id == key_state.agent_id)
+        && controller_id == &key_state.controller_id
+}
+
 fn agent_slug_label(agent: &AgentView) -> String {
     let slug = agent_field(agent, "slug");
     if !slug.is_empty() {
@@ -334,6 +344,28 @@ mod directory_refresh_tests {
             agent_view_runtime_state(&row),
             AgentRuntimeState::PendingRuntimeKey
         );
+    }
+
+    #[test]
+    fn selected_agent_binding_compares_stable_core_ids_directly() {
+        let row = test_pairing_view(AgentLifecycleState::Active, AgentRuntimeState::Ready);
+        let key_state = row.key_state.as_ref().unwrap();
+
+        assert!(selected_agent_binding_matches(
+            key_state.agent_id.as_str(),
+            &key_state.controller_id,
+            key_state,
+        ));
+        assert!(!selected_agent_binding_matches(
+            "did:web:agents.example:summary",
+            &key_state.controller_id,
+            key_state,
+        ));
+        assert!(!selected_agent_binding_matches(
+            key_state.agent_id.as_str(),
+            &arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+            key_state,
+        ));
     }
 
     fn test_pairing_view(
@@ -709,7 +741,7 @@ fn spawn_set_agent_enabled(
     base: String,
     api_token: String,
     id: String,
-    controller_id: String,
+    controller_id: arkret_sdk::DidCoreId,
     key_state: Option<KeyState>,
     enabled: bool,
     mut agents: Signal<Vec<AgentView>>,
@@ -732,13 +764,7 @@ fn spawn_set_agent_enabled(
             );
             return;
         };
-        let selected_agent_actor_id = arkret_sdk::DidFullId::new(id.clone())
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id));
-        let selected_controller_actor_id = arkret_sdk::DidFullId::new(controller_id.clone())
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id));
-        if selected_agent_actor_id.as_ref().ok() != Some(&key_state.agent_id)
-            || selected_controller_actor_id.as_ref().ok() != Some(&key_state.controller_id)
-        {
+        if !selected_agent_binding_matches(&id, &controller_id, &key_state) {
             last_op_status.set(
                 "Agent key binding does not match the selected Agent and controller; refresh and retry."
                     .to_owned(),
@@ -783,7 +809,7 @@ fn spawn_set_agent_enabled(
                 .active_account()
                 .ok_or_else(|| anyhow::anyhow!("active controller account is unavailable"))?;
             anyhow::ensure!(
-                account.principal_id().as_str() == controller_id,
+                account.principal_id() == &controller_id,
                 "active controller authority changed before lifecycle submission"
             );
             let signer = crate::event_signer::active_signer()
@@ -885,7 +911,7 @@ fn spawn_deactivate_agent(
     base: String,
     api_token: String,
     id: String,
-    controller_id: String,
+    controller_id: arkret_sdk::DidCoreId,
     status: AgentLifecycleState,
     key_state: Option<KeyState>,
     mut agents: Signal<Vec<AgentView>>,
@@ -904,13 +930,7 @@ fn spawn_deactivate_agent(
             );
             return;
         };
-        let selected_agent_actor_id = arkret_sdk::DidFullId::new(id.clone())
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id));
-        let selected_controller_actor_id = arkret_sdk::DidFullId::new(controller_id.clone())
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id));
-        if selected_agent_actor_id.as_ref().ok() != Some(&key_state.agent_id)
-            || selected_controller_actor_id.as_ref().ok() != Some(&key_state.controller_id)
-        {
+        if !selected_agent_binding_matches(&id, &controller_id, &key_state) {
             last_op_status.set(
                 "Agent key binding does not match the selected Agent and controller; refresh and retry."
                     .to_owned(),
@@ -996,7 +1016,7 @@ fn spawn_deactivate_agent(
 fn spawn_provision_agent(
     base: String,
     api_token: String,
-    controller_id: String,
+    controller_id: arkret_sdk::DidCoreId,
     slug: String,
     _avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     content_presets: Vec<AgentGrantPreset>,
@@ -1020,7 +1040,7 @@ fn spawn_provision_agent(
                 return;
             }
         };
-        if account.principal_id().as_str() != controller_id {
+        if account.principal_id() != &controller_id {
             last_op_status.set("Create failed: active controller authority changed".to_owned());
             return;
         }
@@ -1033,26 +1053,13 @@ fn spawn_provision_agent(
             last_op_status.set(format!("Slug is invalid: {error}"));
             return;
         }
-        let controller_full_id = match arkret_sdk::DidFullId::new(controller_id.trim().to_owned()) {
-            Ok(value) => value,
-            Err(error) => {
-                last_op_status.set(format!("Create failed: signed-in controller DID: {error}"));
-                return;
-            }
-        };
-        let controller_id = match arkret_sdk::project_full_id_to_core_id(&controller_full_id) {
-            Ok(value) => value,
-            Err(error) => {
-                last_op_status.set(format!("Create failed: signed-in controller DID: {error}"));
-                return;
-            }
-        };
-        let controller_authority = match state_store
+        let controller_full_id = account.full_id().clone();
+        let controller_principal_server_id = match state_store
             .read()
             .recovery_material_evidence()
             .and_then(|evidence| evidence.controller_authority)
         {
-            Some(value) if value.principal_id == controller_id => value,
+            Some(value) if value == account.authority => value.principal_server_id,
             Some(_) => {
                 last_op_status.set(
                     "Create failed: the saved controller authority pair does not match the signed-in identity. Refresh identity recovery material before provisioning an Agent."
@@ -1157,7 +1164,7 @@ fn spawn_provision_agent(
             operation_id: operation_id.clone(),
             idempotency_key: idempotency_key.clone(),
             full_id: full_id.clone(),
-            controller_authority,
+            controller_principal_server_id,
             slug: slug.clone(),
             requested_scope: requested_scope.clone(),
             pairing_ttl_ms: None,
@@ -1671,7 +1678,10 @@ fn spawn_provision_agent(
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
 #[component]
-pub fn PersonalAgentAdminPanel(token: Signal<String>, controller_id: String) -> Element {
+pub fn PersonalAgentAdminPanel(
+    token: Signal<String>,
+    controller_id: arkret_sdk::DidCoreId,
+) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let navigator = use_navigator();

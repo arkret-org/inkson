@@ -531,6 +531,7 @@ pub fn SettingsPanel(
         return rsx! {};
     };
     let active_server_url = active_account.server_url.to_string();
+    let active_principal = active_account.principal_id().clone();
     let active_principal_id = active_account.principal_id().to_string();
     let active_device_id = active_account.device_id.to_string();
     let active_authority = active_account.authority.clone();
@@ -1496,7 +1497,7 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Agents {
                         crate::views::agents::PersonalAgentAdminPanel {
                             token,
-                            controller_id: principal_id(),
+                            controller_id: active_principal.clone(),
                         }
                     }
 
