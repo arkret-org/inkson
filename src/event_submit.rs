@@ -1438,27 +1438,6 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("server describe: {error}"))
     }
 
-    /// Debug-only freshness diagnostic for a locally mixed server/WASM build.
-    ///
-    /// Exact build identity is not a protocol compatibility boundary. This
-    /// function and every call to it are absent from release builds; production
-    /// interoperability is negotiated from protocol/profile/operation/schema
-    /// capabilities instead.
-    #[cfg(all(debug_assertions, not(test)))]
-    async fn diagnose_exact_development_sdk_build(&self) -> anyhow::Result<()> {
-        let description = self.describe().await?;
-        if description.development_mode {
-            description
-                .validate_exact_development_build_identity()
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "stale or mixed Arkret SDK build; refusing to author Event in this development session: {error}. Rebuild/reload Inkson and restart Soland from the same SDK checkout"
-                    )
-                })?;
-        }
-        Ok(())
-    }
-
     async fn ensure_recovery_material_ready(
         &self,
         intent: &EventIntent,
@@ -2490,8 +2469,6 @@ impl EventSubmitter {
         authoring: SemanticAuthoring,
         digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<AuthoredAttempt> {
-        #[cfg(all(debug_assertions, not(test)))]
-        self.diagnose_exact_development_sdk_build().await?;
         self.verify_origin_principal_server(intent).await?;
         let mut intent = intent.clone();
         // The authority-root claim is a producer-signed envelope member and a
@@ -2918,8 +2895,6 @@ impl EventSubmitter {
         &self,
         steps: Vec<EventUnitStep>,
     ) -> anyhow::Result<Vec<arkret_sdk::AuthoredEvent>> {
-        #[cfg(all(debug_assertions, not(test)))]
-        self.diagnose_exact_development_sdk_build().await?;
         let mut authored: Vec<arkret_sdk::AuthoredEvent> = Vec::with_capacity(steps.len());
         let mut chain = UnitAuthoringChain::default();
         for step in steps {

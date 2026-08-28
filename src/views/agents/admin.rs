@@ -1280,6 +1280,24 @@ fn spawn_provision_agent(
             last_op_status.set("Create failed: server allocation scope digest mismatch".to_owned());
             return;
         }
+        let controller_realm_for_checkpoint = controller_realm_id.clone();
+        if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
+            crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
+                &api,
+                state_store,
+                controller_realm_for_checkpoint.as_str(),
+            )
+            .await
+            .map_err(anyhow::Error::msg)
+        })
+        .await
+        {
+            last_op_status.set(format!(
+                "Create failed: verify Controller PCR governance checkpoint: {}",
+                error.display()
+            ));
+            return;
+        }
         let agent_notary = match crate::event_builders::managed_agent_inception_notary(
             &full_id,
             &agent_inception.root_public_key_multibase,

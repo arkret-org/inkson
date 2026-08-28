@@ -9,7 +9,6 @@ fn main() {
     tracing::warn!(
         target: "build",
         build_id = inkson::build_info::build_id(),
-        event_kind_registry_sha256 = inkson::build_info::event_kind_registry_sha256(),
         "inkson build loaded"
     );
     // AKP-0007 P3B.8.1 — opt-in Sentry init. The guard must outlive
